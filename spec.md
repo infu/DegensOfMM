@@ -1,0 +1,5753 @@
+Below is a **logical rules spec v0.1** for an original turn-based fantasy strategy game inspired by the broad genre of classic champion-led conquest games. It avoids proprietary names, factions, creatures, maps, story, and assets, but preserves the useful design pattern: **champions explore a strategic map, gather armies and resources, develop settlements, and resolve battles on a tactical grid.**
+
+# Game Rules Spec v0.1 — Working Title: **Degens of Misery & Mayhem**
+
+**Redaction note:** Part 2 is authoritative for implementation. Part 1 is design background only and should only be used for reusable game-design ideas. Any Part 1 rule that lacks a Part 2 bounded data model, index, command path, recovery path, deterministic RNG key, and v1 numeric cap is deferred and must not be implemented in canister gameplay. In Part 1, legacy references to **Crownfall Realms** are superseded by **Degens of Misery & Mayhem**, legacy **Hero** terminology is superseded by **Champion/champ**, sequential player turns are superseded by 60-second simultaneous turns, and monolithic save-state language is superseded by IcyDB durable entities plus command/event rows.
+
+## 1. Core Game Concept
+
+**Degens of Misery & Mayhem** is a turn-based strategy game where each player controls one or more **Champions**, each leading an army across a strategic world map. Players explore, gather resources, conquer settlements, recruit units, collect artifacts, learn magic, and fight tactical battles.
+
+The game has two main layers:
+
+1. **Adventure Map**
+
+   * Large strategic map.
+   * Players move champs, capture structures, gather resources, recruit armies, and manage towns.
+   * Time advances through 60-second simultaneous turn windows.
+
+2. **Battle Map**
+
+   * Smaller tactical grid.
+   * Used whenever two hostile armies fight.
+   * Units act in initiative order.
+   * Victory comes from destroying, routing, or otherwise defeating the enemy army.
+
+The intended game loop is:
+
+> Explore → Gather → Build → Recruit → Fight → Upgrade → Conquer → Win
+
+---
+
+# 2. Game Modes
+
+## 2.1 Scenario Mode
+
+A scenario is a prebuilt map with defined players, starting towns, objectives, terrain, neutral armies, and victory conditions.
+
+## 2.2 Skirmish Mode
+
+Players choose settings such as:
+
+* Number of players
+* Map size
+* Factions
+* Starting resources
+* Neutral difficulty
+* Victory condition
+* Fog of war enabled/disabled
+* Procedural map seed
+
+## 2.3 Campaign Mode
+
+Redacted for the first implementation. Campaign carryover is deferred by Part 2 and should not shape the initial IcyDB schema.
+
+---
+
+# 3. Players
+
+Each player has:
+
+```text
+Player {
+  id
+  name
+  faction
+  team_id
+  resources
+  champions[]
+  towns[]
+  discovered_tiles
+  visible_tiles
+  defeated: boolean
+}
+```
+
+A player is defeated when they satisfy the scenario defeat condition, usually:
+
+* No towns and no champions remain, or
+* Main champion is defeated, or
+* A required objective fails.
+
+---
+
+# 4. Time System
+
+The game advances in **60-second simultaneous turns**.
+
+```text
+1 turn = one timed window where all active players may submit commands
+1 rules week = 7 turns, used only for growth/event cadence
+1 rules month = 28 turns, used only if scenario content needs it
+```
+
+Turn advancement is authoritative in Part 2: when the deadline expires, the server advances on the next update call. Query calls may derive effective state but do not persist it. Skipped players require no write.
+
+## 4.1 Turn Reset
+
+Do not mass-update rows at the start of a turn. Use lazy fields:
+
+* `Champion.movement_turn` and `Champion.movement_remaining` for movement.
+* `GameParticipant.last_income_turn` for income.
+* `Town.last_built_turn` for construction availability.
+* `TownRecruitPool.last_growth_week` for recruitable growth.
+
+## 4.2 Weekly Cadence
+
+At the start of each computed rules week:
+
+* Recruitable units become available lazily when recruitment is inspected or used.
+* Certain neutral armies may grow lazily.
+* Special weekly events may be derived from the session seed and turn number.
+
+Example weekly events:
+
+```text
+Week of Plenty: +25% gold income.
+Week of Wolves: wolf-type neutral armies grow by 50%.
+Week of Silence: spellcasting costs +20%.
+```
+
+## 4.3 Monthly Cadence
+
+At the start of each computed rules month:
+
+* Major world events may trigger.
+* Strong neutral armies may expand.
+* Scenario-specific events may occur.
+
+---
+
+# 5. Resources
+
+Players collect resources used for construction, recruitment, spells, upgrades, and trade.
+
+## 5.1 Default Resources
+
+```text
+Gold        — universal currency
+Wood        — common building material
+Stone       — common building material
+Crystal     — magical resource
+Iron        — military/armory resource
+Ember       — fire/energy resource
+Aether      — rare arcane resource
+```
+
+## 5.2 Resource Income
+
+Resources are generated by:
+
+* Town buildings
+* Mines
+* Map structures
+* Artifacts
+* Champion skills
+* Scenario events
+
+Example:
+
+```text
+Gold Mine: +1000 gold/turn
+Sawmill: +2 wood/turn
+Quarry: +2 stone/turn
+Crystal Vein: +1 crystal/turn
+```
+
+## 5.3 Resource Storage
+
+Unless the scenario says otherwise, resources have no maximum storage limit.
+
+---
+
+# 6. Adventure Map
+
+## 6.1 Map Grid
+
+The adventure map is a grid of tiles.
+
+Recommended options:
+
+```text
+Square grid
+Hex grid
+Isometric square grid
+```
+
+For production simplicity, use a **square grid** first.
+
+Each tile has:
+
+```text
+Tile {
+  x
+  y
+  terrain_type
+  movement_cost
+  passable: boolean
+  object_id optional
+  owner_id optional
+  visible_to_players[]
+}
+```
+
+## 6.2 Terrain Types
+
+Example terrain table:
+
+| Terrain   | Movement Cost | Notes                       |
+| --------- | ------------: | --------------------------- |
+| Road      |           0.5 | Fast movement               |
+| Grassland |           1.0 | Normal                      |
+| Dirt      |           1.0 | Normal                      |
+| Forest    |           1.5 | Slower                      |
+| Swamp     |           2.0 | Slower                      |
+| Snow      |           1.5 | Slower                      |
+| Desert    |           1.5 | May cause fatigue           |
+| Mountain  |    Impassable | Unless path exists          |
+| Water     |    Impassable | Unless champion has ship/flying |
+| Lava      |           2.0 | May damage certain armies   |
+
+Movement cost is subtracted from a champion’s movement points.
+
+## 6.3 Fog of War
+
+Each player has:
+
+```text
+discovered_tiles: tiles the player has seen before
+visible_tiles: tiles currently visible this turn
+```
+
+Rules:
+
+* Undiscovered tiles are hidden.
+* Discovered but non-visible tiles show terrain but not current enemy positions.
+* A champion reveals tiles within their scouting radius.
+* Towns and owned structures reveal nearby tiles.
+
+Default vision:
+
+```text
+Champion vision radius: 5 tiles
+Town vision radius: 7 tiles
+Watchtower vision radius: 10 tiles
+```
+
+---
+
+# 7. Champions
+
+Champions are commander units that move on the adventure map and lead armies into battle.
+
+```text
+Champion {
+  id
+  name
+  owner_id
+  class
+  level
+  experience
+  position
+  movement_points
+  max_movement_points
+  army_slots[]
+  skills[]
+  artifacts[]
+  spellbook
+  primary_stats
+  status_effects[]
+}
+```
+
+## 7.1 Champion Primary Stats
+
+Each champion has four primary stats:
+
+```text
+Might       — improves army damage
+Guard       — improves army defense
+Wisdom      — improves spell power and mana
+Command     — improves morale, army size, logistics
+```
+
+Alternative names can be changed later.
+
+## 7.2 Champion Derived Stats
+
+```text
+Mana = Wisdom * 10 + class_bonus
+Movement = base_movement + logistics_bonus + mount_bonus
+Initiative Bonus = some skills/artifacts
+Vision = base_vision + scouting_bonus
+```
+
+## 7.3 Champion Leveling
+
+Champions gain experience from:
+
+* Winning battles
+* Visiting special map locations
+* Completing quests
+* Capturing towns
+* Defeating stronger enemies
+
+Experience curve example:
+
+```text
+Level 1: 0 XP
+Level 2: 1000 XP
+Level 3: 2500 XP
+Level 4: 4500 XP
+Level 5: 7000 XP
+Each later level: previous requirement + level * 1000
+```
+
+## 7.4 Level-Up Rule
+
+When a champion levels up:
+
+1. Increase one primary stat.
+2. Offer the player a choice of 2–3 skill options.
+3. Optionally grant mana restoration or spell learning depending on class.
+
+Example:
+
+```text
+On level up:
+- Warrior classes favor Might and Guard.
+- Mystic classes favor Wisdom.
+- Commander classes favor Command.
+```
+
+## 7.5 Champion Defeat
+
+When a champion loses a battle:
+
+Default rule:
+
+```text
+Champion is removed from map.
+Champion becomes available for rehiring after a rules-defined cooldown.
+Artifacts may be lost, transferred, or captured depending on battle rules.
+Surviving army units are destroyed unless retreat succeeded.
+```
+
+Alternative scenario rule:
+
+```text
+Permanent death enabled.
+```
+
+---
+
+# 8. Champion Classes
+
+Each faction can have two or more champion classes.
+
+Example class archetypes:
+
+## 8.1 Warlord
+
+* Strong army bonuses.
+* High Might and Guard.
+* Low Wisdom.
+* Better morale.
+
+## 8.2 Arcanist
+
+* Strong spellcasting.
+* High Wisdom.
+* Lower army bonuses.
+* More mana.
+
+## 8.3 Pathfinder
+
+* Better movement and scouting.
+* Moderate combat.
+* Strong exploration bonuses.
+
+## 8.4 Steward
+
+* Improves town economy and recruitment.
+* Better logistics and command.
+* Less direct combat power.
+
+---
+
+# 9. Champion Skills
+
+Skills are divided into categories.
+
+Each skill has ranks:
+
+```text
+Novice
+Adept
+Expert
+Master
+```
+
+## 9.1 Example Skill Categories
+
+### Logistics
+
+Improves movement.
+
+```text
+Novice: +10% movement
+Adept: +20% movement
+Expert: +30% movement
+Master: +40% movement and ignores minor terrain penalties
+```
+
+### Tactics
+
+Improves battlefield positioning.
+
+```text
+Novice: +1 deployment row
+Adept: +1 deployment row, +5% initiative
+Expert: +2 deployment rows, +10% initiative
+Master: reposition 1 stack before combat begins
+```
+
+### Leadership
+
+Improves morale.
+
+```text
+Novice: +1 morale
+Adept: +2 morale
+Expert: +3 morale
+Master: morale cannot fall below 0
+```
+
+### Sorcery
+
+Improves spellcasting.
+
+```text
+Novice: -10% spell mana cost
+Adept: -15% spell mana cost, +5% spell damage
+Expert: -20% mana cost, +10% spell damage
+Master: once per battle, cast a minor spell for free
+```
+
+### Scouting
+
+Improves map vision.
+
+```text
+Novice: +1 vision radius
+Adept: +2 vision radius
+Expert: +3 vision radius
+Master: reveals enemy army strength category
+```
+
+### Diplomacy
+
+Improves interactions with neutral armies.
+
+```text
+Novice: small chance neutral army offers to leave
+Adept: chance to bribe neutral army
+Expert: chance to recruit compatible neutral units
+Master: neutral armies may join at discounted cost
+```
+
+### Engineering
+
+Improves siege warfare.
+
+```text
+Novice: +10% siege damage
+Adept: build battlefield barricade in siege
+Expert: siege weapons act faster
+Master: breach wall section before combat starts
+```
+
+---
+
+# 10. Armies and Units
+
+A champion’s army is composed of unit stacks.
+
+## 10.1 Army Slots
+
+Default:
+
+```text
+Each champion has 7 army slots.
+Each slot contains one unit type and quantity.
+```
+
+Example:
+
+```text
+Slot 1: 35 Swordsmen
+Slot 2: 12 Archers
+Slot 3: 6 Griffins
+```
+
+## 10.2 Unit Stack
+
+```text
+UnitStack {
+  unit_type_id
+  quantity
+  current_hp_of_front_unit
+  status_effects[]
+}
+```
+
+Units of the same type may merge if they belong to the same owner and have compatible upgrades.
+
+## 10.3 Unit Type
+
+```text
+UnitType {
+  id
+  name
+  faction
+  tier
+  attack
+  defense
+  damage_min
+  damage_max
+  max_hp
+  speed
+  initiative
+  morale
+  ranged: boolean
+  shots optional
+  flying: boolean
+  abilities[]
+  cost
+  weekly_growth
+}
+```
+
+## 10.4 Unit Tiers
+
+Default unit tiers:
+
+```text
+Tier 1 — militia/basic
+Tier 2 — trained
+Tier 3 — elite
+Tier 4 — champion
+Tier 5 — mythical
+```
+
+A faction may have 5–7 recruitable unit tiers depending on desired complexity.
+
+## 10.5 Unit Growth
+
+Each town generates new recruitable units weekly.
+
+Example:
+
+```text
+Tier 1 dwelling: +25/week
+Tier 2 dwelling: +14/week
+Tier 3 dwelling: +8/week
+Tier 4 dwelling: +4/week
+Tier 5 dwelling: +2/week
+```
+
+Growth can be modified by:
+
+* Buildings
+* Champion skills
+* Artifacts
+* World events
+* Faction bonuses
+
+---
+
+# 11. Factions
+
+A faction defines:
+
+```text
+Faction {
+  name
+  theme
+  champion_classes[]
+  unit_roster[]
+  town_buildings[]
+  native_terrain
+  favored_magic
+  faction_trait
+}
+```
+
+## 11.1 Example Original Factions
+
+### Sunhold Dominion
+
+Theme: disciplined knights, clerics, radiant magic.
+
+Trait:
+
+```text
+Units gain +1 morale when defending owned towns.
+```
+
+### Gloamwood Pact
+
+Theme: forest guardians, beasts, archers, nature magic.
+
+Trait:
+
+```text
+Champions ignore forest movement penalties.
+```
+
+### Ironvein League
+
+Theme: engineers, mercenaries, constructs, siege power.
+
+Trait:
+
+```text
+Town buildings cost -10% stone and iron.
+```
+
+### Ashen Circle
+
+Theme: fire cultists, demons, destructive magic.
+
+Trait:
+
+```text
+Fire spells deal +15% damage.
+```
+
+### Tideborn Court
+
+Theme: sea spirits, amphibious warriors, storm magic.
+
+Trait:
+
+```text
+Units suffer no penalty on swamp or coastal terrain.
+```
+
+### Umbral Host
+
+Theme: undead, shadows, curses.
+
+Trait:
+
+```text
+Units are immune to morale penalties but cannot benefit from positive morale.
+```
+
+---
+
+# 12. Towns
+
+Towns are major strategic structures where players recruit units, build improvements, generate income, and defend territory.
+
+```text
+Town {
+  id
+  name
+  owner_id
+  faction
+  position
+  buildings[]
+  garrison[]
+  fortification_level
+  recruitable_units
+}
+```
+
+## 12.1 Town Ownership
+
+A town is owned by the player who controls it.
+
+A town changes ownership when:
+
+1. An enemy champion attacks it.
+2. The defending garrison is defeated.
+3. The attacker chooses to occupy the town.
+
+## 12.2 Town Construction
+
+Default rule:
+
+```text
+Each town may construct 1 building per turn.
+```
+
+Construction requires:
+
+* Required previous buildings
+* Resources
+* Gold
+* Sometimes faction-specific resources
+
+## 12.3 Town Building Categories
+
+### Core
+
+```text
+Village Hall → Town Hall → City Hall → Capitol
+```
+
+Generates gold.
+
+### Fortifications
+
+```text
+Palisade → Fort → Citadel → Bastion
+```
+
+Improves siege defense.
+
+### Unit Dwellings
+
+Unlock and generate units.
+
+```text
+Barracks
+Range
+Stables
+Sanctum
+Beast Den
+Champion Hall
+```
+
+### Economy
+
+```text
+Marketplace
+Resource Silo
+Trade Guild
+Warehouse
+```
+
+### Magic
+
+```text
+Shrine
+Mage Hall
+Grand Archive
+Mana Well
+```
+
+### Utility
+
+```text
+Tavern
+Blacksmith
+Shipyard
+Portal Gate
+Scout Tower
+```
+
+## 12.4 Example Town Hall Income
+
+```text
+Village Hall: +500 gold/turn
+Town Hall: +1000 gold/turn
+City Hall: +2000 gold/turn
+Capitol: +4000 gold/turn
+```
+
+Default restriction:
+
+```text
+A player may only own one Capitol.
+```
+
+## 12.5 Tavern
+
+The Tavern allows hiring champions.
+
+Rules:
+
+```text
+Each tavern offers 2 seeded pseudo-random champions per week.
+Hiring a champion costs gold.
+Hired champions appear inside the town.
+Defeated champions may reappear in taverns after a delay.
+```
+
+## 12.6 Marketplace
+
+Allows trading resources.
+
+Basic exchange rate:
+
+```text
+10 wood → 1 rare resource
+10 stone → 1 rare resource
+5 rare resource → 1000 gold
+2500 gold → 1 rare resource
+```
+
+Rates improve with more marketplaces owned.
+
+---
+
+# 13. Recruitment
+
+Units can be recruited from:
+
+* Town dwellings
+* External dwellings
+* Special map structures
+* Events
+* Diplomacy
+* Quests
+
+## 13.1 Recruitment Rule
+
+A player may recruit units if:
+
+```text
+recruitable_quantity > 0
+player has required resources
+player owns the dwelling or town
+```
+
+Recruiting decreases available quantity and consumes resources.
+
+## 13.2 External Dwellings
+
+External dwellings are map structures that generate units weekly.
+
+Rules:
+
+```text
+If owned, dwelling adds units to local recruitment pool.
+Some dwellings allow direct recruitment on the map.
+Some dwellings send growth to nearest owned town.
+```
+
+---
+
+# 14. Artifacts
+
+Artifacts are items equipped by champions.
+
+```text
+Artifact {
+  id
+  name
+  slot
+  rarity
+  effects[]
+}
+```
+
+## 14.1 Artifact Slots
+
+Example slots:
+
+```text
+Head
+Neck
+Torso
+Weapon
+Shield
+Ring 1
+Ring 2
+Feet
+Trinket 1
+Trinket 2
+Relic
+```
+
+## 14.2 Artifact Rarity
+
+```text
+Common
+Uncommon
+Rare
+Epic
+Legendary
+Mythic
+```
+
+## 14.3 Example Artifacts
+
+```text
+Traveler's Boots: +10% adventure movement
+Banner of Resolve: +1 morale to all allied units
+Crystal Lens: +2 Wisdom
+Iron Crown: +1 Command, +1 Guard
+Emberblade: melee units deal +5% fire damage
+```
+
+## 14.4 Artifact Capture
+
+Default rule:
+
+```text
+When a champion is defeated, the victor captures one seeded pseudo-random equipped artifact.
+If the defeated champion is eliminated permanently, all artifacts are captured.
+Scenario settings may override this.
+```
+
+---
+
+# 15. Magic System
+
+Champions may cast spells on the adventure map or in battle.
+
+```text
+Spell {
+  id
+  name
+  school
+  level
+  mana_cost
+  target_type
+  effect
+  duration
+  restrictions
+}
+```
+
+## 15.1 Magic Schools
+
+Example schools:
+
+```text
+Light
+Shadow
+Nature
+Fire
+Storm
+Earth
+Arcane
+```
+
+## 15.2 Spell Levels
+
+```text
+Level 1 — minor
+Level 2 — basic
+Level 3 — advanced
+Level 4 — powerful
+Level 5 — legendary
+```
+
+## 15.3 Learning Spells
+
+Champions learn spells from:
+
+* Town magic buildings
+* Shrines
+* Scrolls
+* Artifacts
+* Level-up perks
+* Quest rewards
+
+## 15.4 Battle Spellcasting
+
+Default:
+
+```text
+A champion may cast 1 spell per combat round.
+Casting consumes mana.
+Some skills allow additional minor casts.
+```
+
+## 15.5 Adventure Spellcasting
+
+Adventure spells are cast on the world map.
+
+Examples:
+
+```text
+Reveal Area
+Summon Boat
+Town Portal
+Bless Mine
+Road of Wind
+Call Reinforcements
+```
+
+Adventure spells may have cooldowns to prevent abuse.
+
+---
+
+# 16. Adventure Map Objects
+
+Map objects provide interactions.
+
+```text
+MapObject {
+  id
+  type
+  position
+  owner_id optional
+  guarded_by optional
+  visited_by[]
+  refresh_rule
+  interaction_rule
+}
+```
+
+## 16.1 Common Object Types
+
+### Resource Pile
+
+One-time pickup.
+
+```text
+Gold Chest: choose gold or experience.
+Wood Pile: gain wood.
+Crystal Shard: gain crystal.
+```
+
+### Mine
+
+Capturable income source.
+
+```text
+Owner receives resource income on the lazy income cadence.
+May be guarded.
+Changes ownership when captured.
+```
+
+### Shrine
+
+Teaches a spell.
+
+```text
+Can be visited once per champion or once per player.
+```
+
+### Obelisk
+
+Reveals part of hidden treasure map.
+
+```text
+Each visited obelisk reveals one fragment.
+When all fragments are revealed, treasure location is shown.
+```
+
+### Training Grounds
+
+Grants experience or temporary combat bonus.
+
+### Watchtower
+
+Reveals nearby area when owned.
+
+### Portal
+
+Moves champion to linked portal.
+
+### Quest Hut
+
+Gives objective and reward.
+
+Example quest:
+
+```text
+Bring 10 Crystal.
+Defeat the Bandit Lord.
+Reach level 8.
+Deliver artifact.
+```
+
+---
+
+# 17. Neutral Armies
+
+Neutral armies guard resources, structures, paths, and treasures.
+
+```text
+NeutralArmy {
+  unit_stacks[]
+  aggression_level
+  join_chance
+  bribe_cost
+  growth_rule
+}
+```
+
+## 17.1 Strength Labels
+
+For readability, enemy strength can be shown as:
+
+```text
+Few: 1–9
+Pack: 10–24
+Group: 25–49
+Company: 50–99
+Host: 100–249
+Legion: 250+
+```
+
+Exact numbers may be hidden unless the champion has scouting ability.
+
+## 17.2 Neutral Behavior
+
+When a champion interacts with a neutral army:
+
+Possible outcomes:
+
+```text
+Fight
+Flee
+Offer to join
+Demand payment
+Block passage
+```
+
+## 17.3 Neutral Join Logic
+
+Example formula:
+
+```text
+join_score =
+  champion_command * 5
+  + diplomacy_bonus
+  + faction_affinity_bonus
+  - neutral_strength_rating
+  - alignment_conflict_penalty
+```
+
+If `join_score >= threshold`, neutral units may offer to join.
+
+---
+
+# 18. Battle System
+
+Battles occur when:
+
+* A champion attacks another champion.
+* A champion attacks a town.
+* A champion attacks a neutral army.
+* A scripted event forces combat.
+
+## 18.1 Battle Map
+
+Recommended first implementation:
+
+```text
+Grid size: 12 columns x 10 rows
+Attacker deploys on left side.
+Defender deploys on right side.
+Obstacles may appear depending on terrain.
+```
+
+For sieges:
+
+```text
+Defender has walls, gate, towers, and protected deployment.
+Attacker may have siege engines.
+```
+
+## 18.2 Battle Participants
+
+A battle contains:
+
+```text
+Battle {
+  attacker_champion optional
+  defender_champion optional
+  attacker_army[]
+  defender_army[]
+  terrain
+  round_number
+  active_stack
+  turn_queue
+  battle_effects[]
+}
+```
+
+## 18.3 Deployment
+
+Before combat:
+
+1. Attacker places stacks in attacker deployment zone.
+2. Defender places stacks in defender deployment zone.
+3. Units may be auto-placed if the player skips deployment.
+4. Tactics skill may expand deployment options.
+
+## 18.4 Initiative Order
+
+Units act according to initiative.
+
+Basic model:
+
+```text
+At the start of battle, each stack gets readiness = 0.
+Each tick:
+  readiness += initiative
+The first stack reaching threshold acts.
+After acting, readiness -= threshold.
+```
+
+Simpler model:
+
+```text
+At the start of each round, sort living stacks by initiative descending.
+Ties are broken by speed, then seeded hash.
+Each living stack acts once per round.
+```
+
+For first production version, use the simpler round-based model.
+
+## 18.5 Unit Actions
+
+On its turn, a unit stack may:
+
+```text
+Move
+Melee attack
+Ranged attack
+Cast ability
+Defend
+Wait
+Retreat, if allowed
+```
+
+## 18.6 Movement in Battle
+
+Each unit has speed.
+
+```text
+Maximum movement tiles per turn = unit.speed
+```
+
+Terrain or obstacles may block movement.
+
+Flying units ignore most ground obstacles but cannot end movement on occupied or forbidden tiles.
+
+## 18.7 Melee Attack
+
+A melee attack targets an adjacent enemy.
+
+Damage formula:
+
+```text
+base_damage = random_between(damage_min, damage_max) * attacker_quantity
+
+attack_modifier = 1 + max(0, attacker_attack - defender_defense) * 0.05
+defense_modifier = 1 - max(0, defender_defense - attacker_attack) * 0.04
+
+champion_modifier = 1 + attacker_champion.Might * 0.03 - defender_champion.Guard * 0.025
+
+final_damage = base_damage * attack_modifier * defense_modifier * champion_modifier
+```
+
+Clamp final modifier:
+
+```text
+Minimum final damage multiplier: 0.25
+Maximum final damage multiplier: 4.00
+```
+
+## 18.8 Damage to Stack
+
+When a stack takes damage:
+
+```text
+full_units_killed = damage / unit.max_hp
+remaining_damage = damage % unit.max_hp
+```
+
+Track the front unit’s partial HP.
+
+Example:
+
+```text
+Stack: 10 units, 20 HP each
+Incoming damage: 45
+
+2 units die = 40 damage
+5 damage goes to next unit
+Result: 8 units remain, front unit has 15/20 HP
+```
+
+## 18.9 Retaliation
+
+Default rule:
+
+```text
+A unit may retaliate once per round after being hit by a melee attack.
+```
+
+No retaliation occurs if:
+
+* The attacker has a no-retaliation ability.
+* The defender is stunned.
+* The defender already retaliated this round.
+* The defender is attacked by ranged damage.
+* The defender is attacked by spell damage.
+
+## 18.10 Ranged Attack
+
+A ranged unit may attack non-adjacent enemies.
+
+Rules:
+
+```text
+Ranged attacks consume 1 shot.
+Ranged units cannot shoot if adjacent to an enemy unless they have Close Shot.
+Long-range attacks may suffer a penalty.
+Line of sight may be blocked by obstacles.
+```
+
+Default range penalty:
+
+```text
+Target within half map distance: full damage.
+Target beyond half map distance: -50% damage.
+```
+
+## 18.11 Defend
+
+Defend action:
+
+```text
+Unit skips active action.
+Gains +20% defense until its next turn.
+Retaliation remains available.
+```
+
+## 18.12 Wait
+
+Wait action:
+
+```text
+Unit delays action until later in the current round.
+If multiple units wait, they act in reverse initiative order after normal actions.
+```
+
+## 18.13 Morale
+
+Morale represents unit confidence.
+
+At the start of a unit’s turn, roll morale.
+
+```text
+morale_chance = morale_value * 5%
+```
+
+Positive morale:
+
+```text
+Chance to gain an extra half-action after acting.
+```
+
+Negative morale:
+
+```text
+Chance to lose action or suffer initiative penalty.
+```
+
+Limits:
+
+```text
+Morale ranges from -3 to +3 by default.
+```
+
+Example:
+
+```text
++2 morale = 10% chance of bonus action.
+-2 morale = 10% chance to hesitate.
+```
+
+Undead, constructs, or mindless units may be morale-immune.
+
+## 18.14 Luck
+
+Luck affects damage spikes.
+
+```text
+luck ranges from -3 to +3
+luck_chance = abs(luck) * 5%
+```
+
+Positive luck:
+
+```text
+Chance to deal +50% damage.
+```
+
+Negative luck:
+
+```text
+Chance to deal -50% damage.
+```
+
+## 18.15 Status Effects
+
+Common effects:
+
+```text
+Blessed: increased damage
+Cursed: reduced damage
+Haste: increased speed/initiative
+Slow: reduced speed/initiative
+Shielded: reduced incoming damage
+Burning: takes damage each turn
+Poisoned: takes damage each round
+Frozen: cannot move
+Stunned: skips action
+Silenced: cannot cast abilities
+Regenerating: restores HP each round
+Fear: may move away or lose turn
+```
+
+Each status effect has:
+
+```text
+duration
+source
+stacking_rule
+dispel_rule
+```
+
+## 18.16 Battle Victory
+
+A side wins when all opposing stacks are:
+
+```text
+Destroyed
+Routed
+Surrendered
+Removed by scenario rule
+```
+
+## 18.17 Retreat and Surrender
+
+A champion may retreat if allowed.
+
+Retreat rules:
+
+```text
+Retreat consumes champion action or command action.
+Retreat fails if champion is blocked by scenario rules.
+Retreat destroys or abandons remaining army unless surrender is paid.
+Champion becomes available for rehiring after delay.
+```
+
+Surrender rules:
+
+```text
+Champion pays gold based on surviving army value.
+If accepted, champion and surviving army escape.
+Defender may refuse surrender in some scenarios.
+```
+
+Suggested surrender cost:
+
+```text
+surrender_cost = surviving_army_gold_value * 0.75
+```
+
+---
+
+# 19. Siege Battles
+
+A siege occurs when a champion attacks a fortified town.
+
+## 19.1 Siege Setup
+
+Defender receives:
+
+```text
+Walls
+Gate
+Towers
+Moat or obstacle, depending on fort level
+Defensive deployment zone
+```
+
+Attacker may receive:
+
+```text
+Catapult
+Siege tower
+Battering ram
+Engineering bonuses
+```
+
+## 19.2 Wall Rules
+
+Walls block movement and line of sight.
+
+Wall sections have HP:
+
+```text
+Palisade wall: 100 HP
+Fort wall: 200 HP
+Citadel wall: 350 HP
+Bastion wall: 500 HP
+```
+
+## 19.3 Gate Rules
+
+The gate can be attacked.
+
+```text
+Gate HP depends on fortification level.
+Friendly defender units may pass through gate.
+Enemy units may pass only if gate is destroyed or opened.
+```
+
+## 19.4 Tower Rules
+
+Towers attack automatically each round.
+
+Example:
+
+```text
+Palisade: 1 weak tower
+Fort: 2 towers
+Citadel: 2 strong towers
+Bastion: 3 strong towers
+```
+
+Tower target priority:
+
+```text
+1. Siege engines
+2. Highest threat ranged units
+3. Closest enemy stack
+```
+
+---
+
+# 20. Economy and Building Rules
+
+## 20.1 Lazy Income Phase
+
+Redacted: income must not be applied by iterating every owned town/mine at the start of an obsolete sequential player turn. Part 2 uses 60-second simultaneous turns and IcyDB has no multi-entity transaction boundary for a whole-turn income sweep.
+
+Use `GameParticipant.last_income_turn` instead:
+
+```text
+income_turns = GameSession.current_turn - GameParticipant.last_income_turn
+apply owed income only when an update command needs current resources
+GameParticipant.last_income_turn = GameSession.current_turn
+```
+
+## 20.2 Building Construction
+
+A town can build if:
+
+```text
+Town.last_built_turn < GameSession.current_turn
+required_buildings_exist == true
+participant.resources >= building.cost
+```
+
+Then process the build through an idempotent `GameCommand`:
+
+```text
+load or insert command by session_id + actor_kind + actor_id_text + client_nonce
+validate ownership, resources, prerequisites, and turn window
+subtract resources
+insert TownBuilding row
+Town.last_built_turn = GameSession.current_turn
+append GameEvent
+mark command applied
+```
+
+## 20.3 Building Prerequisites
+
+Example:
+
+```text
+City Hall requires Town Hall + Marketplace
+Citadel requires Fort + Blacksmith
+Mage Hall II requires Mage Hall I
+Champion Dwelling requires Castle + Tier 4 Dwelling
+```
+
+---
+
+# 21. Victory Conditions
+
+Each scenario defines one or more victory conditions.
+
+## 21.1 Standard Victory
+
+```text
+Eliminate all enemy players.
+```
+
+A player is eliminated when they have no towns and no champions.
+
+## 21.2 Conquest Victory
+
+```text
+Control a required number of towns for X consecutive turns.
+```
+
+Example:
+
+```text
+Control 5 towns for 7 turns.
+```
+
+## 21.3 Artifact Victory
+
+```text
+Find and hold a specific artifact.
+Bring it to a target location.
+```
+
+## 21.4 King of the Hill Victory
+
+```text
+Control a special structure for X consecutive turns.
+```
+
+## 21.5 Quest Victory
+
+```text
+Complete scenario-specific quest chain.
+```
+
+## 21.6 Survival Victory
+
+```text
+Survive until turn N.
+```
+
+## 21.7 Defeat Conditions
+
+Examples:
+
+```text
+Lose main town.
+Lose main champion.
+Fail to complete objective by turn N.
+Another player completes their objective.
+```
+
+---
+
+# 22. Turn Sequence
+
+Redacted: the sequential player-turn flow below is superseded by Part 2. The active loop is command-based and simultaneous:
+
+```text
+Client submits command
+  -> server recovers applying and pending commands for the current/closing turn within budget
+  -> if recovery budget is exhausted, return recovery_budget_exhausted and do not advance the turn
+  -> server advances/syncs turn if needed
+  -> server resolves due movement intents through an idempotent system GameCommand
+  -> server validates ownership and rules
+  -> server applies one idempotent command
+  -> server emits events
+  -> client refreshes visible state
+```
+
+Turn advancement is time-based:
+
+```text
+If now >= GameSession.turn_deadline_at:
+  use Part 2 bounded catch-up
+  resolve due MovementIntent rows
+  set the next turn window
+```
+
+---
+
+# 23. Movement Rules
+
+## 23.1 Champion Movement Points
+
+Default:
+
+```text
+Champion base movement = 240 points/turn
+```
+
+Tile cost example:
+
+```text
+Road: 0.5
+Grassland: 1
+Forest: 1.5
+Swamp: 2
+```
+
+To avoid decimals in code, multiply all costs by 10:
+
+```text
+Road = 5
+Grassland = 10
+Forest = 15
+Swamp = 20
+```
+
+## 23.2 Movement Restrictions
+
+A champion cannot move into a tile if:
+
+```text
+Tile is impassable.
+Tile is occupied by another champion.
+Tile contains enemy-controlled blocking object.
+Tile requires transport and champion lacks it.
+```
+
+## 23.3 Enemy Engagement
+
+If a champion moves adjacent to an enemy champion, no battle starts automatically unless the scenario enables zones of control.
+
+If a champion moves onto an enemy champion’s tile:
+
+```text
+Battle starts.
+```
+
+## 23.4 Zone of Control Optional Rule
+
+Enemy armies project control to adjacent tiles.
+
+```text
+Moving out of an enemy zone costs extra movement.
+Moving through an enemy zone may be forbidden.
+```
+
+This is optional and should probably be disabled in v1 for simplicity.
+
+---
+
+# 24. Boats and Water
+
+Water can be handled in two possible ways.
+
+## 24.1 Simple Water Rule
+
+Champions cannot enter water.
+
+Water exists only as map barrier.
+
+## 24.2 Advanced Water Rule
+
+Champions can board boats at shipyards.
+
+```text
+Boarding costs remaining movement.
+Disembarking costs remaining movement.
+Boats move on water tiles.
+Some units or factions gain bonuses at sea.
+```
+
+For first implementation, use the simple rule unless naval maps are required.
+
+---
+
+# 25. Quests
+
+Quest structures or NPCs assign tasks.
+
+```text
+Quest {
+  id
+  giver_id
+  requirements[]
+  rewards[]
+  repeatable: boolean
+  deadline optional
+}
+```
+
+## 25.1 Requirement Types
+
+```text
+Bring resource
+Bring artifact
+Defeat army
+Capture town
+Reach champion level
+Visit location
+Escort unit
+Survive until date
+```
+
+## 25.2 Reward Types
+
+```text
+Gold
+Resources
+Artifact
+Experience
+Units
+Spell
+Town building
+Permanent champion stat
+Temporary buff
+Map reveal
+```
+
+---
+
+# 26. AI Rules
+
+AI runs inside the canister, so it must be deterministic, bounded, and cheap. It should not run deep search, minimax, MCTS, machine-learning inference, whole-map scans, or unbounded pathfinding during gameplay updates.
+
+AI is a fast heuristic system:
+
+```text
+observe bounded state
+generate a small candidate list
+score candidates with integer/fixed-point formulas
+choose the best deterministic action
+submit the action through the same command pipeline as a player
+```
+
+AI never writes gameplay state directly. It emits normal movement/build/recruit/battle commands or movement intents with deterministic nonces, so all authorization, idempotency, recovery, events, and replay behavior stay shared.
+
+## 26.1 AI Priorities
+
+AI priorities are weighted by profile, but the first playable should use a simple profile:
+
+```text
+1. Protect towns
+2. Recruit available units
+3. Build economy early
+4. Capture nearby resources
+5. Avoid battles it is likely to lose
+6. Attack weak enemies
+7. Complete scenario objective
+8. Expand toward neutral towns
+```
+
+Candidate caps:
+
+```text
+max town build candidates: 8
+max recruitment candidates: 8
+max movement targets per champion: 12
+max path nodes evaluated per champion: 128
+max battle actions scored per active stack: 16
+max AI-controlled champions acted per update: 2
+```
+
+If the AI cannot finish within budget, it records its cursor/state and continues on a later update. It must prefer a legal no-op, defend, or short safe move over exceeding budget.
+
+## 26.2 Army Strength Evaluation
+
+Use one deterministic combat power formula for AI, neutral labels, stalemate scoring, surrender estimates, and map balancing.
+
+```text
+stack_value =
+  quantity
+  * unit.max_hp
+  * (unit.attack + unit.defense + unit.damage_avg + unit.speed + unit.initiative)
+  * tier_multiplier
+```
+
+Champion army strength:
+
+```text
+army_strength = sum(stack_values) * champion_bonus_multiplier
+```
+
+Champion bonus multiplier:
+
+```text
+1 + Might*0.03 + Guard*0.025 + Command*0.02 + relevant_skill_bonus
+```
+
+Use integer or fixed-point arithmetic in canister code. Floating-point estimates in design docs must be converted to fixed-point before implementation.
+
+## 26.3 AI Battle Decision
+
+```text
+if own_strength >= enemy_strength * 1.2:
+  attack
+elif own_strength >= enemy_strength * 0.8 and objective_is_important:
+  consider attack
+else:
+  avoid
+```
+
+Battle AI should score only legal actions returned by the battle rules:
+
+```text
+1. lethal attack
+2. high-value ranged attack
+3. safe melee attack
+4. move into attack range without exposing stack to lethal retaliation
+5. defend
+6. wait
+```
+
+The battle AI must not simulate full future battles. It may use one-ply evaluation with a cheap retaliation estimate.
+
+## 26.4 Canister Execution Rules
+
+AI code must follow these rules:
+
+```text
+No await or external canister calls inside AI decisions.
+No generic SQL for gameplay AI.
+No full-session scans.
+No host entropy.
+No unbounded loops.
+No allocations proportional to whole map size.
+All tie-breakers use hash(session.seed, turn_number, actor_id, candidate_key).
+AI actions are idempotent commands with deterministic client_nonce.
+```
+
+The AI should read only:
+
+```text
+current session summary
+own participant/champion/town rows
+visible or last-known objects from bounded viewport/chunk indexes
+content manifest definitions
+recent event window
+active battle state when required
+```
+
+AI should maintain small per-actor state only when needed:
+
+```text
+last_decision_turn
+profile_key
+cursor_json for budgeted continuation
+last_command_id
+```
+
+Do not store large plans. Movement plans are replaceable `MovementIntent` rows, not long-lived AI plan documents.
+
+---
+
+# 27. Deterministic Pseudo-Randomness
+
+The game should use deterministic seeded pseudo-randomness.
+
+```text
+Game seed determines:
+- Map generation
+- Neutral army composition
+- Artifact placement
+- Combat damage rolls
+- Weekly events
+```
+
+This allows:
+
+* Replays
+* Debugging
+* Multiplayer sync
+* Fair procedural generation
+
+## 27.1 Pseudo-Random Roll Rule
+
+All pseudo-random events should call the Part 2 deterministic pseudo-random roll helper:
+
+```text
+roll = hash64(session.seed, domain_key, turn_number, command_id_or_system_key, actor_id_text, target_id_text, roll_index)
+```
+
+Every roll must be reproducible from explicit keys. Do not use event order, event_seq, mutable RNG cursors, host entropy, or IC raw randomness for gameplay.
+
+---
+
+# 28. Multiplayer Rules
+
+## 28.1 Hotseat
+
+Redacted for the IcyDB first implementation. Hotseat can be simulated by multiple accounts, but the backend should still use the same simultaneous timed-turn command model.
+
+## 28.2 Online Async
+
+Players submit commands independently during each 60-second turn window.
+
+## 28.3 Online Sequential
+
+Redacted. Sequential player-order turns conflict with Part 2 and should not be implemented in v1.
+
+## 28.4 Simultaneous Turns
+
+This is the default model:
+
+```text
+Players submit movement/build/recruit/battle commands during the same timed window.
+The canister processes update calls one at a time.
+For non-movement commands, the first processed valid command wins contested state.
+Movement conflicts are resolved only by Part 2 deterministic turn-end microsteps.
+```
+
+This is required by Part 2 and should not be postponed.
+
+---
+
+# 29. Persistent Game State
+
+Redacted: do not model the game as one serializable `GameState` row. Part 2 and the IcyDB guidance require durable, queryable entities with command/event rows.
+
+Use separate IcyDB entities for:
+
+```text
+GameSession
+GameParticipant
+MapChunk
+VisibilityChunk
+Champion
+ChampionArmyStack
+Town
+TownBuilding
+TownRecruitPool
+WorldObject
+NeutralArmy
+Battle
+BattleStack
+GameCommand
+GameEvent
+PendingEffect
+```
+
+The command/event log is the replay and recovery surface. Persisted rows are the current authoritative state.
+
+## 29.1 Event Log
+
+Every major action should be logged.
+
+Example:
+
+```text
+Turn 3: Player Red captured East Quarry.
+Turn 4: Champion Arlen defeated Neutral Wolves.
+Turn 5: Blue built Mage Hall in Duskwatch.
+```
+
+This helps with:
+
+* Replays
+* Debugging
+* Multiplayer validation
+* Player history
+
+---
+
+# 30. Core Balance Defaults
+
+These are starting values, not final balance.
+
+## 30.1 Champion
+
+```text
+Starting champion level: 1
+Starting movement: 240
+Starting army slots: 7
+Starting vision radius: 5
+Starting mana: Wisdom * 10
+```
+
+## 30.2 Town
+
+```text
+One building per town per turn
+Unit growth every 7 turns
+Base town income: 500 gold/turn
+Capitol income: 4000 gold/turn
+```
+
+## 30.3 Battle
+
+```text
+Battle grid: 12 x 10
+Default retaliation: once per round
+Default morale range: -3 to +3
+Default luck range: -3 to +3
+Champion spellcasts: 1 per round
+```
+
+## 30.4 Economy
+
+```text
+Starting gold: 10000
+Starting wood: 10
+Starting stone: 10
+Starting rare resources: 3 each
+```
+
+---
+
+# 31. Minimal First Playable Version
+
+To build the game efficiently, the first playable version should include only the core systems.
+
+## 31.1 Required for Prototype
+
+```text
+1 map
+2 factions
+3 unit tiers per faction
+1 town per player
+Champion movement
+60-second simultaneous turns
+Resource pickup
+Town building
+Unit recruitment
+Neutral battles
+Basic tactical combat
+Event feed
+Win condition: eliminate all enemy towns/champs
+```
+
+## 31.2 Defer Until Later
+
+```text
+Naval movement
+Complex diplomacy
+Campaign carryover
+Seeded procedural map generation
+Advanced siege weapons
+Large spell trees
+Artifact sets
+Dozens of factions
+Guilds
+Ranked leaderboard
+Campaign persistence
+```
+
+---
+
+# 32. Example Unit Roster
+
+## 32.1 Sunhold Dominion
+
+| Tier | Unit              | Role              |
+| ---: | ----------------- | ----------------- |
+|    1 | Militia           | Cheap melee       |
+|    2 | Crossbow Guard    | Ranged            |
+|    3 | Dawn Knight       | Heavy cavalry     |
+|    4 | Chapel Adept      | Support caster    |
+|    5 | Seraphic Champion | Elite flying unit |
+
+## 32.2 Gloamwood Pact
+
+| Tier | Unit         | Role                   |
+| ---: | ------------ | ---------------------- |
+|    1 | Thornling    | Swarm melee            |
+|    2 | Wild Archer  | Ranged                 |
+|    3 | Briar Wolf   | Fast attacker          |
+|    4 | Grove Warden | Durable defender       |
+|    5 | Elder Stag   | Powerful support beast |
+
+---
+
+# 33. Example Spell List
+
+## Level 1
+
+```text
+Haste: target ally gains +2 speed for 3 rounds.
+Spark: deal minor fire damage to one enemy.
+Stone Skin: target ally gains +20% defense for 3 rounds.
+Minor Heal: restore HP to one living stack.
+```
+
+## Level 2
+
+```text
+Slow: target enemy loses -2 speed for 3 rounds.
+Bless: target ally rolls maximum damage for 3 rounds.
+Curse: target enemy rolls minimum damage for 3 rounds.
+Lightning Bolt: deal storm damage to one enemy.
+```
+
+## Level 3
+
+```text
+Fireball: area fire damage.
+Mass Haste: all allies gain +1 speed for 3 rounds.
+Revitalize: heal and remove poison.
+Shadowbind: enemy cannot move for 1 round.
+```
+
+## Level 4
+
+```text
+Meteor: heavy area damage.
+Mass Shield: all allies take -20% physical damage.
+Summon Vines: creates battlefield obstacles.
+Chain Lightning: jumps between enemy stacks.
+```
+
+## Level 5
+
+```text
+Time Fracture: target ally acts again later this round.
+Earthquake: damages siege walls and all grounded units.
+Judgment Ray: massive light damage to one enemy.
+Army of Thorns: summons temporary nature units.
+```
+
+---
+
+# 34. Example Battle Calculation
+
+A stack of 20 Dawn Knights attacks a stack of 30 Thornlings.
+
+Dawn Knight stats:
+
+```text
+Attack: 12
+Damage: 6–10
+Quantity: 20
+```
+
+Thornling stats:
+
+```text
+Defense: 6
+HP: 8
+Quantity: 30
+```
+
+Champion stats:
+
+```text
+Attacker Might: 4
+Defender Guard: 2
+```
+
+Calculation:
+
+```text
+base_damage = seeded pseudo-random 6–10 per unit * 20
+Assume average 8 damage:
+base_damage = 160
+
+attack_modifier = 1 + (12 - 6) * 0.05
+attack_modifier = 1.30
+
+champion_modifier = 1 + 4*0.03 - 2*0.025
+champion_modifier = 1.07
+
+final_damage = 160 * 1.30 * 1.07
+final_damage = 222.56
+```
+
+Thornlings have 8 HP each.
+
+```text
+222 damage kills 27 Thornlings with 6 damage left over.
+Result: 3 Thornlings remain, front unit has 2/8 HP.
+```
+
+---
+
+# 35. Formal Rule Priorities
+
+When rules conflict, resolve in this order:
+
+```text
+1. Scenario-specific rule
+2. Unit ability rule
+3. Champion skill rule
+4. Artifact rule
+5. Faction rule
+6. Global game rule
+```
+
+Example:
+
+```text
+Global rule: Units retaliate once per round.
+Unit ability: This unit cannot retaliate.
+Result: Unit ability wins.
+```
+
+---
+
+# 36. Design Principles
+
+The game should follow these principles:
+
+```text
+Meaningful exploration:
+  The map should constantly offer choices.
+
+Army preservation:
+  Winning with fewer losses should matter.
+
+Asymmetric factions:
+  Factions should feel mechanically different.
+
+Readable combat:
+  Players should understand why damage happened.
+
+Strategic snowball control:
+  Strong players should gain advantage, but not instantly end the game.
+
+Deterministic rules:
+  Seeded pseudo-random outcomes are allowed, but outcomes should be reproducible and explainable.
+
+Modular content:
+  Factions, units, spells, maps, and artifacts should be data-driven.
+```
+
+---
+
+# 37. Implementation-Friendly Data Model
+
+These examples are seed/content data only. Runtime state should use the IcyDB entities in Part 2 rather than ad hoc JSON rows or a monolithic state document.
+
+Example unit definition:
+
+```json
+{
+  "id": "sunhold_militia",
+  "name": "Militia",
+  "faction": "sunhold_dominion",
+  "tier": 1,
+  "attack": 3,
+  "defense": 3,
+  "damage_min": 1,
+  "damage_max": 3,
+  "max_hp": 6,
+  "speed": 4,
+  "initiative": 8,
+  "morale": 0,
+  "ranged": false,
+  "flying": false,
+  "abilities": [],
+  "cost": {
+    "gold": 35
+  },
+  "weekly_growth": 25
+}
+```
+
+Example building definition:
+
+```json
+{
+  "id": "sunhold_barracks",
+  "name": "Barracks",
+  "town_faction": "sunhold_dominion",
+  "cost": {
+    "gold": 1500,
+    "wood": 5,
+    "stone": 5
+  },
+  "requires": ["village_hall"],
+  "effects": [
+    {
+      "type": "unlock_recruitment",
+      "unit_id": "sunhold_militia"
+    }
+  ]
+}
+```
+
+Example spell definition:
+
+```json
+{
+  "id": "haste",
+  "name": "Haste",
+  "school": "arcane",
+  "level": 1,
+  "mana_cost": 5,
+  "target_type": "ally_stack",
+  "duration": 3,
+  "effects": [
+    {
+      "type": "modify_stat",
+      "stat": "speed",
+      "amount": 2
+    }
+  ]
+}
+```
+
+---
+
+# 38. Recommended Next Step
+
+The next useful artifact would be a **production-ready rules/content document for Degens of Misery & Mayhem v0.2** with concrete seed data and rule tables for:
+
+```text
+2 starter factions
+10 units
+20 buildings
+15 spells
+20 artifacts
+10 map objects
+battle formulas
+town progression
+first playable map rules
+IcyDB entity seed plan
+```
+
+That would give us enough to begin building the actual game prototype.
+
+
+--- PART 2 ---
+
+Great name. **Degens of Misery & Mayhem** should use a **simultaneous timed-turn model**:
+
+> Every match has a 60-second turn window. Players submit replaceable movement intents and other commands during that window. When the window expires, movement intents resolve in deterministic turn-end order. The turn advances on the next update call; query calls may return time metadata and `sync_required`, but must not return speculative movement, battle, victory, resource, visibility, or event results. Anyone who did nothing simply skips that turn.
+
+Because IcyDB does **not** provide multi-entity transactions, the architecture should avoid “one huge game state row” but also avoid fragile multi-row transitions. The best pattern is:
+
+> Durable entities for the game state, plus command rows, event rows, lazy turn resets, and idempotent command processing.
+
+Below is the recommended schema and architecture.
+
+---
+
+# Degens of Misery & Mayhem — IcyDB Schema v0.1
+
+This schema uses **Champion** instead of Hero, since your game can brand them as “champs.”
+
+## Product Brief
+
+**Target audience:** strategy players who like compact champion-led conquest games and want async-friendly PvP matches that finish in roughly 20-30 minutes.
+
+**Primary fantasy:** race another player across a cursed fantasy map, grab scraps of power, build one miserable town into a war machine, recruit stacks, and force decisive battles before the map collapses into a stalemate.
+
+**Tone:** darkly comic, scrappy, and competitive. The first version should express the “Degens of Misery & Mayhem” brand through names, event text, faction flavor, and risk/reward objectives, not through extra systems that expand MVP scope.
+
+**First playable product shape:** 1v1 PvP on one hand-authored map. Seeded procedural map generation, ranked ladders, guilds, campaign persistence, large spellbooks, and complex siege are explicitly deferred.
+
+**Acceptance tests for v1:**
+
+```text
+1. A deterministic seed creates the same first playable scenario.
+2. Two players can create, join, start, and finish a match.
+3. A player can move, pick up resources, capture a mine, build, recruit, fight a neutral army, fight the enemy, and win.
+4. Retried commands do not duplicate movement, rewards, spending, recruitment, or battle results.
+5. A skipped 60-second turn requires no per-champion or per-town writes.
+6. Recovery from an applying command reaches exactly one final outcome.
+7. Frontend view endpoints return render-ready state without forcing N+1 raw-row fetches.
+```
+
+Enum-like fields such as `state`, `status`, `command_type`, `battle_type`, and `object_type` should be stored as short `Text` values and validated in game logic.
+
+Examples:
+
+```text
+GameSession.state:
+  lobby | starting | active | finished | cancelled
+
+GameParticipant.status:
+  active | eliminated | surrendered | disconnected
+
+Champion.status:
+  active | defeated | in_battle | garrisoned
+
+GameCommand.status:
+  pending | applying | applied | failed | cancelled | superseded | applied_noop
+```
+
+IcyDB schema constraints to follow exactly:
+
+```text
+Every entity automatically gets managed created_at and updated_at fields. Do not declare those fields manually.
+Relation fields must use explicit prim = "...".
+Relation field names must end in _id or _ids.
+Relations default to weak if strong is omitted; write strong/weak explicitly in this spec.
+Strong relation targets must already be committed before saving a source row.
+A strong parent/child pair cannot be created in one atomic batch if the child points at the new parent.
+Strong relations block target deletion; IcyDB does not cascade deletes.
+Schema-declared indexes may be unique and composite, but max 4 key fields.
+many fields cannot be indexed.
+Redundant same-kind prefix indexes are rejected; unique and non-unique are different kinds.
+Runtime SQL DDL is only for non-unique single-field-path indexes.
+255 is reserved internally as a memory id; do not use it for data/index/schema/commit memory.
+```
+
+---
+
+# 1. Main Schema
+
+```rust
+use icydb::design::prelude::*;
+
+#[canister(memory_min = 20, memory_max = 120, commit_memory_id = 119)]
+pub struct DegensCanister {}
+
+#[store(
+    ident = "DEGENS_STORE",
+    canister = "DegensCanister",
+    data_memory_id = 20,
+    index_memory_id = 21,
+    schema_memory_id = 22
+)]
+pub struct DegensStore {}
+```
+
+## 1.1 Build and Generated Code Setup
+
+Use two crates:
+
+```text
+schema/degens/
+  src/lib.rs
+  src/schema/mod.rs
+
+canisters/degens/
+  build.rs
+  src/lib.rs
+  Cargo.toml
+```
+
+Root `icydb.toml` names must align exactly with the canister key used in `build.rs`:
+
+```toml
+[canisters.degens.sql]
+readonly = false
+ddl = false
+```
+
+Production should default generated SQL/DDL off. Enable readonly/DDL only for controller-only operations, fixture loading, or diagnostics builds. Public gameplay APIs must use typed query/update endpoints, not generic SQL.
+
+Config resolution walks from the canister crate to the nearest ancestor `icydb.toml`, with `ICYDB_CONFIG_PATH` as an override. Keep the `[canisters.degens.sql]` table name, `emit_config_for_canister("degens", ...)`, and `config.canister_sql_*_enabled("degens")` lookup name exactly aligned.
+
+`canisters/degens/build.rs` pattern:
+
+```rust
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = std::any::TypeId::of::<degens_schema::schema::DegensCanister>();
+
+    let config = icydb_config_build::emit_config_for_canister("degens", &["degens"])?;
+    let options = icydb::build::BuildOptions::default()
+        .with_sql_readonly_enabled(config.canister_sql_readonly_enabled("degens"))
+        .with_sql_ddl_enabled(config.canister_sql_ddl_enabled("degens"));
+
+    icydb::build_with_options!("degens_schema::schema::DegensCanister", options);
+    Ok(())
+}
+```
+
+The `TypeId::of::<...>()` line forces schema node registration during build-time macro discovery.
+
+`canisters/degens/src/lib.rs` pattern:
+
+```rust
+extern crate canic_cdk as ic_cdk;
+
+use icydb::prelude::*;
+
+icydb::start!();
+
+fn icydb_admin_sql_load_default() -> Result<(), icydb::Error> {
+    Ok(())
+}
+
+canic_cdk::export_candid!();
+```
+
+`icydb::start!()` includes the generated actor code and provides `db()` and generated admin/diagnostics functions. If SQL DDL/admin lifecycle endpoints are enabled, define `icydb_admin_sql_load_default`, even if it only returns `Ok(())`.
+
+Generated admin SQL endpoints are controller-gated. Generated diagnostics such as snapshot/metrics are a separate surface; do not expose them in public gameplay UI without explicit access review.
+
+---
+
+# 2. Player and Match Entities
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "principal", unique),
+    index(fields = "username", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(ident = "principal", value(item(prim = "Principal"))),
+        field(ident = "username", value(opt, item(prim = "Text", max_len = 32))),
+        field(ident = "display_name", value(opt, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct PlayerAccount {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "slug, version", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "version", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "name", value(item(prim = "Text", max_len = 96))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "content_manifest_hash", value(opt, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct RulesetDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "created_by_player_id"),
+    index(fields = "state, current_turn"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "created_by_player_id", value(item(rel = "PlayerAccount", prim = "Ulid", strong))),
+
+        field(ident = "name", value(item(prim = "Text", max_len = 96))),
+        field(ident = "state", value(item(prim = "Text", max_len = 16)), default = "lobby"),
+
+        field(ident = "seed", value(item(prim = "Nat64"))),
+
+        field(ident = "map_width", value(item(prim = "Nat16"))),
+        field(ident = "map_height", value(item(prim = "Nat16"))),
+        field(ident = "chunk_size", value(item(prim = "Nat8")), default = 16u8),
+
+        field(ident = "simultaneous_turns", value(item(prim = "Bool")), default = true),
+        field(ident = "turn_duration_ms", value(item(prim = "Nat32")), default = 60000u32),
+        field(ident = "max_turns", value(item(prim = "Nat32")), default = 30u32),
+        field(ident = "turn_catchup_cap", value(item(prim = "Nat32")), default = 10u32),
+
+        field(ident = "current_turn", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "next_event_seq", value(item(prim = "Nat64")), default = 1u64, db_default = 1u64),
+
+        field(
+            ident = "turn_started_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        ),
+
+        field(ident = "turn_deadline_at", value(item(prim = "Timestamp"))),
+
+        field(ident = "winner_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))),
+        field(ident = "finish_reason", value(opt, item(prim = "Text", max_len = 32))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct GameSession {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, player_id", unique),
+    index(fields = "session_id, status"),
+    index(fields = "player_id, status"),
+    index(fields = "session_id, slot_index", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "player_id", value(item(rel = "PlayerAccount", prim = "Ulid", strong))),
+        field(ident = "faction_id", value(item(rel = "FactionDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slot_index", value(item(prim = "Nat8"))),
+        field(ident = "team_index", value(item(prim = "Nat8")), default = 0u8),
+        field(ident = "color_key", value(item(prim = "Text", max_len = 24))),
+        field(ident = "primary_color", value(opt, item(prim = "Text", max_len = 16))),
+        field(ident = "secondary_color", value(opt, item(prim = "Text", max_len = 16))),
+
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+
+        field(ident = "gold", value(item(prim = "Nat64")), default = 10000u64),
+        field(ident = "wood", value(item(prim = "Nat32")), default = 10u32),
+        field(ident = "stone", value(item(prim = "Nat32")), default = 10u32),
+        field(ident = "iron", value(item(prim = "Nat32")), default = 3u32),
+        field(ident = "crystal", value(item(prim = "Nat32")), default = 3u32),
+        field(ident = "ember", value(item(prim = "Nat32")), default = 3u32),
+        field(ident = "aether", value(item(prim = "Nat32")), default = 3u32),
+
+        field(ident = "last_income_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_action_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "ready_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "last_resource_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+
+        field(
+            ident = "joined_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct GameParticipant {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "command_id, ledger_key", unique),
+    index(fields = "participant_id, turn_number"),
+    index(fields = "session_id, participant_id"),
+    index(fields = "session_id, resource_key"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "command_id", value(item(rel = "GameCommand", prim = "Ulid", weak))),
+
+        field(ident = "ledger_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "resource_key", value(item(prim = "Text", max_len = 16))),
+        field(ident = "delta", value(item(prim = "Int64"))),
+        field(ident = "balance_after", value(item(prim = "Nat64"))),
+        field(ident = "reason", value(item(prim = "Text", max_len = 32))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending")
+    )
+)]
+pub struct ResourceLedgerEntry {}
+```
+
+`GameParticipant` stores the current resource balances for hot reads. `ResourceLedgerEntry` is the idempotent audit row for every spend, income tick, object reward, town reward, and battle reward. The same command may write multiple ledger rows, one per `ledger_key`, but recovery must never write the same `command_id + ledger_key` twice. `ResourceLedgerEntry.status` is a domain recovery marker for partial resource writes.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, participant_id, turn_number", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", weak))),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "summary_json", value(item(prim = "Text", max_len = 4096)))
+    )
+)]
+pub struct ResourceLedgerTurnSummary {}
+```
+
+`ResourceLedgerTurnSummary` is written only by cleanup/compaction sagas after the raw ledger entries for that turn are no longer needed for active recovery.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "player_id, session_id", unique),
+    index(fields = "player_id, finished_at"),
+    index(fields = "session_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "player_id", value(item(rel = "PlayerAccount", prim = "Ulid", weak))),
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", weak))),
+        field(ident = "result", value(item(prim = "Text", max_len = 16))),
+        field(ident = "opponent_name", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "turns_played", value(item(prim = "Nat32"))),
+        field(ident = "summary_json", value(opt, item(prim = "Text", max_len = 2048))),
+        field(
+            ident = "finished_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct PlayerMatchSummary {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, actor_kind, actor_id_text", unique),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "actor_kind", value(item(prim = "Text", max_len = 24))),
+        field(ident = "actor_id_text", value(item(prim = "Text", max_len = 64))),
+        field(ident = "profile_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "last_decision_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "cursor_json", value(opt, item(prim = "Text", max_len = 2048))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct AiActorState {}
+```
+
+---
+
+# 3. Content Definition Entities
+
+These are the data-driven rules for factions, units, buildings, spells, artifacts, and map objects.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "ruleset_id, name", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "theme", value(opt, item(prim = "Text", max_len = 256))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "banner_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "native_terrain", value(opt, item(prim = "Text", max_len = 32))),
+        field(ident = "trait_key", value(item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct FactionDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "faction_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "faction_id", value(opt, item(rel = "FactionDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "portrait_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "base_movement", value(item(prim = "Nat16")), default = 240u16),
+        field(ident = "base_vision", value(item(prim = "Nat8")), default = 5u8)
+    )
+)]
+pub struct ChampionClassDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, terrain_key", unique),
+    index(fields = "ruleset_id, terrain_code", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "terrain_key", value(item(prim = "Text", max_len = 32))),
+        field(ident = "terrain_code", value(item(prim = "Nat8"))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "movement_cost", value(item(prim = "Nat16"))),
+        field(ident = "passable", value(item(prim = "Bool")), default = true),
+        field(ident = "sprite_key", value(opt, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct TerrainDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "faction_id, tier"),
+    index(fields = "ruleset_id, tier"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "faction_id", value(opt, item(rel = "FactionDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "sprite_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "animation_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "tier", value(item(prim = "Nat8"))),
+
+        field(ident = "attack", value(item(prim = "Int16"))),
+        field(ident = "defense", value(item(prim = "Int16"))),
+        field(ident = "damage_min", value(item(prim = "Nat16"))),
+        field(ident = "damage_max", value(item(prim = "Nat16"))),
+        field(ident = "max_hp", value(item(prim = "Nat16"))),
+        field(ident = "speed", value(item(prim = "Nat8"))),
+        field(ident = "initiative", value(item(prim = "Nat8"))),
+
+        field(ident = "ranged", value(item(prim = "Bool")), default = false),
+        field(ident = "flying", value(item(prim = "Bool")), default = false),
+        field(ident = "shots", value(item(prim = "Nat16")), default = 0u16),
+
+        field(ident = "gold_cost", value(item(prim = "Nat32"))),
+        field(ident = "wood_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "stone_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "iron_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "crystal_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "ember_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "aether_cost", value(item(prim = "Nat32")), default = 0u32),
+
+        field(ident = "weekly_growth", value(item(prim = "Nat16"))),
+
+        field(ident = "ability_keys", value(many, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct UnitDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "faction_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+        field(ident = "faction_id", value(opt, item(rel = "FactionDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "building_type", value(item(prim = "Text", max_len = 32))),
+
+        field(ident = "gold_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "wood_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "stone_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "iron_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "crystal_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "ember_cost", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "aether_cost", value(item(prim = "Nat32")), default = 0u32),
+
+        field(ident = "requires_building_slugs", value(many, item(prim = "Text", max_len = 64))),
+        field(ident = "unlocks_unit_slug", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "effect_key", value(opt, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct BuildingDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "ruleset_id, school, level"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "school", value(item(prim = "Text", max_len = 32))),
+        field(ident = "level", value(item(prim = "Nat8"))),
+        field(ident = "mana_cost", value(item(prim = "Nat16"))),
+        field(ident = "target_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "effect_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "duration_rounds", value(item(prim = "Nat8")), default = 0u8)
+    )
+)]
+pub struct SpellDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "ruleset_id, rarity"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "slot", value(item(prim = "Text", max_len = 32))),
+        field(ident = "rarity", value(item(prim = "Text", max_len = 16))),
+        field(ident = "effect_key", value(item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct ArtifactDefinition {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "ruleset_id, slug", unique),
+    index(fields = "ruleset_id, object_type"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "ruleset_id", value(item(rel = "RulesetDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "description", value(opt, item(prim = "Text", max_len = 512))),
+        field(ident = "sprite_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "icon_key", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "object_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "footprint_w", value(item(prim = "Nat8")), default = 1u8),
+        field(ident = "footprint_h", value(item(prim = "Nat8")), default = 1u8),
+        field(ident = "blocking", value(item(prim = "Bool")), default = false),
+        field(ident = "interaction_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "refresh_rule", value(item(prim = "Text", max_len = 32)), default = "never")
+    )
+)]
+pub struct MapObjectDefinition {}
+```
+
+---
+
+# 4. Map Storage
+
+Use chunks instead of one row per tile. Static terrain belongs in `MapChunk`; dynamic things like champs, towns, mines, resources, and neutral armies are separate rows with coordinates.
+
+Map chunk encoding rules:
+
+```text
+chunk_size allowed values: 16 or 32
+v1 chunk_size: 16
+terrain_blob: one compact terrain id byte per cell
+movement_blob: one compact movement-cost byte per cell
+flags_blob: bitset or compact byte flags per cell
+all blobs are row-major; cell index = local_y * chunk_width + local_x
+terrain/movement/flags byte blobs use one byte per cell unless a field explicitly says bitset
+visibility/discovery bitsets use little-endian bit order within each byte
+DTOs return blobs as Candid Vec<u8>
+movement costs use deci-tile units: grass 10, road 5, forest 15, swamp 20
+Champion.movement_max = 240 means 24 normal grass tiles
+16x16 chunks should use roughly 256 bytes per byte-array blob
+Blob max_len = 4096 is an upper guard, not the target payload size
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, chunk_x, chunk_y", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "width", value(item(prim = "Nat8"))),
+        field(ident = "height", value(item(prim = "Nat8"))),
+
+        field(ident = "terrain_blob", value(item(prim = "Blob", max_len = 4096))),
+        field(ident = "movement_blob", value(item(prim = "Blob", max_len = 4096))),
+        field(ident = "flags_blob", value(item(prim = "Blob", max_len = 4096)))
+    )
+)]
+pub struct MapChunk {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "participant_id, chunk_x, chunk_y", unique),
+    index(fields = "session_id, participant_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "discovered_blob", value(item(prim = "Blob", max_len = 4096))),
+        field(ident = "visible_blob", value(item(prim = "Blob", max_len = 4096))),
+        field(ident = "visible_turn", value(item(prim = "Nat32")), default = 0u32)
+    )
+)]
+pub struct VisibilityChunk {}
+```
+
+Visibility rules:
+
+```text
+discovered_blob is durable.
+visible_blob may be materialized only for chunks touched by bounded movement/vision updates.
+Query APIs may compute current visibility from champion/town/watchtower sources without writing.
+Do not clear or rewrite all visible blobs at turn start.
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, x, y, layer", unique),
+    index(fields = "session_id, chunk_x, chunk_y"),
+    index(fields = "occupant_kind, occupant_id_text"),
+    index(fields = "session_id, occupant_kind, occupant_id_text, occupant_cell_index", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "layer", value(item(prim = "Text", max_len = 24))),
+        field(ident = "occupant_kind", value(item(prim = "Text", max_len = 32))),
+        field(ident = "occupant_id_text", value(item(prim = "Text", max_len = 64))),
+        field(ident = "occupant_cell_index", value(item(prim = "Nat8")), default = 0u8),
+        field(ident = "blocking", value(item(prim = "Bool")), default = true),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct MapOccupancy {}
+```
+
+Single-tile occupants use `occupant_cell_index = 0`. Multi-tile footprints create one row per occupied cell with deterministic cell indexes. Before deleting any entity represented by `occupant_kind + occupant_id_text`, delete its occupancy rows by `session_id + occupant_kind + occupant_id_text`.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, x, y"),
+    index(fields = "session_id, chunk_x, chunk_y, state"),
+    index(fields = "session_id, owner_participant_id"),
+    index(fields = "session_id, scoring_kind, owner_participant_id, state"),
+    index(fields = "object_def_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "object_def_id", value(item(rel = "MapObjectDefinition", prim = "Ulid", strong))),
+
+        field(ident = "owner_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "guarded_neutral_army_id", value(opt, item(rel = "NeutralArmy", prim = "Ulid", weak))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "state", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "scoring_kind", value(item(prim = "Text", max_len = 24)), default = "none"),
+        field(ident = "last_visited_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "captured_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "income_started_turn", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "instance_json", value(opt, item(prim = "Text", max_len = 2048))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct WorldObject {}
+```
+
+`WorldObject.scoring_kind` allowed v1 values: `none | mine | central_objective | resource_pile`. Victory/stalemate scoring uses `session_id + scoring_kind + owner_participant_id + state`, not joins over object definitions.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "object_id, participant_id, visit_key", unique),
+    index(fields = "session_id, participant_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "object_id", value(item(rel = "WorldObject", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+
+        field(ident = "visit_key", value(item(prim = "Text", max_len = 32)), default = "once"),
+        field(ident = "visit_kind", value(item(prim = "Text", max_len = 24))),
+        field(ident = "visited_turn", value(item(prim = "Nat32")))
+    )
+)]
+pub struct ParticipantObjectVisit {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "object_id, champion_id, visit_key", unique),
+    index(fields = "session_id, champion_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "object_id", value(item(rel = "WorldObject", prim = "Ulid", strong))),
+        field(ident = "champion_id", value(item(rel = "Champion", prim = "Ulid", strong))),
+
+        field(ident = "visit_key", value(item(prim = "Text", max_len = 32)), default = "once"),
+        field(ident = "visit_kind", value(item(prim = "Text", max_len = 24))),
+        field(ident = "visited_turn", value(item(prim = "Nat32")))
+    )
+)]
+pub struct ChampionObjectVisit {}
+```
+
+Object visit `visit_key` is `once` for one-time rewards or a deterministic window key such as `week:{n}` for refreshable objects. This keeps refreshable pickups from colliding with old visit rows.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "participant_id, subject_kind, subject_id_text", unique),
+    index(fields = "session_id, participant_id, chunk_x, chunk_y"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+
+        field(ident = "subject_kind", value(item(prim = "Text", max_len = 32))),
+        field(ident = "subject_id_text", value(item(prim = "Text", max_len = 64))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "visibility", value(item(prim = "Text", max_len = 24))),
+        field(ident = "last_seen_turn", value(item(prim = "Nat32"))),
+        field(ident = "redacted_json", value(opt, item(prim = "Text", max_len = 2048)))
+    )
+)]
+pub struct ParticipantKnownObject {}
+```
+
+---
+
+# 5. Towns, Buildings, and Recruitment
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, x, y"),
+    index(fields = "session_id, chunk_x, chunk_y, status"),
+    index(fields = "session_id, owner_participant_id"),
+    index(fields = "owner_participant_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "owner_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "faction_id", value(item(rel = "FactionDefinition", prim = "Ulid", strong))),
+
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+
+        field(ident = "hall_level", value(item(prim = "Nat8")), default = 1u8),
+        field(ident = "fort_level", value(item(prim = "Nat8")), default = 0u8),
+
+        field(ident = "last_built_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "captured_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "income_started_turn", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "unrest_until_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct Town {}
+```
+
+`TownBuilding` rows are authoritative. `Town.hall_level` and `Town.fort_level` are derived caches updated only by the build/capture saga. If cache fields and building rows disagree, building rows win and a repair command updates the cache.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "town_id, building_def_id", unique),
+    index(fields = "town_id"),
+    index(fields = "session_id"),
+    index(fields = "building_def_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
+        field(ident = "building_def_id", value(item(rel = "BuildingDefinition", prim = "Ulid", strong))),
+
+        field(ident = "built_turn", value(item(prim = "Nat32")))
+    )
+)]
+pub struct TownBuilding {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "town_id, unit_id", unique),
+    index(fields = "town_id"),
+    index(fields = "session_id"),
+    index(fields = "unit_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
+        field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+
+        field(ident = "available", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_growth_week", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct TownRecruitPool {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "town_id, slot_index", unique),
+    index(fields = "town_id"),
+    index(fields = "session_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
+        field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slot_index", value(item(prim = "Nat8"))),
+        field(ident = "quantity", value(item(prim = "Nat32"))),
+        field(ident = "front_hp", value(item(prim = "Nat16"))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct TownGarrisonStack {}
+```
+
+---
+
+# 6. Champions and Armies
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, participant_id"),
+    index(fields = "session_id, x, y"),
+    index(fields = "session_id, chunk_x, chunk_y, status"),
+    index(fields = "participant_id, status"),
+    index(fields = "in_battle_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "class_def_id", value(item(rel = "ChampionClassDefinition", prim = "Ulid", strong))),
+
+        field(ident = "name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "class_key", value(item(prim = "Text", max_len = 32))),
+
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "in_battle_id", value(opt, item(rel = "Battle", prim = "Ulid", weak))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "level", value(item(prim = "Nat16")), default = 1u16),
+        field(ident = "experience", value(item(prim = "Nat64")), default = 0u64),
+
+        field(ident = "might", value(item(prim = "Int16")), default = 1i16),
+        field(ident = "guard", value(item(prim = "Int16")), default = 1i16),
+        field(ident = "wisdom", value(item(prim = "Int16")), default = 1i16),
+        field(ident = "command", value(item(prim = "Int16")), default = 1i16),
+
+        field(ident = "mana", value(item(prim = "Nat16")), default = 10u16),
+
+        field(ident = "movement_max", value(item(prim = "Nat16")), default = 240u16),
+        field(ident = "movement_remaining", value(item(prim = "Nat16")), default = 240u16),
+        field(ident = "movement_turn", value(item(prim = "Nat32")), default = 0u32),
+
+        field(ident = "vision_radius", value(item(prim = "Nat8")), default = 5u8),
+
+        field(ident = "defeated_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct Champion {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "champion_id, slot_index", unique),
+    index(fields = "champion_id"),
+    index(fields = "session_id"),
+    index(fields = "unit_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "champion_id", value(item(rel = "Champion", prim = "Ulid", strong))),
+        field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slot_index", value(item(prim = "Nat8"))),
+        field(ident = "quantity", value(item(prim = "Nat32"))),
+        field(ident = "front_hp", value(item(prim = "Nat16"))),
+
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct ChampionArmyStack {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "champion_id, spell_id", unique),
+    index(fields = "champion_id"),
+    index(fields = "session_id"),
+    index(fields = "spell_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "champion_id", value(item(rel = "Champion", prim = "Ulid", strong))),
+        field(ident = "spell_id", value(item(rel = "SpellDefinition", prim = "Ulid", strong))),
+        field(ident = "learned_turn", value(item(prim = "Nat32")))
+    )
+)]
+pub struct ChampionSpell {}
+```
+
+---
+
+# 7. Artifacts
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, x, y"),
+    index(fields = "session_id, chunk_x, chunk_y, state"),
+    index(fields = "owner_champion_id, slot"),
+    index(fields = "artifact_def_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "artifact_def_id", value(item(rel = "ArtifactDefinition", prim = "Ulid", strong))),
+
+        field(ident = "owner_champion_id", value(opt, item(rel = "Champion", prim = "Ulid", weak))),
+
+        field(ident = "slot", value(opt, item(prim = "Text", max_len = 32))),
+
+        field(ident = "x", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "y", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "chunk_x", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "chunk_y", value(item(prim = "Nat16")), default = 0u16),
+
+        field(ident = "state", value(item(prim = "Text", max_len = 24)), default = "stored"),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct ArtifactInstance {}
+```
+
+Do not enforce equipped-slot uniqueness on nullable `ArtifactInstance` fields. `ArtifactEquipment` is the authoritative equipped-state row: `champion_id + slot` is unique and `artifact_id` is unique. `ArtifactInstance.owner_champion_id` and `slot` are lookup/cache fields only; remove them later if they become redundant.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "champion_id, slot", unique),
+    index(fields = "artifact_id", unique),
+    index(fields = "session_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "champion_id", value(item(rel = "Champion", prim = "Ulid", strong))),
+        field(ident = "artifact_id", value(item(rel = "ArtifactInstance", prim = "Ulid", strong))),
+        field(ident = "slot", value(item(prim = "Text", max_len = 32))),
+        field(ident = "equipped_turn", value(item(prim = "Nat32"))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct ArtifactEquipment {}
+```
+
+---
+
+# 8. Neutral Armies
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, x, y"),
+    index(fields = "session_id, chunk_x, chunk_y, state"),
+    index(fields = "session_id, state"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+
+        field(ident = "x", value(item(prim = "Nat16"))),
+        field(ident = "y", value(item(prim = "Nat16"))),
+        field(ident = "chunk_x", value(item(prim = "Nat16"))),
+        field(ident = "chunk_y", value(item(prim = "Nat16"))),
+
+        field(ident = "state", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "aggression", value(item(prim = "Text", max_len = 24)), default = "guard"),
+        field(ident = "growth_rule_key", value(item(prim = "Text", max_len = 64)), default = "none"),
+        field(ident = "last_growth_week", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct NeutralArmy {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "neutral_army_id, slot_index", unique),
+    index(fields = "neutral_army_id"),
+    index(fields = "session_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "neutral_army_id", value(item(rel = "NeutralArmy", prim = "Ulid", strong))),
+        field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+
+        field(ident = "slot_index", value(item(prim = "Nat8"))),
+        field(ident = "quantity", value(item(prim = "Nat32"))),
+        field(ident = "front_hp", value(item(prim = "Nat16"))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct NeutralArmyStack {}
+```
+
+---
+
+# 9. Battles
+
+Battles should use snapshots. When a battle begins, copy relevant army stacks into `BattleStack`. Resolve battle actions against battle stacks. When the battle ends, write survivors back to the original champion, town, or neutral army using an idempotent command flow.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, state"),
+    index(fields = "attacker_champion_id"),
+    index(fields = "defender_champion_id"),
+    index(fields = "created_turn"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+
+        field(ident = "state", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "battle_type", value(item(prim = "Text", max_len = 24))),
+
+        field(ident = "attacker_champion_id", value(opt, item(rel = "Champion", prim = "Ulid", weak))),
+        field(ident = "defender_champion_id", value(opt, item(rel = "Champion", prim = "Ulid", weak))),
+        field(ident = "defender_town_id", value(opt, item(rel = "Town", prim = "Ulid", weak))),
+        field(ident = "defender_neutral_army_id", value(opt, item(rel = "NeutralArmy", prim = "Ulid", weak))),
+
+        field(ident = "current_round", value(item(prim = "Nat16")), default = 1u16),
+        field(ident = "active_side", value(item(prim = "Text", max_len = 16)), default = "attacker"),
+        field(ident = "active_stack_id", value(opt, item(rel = "BattleStack", prim = "Ulid", weak))),
+        field(ident = "grid_width", value(item(prim = "Nat8")), default = 12u8),
+        field(ident = "grid_height", value(item(prim = "Nat8")), default = 10u8),
+        field(ident = "max_rounds", value(item(prim = "Nat16")), default = 20u16),
+
+        field(ident = "turn_seed", value(item(prim = "Nat64"))),
+
+        field(ident = "winner_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))),
+
+        field(ident = "created_turn", value(item(prim = "Nat32"))),
+
+        field(ident = "action_deadline_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "resolved_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "cleanup_after_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct Battle {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "battle_id, obstacle_type"),
+    index(fields = "battle_id, battle_x, battle_y", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "battle_id", value(item(rel = "Battle", prim = "Ulid", strong))),
+
+        field(ident = "obstacle_type", value(item(prim = "Text", max_len = 24))),
+        field(ident = "battle_x", value(item(prim = "Nat8"))),
+        field(ident = "battle_y", value(item(prim = "Nat8"))),
+        field(ident = "width", value(item(prim = "Nat8")), default = 1u8),
+        field(ident = "height", value(item(prim = "Nat8")), default = 1u8),
+        field(ident = "hp", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "state", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct BattleObstacle {}
+```
+
+Battle obstacle rows are the durable tactical map. Do not hide walls, gates, blocked hexes, or destructible cover inside command/event JSON; battle pathfinding, targeting, AI, and the frontend all query `BattleObstacle` by `battle_id`.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "battle_id, side"),
+    index(fields = "battle_id, side, slot_index", unique),
+    index(fields = "unit_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "battle_id", value(item(rel = "Battle", prim = "Ulid", strong))),
+        field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+        field(ident = "owner_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))),
+
+        field(ident = "side", value(item(prim = "Text", max_len = 16))),
+        field(ident = "slot_index", value(item(prim = "Nat8"))),
+        field(ident = "origin_kind", value(item(prim = "Text", max_len = 32))),
+        field(ident = "origin_stack_id_text", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "origin_slot_index", value(item(prim = "Nat8"))),
+
+        field(ident = "attack", value(item(prim = "Int16"))),
+        field(ident = "defense", value(item(prim = "Int16"))),
+        field(ident = "damage_min", value(item(prim = "Nat16"))),
+        field(ident = "damage_max", value(item(prim = "Nat16"))),
+        field(ident = "max_hp", value(item(prim = "Nat16"))),
+        field(ident = "speed", value(item(prim = "Nat8"))),
+        field(ident = "initiative", value(item(prim = "Nat8"))),
+        field(ident = "ranged", value(item(prim = "Bool")), default = false),
+        field(ident = "flying", value(item(prim = "Bool")), default = false),
+
+        field(ident = "quantity", value(item(prim = "Nat32"))),
+        field(ident = "front_hp", value(item(prim = "Nat16"))),
+        field(ident = "shots_remaining", value(item(prim = "Nat16")), default = 0u16),
+
+        field(ident = "battle_x", value(item(prim = "Nat8"))),
+        field(ident = "battle_y", value(item(prim = "Nat8"))),
+
+        field(ident = "readiness", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "acted_round", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "retaliated_round", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "defended_round", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "waited_round", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "cast_round", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "active"),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+
+        field(ident = "status_keys", value(many, item(prim = "Text", max_len = 64)))
+    )
+)]
+pub struct BattleStack {}
+```
+
+For v1, `BattleStack.status_keys` is capped at 8 keys. If status duration, source, stacking, or dispel logic becomes important, replace status keys with a `BattleStackEffect` entity instead of growing this many field.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "battle_id, battle_x, battle_y", unique),
+    index(fields = "battle_stack_id", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "battle_id", value(item(rel = "Battle", prim = "Ulid", strong))),
+        field(ident = "battle_stack_id", value(item(rel = "BattleStack", prim = "Ulid", strong))),
+
+        field(ident = "battle_x", value(item(prim = "Nat8"))),
+        field(ident = "battle_y", value(item(prim = "Nat8"))),
+        field(ident = "last_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak)))
+    )
+)]
+pub struct BattleOccupancy {}
+```
+
+`BattleOccupancy` is the authoritative tactical occupancy table. `BattleStack.battle_x` and `battle_y` are cache fields for fast DTO assembly and must be updated in the same command/effect flow as the matching `BattleOccupancy` row.
+
+Battle UI and action rules:
+
+```text
+Battle action timeout: 30 seconds per active stack.
+If a player times out, the active stack auto-defends.
+If a battle reaches max_rounds, resolve by remaining combat power.
+Battle movement/pathfinding treats active BattleObstacle footprints as blocked unless the acting stack has an explicit bypass rule.
+For v1, BattleStack.readiness is unused and must remain 0.
+Active stack selection is round-based: unacted non-waiting stacks by initiative, then speed, then seeded hash; waited stacks act after non-waiting stacks in reverse initiative order.
+Before accepting submit_battle_action, process due battle timeout effects for that battle within budget.
+If now >= action_deadline_at, a deterministic system auto-defend command wins unless a valid player action was already applied before the deadline.
+Every battle update starts by recovering applying commands for that battle, resolving due battle timeout system commands within budget, then validating the caller command.
+Resolved battle rows are compacted after cleanup_after_turn once GameEvent summaries exist.
+Strategic turns continue for uninvolved champions; champions in active battles cannot move.
+```
+
+---
+
+# 10. Commands, Events, and Pending Effects
+
+This is the most important part for IcyDB.
+
+Commands let us make game actions durable and idempotent. Events are for history/UI. Pending effects are for deferred rewards, delayed income, battle aftermath, or repairable multi-step transitions.
+
+Hot-path command payloads should be typed Rust/Candid structs at the API boundary. JSON fields are durable audit/debug envelopes and must stay bounded; they must not contain full view snapshots.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, actor_kind, actor_id_text, client_nonce", unique),
+    index(fields = "session_id, status, created_at"),
+    index(fields = "session_id, turn_number"),
+    index(fields = "actor_participant_id, turn_number"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "actor_kind", value(item(prim = "Text", max_len = 24))),
+        field(ident = "actor_id_text", value(item(prim = "Text", max_len = 64))),
+        field(ident = "actor_player_id", value(opt, item(rel = "PlayerAccount", prim = "Ulid", weak))),
+        field(ident = "actor_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))),
+        field(ident = "champion_id", value(opt, item(rel = "Champion", prim = "Ulid", weak))),
+
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "client_nonce", value(item(prim = "Nat64"))),
+
+        field(ident = "command_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending"),
+        field(ident = "phase", value(item(prim = "Text", max_len = 32)), default = "created"),
+        field(ident = "payload_hash", value(item(prim = "Text", max_len = 64))),
+
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 4096))),
+        field(ident = "result_json", value(opt, item(prim = "Text", max_len = 4096))),
+        field(ident = "error_code", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "error_message", value(opt, item(prim = "Text", max_len = 256))),
+        field(ident = "error_details_json", value(opt, item(prim = "Text", max_len = 2048))),
+        field(ident = "retryable", value(item(prim = "Bool")), default = false),
+
+        field(ident = "applied_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "failed_at", value(opt, item(prim = "Timestamp")))
+    )
+)]
+pub struct GameCommand {}
+```
+
+`GameCommand.actor_kind` is one of `player | system | ai`. Human commands use `actor_kind = "player"` and `actor_id_text = actor_player_id`. System commands use deterministic actor ids such as `turn_resolution`, `battle_timeout`, `setup`, or `cleanup`. AI commands use the `AiActorState.actor_id_text`.
+
+`create_session`, account setup, and other pre-session actions use a separate lobby command because they do not always have a `GameSession` or `GameParticipant` yet.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "actor_principal, client_nonce", unique),
+    index(fields = "status, created_at"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "actor_principal", value(item(prim = "Principal"))),
+        field(ident = "actor_player_id", value(opt, item(rel = "PlayerAccount", prim = "Ulid", weak))),
+        field(ident = "client_nonce", value(item(prim = "Nat64"))),
+        field(ident = "payload_hash", value(item(prim = "Text", max_len = 64))),
+        field(ident = "command_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending"),
+        field(ident = "phase", value(item(prim = "Text", max_len = 32)), default = "created"),
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 4096))),
+        field(ident = "result_json", value(opt, item(prim = "Text", max_len = 4096))),
+        field(ident = "error_code", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "error_message", value(opt, item(prim = "Text", max_len = 256))),
+        field(ident = "error_details_json", value(opt, item(prim = "Text", max_len = 2048))),
+        field(ident = "retryable", value(item(prim = "Bool")), default = false),
+        field(ident = "applied_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "failed_at", value(opt, item(prim = "Timestamp")))
+    )
+)]
+pub struct LobbyCommand {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, turn_number, status"),
+    index(fields = "session_id, champion_id, turn_number", unique),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "actor_participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "champion_id", value(item(rel = "Champion", prim = "Ulid", strong))),
+        field(ident = "command_id", value(item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending"),
+        field(ident = "path_json", value(item(prim = "Text", max_len = 2048))),
+        field(ident = "path_hash", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "submitted_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        ),
+        field(ident = "resolved_at", value(opt, item(prim = "Timestamp")))
+    )
+)]
+pub struct MovementIntent {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "command_id, effect_key", unique),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "command_id", value(item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "effect_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "effect_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "target_kind", value(item(prim = "Text", max_len = 32))),
+        field(ident = "target_id_text", value(item(prim = "Text", max_len = 64))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending"),
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 2048))),
+        field(ident = "applied_at", value(opt, item(prim = "Timestamp")))
+    )
+)]
+pub struct CommandEffect {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, event_seq", unique),
+    index(fields = "session_id, turn_number"),
+    index(fields = "session_id, event_type"),
+    index(fields = "actor_participant_id"),
+    index(fields = "command_id"),
+    index(fields = "session_id, event_key", unique),
+    index(fields = "session_id, audience_key, event_seq"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "actor_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))),
+
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "event_seq", value(item(prim = "Nat64"))),
+        field(ident = "event_key", value(item(prim = "Text", max_len = 128))),
+        field(ident = "audience_key", value(item(prim = "Text", max_len = 96)), default = "public", db_default = "public"),
+        field(ident = "event_type", value(item(prim = "Text", max_len = 32))),
+
+        field(ident = "subject_kind", value(opt, item(prim = "Text", max_len = 32))),
+        field(ident = "subject_id_text", value(opt, item(prim = "Text", max_len = 64))),
+
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 4096)))
+    )
+)]
+pub struct GameEvent {}
+```
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, audience_key, turn_number", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "audience_key", value(item(prim = "Text", max_len = 96))),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "first_event_seq", value(item(prim = "Nat64"))),
+        field(ident = "last_event_seq", value(item(prim = "Nat64"))),
+        field(ident = "event_count", value(item(prim = "Nat32"))),
+        field(ident = "summary_json", value(item(prim = "Text", max_len = 4096)))
+    )
+)]
+pub struct GameEventTurnSummary {}
+```
+
+`GameEventTurnSummary` preserves a redacted per-audience history after old raw `GameEvent` rows are compacted.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, effect_key", unique),
+    index(fields = "session_id, status, due_turn"),
+    index(fields = "source_command_id"),
+    index(fields = "target_participant_id, status"),
+    index(fields = "target_champion_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "source_command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+
+        field(ident = "target_participant_id", value(opt, item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "target_champion_id", value(opt, item(rel = "Champion", prim = "Ulid", strong))),
+
+        field(ident = "effect_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "due_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "effect_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "pending"),
+
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 4096))),
+
+        field(ident = "applied_at", value(opt, item(prim = "Timestamp")))
+    )
+)]
+pub struct PendingEffect {}
+```
+
+## 10.1 Database Coverage Review
+
+From a database perspective, v1 now has the durable rows needed to make the gameplay work without a hidden monolithic state blob.
+
+| Gameplay area | Authoritative durable rows | Database rule |
+| --- | --- | --- |
+| Match lifecycle | `GameSession`, `GameParticipant`, `LobbyCommand`, `GameCommand` | Session state, current turn, event sequence, participants, readiness, and retries are all indexed rows. |
+| Content rules | `RulesetDefinition`, faction/unit/building/spell/artifact/map-object definitions | Content is keyed by ruleset and slug; gameplay rows reference definitions strongly so a match cannot point at missing rules data. |
+| Strategic map | `MapChunk`, `MapOccupancy`, `WorldObject`, `NeutralArmy`, `Town`, `ArtifactInstance` | Terrain stays chunked; dynamic blockers and interactables stay typed and queryable by coordinate/chunk indexes. |
+| Fog of war | `VisibilityChunk`, `ParticipantKnownObject` | Durable discovery is chunked; last-known enemy/object state is redacted per participant. |
+| Movement | `MovementIntent`, `Champion`, `MapOccupancy`, `GameEvent` | Intent replacement is unique per champion/turn; resolved position is guarded by occupancy rows, not just champion coordinates. |
+| Economy | `GameParticipant`, `ResourceLedgerEntry`, `WorldObject`, `Town`, `TownRecruitPool` | Hot balances live on the participant; every spend/reward/income mutation writes an idempotent ledger row. |
+| Town building/recruitment | `Town`, `TownBuilding`, `TownRecruitPool`, `TownGarrisonStack`, `ChampionArmyStack` | Built structures, recruit pools, and army stacks are normalized rows with uniqueness by town/champion slot. |
+| Artifacts | `ArtifactInstance`, `ArtifactEquipment`, `MapOccupancy` | Equipment state is a unique row; nullable lookup/cache fields on `ArtifactInstance` are not the source of truth. |
+| Battles | `Battle`, `BattleStack`, `BattleObstacle`, `BattleOccupancy`, `GameCommand`, `GameEvent` | Battles use stack snapshots and typed obstacle/occupancy rows so tactical rules, AI, and the frontend can read the same state. |
+| AI | `AiActorState`, normal command/effect/event rows | AI stores only a small cursor and emits the same bounded commands as a human player. |
+| Recovery/audit | `GameCommand`, `CommandEffect`, `ResourceLedgerEntry`, `PendingEffect`, `GameEvent`, summary rows | Saga phases and effect keys give every non-atomic workflow a durable recovery trail. |
+
+Database invariants:
+
+```text
+All gameplay mutations must be expressed as typed rows plus bounded audit JSON, not as full-state payload_json blobs.
+Every row with session_id must match the session_id of its strong parent rows.
+Coordinate-bearing rows must store x, y, chunk_x, and chunk_y together and update them together.
+MapOccupancy is the authoritative strategic blocking/occupancy table.
+BattleObstacle is the authoritative tactical blocking/cover table.
+BattleOccupancy is the authoritative tactical stack occupancy table.
+GameSession.next_event_seq is the only event sequence allocator for a session.
+GameEvent.event_seq is monotonic by session; gaps are allowed after recovery, duplicates are not.
+Resource changes must update GameParticipant balances and append ResourceLedgerEntry in the same idempotent command flow.
+Mutable hot rows that receive non-repeatable effects must carry last_command_id or an equivalent domain marker.
+Arrays are allowed only for small bounded sets such as BattleStack.status_keys; armies, buildings, equipment, visits, and ledger entries are rows.
+JSON fields may describe typed command payloads, event summaries, or cold per-object instance details; JSON must not be required for hot ownership, balance, movement, visibility, combat, or occupancy queries.
+```
+
+The main remaining database risk is scope creep: if new gameplay adds quests, diplomacy, markets, timed buffs, or multi-player alliances, add typed rows and indexes for those systems before building client flows around JSON payloads.
+
+---
+
+# 11. Core Architecture
+
+Recommended canister layout:
+
+```text
+canisters/degens/
+  src/
+    lib.rs
+
+    api/
+      mod.rs
+      player_api.rs
+      lobby_api.rs
+      session_api.rs
+      movement_api.rs
+      town_api.rs
+      battle_api.rs
+      query_api.rs
+      admin_api.rs
+
+    game/
+      mod.rs
+      auth.rs
+      errors.rs
+      ids.rs
+      rng.rs
+
+      systems/
+        turn_system.rs
+        command_system.rs
+        recovery_system.rs
+        movement_intent_system.rs
+        movement_system.rs
+        map_system.rs
+        occupancy_system.rs
+        vision_system.rs
+        economy_system.rs
+        town_system.rs
+        recruitment_system.rs
+        battle_system.rs
+        ai_system.rs
+        reward_system.rs
+        victory_system.rs
+
+      rules/
+        movement_rules.rs
+        terrain_rules.rs
+        combat_rules.rs
+        ai_rules.rs
+        town_rules.rs
+        recruitment_rules.rs
+        magic_rules.rs
+        economy_rules.rs
+        victory_rules.rs
+
+      repos/
+        player_repo.rs
+        session_repo.rs
+        participant_repo.rs
+        champion_repo.rs
+        map_repo.rs
+        town_repo.rs
+        battle_repo.rs
+        battle_obstacle_repo.rs
+        battle_occupancy_repo.rs
+        resource_ledger_repo.rs
+        summary_repo.rs
+        command_repo.rs
+        command_effect_repo.rs
+        event_repo.rs
+        movement_intent_repo.rs
+        occupancy_repo.rs
+        ai_repo.rs
+        view_repo.rs
+```
+
+The rule modules should be mostly pure Rust:
+
+```text
+rules/ = no database writes
+systems/ = orchestration and validation
+repos/ = IcyDB queries and writes
+api/ = canister entrypoints
+```
+
+That separation will keep game logic testable.
+
+IcyDB repository convention:
+
+```text
+Every repository function starts from a fresh generated `db()` session.
+Do not store `db()` or lower-level sessions globally.
+Gameplay code uses typed/fluent IcyDB APIs, not SQL.
+Treat `core_db()` as generated/internal; app repositories should use `db()`.
+Public APIs may accept `Id<T>`, but entity relation fields store primitive keys.
+When writing or filtering relation fields, use `some_id.key()`.
+Prefer `db().create(EntityCreate { ... })` for normal app inserts with generated ids/defaults.
+Use `db().insert(full_entity)` mainly for fixtures or deliberate full-row writes.
+```
+
+---
+
+# 12. Turn System
+
+The server stores:
+
+```text
+GameSession.current_turn
+GameSession.turn_started_at
+GameSession.turn_deadline_at
+GameSession.turn_duration_ms = 60000
+GameSession.next_event_seq
+```
+
+Every public update method starts with:
+
+```text
+recover_applying_commands(session_id, budget)?;
+recover_pending_commands_for_current_or_closing_turn(session_id, remaining_budget)?;
+if recovery budget is exhausted:
+  return recovery_budget_exhausted and do not advance the turn
+ensure_session_turn_is_current(session_id)?;
+recover_pending_commands(session_id, remaining_budget)?;
+```
+
+Run app-command recovery before turn advancement so a prior half-finished command cannot be overtaken by turn-final movement resolution. Before resolving a closing turn, recover pending/applying commands for that turn whose effects can affect turn closure, especially `submit_move_intent`. Pure query methods cannot persist turn advancement, income, growth, movement resets, battle timeouts, victory checks, events, visibility writes, resource ledger writes, or game-command recovery. Query methods return time metadata with `server_now` and persisted projections at `as_of_turn`; update methods materialize durable lazy state. IcyDB may still run its internal commit-marker recovery before guarded reads and writes.
+
+Turn advancement rule:
+
+```text
+If now < turn_deadline_at:
+  stay in current turn
+
+If now >= turn_deadline_at:
+  missed_windows = 1 + ((now - turn_deadline_at) / turn_duration_ms)
+  windows_to_advance = min(missed_windows, GameSession.turn_catchup_cap)
+  create/load deterministic system GameCommand for turn_resolution(closing_turn)
+  resolve movement intents for the closing turn window through that command/effects
+  current_turn += windows_to_advance
+  turn_started_at = previous turn_started_at + windows_to_advance * turn_duration_ms
+  turn_deadline_at = previous turn_deadline_at + windows_to_advance * turn_duration_ms
+
+If missed_windows > turn_catchup_cap:
+  mark the session stale or require an admin/system catch-up command
+```
+
+Never loop over every skipped turn. Weekly and monthly effects are derived from turn numbers and lazy fields.
+
+Each turn-final resolution is represented by one deterministic system `GameCommand`:
+
+```text
+command_type = "turn_resolution"
+actor_kind = "system"
+actor_id_text = "turn_resolution"
+client_nonce = hash(session_id, closing_turn)
+payload_hash covers session_id and closing_turn
+```
+
+The unique idempotency key prevents resolving the same turn twice. Turn-resolution phases use `CommandEffect` rows for movement, occupancy, battle starts, object interactions, visibility writes, events, and victory checks.
+
+Important: do **not** mass-update every champion when the turn changes.
+
+Instead, use lazy movement reset:
+
+```text
+Champion.movement_turn
+Champion.movement_remaining
+Champion.movement_max
+```
+
+Effective movement:
+
+```rust
+fn effective_movement(champ: &Champion, session: &GameSession) -> u16 {
+    if champ.movement_turn != session.current_turn {
+        champ.movement_max
+    } else {
+        champ.movement_remaining
+    }
+}
+```
+
+When the champ moves:
+
+```text
+movement_remaining = effective_movement - path_cost
+movement_turn = session.current_turn
+```
+
+That means skipped players require no write. They simply never spent movement that turn.
+
+---
+
+# 13. Simultaneous Movement Model
+
+On the frontend, everyone sees the same countdown.
+
+On the backend, canister update calls are still processed one at a time, but movement is not resolved immediately. During a turn, players submit or replace movement intents. At turn finalization, the server resolves all pending movement intents deterministically.
+
+Recommended movement command:
+
+```rust
+submit_move_intent(
+    session_id,
+    champion_id,
+    path: Vec<(u16, u16)>,
+    client_nonce: u64
+)
+```
+
+A champion may have only one `MovementIntent` per turn. Submitting a new path with a new nonce replaces the prior unresolved intent for that champion and turn. Reusing the same nonce with a different `payload_hash` fails with `duplicate_nonce_payload_mismatch`.
+
+Movement validation:
+
+```text
+1. Caller owns the participant.
+2. Participant owns the champion.
+3. Session is active.
+4. Current server time is inside the turn window for intent submission.
+5. Champion is active and not in battle.
+6. Path starts adjacent to champion position.
+7. Path does not pass through impassable terrain.
+8. Path cost <= effective movement.
+9. Fog/vision rules allow the move.
+10. Path length <= 64 steps in v1 and touches no more than 8 chunks.
+11. If path hits an enemy, neutral army, guarded object, or town, stop path at that interaction.
+```
+
+Movement visibility snapshot:
+
+```text
+A movement intent is validated against the participant's effective visibility for turn_number and the submitted path.
+Terrain must be visible or already discovered.
+Known static blockers are validated at submit time.
+Hidden dynamic blockers are resolved only at turn finalization; if encountered, movement stops and the appropriate battle or interaction begins.
+```
+
+Conflict handling:
+
+```text
+Movement commands submitted during a turn are intents, not immediate position changes.
+At turn advancement, all pending movement intents for the ended turn resolve in deterministic microsteps.
+
+Resolve movement in rounds by path index:
+  collect every champion's proposed next tile for the current microstep
+  validate remaining movement, terrain, visibility, and blocking from the previous committed microstep snapshot
+  resolve tile conflicts, crossing conflicts, blockers, and object interactions
+  commit winning positions and stop losers/interactors
+  no champion sees another champion's newly committed microstep until the next microstep
+
+If multiple champs enter the same tile:
+  1. higher effective movement remaining before the step wins
+  2. shorter committed path distance to that tile wins
+  3. seeded tie-break wins: hash(session.seed, turn_number, champion_id)
+
+Losing champs stop on their last legal tile.
+
+If a champ moves into an enemy champ:
+  movement stops and a battle begins.
+
+If opposing champs cross through each other:
+  movement stops and a battle begins on the contested edge/tile.
+
+If a champ moves onto a neutral army:
+  movement stops and a neutral battle begins.
+
+If a champ moves onto a resource/object:
+  movement stops only if the object interaction requires it.
+```
+
+Map occupancy must be updated through `MapOccupancy` as part of the movement resolution command/effects, not by trusting coordinate indexes on individual entity tables.
+
+When movement starts a battle, involved champions get `status = "in_battle"` and retain their last legal strategic tile unless the battle type explicitly defines an attack tile. Their champion-layer `MapOccupancy` remains blocking while the battle is active. After victory, the battle aftermath saga moves the winner onto the defender/object/town tile if legal; retreat or surrender places the champion at the last legal owned town tile, or marks the champion defeated if no legal retreat tile exists.
+
+---
+
+# 14. Command Processing Pattern
+
+Because IcyDB does not have multi-entity transactions, every important action should be represented by a `GameCommand`.
+
+Do not `await`, yield, or call external canisters inside a mutation sequence that assumes atomicity or ordered saga progress. Keep gameplay writes synchronous within a single canister update call.
+
+Example command lifecycle:
+
+```text
+pending
+  -> applying
+  -> applied
+
+pending
+  -> failed
+
+pending/applying
+  -> superseded
+
+applying
+  -> applied_noop
+```
+
+For a move command:
+
+```text
+1. Query GameCommand by unique:
+   session_id + actor_kind + actor_id_text + client_nonce
+
+   If none exists:
+     create it with db().create(...)
+
+   If create fails because the unique row already exists:
+     reload it by the same unique key
+
+   If an existing command has the same nonce but different payload_hash:
+     fail with duplicate_nonce_payload_mismatch
+
+2. Validate command.
+
+3. Set command.status = applying.
+
+4. Create or replace MovementIntent for:
+   session_id + champion_id + turn_number
+
+5. Create CommandEffect rows with unique command_id + effect_key for any durable side effect.
+
+6. Append GameEvent.
+
+7. Mark GameCommand as applied.
+```
+
+IcyDB has unique indexes but no app-level upsert. Use query/create/reload, then compare `payload_hash`.
+
+`payload_hash` is canonical. It covers command type, session id, actor_kind, actor_id_text, participant id when present, frozen turn number, target ids, and canonical typed payload bytes. It does not hash debug JSON formatting.
+
+Every system mutation that writes gameplay rows must have an idempotency key and command/effect rows. This includes setup phases, turn-final movement resolution, battle timeout auto-defend, resource pickups during movement, battle aftermath, town capture, cleanup, and recovery repair actions.
+
+`GameCommand`, `CommandEffect`, `MovementIntent`, `GameEvent`, target rows, resources, occupancy, and battle rows are separate IcyDB commits. The lifecycle above is a saga, not an atomic multi-entity transaction. If the canister traps halfway through, game-command recovery continues from durable command/effect rows.
+
+Recovery rule:
+
+```text
+recover_pending_commands(session_id) inspects at most 25 commands per update call.
+Recovery advances at most 8 pending/applying commands per update call.
+Recovery applies at most 32 CommandEffect rows per update call.
+Recovery applies at most 32 ResourceLedgerEntry rows per update call.
+Recovery appends at most 32 GameEvent rows per update call.
+Recovery creates/updates/deletes at most 160 gameplay rows per update call.
+Each GameCommand may declare at most 16 CommandEffect rows and 8 GameEvent rows in v1, except setup commands, which use the setup saga budget.
+Recovery loads oldest applying/pending commands by session_id + status + created_at.
+Each side effect checks CommandEffect(command_id, effect_key) or a target last_command_id before writing.
+Recovery may finish missing effects/events or mark the command failed/superseded/applied_noop.
+Recovery must never repeat resource spends, rewards, movement, recruitment, battle aftermath, or artifact transfer.
+If any cap is reached, stop recovery, persist progress, and return recovery_budget_exhausted before processing the caller command.
+```
+
+Pending/applying recovery:
+
+```text
+pending:
+  command was inserted before validation completed
+  re-run validation against frozen turn_number, created_at, and payload_hash
+  fail deterministically if it is no longer valid
+
+applying:
+  command was accepted
+  finish missing idempotent effects/events
+```
+
+Per-effect idempotency protocol:
+
+```text
+For each effect_key:
+  insert/load CommandEffect(command_id, effect_key)
+  if target already records the command/effect marker:
+    mark effect applied and return
+  otherwise mutate the target row
+  then mark CommandEffect applied
+```
+
+Target rows that can receive non-repeatable effects need a guard field such as `last_command_id`, `last_effect_key`, or a domain-specific applied marker.
+
+Movement intent recovery:
+
+```text
+Recovery may create or replace MovementIntent only when it is absent or command_id == recovering command_id.
+If a newer applied command owns the intent, mark the older command applied-noop or superseded.
+```
+
+Events:
+
+```text
+Every event has a deterministic event_key unique within the session.
+For command-created events, derive event_key from command_id + logical event name.
+For simple single-subject system events, derive event_key from session_id + turn_number + logical event name.
+For system events with multiple subjects, event_key must include command/effect key plus subject id and deterministic ordinal.
+Example: turn_resolution:{turn}:{phase}:{subject_kind}:{subject_id}:{ordinal_hash}.
+```
+
+Event audience:
+
+```text
+GameEvent.audience_key controls redaction and event feed delivery.
+Allowed v1 audience keys:
+  public
+  participant:{participant_id}
+  battle:{battle_id}:participant:{participant_id}
+Public APIs return EventView DTOs, never raw GameEvent.payload_json.
+Event cursors are numeric events_after_seq values.
+```
+
+Event sequence allocation:
+
+```text
+Before appending an event, query GameEvent by session_id + event_key.
+If it exists, return that row and do not allocate a new sequence.
+Otherwise read GameSession.next_event_seq and create GameEvent with that event_seq.
+After the event commit succeeds, update GameSession.next_event_seq to at least event_seq + 1.
+If recovery finds the event exists but next_event_seq did not advance, bump next_event_seq past the existing max event_seq touched by this command.
+If event_seq collides but event_key is absent, bump next_event_seq and retry within the recovery budget.
+```
+
+Do not use ULID order as the player-facing event order. `event_seq` is the replay cursor. It is monotonic within a session, and gaps are acceptable after traps/recovery.
+
+Resource mutation protocol:
+
+```text
+Apply resource deltas in deterministic ledger_key order.
+
+For each resource delta:
+  derive ledger_key from target participant id + resource_key + effect_key + logical phase
+  load ResourceLedgerEntry(command_id, ledger_key)
+  if the ledger row exists with status = applied:
+    treat the resource delta as already applied
+  if the ledger row exists with status = pending:
+    verify resource_key, delta, balance_after, participant_id, reason, and turn_number match the expected deterministic delta
+    use the stored balance_after and continue balance reconciliation
+  if the ledger row is absent:
+    verify current GameParticipant balance covers negative deltas
+    verify projected balance_after fits the target resource field type
+    create ResourceLedgerEntry with status = pending and projected balance_after
+  if current participant balance == balance_after - delta:
+    update the participant resource balance to balance_after and set last_resource_command_id in the same GameParticipant update
+  else if current participant balance == balance_after:
+    continue recovery without changing the balance
+  else:
+    fail closed with resource_ledger_balance_mismatch
+  mark ResourceLedgerEntry.status = applied
+```
+
+Never change `GameParticipant.gold`, `wood`, `stone`, `iron`, `crystal`, `ember`, or `aether` without a matching `ResourceLedgerEntry`.
+
+Multi-row workflows such as session setup, turn-final movement resolution, battle start, battle resolution, town capture, recruitment, and artifact transfer should be implemented as sagas with explicit phases and idempotent effects.
+
+Gameplay pseudo-randomness:
+
+```text
+Gameplay randomness uses deterministic pseudo-random keyed rolls only:
+  roll = hash64(session.seed, domain_key, turn_number, command_id_or_system_key, actor_id_text, target_id_text, roll_index)
+Do not use IC raw randomness, host entropy, wall-clock elapsed time, ULID generation order, event_seq, or a mutable global RNG cursor for gameplay outcomes.
+Recovery must recompute the same roll from the same keys.
+Every pseudo-random outcome records domain_key and roll_index in the command result or EventView payload for audit.
+```
+
+Gameplay code must not use `insert_many_non_atomic`, `update_many_non_atomic`, or `replace_many_non_atomic`. Same-entity `insert_many_atomic`, `update_many_atomic`, and `replace_many_atomic` are allowed only when every row is the same entity type and the whole batch fits bounded commit-marker/resource budgets.
+
+---
+
+# 15. Public API Shape
+
+Recommended update calls:
+
+```rust
+register_player(username: Option<String>, display_name: Option<String>)
+
+create_session(name: String, ruleset_id: Id<RulesetDefinition>, seed: u64, client_nonce: u64)
+
+join_session(session_id: Id<GameSession>, faction_id: Id<FactionDefinition>, client_nonce: u64)
+
+start_session(session_id: Id<GameSession>, client_nonce: u64)
+
+sync_session_turn(session_id: Id<GameSession>)
+
+sync_battle(session_id: Id<GameSession>, battle_id: Id<Battle>)
+
+submit_move_intent(
+    session_id: Id<GameSession>,
+    champion_id: Id<Champion>,
+    path: Vec<(u16, u16)>,
+    client_nonce: u64
+)
+
+submit_build_town_structure(
+    session_id: Id<GameSession>,
+    town_id: Id<Town>,
+    building_def_id: Id<BuildingDefinition>,
+    client_nonce: u64
+)
+
+submit_recruit_units(
+    session_id: Id<GameSession>,
+    town_id: Id<Town>,
+    unit_id: Id<UnitDefinition>,
+    quantity: u32,
+    target: RecruitTarget,
+    client_nonce: u64
+)
+
+submit_battle_action(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    battle_stack_id: Id<BattleStack>,
+    action: BattleAction,
+    client_nonce: u64
+)
+
+mark_ready(session_id: Id<GameSession>)
+```
+
+`RecruitTarget` is a typed enum:
+
+```text
+TownGarrison { slot_index: Option<u8> }
+Champion { champion_id: Id<Champion>, slot_index: Option<u8> }
+```
+
+Recruiting into a champion requires the champion to be active, owned by the participant, and on the same tile as the owned town. Recruitment can merge into a compatible existing stack or create a stack in an empty slot. If no legal slot exists, return `recruit_target_full`.
+
+`sync_session_turn` is an update call. It can advance stale turns, resolve movement intents, materialize bounded lazy state, and recover commands. `sync_battle` is an update call. It recovers commands for that battle and materializes due battle timeouts within budget. Query calls must not persist those changes.
+
+Entity view queries return `not_visible` when an object exists but is hidden from the caller. They return not-found only when the row does not exist or is outside the session scope.
+
+Recommended query calls:
+
+```rust
+get_my_player()
+
+get_session(session_id)
+
+get_my_participant(session_id)
+
+get_game_view(session_id, request: GameViewRequest)
+
+get_visible_map_chunks(session_id, cursor, limit)
+
+get_visible_objects(session_id, viewport, cursor, limit)
+
+get_my_champions(session_id)
+
+get_champion_view(session_id, champion_id)
+
+get_town_view(session_id, town_id)
+
+get_battle_state(session_id, battle_id, events_after_seq, limit)
+
+get_content_manifest(ruleset_id, version)
+
+get_command_status(session_id, command_id_or_client_nonce)
+
+get_events_after(session_id, audience_key, events_after_seq, limit)
+
+get_match_history(cursor, limit)
+
+preview_move_path(session_id, champion_id, path)
+
+preview_build_town_structure(session_id, town_id, building_def_id)
+
+preview_recruit_units(session_id, town_id, unit_id, quantity, target)
+```
+
+## API Response Contracts
+
+`GameViewRequest` uses separate cursors for separate lists:
+
+```text
+GameViewRequest {
+  viewport { x, y, width, height }
+  limits {
+    chunks
+    objects
+    events
+    battles
+  }
+  cursors {
+    chunks
+    objects
+    events_after_seq
+    battles
+  }
+}
+```
+
+`GameView.page_info` mirrors the same keys. A cursor is scoped to exactly one list; never reuse an object cursor as an event cursor.
+
+Every render-facing response includes:
+
+```text
+server_now
+session_id
+current_turn
+turn_started_at
+turn_deadline_at
+remaining_ms
+turn_expired: bool
+sync_required: bool
+as_of_turn
+```
+
+`turn_expired` means `server_now >= turn_deadline_at`. `sync_required` means an update is needed before turn-sensitive state can be trusted. The client should call `sync_session_turn` or submit an update command to materialize that state.
+
+Query methods may derive time metadata only: `remaining_ms`, `turn_expired`, and `sync_required`. Resource, recruit, movement, visibility, battle, victory, and event values come from persisted rows at `as_of_turn`. Query methods must not simulate or return speculative results for movement-intent resolution, battle timeouts, battle auto-defend, victory finalization, town capture, resource ledger writes, recruitment growth writes, visibility writes, command recovery, or event creation. If `turn_deadline_at` has passed and unresolved `MovementIntent` rows exist for the current turn, `get_game_view` returns `sync_required = true` and does not advance positions.
+
+Command update calls return:
+
+```text
+CommandResponse {
+  command_id
+  command_type
+  client_nonce
+  payload_hash
+  status
+  phase
+  retryable
+  effective_turn
+  durable_turn
+  next_event_seq
+  latest_event_seq
+  applied_events: EventView[]
+  changed_subjects: ChangedSubject[]
+  result: CommandResult
+  error: Option<ApiError>
+  server_now
+}
+```
+
+`LobbyCommandResponse` uses the same envelope, except `session_id` is optional until a session row has been created.
+
+`CommandResult` is a typed enum:
+
+```text
+CreateSession { session_id }
+JoinSession { session_id, participant_id }
+StartSession { session_id, setup_complete: bool, next_phase: Option<Text> }
+SyncSessionTurn { advanced_turns, sync_incomplete: bool }
+MoveIntent { movement_intent_id, superseded_by_command_id: Option<Id<GameCommand>> }
+BuildTownStructure { town_id, building_def_id }
+RecruitUnits { town_id, target, stack_changes[] }
+BattleAction { battle_id, active_stack_id, battle_state }
+SyncBattle { battle_id, timeout_actions_applied, battle_sync_incomplete: bool }
+Noop { reason }
+```
+
+`ChangedSubject` includes `subject_kind`, `subject_id_text`, `change_kind`, and optional `visibility_hint`.
+
+`ApiError` includes `code`, `message`, `details_json`, and `retryable`.
+
+Canonical error codes:
+
+```text
+not_authenticated
+not_participant
+not_owner
+session_not_active
+turn_expired
+not_visible
+path_blocked
+path_too_long
+too_many_chunks
+viewport_too_large
+insufficient_resources
+resource_ledger_balance_mismatch
+already_built_this_turn
+recruit_pool_empty
+recruit_target_full
+champion_not_at_town
+unit_stack_incompatible
+unit_not_unlocked
+value_cap_exceeded
+battle_not_active
+not_active_stack
+duplicate_nonce_payload_mismatch
+recovery_budget_exhausted
+stale_session_requires_sync
+sync_incomplete
+battle_sync_incomplete
+canister_active_session_limit_reached
+```
+
+`get_game_view` returns a render-ready DTO, not raw IcyDB rows:
+
+```text
+GameView {
+  session_summary: SessionSummary
+  my_participant: ParticipantSummary
+  participants: ParticipantSummary[]
+  visible_map_chunks: MapChunkView[]
+  visible_objects: ObjectView[]
+  my_champions: ChampionView[]
+  my_towns: TownView[]
+  active_battles: BattleSummary[]
+  recent_events: EventView[]
+  affordances: ActionAffordance[]
+  page_info: PageInfo
+}
+```
+
+The backend assembles content names, asset keys, ownership, effective movement, visible object state, and action affordances so the frontend does not need N+1 reads.
+
+Core DTO names and required fields:
+
+```text
+SessionSummary:
+  session_id, ruleset_id, ruleset_version, content_manifest_hash, state,
+  current_turn, max_turns, turn_started_at, turn_deadline_at, remaining_ms,
+  map_width, map_height, chunk_size
+
+ParticipantSummary:
+  participant_id, player_id, display_name, color_key, team_index, status,
+  effective_resources, ready_turn
+
+MapChunkView:
+  chunk_id, chunk_x, chunk_y, width, height,
+  terrain_blob, movement_blob, flags_blob, discovered_blob, visible_blob
+
+ChampionView:
+  champion_id, owner_participant_id, name, class_def_id, class_key, status,
+  x, y, effective_movement, movement_max, vision_radius,
+  pending_move_intent, army_stacks: ArmyStackView[], artifacts[]
+
+TownView:
+  town_id, owner_participant_id, name, faction_id, x, y, status,
+  hall_level, fort_level, unrest_until_turn,
+  buildings[], recruit_pools[], garrison: ArmyStackView[],
+  disabled_reason_code
+
+ArmyStackView:
+  stack_id, unit_id, slot_index, quantity, front_hp, status
+
+BattleSummary:
+  battle_id, state, battle_type, active_stack_id, action_deadline_at, remaining_ms
+
+ActionAffordance:
+  action_key, subject_kind, subject_id_text, enabled, disabled_reason_code
+
+PageInfo:
+  chunks, objects, events, battles each with next_cursor/next_event_seq and has_more
+```
+
+Fog and redaction contract:
+
+```text
+visibility: visible | discovered | last_known | hidden
+
+Enemy champions:
+  hidden unless currently visible.
+
+Towns and mines:
+  visible when in vision.
+  last_known after discovery with owner and garrison data redacted unless visible.
+
+Neutral armies:
+  exact stack counts when visible and scouting allows it.
+  estimated strength label when visible without scouting.
+  last_known marker only after leaving vision.
+
+Resource piles:
+  visible only when current vision or explicitly discovered by scenario rule.
+```
+
+Field-level object redaction DTO:
+
+```text
+ObjectView {
+  subject_kind
+  subject_id_text
+  visibility
+  redaction_level
+  x
+  y
+  last_seen_turn
+  display_name
+  asset_key
+  owner: Option<PublicOwner>
+  details: ObjectDetails
+}
+
+ObjectDetails variants:
+  Town { town_id, faction_id, status, garrison_strength_label, exact_garrison_if_visible }
+  Champion { champion_id, class_key, status, strength_label, exact_army_if_visible_and_scouted }
+  NeutralArmy { army_id, strength_label, exact_stacks_if_visible_and_scouted }
+  WorldObject { object_id, object_type, scoring_kind, interaction_key, state }
+  Artifact { artifact_id, artifact_def_id, state }
+```
+
+Hidden rows are never returned. Last-known enemy champions return only kind, last_seen_turn, and last-known position. Visible enemy champions may return name, class, and strength label, but exact stack counts require a scouting rule.
+
+Battle state DTO:
+
+```text
+BattleView {
+  battle_id
+  state
+  battle_type
+  current_round
+  active_stack_id
+  active_participant_id
+  action_deadline_at
+  remaining_ms
+  grid { width, height }
+  obstacles: BattleObstacleView[]
+  deployment_zones[]
+  stacks: BattleStackView[]
+  initiative_order: Id<BattleStack>[]
+  legal_actions_for_caller: LegalBattleAction[]
+  events: EventView[]
+  next_event_seq
+}
+```
+
+`LegalBattleAction` includes `action`, `enabled`, `disabled_reason`, `targets`, `path`, and optional `damage_preview`. `BattleStackView` includes unit metadata needed for rendering and input: `unit_id`, `side`, `owner_participant_id`, `battle_x`, `battle_y`, `quantity`, `front_hp`, `shots_remaining`, `acted_round`, `waited_round`, `defended_round`, `status`, and `status_keys`.
+
+Public event DTO:
+
+```text
+EventView {
+  event_seq
+  event_key
+  audience_key
+  turn_number
+  event_type
+  subject_kind
+  subject_id_text
+  payload
+}
+```
+
+`EventView.payload` is redacted for the caller. Public APIs never return raw `GameEvent.payload_json`.
+
+`BattleAction` is a typed enum:
+
+```text
+Move { to }
+MeleeAttack { target_stack_id }
+RangedAttack { target_stack_id }
+CastAbility { ability_key, target }
+Defend
+Wait
+Retreat
+Surrender
+```
+
+Pagination contract:
+
+```text
+Every list endpoint accepts limit and cursor.
+Default limit: 50
+Max limit: 200
+Viewport max chunks per request: 9
+Max visible dynamic rows loaded per request before pagination: 200
+Max recent_events in get_game_view: 50
+Max active_battles in get_game_view: 2
+Ordering must include a stable tie-breaker such as id or event_seq.
+Response includes next_cursor, has_more, as_of_turn, and server_now.
+IcyDB PagedResponse exposes next_cursor; app DTOs set has_more = next_cursor.is_some().
+Do not use offset pagination.
+Events order by session_id + event_seq.
+Event cursors are numeric events_after_seq values; responses include next_event_seq and latest_event_seq.
+Cursor pagination is live-state, not snapshot-isolated; clients must tolerate row changes between pages.
+If a requested viewport touches more than 9 chunks, reject with viewport_too_large.
+```
+
+Client retry/sync contract:
+
+```text
+The client generates one client_nonce per user intent and reuses it for retries of the exact same typed payload.
+If a retry returns the same command_id and payload_hash, the client treats the response as authoritative.
+If the same nonce returns duplicate_nonce_payload_mismatch, the client discards that nonce and creates a new user intent.
+If any render response has sync_required = true, the client should call sync_session_turn or sync_battle before submitting turn-sensitive commands.
+If a command returns recovery_budget_exhausted or status = applying with retryable = true, the client polls get_command_status or calls sync_session_turn/sync_battle, then refreshes events after latest_event_seq.
+After any applied command, the client applies returned EventView/changed_subjects, then refreshes get_game_view using the latest per-list cursors.
+```
+
+Content manifest contract:
+
+```text
+get_content_manifest returns all render metadata and ruleset definitions needed for the current ruleset:
+factions
+champion classes
+terrain definitions
+units
+buildings
+spells
+artifacts
+map objects
+asset keys
+rule version/hash
+```
+
+---
+
+# 16. Lazy Systems
+
+Use lazy updates aggressively. This avoids unnecessary writes and works well with IcyDB.
+
+Lazy state rules:
+
+```text
+Update calls may materialize lazy state.
+Query calls return persisted projections at `as_of_turn` plus time metadata and `sync_required`.
+All lazy arithmetic uses saturating math.
+Max lazy accrual window in v1: 14 turns.
+Resource and recruit caps are enforced before writing materialized values.
+Opening setup initializes GameParticipant.last_income_turn = GameSession.current_turn.
+Opening setup initializes TownRecruitPool.last_growth_week = current_week unless the scenario deliberately seeds zero pools and wants opening growth materialized.
+```
+
+V1 numeric caps:
+
+```text
+gold max: 1_000_000
+wood/stone/iron/crystal/ember/aether max: 10_000 each
+TownRecruitPool.available max per unit: 9_999
+ChampionArmyStack.quantity max: 99_999
+TownGarrisonStack.quantity max: 99_999
+NeutralArmyStack.quantity max: 99_999
+Champion level max: 10
+Player actions that would exceed a cap fail with value_cap_exceeded.
+System income/growth may saturate only when explicitly specified by the rule.
+```
+
+## Champion Movement
+
+Do not reset all champs at turn start.
+
+Use:
+
+```text
+Champion.movement_turn
+Champion.movement_remaining
+Champion.movement_max
+```
+
+## Town Building
+
+Do not reset towns.
+
+Use:
+
+```text
+Town.last_built_turn
+```
+
+A town can build if:
+
+```text
+Town.last_built_turn < GameSession.current_turn
+```
+
+## Income
+
+Do not pay every player every turn unless needed.
+
+Use:
+
+```text
+GameParticipant.last_income_turn
+```
+
+When a participant needs resources:
+
+```text
+income_turns = min(current_turn - last_income_turn, 14)
+apply income through the ResourceLedgerEntry protocol
+last_income_turn = current_turn
+```
+
+Read APIs may return effective resources without writing `GameParticipant`, but update commands must materialize owed income with ledger rows before spending or rewarding resources.
+
+Income ownership cutover:
+
+```text
+Before any command changes an income source, owner, or income rate, materialize owed income for affected participants through current_turn using the old ownership/rate.
+Income from a source accrues only from max(participant.last_income_turn, source.captured_turn, source.income_started_turn).
+Building construction materializes owner income before adding the building or changing income rate.
+Capture materializes old-owner and new-owner income before changing owner_participant_id.
+After capture, set captured_turn and income_started_turn = current_turn.
+The new owner accrues income from subsequent turns only.
+```
+
+## Recruitment Growth
+
+Use:
+
+```text
+TownRecruitPool.last_growth_week
+```
+
+Computed week:
+
+```rust
+let current_week = ((session.current_turn - 1) / 7) + 1;
+```
+
+Before recruitment or town inspection:
+
+```text
+growth_weeks = min(current_week - last_growth_week, 2)
+available += unit.weekly_growth * growth_weeks
+last_growth_week = current_week
+```
+
+Read APIs may return effective recruitment availability without writing `TownRecruitPool`.
+
+---
+
+# 17. Canister AI Architecture
+
+AI must be implemented as a bounded canister subsystem, not a general planner.
+
+AI actor kinds:
+
+```text
+neutral_army
+bot_participant
+autopilot_participant
+```
+
+V1 should implement only neutral-army battle behavior and optional autopilot for disconnected humans. Full bot opponents are deferred unless the first playable needs solo onboarding.
+
+AI execution entrypoints:
+
+```rust
+run_ai_for_session(session_id: Id<GameSession>, max_actors: u16, client_nonce: u64)
+
+run_ai_for_battle(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    client_nonce: u64
+)
+```
+
+AI runs as update calls and uses the same IcyDB command system:
+
+```text
+AI reads bounded state through repositories using db().
+AI generates candidates with hard caps.
+AI scores candidates with deterministic fixed-point math.
+AI submits normal GameCommand / MovementIntent / BattleAction rows.
+AI never mutates game state outside command/effect processing.
+AI uses actor_kind = "ai" and deterministic client_nonce = hash(session_id, actor_id, turn_number, ai_step).
+Each run_ai_for_session call emits at most one command per AI actor and at most two commands total.
+```
+
+Decision budget:
+
+```text
+max AI actors processed per update: 2
+max candidate actions per actor: 16
+max movement targets per champion: 12
+max path nodes per champion: 128
+max chunks loaded per AI actor: 8
+max recent events inspected: 25
+max emitted AI commands per update: 2
+wall-clock/cycle counters may only be used as a fail-closed guard before emitting a command
+```
+
+Candidate generation:
+
+```text
+Town candidates:
+  affordable buildings from current town view, capped to 8
+  recruitment bundles from current recruit pool, capped to 8
+
+Champion movement candidates:
+  visible resource piles
+  nearby mines
+  safe neutral fights
+  defend own town
+  approach central objective
+  no-op
+
+Battle candidates:
+  legal actions from battle rules only
+  one-ply damage/retaliation estimate
+  defend if no good action is available
+```
+
+AI data access:
+
+```text
+No generic SQL.
+No joins.
+No full-map scans.
+No loading every command/event in a session.
+Use viewport/chunk indexes and render/view DTO helpers where possible.
+Cache only small cursor/profile state in AiActorState.
+```
+
+AI determinism:
+
+```text
+No host entropy.
+No floating-point decision math.
+All scores use integer or fixed-point arithmetic.
+Tie-breaks use hash(session.seed, turn_number, actor_id, candidate_key).
+Same seed + same visible state + same turn must produce the same AI decision.
+AI must not branch on elapsed wall-clock time or IC randomness.
+Decision loops terminate by deterministic caps: actors, candidates, path nodes, chunks, rows, and emitted commands.
+```
+
+AI failure behavior:
+
+```text
+If budget is exhausted, save cursor_json and stop.
+If no legal candidate exists, emit no-op or defend.
+If a stale AI command is retried, payload_hash/idempotency rules decide the outcome.
+If AI state is corrupt or missing, recreate minimal AiActorState from session/actor facts.
+```
+
+AI should never block a player update for long planning. If a match requires AI actions, schedule them as explicit update calls or run only a small bounded slice before processing the current command.
+
+---
+
+# 18. Performance Budgets and Query Contracts
+
+V1 hard limits:
+
+```text
+active sessions per canister target: 100
+participants per session: 2
+champions per participant: 3
+towns per session: 6
+map size: 48 x 48
+chunk size: 16
+map chunks per session: 9
+dynamic objects per session: 200
+active battles per session: 2
+stacks per battle side: 7
+battle obstacles per battle: 16
+max battle rounds: 20
+AI actors processed per update: 2
+AI candidate actions per actor: 16
+AI path nodes per champion: 128
+AI chunks loaded per actor: 8
+max events per turn: 100
+max commands retained per active session: 2000
+max events retained per active session: 5000
+max resource ledger rows retained per active session: 3000
+max unresolved MovementIntent rows resolved per session turn: 6
+max movement microsteps per sync_session_turn: 384
+max battle starts from movement resolution per update: 2
+max object interactions from movement resolution per update: 6
+max timed-out battle actions applied per update: 2
+max cleanup rows per update: 100
+max finished sessions cleaned per update: 1
+```
+
+Storage and cleanup:
+
+```text
+Command payload_json max: 4096 bytes
+Command result_json max: 4096 bytes
+Event payload_json max: 4096 bytes
+MovementIntent path_json max: 2048 bytes
+Battle action payloads are typed and bounded, not arbitrary JSON blobs.
+ResourceLedgerEntry has no payload_json; it stores resource_key, delta, balance_after, reason, and status only.
+IcyDB internal commit markers are bounded; keep generated setup/effect batches well below 16 MiB.
+
+Finished sessions may be archived or deleted after their match summary is written.
+Resolved BattleStack rows may be compacted after battle result events exist.
+Resource ledger rows may be compacted into turn summaries after a session is finished and match summaries are written.
+Old events may be compacted into per-turn summaries after 50 turns.
+Finished-session cleanup is mandatory and runs as a bounded cleanup saga.
+Keep raw finished-session logs for at most 7 days or 100 finished sessions per canister, whichever limit is reached first.
+PlayerMatchSummary, GameEventTurnSummary, and ResourceLedgerTurnSummary rows are retained.
+Never store full frontend view snapshots in command/event payloads.
+```
+
+Spatial query contract:
+
+```text
+Dynamic map entities store x, y, chunk_x, and chunk_y.
+Viewport queries load visible chunks first, then query dynamic rows by session_id + chunk_x + chunk_y.
+Movement validation stops at the first interaction or blocker.
+submit_move_intent path cap: 64 steps and 8 chunks touched.
+```
+
+Turn catch-up and recovery budgets:
+
+```text
+turn_catchup_cap: 10 windows per update
+recovery commands inspected: 25 per update
+recovery commands advanced from pending/applying: 8 per update
+recovery CommandEffect rows applied: 32 per update
+recovery ResourceLedgerEntry rows applied: 32 per update
+recovery GameEvent rows appended: 32 per update
+recovery gameplay rows created/updated/deleted: 160 per update
+GameCommand effect cap: 16 CommandEffect rows
+GameCommand event cap: 8 GameEvent rows
+If budget is exhausted, return recovery_budget_exhausted or ask caller to retry/sync.
+No update may scan all commands, all events, all champions, all towns, or all chunks for a session.
+```
+
+Turn-final movement resolution is sliced. If any movement cap would be exceeded, resolve deterministically up to the cap, persist the partial resolution cursor in the turn-resolution system command/effects, and return `sync_incomplete`. A later `sync_session_turn` continues from the stored cursor.
+
+Battle timeout processing is sliced. No update may auto-resolve an entire stale battle unless the battle fits within the timeout caps; otherwise return `battle_sync_incomplete`.
+
+Active-session limit:
+
+```text
+create_session refuses new active sessions with canister_active_session_limit_reached when the first 101 rows from GameSession(state = lobby|starting|active) show more than 100 live sessions.
+```
+
+# 19. Schema Evolution, Retention, and Deletion
+
+IcyDB schema changes must be conservative:
+
+```text
+Stable memory IDs are permanent.
+Schema changes should be append-only.
+Appended nullable fields are safe.
+New required scalar primitive fields need db_default = ...; a literal default = ... can also imply the persisted default.
+Function defaults such as default = "Timestamp::now" and default = "Ulid::generate" are Rust/create defaults only and do not provide a persisted default for existing rows.
+db_default currently supports single-value primitive fields, not many fields.
+Do not rename fields casually.
+Do not change primitive types casually.
+Do not change relation strength casually.
+Composite and unique indexes are schema-declared, not runtime DDL.
+Unsupported drift should fail closed during reconciliation.
+```
+
+Persisted-default examples for future migrations:
+
+```rust
+field(
+    ident = "rank",
+    value(item(prim = "Nat32")),
+    default = 1u32,
+    db_default = 1u32
+)
+
+field(
+    ident = "status",
+    value(item(prim = "Text", max_len = 24)),
+    default = "active",
+    db_default = "active"
+)
+```
+
+Deletion and history policy:
+
+```text
+Operational rows with strong relations may be deleted in dependency order after compaction.
+History rows use weak relations where the referenced entity may be removed.
+GameEvent.command_id, ResourceLedgerEntry.command_id, Battle participant refs, and last_command_id fields stay weak.
+PendingEffect rows are deleted or compacted after application.
+Sessions are not physically deleted until their commands, effects, battles, occupancy, visibility, and child rows are compacted or deleted.
+Before deleting a strong target, delete or retarget all strong source rows first.
+Delete or compact ledger rows before participants; delete stack rows before champions/towns/battles; buildings/recruit pools before towns; battle obstacles and battle occupancy rows before battles; artifact equipment before artifact instances; neutral army stacks before neutral armies; object visit and known-object rows before world objects; movement intents before champions; map chunks, occupancy, visibility, commands, effects, events, event summaries, ledger summaries, and child rows before sessions; pending effects before their targets.
+Because MapOccupancy stores generic occupant_id_text instead of strong occupant relations, target cleanup must delete occupancy rows by session_id + occupant_kind + occupant_id_text before deleting champions, towns, artifacts, neutral armies, or world objects.
+```
+
+Setup/start-session is a saga, not a transaction. Creating map chunks, participants, towns, champions, recruit pools, starting stacks, visibility chunks, and occupancy rows must use command phases and idempotent `CommandEffect` rows. Each phase must commit parent rows before child rows whose strong relations point at them. Do not rely on `insert_many_atomic` or one SQL multi-row insert to make earlier rows in the same batch visible to later strong-relation checks.
+
+Session setup is resumable:
+
+```text
+GameSession.state transitions:
+  lobby -> starting -> active
+
+start_session may write at most 50 durable rows or 12 KiB of command/effect/event JSON per update call.
+If setup is incomplete, return setup_in_progress with the next phase.
+Only after all required parent rows, child rows, occupancy rows, visibility seeds, and setup events are committed may the session become active.
+
+Setup phases:
+  create_map_chunks
+  create_participants
+  create_towns
+  create_champions
+  create_army_stacks
+  create_world_objects
+  create_occupancy
+  seed_visibility
+  emit_start_events
+```
+
+---
+
+# 20. Why This Works Well With IcyDB
+
+This design avoids the main IcyDB pitfalls.
+
+It does **not** use one giant `GameState` row.
+
+It uses strong relations for ownership:
+
+```text
+Champion -> GameParticipant
+Town -> GameSession
+ChampionArmyStack -> Champion
+TownBuilding -> Town
+BattleStack -> Battle
+BattleObstacle -> Battle
+BattleOccupancy -> Battle
+MovementIntent -> Champion
+MapOccupancy -> GameSession
+ResourceLedgerEntry -> GameParticipant
+```
+
+It uses weak relations for history:
+
+```text
+GameEvent.command_id
+ResourceLedgerEntry.command_id
+Battle.attacker_champion_id
+Battle.defender_champion_id
+Champion.last_command_id
+```
+
+It avoids mass writes at turn start by using lazy reset fields:
+
+```text
+movement_turn
+last_income_turn
+last_growth_week
+last_built_turn
+```
+
+It gives every gameplay action an idempotency key:
+
+```text
+session_id + actor_kind + actor_id_text + client_nonce
+command_id + effect_key
+command_id + ledger_key
+session_id + event_key
+payload_hash guards against nonce reuse with a different payload
+```
+
+That lets the client safely retry commands without double-moving, double-spending, or double-rewarding.
+
+---
+
+# 21. First Playable Scenario v1
+
+For the first version of **Degens of Misery & Mayhem**, build one exact 1v1 scenario instead of a generic feature pile.
+
+Product target:
+
+```text
+mode: 1v1 PvP
+target session length: 20-30 minutes
+turn duration: 60 seconds
+max turns: 30
+map: hand-authored 48 x 48 square grid
+players: 2
+towns: 1 starting town per player
+champions: 1 starting champion per player
+factions: 2
+unit tiers per faction: 3
+neutral army types: 3 strength bands
+victory: eliminate all enemy towns and active champions
+stalemate: if max_turns reached, score by towns owned, then mines owned, then army combat power, then seeded tie-break
+```
+
+Victory timing:
+
+```text
+A player is eliminated only when they own no towns and have no champions with status active | in_battle | garrisoned.
+Check victory after battle aftermath, town capture, champion defeat, surrender, and turn-final movement.
+Do not count a champion as eliminated while its battle is still active.
+Stalemate scoring runs after resolving turn max_turns.
+If active battles remain at max_turns, score them by battle snapshot combat power unless the battle fits within auto-timeout resolution caps.
+Victory and stalemate scoring must use indexed rows or maintained counters and inspect at most:
+  participants: 2
+  towns: 6
+  champions: 6
+  owned scoring objects: 16
+  army stacks: 42
+```
+
+Starting state:
+
+```text
+starting gold: 10000
+starting wood: 10
+starting stone: 10
+starting rare resources: 3 each
+starting champion level: 1
+starting movement: 240
+starting vision radius: 5
+starting town hall level: 1
+starting army: one tier-1 stack and one tier-2 stack per faction
+```
+
+Map content:
+
+```text
+2 starting towns
+4 gold/resource mines
+12 resource piles
+6 neutral armies
+2 central contested objectives
+roads connect starting town -> nearby mine -> central objective
+early neutral armies must be beatable with starting army and modest losses
+central neutral armies should require recruitment or a favorable tactical fight
+```
+
+V1 battle contract:
+
+```text
+grid: 12 x 10
+turn order: round-based initiative descending, tie by speed, then seeded hash
+actions: move, melee, ranged, defend, wait, retreat, surrender
+damage formula: Part 1 section 18.7 unless replaced by a balance table
+morale/luck: disabled in v1 or capped to +/-10% equivalent effect
+ranged: limited shots, blocked by adjacency unless Close Shot
+retreat: allowed after round 2 unless scenario blocks it
+surrender: preserves surviving units if cost can be paid
+battle timeout: active stack auto-defends after 30 seconds
+auto-resolve: deferred
+```
+
+Town capture and battle aftermath:
+
+```text
+In v1, town capture is automatic when the attacker wins a town battle.
+The battle aftermath saga updates Town.owner_participant_id, captured_turn, income_started_turn, unrest_until_turn, occupancy, garrison survivors, champion positions, and victory checks.
+Before changing town owner, materialize owed income for old and new owners using the pre-capture ownership/rate.
+Neutral-army and champion battles write survivors back through origin_stack_id_text and last_command_id guards.
+```
+
+Loss mitigation and anti-snowball:
+
+```text
+Captured towns enter unrest for 2 turns:
+  income reduced by 50%
+  recruitment disabled
+  one building action skipped unless pacification cost is paid
+  existing recruit pools reduced by 50%
+
+A participant with no town but at least one active champion receives desperation income:
+  +500 gold per turn for up to 5 turns
+  ends when they capture or rebuild a town
+
+Champion level cap in v1: 10
+Champion Might/Guard damage impact cap: +/-30% before other effects
+```
+
+Frontend/onboarding scope:
+
+```text
+lobby
+match loading
+map view
+turn countdown
+town panel
+champion panel
+battle view
+event feed
+match result
+first-match checklist with suggested move/build/recruit actions
+rematch button
+basic match history and win/loss stats
+```
+
+Defer:
+
+```text
+full spellbook
+champion skill trees
+quests
+naval movement
+complex siege engines
+artifact sets
+seeded procedural map generation
+guilds
+ranked leaderboard
+campaign persistence
+```
+
+---
+
+# 22. IcyDB Testing Matrix
+
+Use test layers that match the IcyDB stack:
+
+```text
+Pure Rust unit tests:
+  movement rules
+  combat formulas
+  scoring/tie-breaks
+  payload hashing
+  DTO assembly helpers
+
+Schema/macro tests:
+  entity macro syntax
+  relation suffix rules
+  index validity
+  default/db_default evolution cases
+  compile-fail cases for invalid schema edits
+
+Generated-session tests:
+  db().create/update/replace flows
+  typed/fluent queries
+  cursor pagination DTO wrapping
+  command/effect idempotency
+  setup/start-session saga phases
+
+Pocket-IC canister tests:
+  register/create/join/start
+  turn sync and movement-intent resolution
+  command retry after duplicate nonce
+  battle action timeout
+  admin SQL/fixture endpoints when enabled
+  diagnostics access review
+```
+
+Acceptance tests from the product brief should be backed by deterministic fixtures using the first playable scenario seed.
+
+---
+
+# 23. Most Important Design Decision
+
+The game should be built around this loop:
+
+```text
+Client submits command
+  -> server recovers applying and pending commands for the current/closing turn within budget
+  -> if recovery budget is exhausted, return recovery_budget_exhausted and do not advance the turn
+  -> server advances/syncs turn if needed
+  -> server resolves due movement intents through an idempotent system GameCommand
+  -> server validates ownership and rules
+  -> server applies one idempotent command
+  -> server emits events
+  -> client refreshes visible state
+```
+
+That gives us a clean foundation for timed simultaneous turns and keeps the logic safe inside IcyDB’s single-entity atomicity model.

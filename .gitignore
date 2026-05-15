@@ -1,0 +1,18 @@
+# Rust
+/target/
+
+# Internet Computer / DFX
+/.dfx/
+
+# JavaScript / web client
+/node_modules/
+/dist/
+/build/
+/coverage/
+
+# Environment and local tooling
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log

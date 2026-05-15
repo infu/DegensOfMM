@@ -95,16 +95,16 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 5. Lobby And Session Lifecycle
 
-- [ ] Implement create session, join session, leave/cancel where needed, and start session.
-- [ ] Implement player account basics: `register_player`, `get_my_player`, display names, principal mapping, and duplicate registration behavior.
-- [ ] Implement `mark_ready`, `get_session`, `get_my_participant`, and the match-history shell needed by the frontend.
-- [ ] Implement setup as idempotent command/effect phases.
-- [ ] Enforce player caps, principal ownership, active session limits, and deterministic setup events.
-- [ ] Extend the headless game driver so it can create, join, start, and fetch an active match summary.
-- [ ] Unit test duplicate lobby commands, setup recovery, session state transitions, and invalid caller rejection.
-- [ ] Audit: confirm setup only marks a session active after all required rows, occupancy, visibility seeds, and setup events exist.
-- [ ] Gate A: run the headless create/join/start/inspect smoke path and fix all failures.
-- [ ] Commit after this checkpoint.
+- [x] Implement create session, join session, leave/cancel where needed, and start session.
+- [x] Implement player account basics: `register_player`, `get_my_player`, display names, principal mapping, and duplicate registration behavior.
+- [x] Implement `mark_ready`, `get_session`, `get_my_participant`, and the match-history shell needed by the frontend.
+- [x] Implement setup as idempotent command/effect phases.
+- [x] Enforce player caps, principal ownership, active session limits, and deterministic setup events.
+- [x] Extend the headless game driver so it can create, join, start, and fetch an active match summary.
+- [x] Unit test duplicate lobby commands, setup recovery, session state transitions, and invalid caller rejection.
+- [x] Audit: confirm setup only marks a session active after all required rows, occupancy, visibility seeds, and setup events exist.
+- [x] Gate A: run the headless create/join/start/inspect smoke path and fix all failures.
+- [x] Commit after this checkpoint.
 
 ## 6. Map, Terrain, Occupancy, And Visibility
 

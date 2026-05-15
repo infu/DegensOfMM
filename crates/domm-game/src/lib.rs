@@ -8,6 +8,7 @@ pub mod command;
 pub mod content;
 pub mod driver;
 pub mod fixtures;
+pub mod lifecycle;
 pub mod rng;
 
 pub use command::{
@@ -36,6 +37,9 @@ pub use driver::{
 pub use fixtures::{
     CommandNonces, FIRST_PLAYABLE_SCENARIO_SEED, FixtureClock, FixtureIds, FixturePrincipals,
     ScenarioFixture, TURN_DURATION_MS, first_playable_fixture,
+};
+pub use lifecycle::{
+    LifecycleBackend, LifecycleError, MatchHistoryEntry, ParticipantView, SetupProjection,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

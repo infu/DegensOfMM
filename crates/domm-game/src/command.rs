@@ -360,6 +360,21 @@ pub struct LobbyCommandRecord {
     pub failed_at_ms: Option<u64>,
 }
 
+impl LobbyCommandRecord {
+    #[must_use]
+    pub fn status_view(&self) -> CommandStatusView {
+        CommandStatusView {
+            command_id: self.id.clone(),
+            status: self.status,
+            phase: self.phase,
+            retryable: self.retryable,
+            error_code: self.error_code.clone(),
+            error_message: self.error_message.clone(),
+            result_json: self.result_json.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct CommandEffectRecord {
     pub id: String,
@@ -1379,6 +1394,64 @@ impl LobbyCommandJournal {
             command,
             duplicate: false,
         })
+    }
+
+    pub fn mark_command_applied(
+        &mut self,
+        command_id: &str,
+        result_json: Option<String>,
+    ) -> Result<CommandStatusView, CommandCoreError> {
+        let applied_at_ms = self.synthetic_time_ms();
+        let command = self.command_mut(command_id)?;
+        command.status = CommandStatus::Applied;
+        command.phase = CommandPhase::Complete;
+        command.result_json = result_json;
+        command.retryable = false;
+        command.applied_at_ms = Some(applied_at_ms);
+        Ok(command.status_view())
+    }
+
+    pub fn mark_command_failed(
+        &mut self,
+        command_id: &str,
+        error_code: impl Into<String>,
+        error_message: impl Into<String>,
+        retryable: bool,
+    ) -> Result<CommandStatusView, CommandCoreError> {
+        let failed_at_ms = self.synthetic_time_ms();
+        let command = self.command_mut(command_id)?;
+        command.status = CommandStatus::Failed;
+        command.phase = CommandPhase::Failed;
+        command.error_code = Some(error_code.into());
+        command.error_message = Some(error_message.into());
+        command.retryable = retryable;
+        command.failed_at_ms = Some(failed_at_ms);
+        Ok(command.status_view())
+    }
+
+    pub fn command_status(&self, command_id: &str) -> Result<CommandStatusView, CommandCoreError> {
+        Ok(self.command(command_id)?.status_view())
+    }
+
+    fn command(&self, command_id: &str) -> Result<&LobbyCommandRecord, CommandCoreError> {
+        self.commands
+            .iter()
+            .find(|command| command.id == command_id)
+            .ok_or_else(|| CommandCoreError::CommandNotFound {
+                command_id: command_id.to_string(),
+            })
+    }
+
+    fn command_mut(
+        &mut self,
+        command_id: &str,
+    ) -> Result<&mut LobbyCommandRecord, CommandCoreError> {
+        self.commands
+            .iter_mut()
+            .find(|command| command.id == command_id)
+            .ok_or_else(|| CommandCoreError::CommandNotFound {
+                command_id: command_id.to_string(),
+            })
     }
 
     fn allocate_command_id(&mut self) -> String {

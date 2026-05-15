@@ -6,6 +6,7 @@
 
 pub mod aftermath;
 pub mod ai;
+pub mod api;
 pub mod battle;
 pub mod champion;
 pub mod command;
@@ -37,6 +38,15 @@ pub use ai::{
     AI_MAX_ACTORS_PER_UPDATE, AI_MAX_CANDIDATES_PER_ACTOR, AI_MAX_EMITTED_COMMANDS_PER_UPDATE,
     AiActorStateRecord, AiCommandDraft, AiDecisionInput, AiError, AiUpdateReport, decide_for_actor,
     run_ai_update,
+};
+pub use api::{
+    ActionAffordance, ApiError, ApiEventPage, ApiEventView, ApiMetrics, ApiTownView,
+    BattleActionInput, BattleSummary, ChangedSubject, CommandResponse, CommandResult,
+    ContentManifestResponse, DEFAULT_CHUNK_LIMIT, DEFAULT_EVENT_LIMIT, DEFAULT_OBJECT_LIMIT,
+    EventPageInfo, FixtureApiBackend, GameView, GameViewRequest, LobbyCommandResponse,
+    LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_EVENT_LIMIT, MAX_OBJECT_LIMIT, MAX_VIEWPORT_TILES,
+    MatchHistoryPage, PageInfo, ParticipantSummary, RenderTimeMeta, SessionSummary,
+    opening_viewport_for_slot,
 };
 pub use battle::{
     BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,

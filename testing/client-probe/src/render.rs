@@ -1,9 +1,7 @@
 use candid::Principal;
 use domm_game::{
-    FIRST_PLAYABLE_CHUNK_SIZE, MAP_FLAG_BLOCKING_TERRAIN, MAP_FLAG_ROAD, MapChunkView,
-    OPENING_VIEWPORT_EAST_X, OPENING_VIEWPORT_EAST_Y, OPENING_VIEWPORT_HEIGHT,
-    OPENING_VIEWPORT_WEST_X, OPENING_VIEWPORT_WEST_Y, OPENING_VIEWPORT_WIDTH, ObjectView, Viewport,
-    read_visibility_bit,
+    ApiEventPage, FIRST_PLAYABLE_CHUNK_SIZE, GameViewRequest, MAP_FLAG_BLOCKING_TERRAIN,
+    MAP_FLAG_ROAD, MapChunkView, ObjectView, read_visibility_bit,
 };
 
 use crate::backend::ThinClientBackend;
@@ -34,19 +32,18 @@ impl<B: ThinClientBackend> ThinClientProbe<B> {
         caller: Principal,
         session_id: &str,
     ) -> Result<ClientOpeningViewport, ProbeError> {
-        let match_view = self.backend.active_match(caller, session_id)?;
-        let participant = self.backend.my_participant(caller, session_id)?;
-        let viewport = opening_viewport_for_slot(participant.slot_index)?;
-        let chunks = self.collect_chunks(caller, session_id, &viewport)?;
-        let objects = self.collect_objects(caller, session_id, &viewport)?;
-        let events = self
-            .backend
-            .events_after(caller, session_id, 0, EVENT_PAGE_LIMIT)?;
-        let sync_required = match_view.sync_required;
+        let mut game_view = self.backend.default_game_view(caller, session_id)?;
+        let viewport = game_view.viewport.clone();
+        let chunks = self.collect_chunks(caller, session_id, &mut game_view)?;
+        let objects = self.collect_objects(caller, session_id, &mut game_view)?;
+        let events = ApiEventPage {
+            events: game_view.events.clone(),
+            page_info: game_view.event_page_info.clone(),
+        };
+        let sync_required = game_view.render_time.sync_required;
 
         Ok(ClientOpeningViewport {
-            match_view,
-            participant,
+            game_view,
             viewport,
             chunks,
             objects,
@@ -59,48 +56,65 @@ impl<B: ThinClientBackend> ThinClientProbe<B> {
         &mut self,
         caller: Principal,
         session_id: &str,
-        viewport: &Viewport,
+        game_view: &mut domm_game::GameView,
     ) -> Result<Vec<MapChunkView>, ProbeError> {
-        let mut chunks = Vec::new();
-        let mut cursor = None;
-        loop {
-            let page = self.backend.viewport_chunks(
+        let mut chunks = game_view.map_chunks.clone();
+        let mut page_info = game_view.map_page_info.clone();
+        while page_info.has_more {
+            let page = self.fetch_page(
                 caller,
                 session_id,
-                viewport,
-                cursor,
-                CHUNK_PAGE_LIMIT,
+                game_view,
+                Some(page_info.next_cursor),
+                None,
             )?;
-            chunks.extend(page.chunks);
-            if !page.has_more {
-                return Ok(chunks);
-            }
-            cursor = page.next_cursor;
+            chunks.extend(page.map_chunks.clone());
+            page_info = page.map_page_info;
         }
+        Ok(chunks)
     }
 
     fn collect_objects(
         &mut self,
         caller: Principal,
         session_id: &str,
-        viewport: &Viewport,
+        game_view: &mut domm_game::GameView,
     ) -> Result<Vec<ObjectView>, ProbeError> {
-        let mut objects = Vec::new();
-        let mut cursor = None;
-        loop {
-            let page = self.backend.viewport_objects(
+        let mut objects = game_view.objects.clone();
+        let mut page_info = game_view.object_page_info.clone();
+        while page_info.has_more {
+            let page = self.fetch_page(
                 caller,
                 session_id,
-                viewport,
-                cursor,
-                OBJECT_PAGE_LIMIT,
+                game_view,
+                None,
+                Some(page_info.next_cursor),
             )?;
-            objects.extend(page.objects);
-            if !page.has_more {
-                return Ok(objects);
-            }
-            cursor = page.next_cursor;
+            objects.extend(page.objects.clone());
+            page_info = page.object_page_info;
         }
+        Ok(objects)
+    }
+
+    fn fetch_page(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        game_view: &domm_game::GameView,
+        chunk_cursor: Option<Option<u32>>,
+        object_cursor: Option<Option<u32>>,
+    ) -> Result<domm_game::GameView, ProbeError> {
+        let request = GameViewRequest {
+            viewport: game_view.viewport.clone(),
+            chunk_cursor: chunk_cursor.flatten(),
+            chunk_limit: CHUNK_PAGE_LIMIT,
+            object_cursor: object_cursor.flatten(),
+            object_limit: OBJECT_PAGE_LIMIT,
+            events_after_seq: game_view.events.last().map_or(0, |event| event.event_seq),
+            event_limit: EVENT_PAGE_LIMIT as u32,
+            include_battle: false,
+        };
+        self.backend.game_view(caller, session_id, request)
     }
 }
 
@@ -177,24 +191,6 @@ pub fn render_opening_viewport(
         event_summaries,
         sync_required: state.sync_required,
     })
-}
-
-fn opening_viewport_for_slot(slot_index: u8) -> Result<Viewport, ProbeError> {
-    match slot_index {
-        0 => Ok(Viewport::new(
-            OPENING_VIEWPORT_WEST_X,
-            OPENING_VIEWPORT_WEST_Y,
-            OPENING_VIEWPORT_WIDTH,
-            OPENING_VIEWPORT_HEIGHT,
-        )),
-        1 => Ok(Viewport::new(
-            OPENING_VIEWPORT_EAST_X,
-            OPENING_VIEWPORT_EAST_Y,
-            OPENING_VIEWPORT_WIDTH,
-            OPENING_VIEWPORT_HEIGHT,
-        )),
-        _ => Err(ProbeError::MissingOpeningViewport { slot_index }),
-    }
 }
 
 fn chunk_for_tile(chunks: &[MapChunkView], x: u16, y: u16) -> Option<&MapChunkView> {

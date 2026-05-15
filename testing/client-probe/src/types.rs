@@ -1,19 +1,15 @@
 use candid::CandidType;
-use domm_game::{
-    ActiveMatchView, EventPage, LifecycleError, MapChunkView, MapError, ObjectView,
-    ParticipantView, Viewport,
-};
+use domm_game::{ApiError, ApiEventPage, GameView, MapChunkView, ObjectView, Viewport};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct ClientOpeningViewport {
-    pub match_view: ActiveMatchView,
-    pub participant: ParticipantView,
+    pub game_view: GameView,
     pub viewport: Viewport,
     pub chunks: Vec<MapChunkView>,
     pub objects: Vec<ObjectView>,
-    pub events: EventPage,
+    pub events: ApiEventPage,
     pub sync_required: bool,
 }
 
@@ -32,10 +28,8 @@ pub struct RenderedViewport {
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum ProbeError {
-    #[error(transparent)]
-    Lifecycle(#[from] LifecycleError),
-    #[error(transparent)]
-    Map(#[from] MapError),
+    #[error("api error: {0:?}")]
+    Api(ApiError),
     #[error("participant slot {slot_index} does not have an opening viewport")]
     MissingOpeningViewport { slot_index: u8 },
     #[error("no public chunk DTO covers tile ({x},{y})")]
@@ -44,4 +38,10 @@ pub enum ProbeError {
     MissingChunkCell { cell_index: usize },
     #[error("rendered row is not valid UTF-8")]
     InvalidRenderedRow,
+}
+
+impl From<ApiError> for ProbeError {
+    fn from(error: ApiError) -> Self {
+        Self::Api(error)
+    }
 }

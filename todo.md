@@ -251,14 +251,14 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 16. API DTOs And Client Contract
 
-- [ ] Implement all public update/query methods in `spec.md`, including registration, session, sync, command submission, view queries, content manifest, command status, event feed, match history, and preview endpoints.
-- [ ] Implement command responses, lobby responses, typed command results, errors, event views, game views, object views, town/champion/battle views, and pagination.
-- [ ] Ensure responses include enough information for a web client to render and recover without private backend assumptions.
-- [ ] Update the thin client/probe from checkpoint 6A to use the final DTO shapes.
-- [ ] Add contract tests that compare representative DTO fixtures to the client expectations.
-- [ ] Unit test candid/serialization compatibility, error mapping, cursor behavior, event audience filtering, redaction, and retry/sync contract.
-- [ ] Audit: compare every public method and DTO against `spec.md`; add missing fields before moving on.
-- [ ] Commit after this checkpoint.
+- [x] Implement all public update/query methods in `spec.md`, including registration, session, sync, command submission, view queries, content manifest, command status, event feed, match history, and preview endpoints.
+- [x] Implement command responses, lobby responses, typed command results, errors, event views, game views, object views, town/champion/battle views, and pagination.
+- [x] Ensure responses include enough information for a web client to render and recover without private backend assumptions.
+- [x] Update the thin client/probe from checkpoint 6A to use the final DTO shapes.
+- [x] Add contract tests that compare representative DTO fixtures to the client expectations.
+- [x] Unit test candid/serialization compatibility, error mapping, cursor behavior, event audience filtering, redaction, and retry/sync contract.
+- [x] Audit: compare every public method and DTO against `spec.md`; add missing fields before moving on.
+- [x] Commit after this checkpoint.
 
 ## 17. Cleanup, Compaction, And Storage Limits
 

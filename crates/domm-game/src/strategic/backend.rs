@@ -3,14 +3,18 @@ use candid::Principal;
 use crate::aftermath::{
     AftermathError, AftermathState, MatchSessionRecord, build_first_playable_aftermath_state,
 };
-use crate::champion::{ChampionState, build_first_playable_champion_state};
+use crate::champion::{
+    ChampionState, ChampionView, ChampionViewResult, build_first_playable_champion_state,
+};
 use crate::driver::{ActiveMatchView, HeadlessBackend, PlayerView, SessionView};
 use crate::economy::{EconomyState, build_first_playable_economy_state};
-use crate::fixtures::ScenarioFixture;
-use crate::lifecycle::LifecycleBackend;
-use crate::map::{FirstPlayableMapState, build_first_playable_map_state};
+use crate::fixtures::{ScenarioFixture, TURN_DURATION_MS};
+use crate::lifecycle::{LifecycleBackend, MatchHistoryEntry, ParticipantView};
+use crate::map::{
+    FirstPlayableMapState, MapChunkPage, ObjectViewPage, Viewport, build_first_playable_map_state,
+};
 use crate::movement::{
-    MoveCoord, MovementState, MovementSyncBudget, MovementSyncOutcome,
+    MoveCoord, MovementPreview, MovementState, MovementSyncBudget, MovementSyncOutcome,
     build_first_playable_movement_state, submit_move_intent, sync_session_turn,
 };
 use crate::neutral::{
@@ -102,6 +106,204 @@ impl StrategicFixtureBackend {
         state.map = self.map.clone();
         state.neutral = self.neutral.clone();
         Ok(state)
+    }
+
+    pub fn get_my_player_public(&self, caller: Principal) -> Result<PlayerView, StrategicError> {
+        Ok(self.lifecycle.get_my_player(caller)?)
+    }
+
+    pub fn get_session_public(&self, session_id: &str) -> Result<SessionView, StrategicError> {
+        Ok(self.lifecycle.get_session(session_id)?)
+    }
+
+    pub fn get_my_participant_public(
+        &self,
+        caller: Principal,
+        session_id: &str,
+    ) -> Result<ParticipantView, StrategicError> {
+        Ok(self.lifecycle.get_my_participant(caller, session_id)?)
+    }
+
+    pub fn get_match_history_public(
+        &self,
+        caller: Principal,
+        cursor: usize,
+        limit: usize,
+    ) -> Result<Vec<MatchHistoryEntry>, StrategicError> {
+        Ok(self.lifecycle.get_match_history(caller, cursor, limit)?)
+    }
+
+    pub fn get_events_public(
+        &self,
+        caller: Principal,
+        session_id: &str,
+        events_after_seq: u64,
+        limit: usize,
+    ) -> Result<crate::command::EventPage, StrategicError> {
+        Ok(self
+            .lifecycle
+            .get_events(caller, session_id, events_after_seq, limit)?)
+    }
+
+    pub fn visible_map_chunks_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        viewport: &Viewport,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> Result<MapChunkPage, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self
+            .map
+            .map_chunk_views(&participant_id, viewport, cursor, limit))
+    }
+
+    pub fn visible_objects_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        viewport: &Viewport,
+        cursor: Option<u32>,
+        limit: u32,
+    ) -> Result<ObjectViewPage, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self
+            .map
+            .object_views(&participant_id, viewport, cursor, limit))
+    }
+
+    pub fn my_champions_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+    ) -> Result<Vec<ChampionView>, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self
+            .champions
+            .champions
+            .iter()
+            .filter(|champion| champion.participant_id == participant_id)
+            .filter_map(|champion| {
+                match self.champions.champion_view_for(
+                    &participant_id,
+                    &champion.champion_id,
+                    true,
+                    self.movement.current_turn,
+                ) {
+                    ChampionViewResult::Visible(view) => Some(view),
+                    ChampionViewResult::Hidden { .. } => None,
+                }
+            })
+            .collect())
+    }
+
+    pub fn champion_view_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        champion_id: &str,
+    ) -> Result<ChampionViewResult, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        let visible = self
+            .champions
+            .champions
+            .iter()
+            .find(|champion| champion.champion_id == champion_id)
+            .is_some_and(|champion| {
+                self.map
+                    .is_visible_at(&participant_id, champion.x, champion.y)
+            });
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self.champions.champion_view_for(
+            &participant_id,
+            champion_id,
+            visible,
+            self.movement.current_turn,
+        ))
+    }
+
+    pub fn preview_move_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        champion_id: &str,
+        path: Vec<MoveCoord>,
+        now_ms: u64,
+    ) -> Result<MovementPreview, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(crate::movement::preview_move_path(
+            &self.movement,
+            &self.map,
+            &self.champions,
+            &participant_id,
+            champion_id,
+            path,
+            now_ms,
+        )?)
+    }
+
+    pub fn preview_build_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        town_id: &str,
+        building_slug: &str,
+        turn_number: u32,
+    ) -> Result<crate::town::BuildPreview, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self.town.preview_build_town_structure(
+            &self.economy,
+            &participant_id,
+            town_id,
+            building_slug,
+            turn_number,
+        )?)
+    }
+
+    pub fn preview_recruit_public(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        town_id: &str,
+        unit_slug: &str,
+        quantity: u32,
+        target: &RecruitTarget,
+        turn_number: u32,
+    ) -> Result<crate::town::RecruitPreview, StrategicError> {
+        self.ensure_active_match(caller, session_id)?;
+        let participant_id = self.participant_for_caller(caller)?.to_string();
+        self.record_query(StrategicCall::InspectView { caller });
+        Ok(self.town.preview_recruit_units(
+            &self.economy,
+            &participant_id,
+            town_id,
+            unit_slug,
+            quantity,
+            target,
+            turn_number,
+        )?)
+    }
+
+    #[must_use]
+    pub fn current_turn(&self) -> u32 {
+        self.movement.current_turn
+    }
+
+    #[must_use]
+    pub fn turn_started_at(&self) -> u64 {
+        u64::from(self.movement.current_turn.saturating_sub(1)) * TURN_DURATION_MS
     }
 
     fn participant_for_caller(&self, caller: Principal) -> Result<&str, StrategicError> {

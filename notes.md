@@ -504,6 +504,32 @@ Suggested follow-up:
 
 Checkpoint 16 should expose these AI command drafts through canister update APIs and generated IcyDB command rows using `actor_kind = "ai"`. Full bot opponents remain deferred; the current v1 surface covers neutral battle behavior and optional autopilot-style command generation.
 
+## Checkpoint 16: API DTOs And Client Contract
+
+Added a `domm_game::api` module split across DTO types, view assembly, response/hash helpers, backend wrapper, and contract tests. The fixture API now exposes the public update/query surface from `spec.md`: lobby/session commands, strategic sync and command submission, battle sync/action submission, render-ready game views, map/object/champion/town/battle queries, content manifests, command status, event feeds, match history, and previews.
+
+The API command envelopes now carry `command_id`, `command_type`, `client_nonce`, `payload_hash`, status/phase, effective/durable turns, changed subjects, typed results, emitted events, and structured `ApiError` values. Retry semantics are pinned by tests: same actor+nonce+payload replays the same response, while same actor+nonce with a different payload returns `duplicate_nonce_payload_mismatch`.
+
+The `GameView` DTO is render-ready and includes session/participant summaries, viewport chunks, objects, champion/town/battle views, content hash, event page data, action affordances, and render-time sync metadata. The checkpoint 6A thin client probe now loads this final DTO shape instead of stitching together older lobby/map/event reads.
+
+Audit notes:
+
+- The public API layer is still a deterministic fixture wrapper over `StrategicFixtureBackend`; it does not introduce an IcyDB dependency into `crates/domm-game`.
+- Query methods assemble persisted fixture projections and time metadata only. They do not advance turns, recover commands, apply battle timeouts, mutate resources, or finalize victory.
+- Event feeds merge lifecycle events with API-envelope events. Private API command payloads are redacted for other participants while public lifecycle events remain readable.
+- Battle query/update methods use the first-playable battle fixture until checkpoint 18+ web/client work drives active battle selection from a live match path.
+- Focused coverage now includes representative DTO contract checks, Candid roundtrips for `GameView`, `CommandResponse`, and `ApiError`, cursor behavior, event audience redaction, hidden champion errors, command retry/mismatch behavior, content manifest reads, previews, and the client probe render path.
+
+Performance and size notes:
+
+- The API contract tests keep the first visible map payload at four chunk DTOs for the opening viewport.
+- API metrics expose response/event counts and the underlying strategic command/event/query counters for checkpoint 17 limit audits.
+- Largest new API file is `api/backend.rs` at roughly 1.2k LOC after splitting response/hash helpers into `api/codec.rs`; the DTO, view, and test files remain separate by domain.
+
+Suggested follow-up:
+
+Checkpoint 17 should enforce hard request limits and payload-size caps on this API layer, then checkpoint 18 can consume the DTOs from the web client. When canister entrypoints are wired, this API fixture should be replaced with generated IcyDB repository reads/writes while preserving the same response contracts.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

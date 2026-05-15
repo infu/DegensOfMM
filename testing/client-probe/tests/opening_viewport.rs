@@ -1,31 +1,32 @@
 use domm_client_probe::{FixtureProbeBackend, ThinClientProbe, render_opening_viewport};
-use domm_game::{HeadlessGameDriver, first_playable_fixture};
+use domm_game::first_playable_fixture;
 
 #[test]
-fn gate_b_loads_and_renders_opening_viewport_from_public_dtos() {
+fn gate_b_loads_and_renders_opening_viewport_from_final_game_view_dto() {
     let fixture = first_playable_fixture();
-    let backend = FixtureProbeBackend::new(fixture.clone()).expect("fixture backend should build");
-    let mut driver = HeadlessGameDriver::new(backend, fixture.clone());
-    let match_view = driver
-        .create_join_start_inspect()
-        .expect("public lobby path should start a match");
-    let backend = driver.into_backend();
+    let mut backend = FixtureProbeBackend::new(fixture.clone());
+    let session = backend.start_first_playable_session();
     let mut probe = ThinClientProbe::new(backend);
 
     let loaded = probe
-        .load_opening_viewport(fixture.principals.player_one, &match_view.session_id)
+        .load_opening_viewport(fixture.principals.player_one, &session.session_id)
         .expect("client probe should load the opening viewport");
     let rendered =
         render_opening_viewport(&loaded).expect("client probe should render visible DTOs");
 
-    assert_eq!(loaded.match_view.session_id, fixture.ids.session_id);
+    assert_eq!(loaded.game_view.session.session_id, fixture.ids.session_id);
     assert_eq!(
-        loaded.participant.participant_id,
+        loaded.game_view.participant.participant_id,
         fixture.ids.participant_one_id
     );
     assert_eq!(loaded.chunks.len(), 4);
-    assert_eq!(loaded.events.events.len(), 1);
-    assert_eq!(loaded.events.events[0].event_type, "session_started");
+    assert!(
+        loaded
+            .events
+            .events
+            .iter()
+            .any(|event| event.event_type == "session_started")
+    );
     assert!(!loaded.sync_required);
 
     assert_eq!(rendered.width, 24);

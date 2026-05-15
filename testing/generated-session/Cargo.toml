@@ -1,0 +1,15 @@
+[package]
+name = "domm-generated-session-tests"
+edition = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+description = "Generated-session harness tests for Degens of Misery & Mayhem"
+
+[dependencies]
+domm-degens-schema = { workspace = true }
+domm-game = { workspace = true }
+
+[lints]
+workspace = true

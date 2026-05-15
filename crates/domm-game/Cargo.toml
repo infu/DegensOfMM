@@ -1,0 +1,16 @@
+[package]
+name = "domm-game"
+edition = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+description = "Pure deterministic game harness for Degens of Misery & Mayhem"
+
+[dependencies]
+candid = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,36 @@
+[workspace]
+members = [
+    "canisters/degens",
+    "crates/domm-game",
+    "schema/degens",
+    "testing/generated-session",
+    "testing/macro-tests",
+    "testing/pocket-ic",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.91.0"
+version = "0.1.0"
+license = "Apache-2.0 OR MIT"
+publish = false
+
+[workspace.dependencies]
+candid = "0.10"
+canic-cdk = "0.35.5"
+domm-game = { path = "crates/domm-game" }
+domm-degens-schema = { path = "schema/degens" }
+icydb = { path = "../icydb/crates/icydb", version = "0.156.0" }
+icydb-config-build = { path = "../icydb/crates/icydb-config-build", version = "0.156.0" }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"

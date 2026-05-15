@@ -42,16 +42,16 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 0. Project Harness
 
-- [ ] Verify `DoMM/` is an independent git repo, `git status` works from this directory, and the branch/remote policy is documented.
-- [ ] Create the canister/backend project layout for the game modules.
-- [ ] Add a test harness that can run pure unit tests without deploying a canister.
-- [ ] Add the test layers required by `spec.md`: pure Rust unit tests, schema/macro tests, generated-session tests, and Pocket-IC canister tests.
-- [ ] Add deterministic fixture support for scenario seeds, principals, timestamps, command nonces, and IDs.
-- [ ] Add documented smoke and regression commands for future agents.
-- [ ] Add a headless game-driver test utility that can call public command/query functions in sequence.
-- [ ] Notes requirement: create the first entries in `DoMM/notes.md` for any setup friction or IcyDB ergonomics issues.
-- [ ] Audit: confirm the harness can test deterministic command flows, recovery flows, and DTO serialization.
-- [ ] Commit after this checkpoint.
+- [x] Verify `DoMM/` is an independent git repo, `git status` works from this directory, and the branch/remote policy is documented.
+- [x] Create the canister/backend project layout for the game modules.
+- [x] Add a test harness that can run pure unit tests without deploying a canister.
+- [x] Add the test layers required by `spec.md`: pure Rust unit tests, schema/macro tests, generated-session tests, and Pocket-IC canister tests.
+- [x] Add deterministic fixture support for scenario seeds, principals, timestamps, command nonces, and IDs.
+- [x] Add documented smoke and regression commands for future agents.
+- [x] Add a headless game-driver test utility that can call public command/query functions in sequence.
+- [x] Notes requirement: create the first entries in `DoMM/notes.md` for any setup friction or IcyDB ergonomics issues.
+- [x] Audit: confirm the harness can test deterministic command flows, recovery flows, and DTO serialization.
+- [x] Commit after this checkpoint.
 
 ## 1. IcyDB Schema Baseline
 

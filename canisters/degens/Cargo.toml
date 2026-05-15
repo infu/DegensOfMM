@@ -1,0 +1,30 @@
+[package]
+name = "domm-degens-canister"
+edition = { workspace = true }
+rust-version = { workspace = true }
+version = { workspace = true }
+license = { workspace = true }
+publish = { workspace = true }
+description = "Degens of Misery & Mayhem Internet Computer canister"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+sql = ["icydb/sql"]
+diagnostics = ["icydb/diagnostics"]
+
+[dependencies]
+candid = { workspace = true }
+canic-cdk = { workspace = true }
+domm-degens-schema = { workspace = true }
+icydb = { path = "../../../icydb/crates/icydb", version = "0.156.0", default-features = false }
+
+[build-dependencies]
+domm-degens-schema = { workspace = true }
+icydb = { path = "../../../icydb/crates/icydb", version = "0.156.0", default-features = false }
+icydb-config-build = { workspace = true }
+
+[lints]
+workspace = true

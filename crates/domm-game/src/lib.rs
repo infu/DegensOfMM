@@ -9,6 +9,7 @@ pub mod content;
 pub mod driver;
 pub mod fixtures;
 pub mod lifecycle;
+pub mod map;
 pub mod rng;
 
 pub use command::{
@@ -40,6 +41,14 @@ pub use fixtures::{
 };
 pub use lifecycle::{
     LifecycleBackend, LifecycleError, MatchHistoryEntry, ParticipantView, SetupProjection,
+};
+pub use map::{
+    FirstPlayableMapState, MAP_FLAG_BLOCKING_TERRAIN, MAP_FLAG_PASSABLE, MAP_FLAG_ROAD,
+    MapChunkPage, MapChunkRecord, MapChunkView, MapError, MapOccupancyRecord, MapSubjectRecord,
+    ObjectView, ObjectViewPage, OpeningViewportSnapshot, ParticipantKnownObjectRecord,
+    SubjectViewResult, Viewport, VisibilityChunkRecord, WorldObjectRecord,
+    build_first_playable_map_state, build_first_playable_map_state_for_ids, empty_visibility_blob,
+    read_visibility_bit, set_visibility_bit,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

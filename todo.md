@@ -108,12 +108,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 6. Map, Terrain, Occupancy, And Visibility
 
-- [ ] Implement map chunks, terrain blobs, movement-cost blobs, flags, discovered/visible bitsets, known objects, and occupancy rows.
-- [ ] Implement viewport reads with limits, cursors, visibility redaction, and `not_visible` behavior.
-- [ ] Add a stable fixture snapshot for the opening viewport of the first playable map.
-- [ ] Unit test chunk encoding, bitset encoding, movement costs, single-tile and multi-tile occupancy, cleanup by occupant key, and hidden-object redaction.
-- [ ] Audit: confirm the frontend can render the visible map without needing backend-private rows or speculative query state.
-- [ ] Commit after this checkpoint.
+- [x] Implement map chunks, terrain blobs, movement-cost blobs, flags, discovered/visible bitsets, known objects, and occupancy rows.
+- [x] Implement viewport reads with limits, cursors, visibility redaction, and `not_visible` behavior.
+- [x] Add a stable fixture snapshot for the opening viewport of the first playable map.
+- [x] Unit test chunk encoding, bitset encoding, movement costs, single-tile and multi-tile occupancy, cleanup by occupant key, and hidden-object redaction.
+- [x] Audit: confirm the frontend can render the visible map without needing backend-private rows or speculative query state.
+- [x] Commit after this checkpoint.
 
 ## 6A. Thin Client Skeleton And API Probe
 

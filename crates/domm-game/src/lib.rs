@@ -4,6 +4,7 @@
 //! public DTO shapes used by tests, and the headless driver contract so gameplay
 //! rules can be tested before and alongside persistence work.
 
+pub mod aftermath;
 pub mod battle;
 pub mod champion;
 pub mod command;
@@ -21,6 +22,15 @@ pub mod strategic;
 pub mod town;
 pub mod world_object;
 
+pub use aftermath::{
+    AftermathError, AftermathEventRecord, AftermathSmokeView, AftermathState,
+    BattleAftermathReport, MatchSessionRecord, PlayerMatchSummaryRecord, RetreatSurrenderPolicy,
+    VictoryCheck, VictoryScore, apply_battle_aftermath, build_first_playable_aftermath_state,
+    check_and_finalize_victory, finalize_stalemate, require_retreat_or_surrender_enabled,
+    resolve_neutral_battle_for_fixture, retreat_surrender_policy,
+    run_first_playable_aftermath_smoke, seed_resolved_champion_defeat_battle,
+    seed_resolved_town_capture_battle,
+};
 pub use battle::{
     BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,
     BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER, BattleActionReceipt, BattleCommandBudget,

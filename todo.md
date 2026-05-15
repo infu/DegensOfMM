@@ -222,13 +222,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 14. Aftermath, Town Capture, Defeat, And Victory
 
-- [ ] Implement battle aftermath, strategic position updates, town capture, garrison survivor placement, champion defeat, surrender/retreat handling, and victory finalization.
-- [ ] Implement stalemate scoring and bounded winner checks.
-- [ ] Write `PlayerMatchSummary` and match-history rows when the match finishes.
-- [ ] Extend the headless smoke path through battle resolution, capture, and victory.
-- [ ] Unit test town battles, neutral battles, champion defeats, artifact capture, no-elimination-while-battle-active, capture income cutover, and max-turn stalemate.
-- [ ] Audit: confirm victory, defeat, scoring, events, resources, occupancy, and visibility are all updated by idempotent commands/effects.
-- [ ] Commit after this checkpoint.
+- [x] Implement battle aftermath, strategic position updates, town capture, garrison survivor placement, champion defeat, surrender/retreat handling, and victory finalization.
+- [x] Implement stalemate scoring and bounded winner checks.
+- [x] Write `PlayerMatchSummary` and match-history rows when the match finishes.
+- [x] Extend the headless smoke path through battle resolution, capture, and victory.
+- [x] Unit test town battles, neutral battles, champion defeats, artifact capture, no-elimination-while-battle-active, capture income cutover, and max-turn stalemate.
+- [x] Audit: confirm victory, defeat, scoring, events, resources, occupancy, and visibility are all updated by idempotent commands/effects.
+- [x] Commit after this checkpoint.
 
 ## 14A. Backend Match Playable Gate
 

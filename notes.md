@@ -450,6 +450,24 @@ Suggested follow-up:
 
 Checkpoint 14 should consume applied battle events and stack survivor state to implement battle aftermath, neutral defeat, town capture, champion defeat, and victory finalization through idempotent commands.
 
+## 2026-05-15 - Checkpoint 14 Battle Aftermath Audit
+
+Area: battle aftermath, capture, defeat, and victory
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 14 added a split `aftermath` module that consumes resolved battle rows and applies neutral defeat cleanup, town capture, income cutover, garrison survivor placement, champion strategic repositioning, champion defeat, deterministic artifact capture, match finish summaries, match history, and local aftermath events. Retreat and surrender are explicit disabled v1 paths with typed reasons instead of partially implemented behavior.
+
+Impact:
+
+The first playable pure harness can resolve the neutral guard battle, capture the east town, defeat the enemy champion, and finalize the match. Victory checks ignore elimination while any battle remains active. Max-turn scoring is bounded to the first playable participant set and uses towns, mines, army combat power, and a seeded tie-break. Town capture now applies the two-turn unrest window and reuses economy income cutover materialization before changing ownership.
+
+Suggested follow-up:
+
+Checkpoint 14A should drive the same path through public backend commands and queries from lobby start to victory. Checkpoint 16 should preserve these aftermath command, event, and idempotency semantics when generated IcyDB repositories replace the in-memory fixture state.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

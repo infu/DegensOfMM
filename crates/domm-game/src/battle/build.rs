@@ -128,6 +128,8 @@ pub fn build_first_playable_battle_state() -> Result<BattleState, BattleError> {
         stacks,
         obstacles,
         occupancy,
+        commands: Vec::new(),
+        events: Vec::new(),
     };
     validate_battle_occupancy(&state, &battle_id)?;
     let active_stack_id =

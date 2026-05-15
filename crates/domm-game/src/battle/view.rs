@@ -93,8 +93,26 @@ pub fn battle_view_for_participant(
             .map(|entry| entry.battle_stack_id)
             .collect(),
         legal_actions_for_caller,
-        events: Vec::<BattleEventView>::new(),
-        next_event_seq: 0,
+        events: state
+            .events
+            .iter()
+            .filter(|event| event.battle_id == battle_id)
+            .map(|event| BattleEventView {
+                event_seq: event.event_seq,
+                event_key: event.event_key.clone(),
+                event_type: event.event_type.clone(),
+                subject_id_text: event.subject_id_text.clone(),
+                payload: event.payload.clone(),
+            })
+            .collect(),
+        next_event_seq: state
+            .events
+            .iter()
+            .filter(|event| event.battle_id == battle_id)
+            .map(|event| event.event_seq)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1),
         morale_luck_policy: v1_morale_luck_policy(),
     })
 }

@@ -214,11 +214,11 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 13. Battle Commands, Timeouts, And Recovery
 
-- [ ] Implement `submit_battle_action`, `sync_battle`, action deadlines, deterministic auto-defend, timeout system commands, and battle event emission.
-- [ ] Enforce bounded timeout processing and `battle_sync_incomplete`.
-- [ ] Unit test duplicate actions, action after timeout, player action racing timeout, auto-defend idempotency, battle recovery, and event ordering.
-- [ ] Audit: confirm battle updates recover applying commands and due timeout commands before validating the caller command.
-- [ ] Commit after this checkpoint.
+- [x] Implement `submit_battle_action`, `sync_battle`, action deadlines, deterministic auto-defend, timeout system commands, and battle event emission.
+- [x] Enforce bounded timeout processing and `battle_sync_incomplete`.
+- [x] Unit test duplicate actions, action after timeout, player action racing timeout, auto-defend idempotency, battle recovery, and event ordering.
+- [x] Audit: confirm battle updates recover applying commands and due timeout commands before validating the caller command.
+- [x] Commit after this checkpoint.
 
 ## 14. Aftermath, Town Capture, Defeat, And Victory
 

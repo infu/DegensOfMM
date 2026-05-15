@@ -432,6 +432,24 @@ Suggested follow-up:
 
 Checkpoint 13 should wrap these pure rules in command/recovery/timeout flows, add active-stack action progression, and emit battle events. When generated IcyDB repositories are wired, preserve `BattleOccupancy` as the authoritative tactical position table and keep `BattleStack.battle_x/y` as repairable DTO cache fields.
 
+## 2026-05-15 - Checkpoint 13 Battle Command Audit
+
+Area: battle commands, timeouts, and recovery
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 13 added a pure battle command layer around the tactical rules: `submit_battle_action`, `sync_battle`, command records, event records, idempotent client nonce replay, applying-command recovery, active-stack action deadlines, deterministic timeout `AutoDefend` system commands, bounded timeout processing, and event sequencing. The command path recovers applying commands and resolves due timeout commands before validating the caller action.
+
+Impact:
+
+Battle actions now have the recovery/idempotency shape needed for generated IcyDB-backed commands. Tests cover duplicate payload mismatch, action-after-timeout races, player action just before timeout, auto-defend idempotency, timeout budget slicing with `battle_sync_incomplete`, recovery before validation, and ordered battle events. This is still an in-memory command journal; checkpoint 16 must map the same semantics onto public canister methods and generated repositories.
+
+Suggested follow-up:
+
+Checkpoint 14 should consume applied battle events and stack survivor state to implement battle aftermath, neutral defeat, town capture, champion defeat, and victory finalization through idempotent commands.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

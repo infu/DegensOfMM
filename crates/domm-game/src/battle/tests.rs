@@ -3,12 +3,13 @@ use super::actions::{
     validate_battle_stack_status_keys,
 };
 use super::build::build_first_playable_battle_state;
+use super::commands::{battle_action_payload_hash, submit_battle_action, sync_battle};
 use super::initiative::initiative_order;
 use super::occupancy::{repair_stack_position_from_occupancy, validate_battle_occupancy};
 use super::smoke::run_first_playable_battle_smoke;
 use super::types::{
-    BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER, BattleCoord,
-    BattleError,
+    BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER,
+    BattleCommandBudget, BattleCommandRecord, BattleCoord, BattleError,
 };
 use super::view::battle_view_for_participant;
 use crate::fixtures::first_playable_fixture;
@@ -246,4 +247,266 @@ fn first_playable_battle_smoke_resolves_first_damage() {
     assert_eq!(smoke.obstacle_count, 2);
     assert!(smoke.legal_action_count >= 5);
     assert!(smoke.first_damage.final_damage > 0);
+}
+
+#[test]
+fn submit_battle_action_dedupes_and_rejects_payload_mismatch() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let fixture = first_playable_fixture();
+    let battle_id = state.battles[0].battle_id.clone();
+    let active_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+
+    let first = submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &active_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:defend:1",
+        480_000,
+    )
+    .expect("defend should apply");
+    let duplicate = submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &active_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:defend:1",
+        480_001,
+    )
+    .expect("duplicate should replay");
+    assert_eq!(first.command_id, duplicate.command_id);
+    assert_eq!(first.event_seq, Some(1));
+    assert_eq!(state.events.len(), 1);
+
+    let mismatch = submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &active_stack_id,
+        "Wait",
+        None,
+        None,
+        "nonce:defend:1",
+        480_002,
+    )
+    .expect_err("same nonce with different payload should fail");
+    assert!(matches!(
+        mismatch,
+        BattleError::DuplicateCommandPayloadMismatch { .. }
+    ));
+}
+
+#[test]
+fn timeout_auto_defend_wins_after_deadline_and_is_idempotent() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let fixture = first_playable_fixture();
+    let battle_id = state.battles[0].battle_id.clone();
+    let expired_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+
+    let sync = sync_battle(
+        &mut state,
+        &battle_id,
+        510_000,
+        BattleCommandBudget::default(),
+    )
+    .expect("timeout sync should apply");
+    assert_eq!(sync.timeout_actions_applied, 1);
+    assert_eq!(state.events[0].event_type, "battle_timeout_auto_defend");
+    assert_eq!(state.stack(&expired_stack_id).unwrap().acted_round, 1);
+
+    let replay = sync_battle(
+        &mut state,
+        &battle_id,
+        510_001,
+        BattleCommandBudget::default(),
+    )
+    .expect("timeout replay should not duplicate");
+    assert_eq!(replay.timeout_actions_applied, 0);
+    assert_eq!(state.events.len(), 1);
+
+    let late_action = submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &expired_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:late",
+        510_001,
+    )
+    .expect_err("old active stack lost its deadline race");
+    assert!(matches!(late_action, BattleError::StackNotActive { .. }));
+}
+
+#[test]
+fn player_action_before_deadline_prevents_timeout_for_that_stack() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let fixture = first_playable_fixture();
+    let battle_id = state.battles[0].battle_id.clone();
+    let active_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+
+    submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &active_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:deadline-race",
+        509_999,
+    )
+    .expect("player action before deadline should apply");
+    let sync = sync_battle(
+        &mut state,
+        &battle_id,
+        520_000,
+        BattleCommandBudget::default(),
+    )
+    .expect("sync after player action should not timeout next stack yet");
+    assert_eq!(sync.timeout_actions_applied, 0);
+    assert_eq!(state.events.len(), 1);
+    assert_eq!(state.events[0].event_type, "battle_action_applied");
+}
+
+#[test]
+fn sync_battle_respects_timeout_budget() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let battle_id = state.battles[0].battle_id.clone();
+
+    let sync = sync_battle(
+        &mut state,
+        &battle_id,
+        700_000,
+        BattleCommandBudget {
+            max_recoveries: 8,
+            max_timeout_actions: 1,
+        },
+    )
+    .expect("bounded timeout sync should return partial progress");
+    assert_eq!(sync.timeout_actions_applied, 1);
+    assert!(sync.battle_sync_incomplete);
+    assert_eq!(state.events.len(), 1);
+}
+
+#[test]
+fn recovery_finishes_applying_command_before_validating_new_action() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let fixture = first_playable_fixture();
+    let battle_id = state.battles[0].battle_id.clone();
+    let active_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+    let pending_command_id = "command:test:recover:defend".to_string();
+    state.commands.push(BattleCommandRecord {
+        command_id: pending_command_id.clone(),
+        battle_id: battle_id.clone(),
+        actor_participant_id: Some(fixture.ids.participant_one_id.clone()),
+        battle_stack_id: Some(active_stack_id.clone()),
+        client_nonce: "nonce:recover".to_string(),
+        payload_hash: battle_action_payload_hash("Defend", None, None),
+        action: "Defend".to_string(),
+        target_stack_id: None,
+        destination: None,
+        system: false,
+        status: "applying".to_string(),
+        created_at: 480_000,
+        applied_at: None,
+        retryable_error: None,
+    });
+
+    let rejected = submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &active_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:new",
+        480_001,
+    )
+    .expect_err("new action should be validated after recovery changes active stack");
+    assert!(matches!(rejected, BattleError::StackNotActive { .. }));
+    let recovered = state
+        .commands
+        .iter()
+        .find(|command| command.command_id == pending_command_id)
+        .expect("pending command remains recorded");
+    assert_eq!(recovered.status, "applied");
+    assert_eq!(state.events.len(), 1);
+    assert_eq!(state.events[0].command_id, pending_command_id);
+}
+
+#[test]
+fn battle_events_are_ordered_across_player_actions() {
+    let mut state = build_first_playable_battle_state().expect("battle fixture should build");
+    let fixture = first_playable_fixture();
+    let battle_id = state.battles[0].battle_id.clone();
+    let first_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+    submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &first_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:event:1",
+        480_000,
+    )
+    .expect("first action should apply");
+    let second_stack_id = state
+        .battle(&battle_id)
+        .unwrap()
+        .active_stack_id
+        .clone()
+        .unwrap();
+    submit_battle_action(
+        &mut state,
+        &battle_id,
+        &fixture.ids.participant_one_id,
+        &second_stack_id,
+        "Defend",
+        None,
+        None,
+        "nonce:event:2",
+        481_000,
+    )
+    .expect("second action should apply");
+
+    assert_eq!(state.events.len(), 2);
+    assert_eq!(state.events[0].event_seq, 1);
+    assert_eq!(state.events[1].event_seq, 2);
+    assert_ne!(state.events[0].event_key, state.events[1].event_key);
 }

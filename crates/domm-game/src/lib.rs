@@ -23,15 +23,18 @@ pub mod world_object;
 
 pub use battle::{
     BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,
-    BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER, BattleCoord, BattleDamageOutcome, BattleError,
+    BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER, BattleActionReceipt, BattleCommandBudget,
+    BattleCommandRecord, BattleCoord, BattleDamageOutcome, BattleError, BattleEventRecord,
     BattleEventView, BattleGridView, BattleInitiativeEntry, BattleMoraleLuckPolicy,
     BattleObstacleRecord, BattleObstacleView, BattleOccupancyRecord, BattleRecord, BattleSmokeView,
-    BattleStackRecord, BattleStackView, BattleState, BattleView, DamagePreview, LegalBattleAction,
-    adjacent_coords, apply_damage_to_stack, apply_stack_attack, battle_view_for_participant,
-    build_first_playable_battle_state, damage_preview, initiative_order, legal_actions_for_stack,
-    occupant_at, reachable_tiles, repair_stack_position_from_occupancy,
-    run_first_playable_battle_smoke, select_active_stack_id, v1_morale_luck_policy,
-    validate_battle_occupancy, validate_battle_stack_status_keys,
+    BattleStackRecord, BattleStackView, BattleState, BattleSyncOutcome, BattleView, DamagePreview,
+    LegalBattleAction, adjacent_coords, append_battle_event, apply_battle_command_by_id,
+    apply_damage_to_stack, apply_stack_attack, battle_action_payload_hash,
+    battle_view_for_participant, build_first_playable_battle_state, damage_preview,
+    initiative_order, legal_actions_for_stack, occupant_at, reachable_tiles,
+    recover_applying_battle_commands, repair_stack_position_from_occupancy,
+    run_first_playable_battle_smoke, select_active_stack_id, submit_battle_action, sync_battle,
+    v1_morale_luck_policy, validate_battle_occupancy, validate_battle_stack_status_keys,
 };
 pub use champion::{
     ArtifactCaptureResult, ArtifactEquipmentRecord, ArtifactInstanceRecord, ArtifactView,

@@ -133,12 +133,76 @@ pub struct BattleOccupancyRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct BattleCommandRecord {
+    pub command_id: String,
+    pub battle_id: String,
+    pub actor_participant_id: Option<String>,
+    pub battle_stack_id: Option<String>,
+    pub client_nonce: String,
+    pub payload_hash: String,
+    pub action: String,
+    pub target_stack_id: Option<String>,
+    pub destination: Option<BattleCoord>,
+    pub system: bool,
+    pub status: String,
+    pub created_at: u64,
+    pub applied_at: Option<u64>,
+    pub retryable_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct BattleEventRecord {
+    pub event_seq: u64,
+    pub battle_id: String,
+    pub event_key: String,
+    pub command_id: String,
+    pub event_type: String,
+    pub subject_id_text: String,
+    pub payload: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct BattleActionReceipt {
+    pub command_id: String,
+    pub status: String,
+    pub current_round: u16,
+    pub active_stack_id: Option<String>,
+    pub event_seq: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct BattleSyncOutcome {
+    pub battle_id: String,
+    pub timeout_actions_applied: u32,
+    pub recovered_commands: u32,
+    pub battle_sync_incomplete: bool,
+    pub active_stack_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct BattleCommandBudget {
+    pub max_recoveries: u32,
+    pub max_timeout_actions: u32,
+}
+
+impl Default for BattleCommandBudget {
+    fn default() -> Self {
+        Self {
+            max_recoveries: 8,
+            max_timeout_actions: 8,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct BattleState {
     pub session_seed: String,
     pub battles: Vec<BattleRecord>,
     pub stacks: Vec<BattleStackRecord>,
     pub obstacles: Vec<BattleObstacleRecord>,
     pub occupancy: Vec<BattleOccupancyRecord>,
+    pub commands: Vec<BattleCommandRecord>,
+    pub events: Vec<BattleEventRecord>,
 }
 
 impl BattleState {
@@ -357,6 +421,20 @@ pub enum BattleError {
     StackNotRanged { battle_stack_id: String },
     #[error("stack has no shots remaining: {battle_stack_id}")]
     NoShotsRemaining { battle_stack_id: String },
+    #[error("battle command nonce payload mismatch: {client_nonce}")]
+    DuplicateCommandPayloadMismatch { client_nonce: String },
+    #[error("battle command recovery budget exhausted")]
+    RecoveryBudgetExhausted,
+    #[error("battle timeout budget exhausted")]
+    TimeoutBudgetExhausted,
+    #[error("battle action is after the deadline")]
+    ActionAfterDeadline,
+    #[error("stack is not active: {battle_stack_id}")]
+    StackNotActive { battle_stack_id: String },
+    #[error("participant does not own active stack: {participant_id}")]
+    StackNotOwned { participant_id: String },
+    #[error("invalid battle action: {action}")]
+    InvalidAction { action: String },
     #[error(transparent)]
     Rng(#[from] RngError),
     #[error(transparent)]

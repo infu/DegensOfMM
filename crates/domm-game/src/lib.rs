@@ -7,6 +7,7 @@
 pub mod command;
 pub mod driver;
 pub mod fixtures;
+pub mod rng;
 
 pub use command::{
     ActorKind, CommandActor, CommandCoreError, CommandEffectRecord, CommandPhase, CommandStatus,
@@ -23,4 +24,8 @@ pub use driver::{
 pub use fixtures::{
     CommandNonces, FIRST_PLAYABLE_SCENARIO_SEED, FixtureClock, FixtureIds, FixturePrincipals,
     ScenarioFixture, TURN_DURATION_MS, first_playable_fixture,
+};
+pub use rng::{
+    BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,
+    roll_between_inclusive,
 };

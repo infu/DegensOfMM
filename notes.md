@@ -180,6 +180,24 @@ Suggested follow-up:
 
 Document implicit entity fields in the local schema notes or upstream IcyDB docs if this remains surprising during repository-wrapper work.
 
+## 2026-05-15 - Checkpoint 3 Deterministic RNG Audit
+
+Area: deterministic pseudo-randomness
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 3 added a pure `RollKey` helper that implements the Part 2 `hash64(session.seed, domain_key, turn_number, command_id_or_system_key, actor_id_text, target_id_text, roll_index)` rule with SHA-256, bounded roll helpers, and compact audit DTOs for future command results and event payloads. Fixture tests pin the first playable combat roll digest and bounded damage value.
+
+Impact:
+
+The current gameplay surface has no systems that consume randomness yet, so there were no call sites to migrate. A scan of executable game/canister/test code found no raw randomness APIs, wall-clock branching, ULID-order decisions, or mutable RNG cursors. The remaining `event_seq` hits are command/event replay cursor logic, not RNG input.
+
+Suggested follow-up:
+
+As checkpoints 4, 9A, 11A, 12, 15, and later systems add content generation, combat, artifacts, neutral armies, effects, or AI tie-breaks, require them to call `RollKey` and include `RollAudit` data in command results or event DTOs.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

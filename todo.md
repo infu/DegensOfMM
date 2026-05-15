@@ -76,12 +76,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 3. Deterministic Pseudo-Random Module
 
-- [ ] Implement the keyed pseudo-random helper used by gameplay.
-- [ ] Use only explicit inputs: session seed, domain key, turn, command/system key, actor id text, target id text, and roll index.
-- [ ] Ban IC raw randomness, host entropy, wall-clock elapsed time, ULID order, event sequence, and mutable RNG cursors from gameplay decisions.
-- [ ] Unit test reproducibility, domain separation, roll-index separation, and fixture stability.
-- [ ] Audit: scan gameplay code for any direct randomness or time-derived branching.
-- [ ] Commit after this checkpoint.
+- [x] Implement the keyed pseudo-random helper used by gameplay.
+- [x] Use only explicit inputs: session seed, domain key, turn, command/system key, actor id text, target id text, and roll index.
+- [x] Ban IC raw randomness, host entropy, wall-clock elapsed time, ULID order, event sequence, and mutable RNG cursors from gameplay decisions.
+- [x] Unit test reproducibility, domain separation, roll-index separation, and fixture stability.
+- [x] Audit: scan gameplay code for any direct randomness or time-derived branching.
+- [x] Commit after this checkpoint.
 
 ## 4. Ruleset And First Playable Content
 

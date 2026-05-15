@@ -5,6 +5,7 @@
 //! rules can be tested before and alongside persistence work.
 
 pub mod command;
+pub mod content;
 pub mod driver;
 pub mod fixtures;
 pub mod rng;
@@ -16,6 +17,17 @@ pub use command::{
     GameEventTurnSummaryRecord, LobbyCommandJournal, LobbyCommandPayload, LobbyCommandRecord,
     LobbyCommandSubmitOutcome, PendingEffectDraft, PendingEffectRecord, RecoveryBudget,
     RecoveryOutcome, SessionCommandJournal, recovery_effect_key, recovery_event_key,
+};
+pub use content::{
+    ArmyStackSeed, ArtifactContent, BuildingContent, ChampionClassContent, ContentManifest,
+    FIRST_PLAYABLE_CHUNK_SIZE, FIRST_PLAYABLE_MAP_HEIGHT, FIRST_PLAYABLE_MAP_WIDTH,
+    FIRST_PLAYABLE_MAX_TURNS, FIRST_PLAYABLE_PLAYER_COUNT, FIRST_PLAYABLE_RULESET_ID,
+    FIRST_PLAYABLE_RULESET_SLUG, FIRST_PLAYABLE_RULESET_VERSION, FactionContent,
+    FirstPlayableScenario, FirstPlayableWalkthrough, HandAuthoredMap, MapObjectContent,
+    NeutralArmySeed, ObjectSeed, PlayerStart, ResourceCost, ResourcePileSeed, RoadPath,
+    RulesetContent, SpellContent, StartingState, TerrainContent, TerrainPatch, TileCoord,
+    UnitContent, WalkthroughStep, first_playable_content_manifest, first_playable_scenario,
+    get_content_manifest,
 };
 pub use driver::{
     ActiveMatchView, DriverCall, DriverError, HeadlessBackend, HeadlessGameDriver, PlayerView,

@@ -85,13 +85,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 4. Ruleset And First Playable Content
 
-- [ ] Seed the first playable ruleset, factions, unit definitions, champion classes, terrain, buildings, objects, battle rules, and one hand-authored 1v1 map.
-- [ ] Define the intended first playable walkthrough as fixture data: opening positions, nearby pickup, build/recruit path, neutral fight, town capture, and victory path.
-- [ ] Implement `get_content_manifest` data for factions, champion classes, terrain, units, buildings, spells, artifacts, map objects, asset keys, and ruleset hash/version, even if some lists are empty in v1.
-- [ ] Keep deferred features as data omissions, not half-wired runtime behavior.
-- [ ] Unit test content loading, definition lookup, numeric caps, and first playable fixture validity.
-- [ ] Audit: confirm all content needed for a complete match exists and no deferred Part 1 feature is required for play.
-- [ ] Commit after this checkpoint.
+- [x] Seed the first playable ruleset, factions, unit definitions, champion classes, terrain, buildings, objects, battle rules, and one hand-authored 1v1 map.
+- [x] Define the intended first playable walkthrough as fixture data: opening positions, nearby pickup, build/recruit path, neutral fight, town capture, and victory path.
+- [x] Implement `get_content_manifest` data for factions, champion classes, terrain, units, buildings, spells, artifacts, map objects, asset keys, and ruleset hash/version, even if some lists are empty in v1.
+- [x] Keep deferred features as data omissions, not half-wired runtime behavior.
+- [x] Unit test content loading, definition lookup, numeric caps, and first playable fixture validity.
+- [x] Audit: confirm all content needed for a complete match exists and no deferred Part 1 feature is required for play.
+- [x] Commit after this checkpoint.
 
 ## 5. Lobby And Session Lifecycle
 

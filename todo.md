@@ -176,12 +176,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 11. World Objects, Pickups, Mines, And Captures
 
-- [ ] Implement object visits, visit keys, pickups, mines, central objectives, scoring fields, and ownership changes.
-- [ ] Implement command/effect-backed object interaction during movement.
-- [ ] Extend the headless smoke path through the first playable pickup/mine/object sequence.
-- [ ] Unit test once-only visits, refreshable visits, resource rewards, mine income start turn, object redaction, and duplicate interaction recovery.
-- [ ] Audit: confirm object interactions do not bypass command idempotency, visibility rules, resource ledger rules, or occupancy cleanup.
-- [ ] Commit after this checkpoint.
+- [x] Implement object visits, visit keys, pickups, mines, central objectives, scoring fields, and ownership changes.
+- [x] Implement command/effect-backed object interaction during movement.
+- [x] Extend the headless smoke path through the first playable pickup/mine/object sequence.
+- [x] Unit test once-only visits, refreshable visits, resource rewards, mine income start turn, object redaction, and duplicate interaction recovery.
+- [x] Audit: confirm object interactions do not bypass command idempotency, visibility rules, resource ledger rules, or occupancy cleanup.
+- [x] Commit after this checkpoint.
 
 ## 11A. Neutral Armies And Encounter Starts
 

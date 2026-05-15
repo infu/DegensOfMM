@@ -347,7 +347,7 @@ fn seed_world_objects(
         seed_object_record(state, object, map_objects, "mine")?;
     }
     for object in &scenario.central_objectives {
-        seed_object_record(state, object, map_objects, "objective")?;
+        seed_object_record(state, object, map_objects, "central_objective")?;
     }
     for pile in &scenario.resource_piles {
         seed_resource_pile_record(state, pile, map_objects)?;
@@ -483,9 +483,10 @@ fn make_world_object_record(
     y: u16,
 ) -> WorldObjectRecord {
     let public_json = format!(
-        "{{\"type\":\"world_object\",\"object_id\":\"{}\",\"object_type\":\"{}\",\"interaction_key\":\"{}\",\"state\":\"available\"}}",
+        "{{\"type\":\"world_object\",\"object_id\":\"{}\",\"object_type\":\"{}\",\"scoring_kind\":\"{}\",\"interaction_key\":\"{}\",\"state\":\"available\"}}",
         escape_json(object_id),
         escape_json(&definition.object_type),
+        escape_json(scoring_kind.as_deref().unwrap_or("none")),
         escape_json(&definition.interaction_key)
     );
     let redacted_json = format!(

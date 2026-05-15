@@ -230,7 +230,7 @@ pub(crate) fn object_requires_stop(subject: &MapSubjectRecord) -> bool {
     subject.subject_kind == "world_object"
         && matches!(
             subject.scoring_kind.as_deref(),
-            Some("resource_pile" | "mine" | "objective")
+            Some("resource_pile" | "mine" | "central_objective" | "objective")
         )
 }
 

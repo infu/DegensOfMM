@@ -250,7 +250,7 @@ fn opening_viewport_snapshot_is_stable_and_candid_roundtrips() {
     assert_eq!(snapshot.snapshot_hash, snapshot.computed_snapshot_hash());
     assert_eq!(
         snapshot.snapshot_hash,
-        "41b82e5d6e3cc4fe94e7bc5decc6a9c64ef5f103db6058a33f4dcfa505f57eb9"
+        "836e88ae73bf643a9e773d861ab243b8d1f0c7c1fd5d4e36b6bb64475c45215f"
     );
 
     let encoded = Encode!(&snapshot).expect("opening viewport should encode as candid");

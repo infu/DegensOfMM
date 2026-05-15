@@ -16,6 +16,7 @@ pub mod map;
 pub mod movement;
 pub mod rng;
 pub mod town;
+pub mod world_object;
 
 pub use champion::{
     ArtifactCaptureResult, ArtifactEquipmentRecord, ArtifactInstanceRecord, ArtifactView,
@@ -90,4 +91,12 @@ pub use town::{
     ArmyStackRecord, BuildPreview, ChampionTownRecord, RecruitPreview, RecruitTarget,
     TownBuildingRecord, TownError, TownRecord, TownRecruitPoolRecord, TownSmokeView, TownState,
     build_first_playable_town_state, run_first_playable_town_smoke,
+};
+pub use world_object::{
+    ChampionObjectVisitRecord, ObjectCommandEffectRecord, ObjectInteractionCommandRecord,
+    ObjectInteractionOutcome, ObjectResourceOutcome, ObjectScoreRecord,
+    ParticipantObjectVisitRecord, WorldObjectError, WorldObjectSmokeView, WorldObjectState,
+    apply_movement_object_interactions, build_first_playable_world_object_state,
+    interact_with_world_object, record_champion_object_visit, record_participant_object_visit,
+    run_first_playable_world_object_smoke, world_object_scoreboard,
 };

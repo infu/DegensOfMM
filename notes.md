@@ -306,6 +306,24 @@ Suggested follow-up:
 
 Checkpoint 9 should consume the same army stack shape for champion strategic state. When movement and real canister commands land, town/recruit commands need to update map occupancy/events through the command/effect saga after the resource ledger and stack mutations complete.
 
+## 2026-05-15 - Checkpoint 9 Champion State Audit
+
+Area: champions, armies, artifacts
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 9 added a split pure champion module with champion rows, army stack rows, artifact instance/equipment rows, movement state, status transitions, deterministic artifact capture, v1 experience/level progression, and visibility-facing champion DTOs. Movement uses `movement_turn` plus `movement_remaining` for lazy reset. Artifact equipment enforces uniqueness through equipment rows, not nullable cache fields. Skill-tree selection is explicitly deferred with a typed progression status.
+
+Impact:
+
+Champion state now supports the strategic lifecycle needed by later movement and battle checkpoints: active/in-battle/garrisoned/defeated statuses, battle aftermath artifact transfer, stack cap enforcement, champion defeat tracking, active-champion victory checks, and hidden-enemy DTO redaction. Battle resolution, movement occupancy updates, and real artifact pickup commands remain future saga work.
+
+Suggested follow-up:
+
+Checkpoint 9A should validate implemented effect hooks against content `effect_key` and `ability_keys`. Checkpoint 10 should consume champion movement fields and update map occupancy through command/effect recovery rather than mutating champion coordinates directly.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

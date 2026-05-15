@@ -147,12 +147,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 9. Champions, Armies, Artifacts, And Strategic State
 
-- [ ] Implement champions, army stacks, artifact instances, equipment, statuses, movement points, ownership, and visibility-facing champion DTOs.
-- [ ] Implement deterministic artifact capture rules needed by the first playable version.
-- [ ] Implement the v1-safe champion progression foundation: experience field updates, level cap enforcement, reward hooks, and explicit no-op/deferred behavior for skill-tree choices.
-- [ ] Unit test stack caps, champion ownership, status transitions, experience caps, artifact ownership changes, equipment uniqueness, and DTO redaction.
-- [ ] Audit: confirm champion state supports movement, battle entry, battle aftermath, defeat, garrisoning, and victory checks.
-- [ ] Commit after this checkpoint.
+- [x] Implement champions, army stacks, artifact instances, equipment, statuses, movement points, ownership, and visibility-facing champion DTOs.
+- [x] Implement deterministic artifact capture rules needed by the first playable version.
+- [x] Implement the v1-safe champion progression foundation: experience field updates, level cap enforcement, reward hooks, and explicit no-op/deferred behavior for skill-tree choices.
+- [x] Unit test stack caps, champion ownership, status transitions, experience caps, artifact ownership changes, equipment uniqueness, and DTO redaction.
+- [x] Audit: confirm champion state supports movement, battle entry, battle aftermath, defeat, garrisoning, and victory checks.
+- [x] Commit after this checkpoint.
 
 ## 9A. Effects, Abilities, Spells, And Status Hooks
 

@@ -4,6 +4,7 @@
 //! public DTO shapes used by tests, and the headless driver contract so gameplay
 //! rules can be tested before and alongside persistence work.
 
+pub mod champion;
 pub mod command;
 pub mod content;
 pub mod driver;
@@ -14,6 +15,12 @@ pub mod map;
 pub mod rng;
 pub mod town;
 
+pub use champion::{
+    ArtifactCaptureResult, ArtifactEquipmentRecord, ArtifactInstanceRecord, ArtifactView,
+    CHAMPION_LEVEL_CAP, ChampionArmyStackRecord, ChampionError, ChampionProgressionResult,
+    ChampionRecord, ChampionState, ChampionView, ChampionViewResult,
+    build_first_playable_champion_state,
+};
 pub use command::{
     ActorKind, CommandActor, CommandCoreError, CommandEffectRecord, CommandPhase, CommandStatus,
     CommandStatusView, CommandSubmitOutcome, EffectStatus, EventAppendOutcome, EventAudience,

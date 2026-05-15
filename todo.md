@@ -156,12 +156,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 9A. Effects, Abilities, Spells, And Status Hooks
 
-- [ ] Implement a bounded effect-key dispatch layer for unit abilities, artifact effects, building effects, object rewards, and spell effects.
-- [ ] Support the v1 required effects and explicitly disable/defer unsupported spellbook, skill-tree, morale, luck, and complex status behavior through typed disabled reasons.
-- [ ] Ensure `CastAbility` is either fully supported for the v1 content that uses it or never returned as an enabled legal action.
-- [ ] Unit test effect dispatch, unsupported effect rejection, deterministic pseudo-random effect rolls, status key caps, and DTO disabled reasons.
-- [ ] Audit: compare all `effect_key`, `ability_keys`, `SpellDefinition`, `ChampionSpell`, artifact, building, and object effect usage in the first playable content against implemented handlers.
-- [ ] Commit after this checkpoint.
+- [x] Implement a bounded effect-key dispatch layer for unit abilities, artifact effects, building effects, object rewards, and spell effects.
+- [x] Support the v1 required effects and explicitly disable/defer unsupported spellbook, skill-tree, morale, luck, and complex status behavior through typed disabled reasons.
+- [x] Ensure `CastAbility` is either fully supported for the v1 content that uses it or never returned as an enabled legal action.
+- [x] Unit test effect dispatch, unsupported effect rejection, deterministic pseudo-random effect rolls, status key caps, and DTO disabled reasons.
+- [x] Audit: compare all `effect_key`, `ability_keys`, `SpellDefinition`, `ChampionSpell`, artifact, building, and object effect usage in the first playable content against implemented handlers.
+- [x] Commit after this checkpoint.
 
 ## 10. Movement Intents And Turn Sync
 

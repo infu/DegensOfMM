@@ -324,6 +324,24 @@ Suggested follow-up:
 
 Checkpoint 9A should validate implemented effect hooks against content `effect_key` and `ability_keys`. Checkpoint 10 should consume champion movement fields and update map occupancy through command/effect recovery rather than mutating champion coordinates directly.
 
+## 2026-05-15 - Checkpoint 9A Effects Audit
+
+Area: effects, abilities, disabled systems
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 9A added a bounded effect dispatch module covering first-playable ability keys, artifact effects, building effects, and object interaction keys. Unsupported spellbook, skill-tree, morale, luck, and complex status systems return typed disabled reasons. `CastAbility` is never returned enabled for v1 content. Chance effects use deterministic `RollKey` audit data, and status keys are capped at 8.
+
+Impact:
+
+All current first-playable `ability_keys`, building `effect_key`s, artifact effects, and map-object interaction keys are accounted for by tests. Since the manifest currently has no spells or champion spell rows, spell dispatch remains explicitly deferred instead of silently enabled. Future battle, artifact, and object systems can call one dispatcher rather than hard-coding effect support checks.
+
+Suggested follow-up:
+
+Checkpoint 10 and later battle/effect systems should thread `EffectResolution` and `RollAudit` into command results/events when an effect changes gameplay. New content keys should fail coverage tests until the dispatcher has an explicit supported or deferred handler.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

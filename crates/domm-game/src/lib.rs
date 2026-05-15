@@ -9,6 +9,7 @@ pub mod command;
 pub mod content;
 pub mod driver;
 pub mod economy;
+pub mod effects;
 pub mod fixtures;
 pub mod lifecycle;
 pub mod map;
@@ -50,6 +51,10 @@ pub use economy::{
     ResourceCapMode, ResourceDelta, ResourceLedgerEntryRecord, ResourceLedgerTurnSummaryRecord,
     ResourcePileEconomyRecord, build_first_playable_economy_state,
     run_first_playable_economy_smoke,
+};
+pub use effects::{
+    EffectDomain, EffectError, EffectRequest, EffectResolution, LegalEffectAction, dispatch_effect,
+    legal_effect_action, resolve_chance_effect, validate_status_keys,
 };
 pub use fixtures::{
     CommandNonces, FIRST_PLAYABLE_SCENARIO_SEED, FixtureClock, FixtureIds, FixturePrincipals,

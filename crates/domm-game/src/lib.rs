@@ -4,6 +4,7 @@
 //! public DTO shapes used by tests, and the headless driver contract so gameplay
 //! rules can be tested before and alongside persistence work.
 
+pub mod battle;
 pub mod champion;
 pub mod command;
 pub mod content;
@@ -20,6 +21,18 @@ pub mod strategic;
 pub mod town;
 pub mod world_object;
 
+pub use battle::{
+    BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,
+    BATTLE_SIDE_ATTACKER, BATTLE_SIDE_DEFENDER, BattleCoord, BattleDamageOutcome, BattleError,
+    BattleEventView, BattleGridView, BattleInitiativeEntry, BattleMoraleLuckPolicy,
+    BattleObstacleRecord, BattleObstacleView, BattleOccupancyRecord, BattleRecord, BattleSmokeView,
+    BattleStackRecord, BattleStackView, BattleState, BattleView, DamagePreview, LegalBattleAction,
+    adjacent_coords, apply_damage_to_stack, apply_stack_attack, battle_view_for_participant,
+    build_first_playable_battle_state, damage_preview, initiative_order, legal_actions_for_stack,
+    occupant_at, reachable_tiles, repair_stack_position_from_occupancy,
+    run_first_playable_battle_smoke, select_active_stack_id, v1_morale_luck_policy,
+    validate_battle_occupancy, validate_battle_stack_status_keys,
+};
 pub use champion::{
     ArtifactCaptureResult, ArtifactEquipmentRecord, ArtifactInstanceRecord, ArtifactView,
     CHAMPION_LEVEL_CAP, ChampionArmyStackRecord, ChampionError, ChampionProgressionResult,

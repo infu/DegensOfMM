@@ -414,6 +414,24 @@ Suggested follow-up:
 
 Checkpoint 12 can start from the pending battle key produced by the strategic gate. Checkpoint 16 should preserve this public DTO and command/query shape when replacing the fixture backend with generated IcyDB-backed canister methods.
 
+## 2026-05-15 - Checkpoint 12 Battle Engine Audit
+
+Area: battle engine baseline
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 12 added a split pure `battle` module for row-shaped battle records, stack snapshots, tactical occupancy, obstacles, round-based initiative, legal action generation, deterministic damage, DTO assembly, and a first-playable neutral battle smoke fixture. The fixture snapshots the west champion army against `neutral:west-mine` as one active battle with 3 stacks, 2 obstacles, 3 occupancy rows, a 12x10 grid, readiness fixed at 0, and a deterministic active stack selected by initiative, speed, then seeded tie-break hash.
+
+Impact:
+
+The tactical baseline can now expose `BattleView`, legal move/melee/ranged/defend/wait/deferred-action DTOs, apply ranged/melee damage with unit attack/defense plus champion Might/Guard modifiers, remove defeated stack occupancy, and repair cached stack coordinates from authoritative `BattleOccupancy`. V1 morale and luck are explicitly disabled through the effect dispatcher with `morale_disabled_v1` and `luck_disabled_v1`, and battle stack status keys remain capped at 8.
+
+Suggested follow-up:
+
+Checkpoint 13 should wrap these pure rules in command/recovery/timeout flows, add active-stack action progression, and emit battle events. When generated IcyDB repositories are wired, preserve `BattleOccupancy` as the authoritative tactical position table and keep `BattleStack.battle_x/y` as repairable DTO cache fields.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

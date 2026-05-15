@@ -204,13 +204,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 12. Battle Engine Baseline
 
-- [ ] Implement battle rows, battle stacks, battle occupancy, obstacles, legal action generation, active stack selection, and battle views.
-- [ ] Keep the tactical engine pure where possible so it can be unit tested without IcyDB.
-- [ ] Add a deterministic battle fixture from the first playable walkthrough.
-- [ ] Implement v1 morale/luck policy exactly: disabled or capped to the spec's allowed equivalent effect, with explicit DTO/event explanation.
-- [ ] Unit test initiative order, seeded tie-breaks, occupancy uniqueness, legal moves, legal attacks, damage fixtures, deaths, morale/luck policy, status caps, and battle DTOs.
-- [ ] Audit: confirm `BattleOccupancy` is authoritative and cached stack coordinates can be repaired.
-- [ ] Commit after this checkpoint.
+- [x] Implement battle rows, battle stacks, battle occupancy, obstacles, legal action generation, active stack selection, and battle views.
+- [x] Keep the tactical engine pure where possible so it can be unit tested without IcyDB.
+- [x] Add a deterministic battle fixture from the first playable walkthrough.
+- [x] Implement v1 morale/luck policy exactly: disabled or capped to the spec's allowed equivalent effect, with explicit DTO/event explanation.
+- [x] Unit test initiative order, seeded tie-breaks, occupancy uniqueness, legal moves, legal attacks, damage fixtures, deaths, morale/luck policy, status caps, and battle DTOs.
+- [x] Audit: confirm `BattleOccupancy` is authoritative and cached stack coordinates can be repaired.
+- [x] Commit after this checkpoint.
 
 ## 13. Battle Commands, Timeouts, And Recovery
 

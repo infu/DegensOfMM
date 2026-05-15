@@ -342,6 +342,78 @@ Suggested follow-up:
 
 Checkpoint 10 and later battle/effect systems should thread `EffectResolution` and `RollAudit` into command results/events when an effect changes gameplay. New content keys should fail coverage tests until the dispatcher has an explicit supported or deferred handler.
 
+## 2026-05-15 - Checkpoint 10 Movement Audit
+
+Area: movement intents and turn sync
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 10 added a split pure movement module for path previews, replaceable intents, turn-final movement resolution, deterministic microsteps, snapshots, object and battle stop drafts, partial cursors, and bounded sync budgets. Queries expose `MovementTimeView` without finalizing movement. Recovery tests cover partial cursor resume and simulated traps after partial apply.
+
+Impact:
+
+The first playable champion can submit a movement intent, cross multiple turn windows, stop on object tiles, and later stop on neutral contact without private state mutation from queries. Movement still runs in the pure fixture layer; durable system command rows and public canister entrypoints should preserve the same recovery ordering when wired into generated repositories.
+
+Suggested follow-up:
+
+Checkpoint 11 should consume movement object stops through command/effect-backed world-object interactions. Battle checkpoints should turn battle stop drafts into durable battle rows instead of resolving combat inside movement.
+
+## 2026-05-15 - Checkpoint 11 World Object Audit
+
+Area: world objects, pickups, mines, captures
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 11 added world-object visits, deterministic visit keys, once-only and refreshable visits, resource rewards, mine ownership cutover, central objective scoring, and movement-object stop application. Object rewards reuse `EconomyState` ledger idempotency, and object reads continue through the existing map visibility/redaction contract.
+
+Impact:
+
+The first playable strategic path can pick up nearby resources, capture income-producing map objects, and update scoring without duplicating visits or bypassing resource recovery. Guarded-object interactions now fail closed until the guard is defeated. Durable IcyDB wiring is still future work, but the pure command shape matches the required idempotent saga ordering.
+
+Suggested follow-up:
+
+Checkpoint 11A should add neutral guard rows and encounter starts so guarded-object and neutral-contact stops can produce battle triggers. Checkpoint 14 should consume object ownership and scoring state during capture/victory aftermath.
+
+## 2026-05-15 - Checkpoint 11A Neutral Army Audit
+
+Area: neutral armies and encounter starts
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 11A added neutral army rows, stack rows, strength labels, visible/scouting/redacted neutral DTOs, v1 behavior policy flags, movement-contact encounter creation, guarded-object encounter creation, and defeat cleanup. Growth is implemented as an explicit v1 no-op rather than silent background behavior, and roaming/join/bribe behavior is disabled through policy fields.
+
+Impact:
+
+Neutral armies now block occupancy until defeated, can be inspected with visibility-safe stack detail, and can create idempotent pending battle keys from strategic movement or guarded-object contact. This supports the first playable battle trigger without requiring Part 1 neutral AI expansion.
+
+Suggested follow-up:
+
+Checkpoint 12 should materialize these encounter records into battle state. Later expansion work can promote roaming, join, or bribe behavior only after Part 2 adds bounded command, DTO, randomness, and cleanup rules.
+
+## 2026-05-15 - Checkpoint 11B Strategic Gate Audit
+
+Area: strategic headless playable gate
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 11B added a split `strategic` module with a public backend trait, fixture backend, headless driver, Candid-facing DTOs, and Gate C tests. The fixture starts a match, inspects the map, moves to a pickup, applies the object reward, syncs income, builds `freehold-training-yard`, syncs to turn 8, recruits four `mudhook-levy` into the town garrison, moves into the west neutral guard, and applies the neutral encounter trigger.
+
+Impact:
+
+Gate C now runs through public command/query methods only and asserts visible state after each step. Current deterministic metrics are 22 commands, 36 fixture event units, 15 public strategic/lobby queries, and 4992 approximate max query bytes. No blocking slow path was found in the pure fixture loop. The metrics are not IC cycle/storage measurements; canister-level instrumentation is still needed when public entrypoints are wired.
+
+Suggested follow-up:
+
+Checkpoint 12 can start from the pending battle key produced by the strategic gate. Checkpoint 16 should preserve this public DTO and command/query shape when replacing the fixture backend with generated IcyDB-backed canister methods.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

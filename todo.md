@@ -32,9 +32,9 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## Playability Gates
 
-- [ ] Gate A after checkpoint 5: a headless test can create, join, start, and inspect an active match.
-- [ ] Gate B after checkpoint 6A: a minimal client/probe can render the first playable map from public DTOs.
-- [ ] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
+- [x] Gate A after checkpoint 5: a headless test can create, join, start, and inspect an active match.
+- [x] Gate B after checkpoint 6A: a minimal client/probe can render the first playable map from public DTOs.
+- [x] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
 - [ ] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
 - [ ] Gate E after checkpoint 18: the web client can play the first playable match path end to end.
 - [ ] Gate F after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable scope.
@@ -194,13 +194,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 11B. Strategic Headless Playable Gate
 
-- [ ] Create or update a single headless strategic fixture that starts a match and plays the non-battle loop: inspect map, move, pick up resources, receive income, build, recruit, interact with an object, and reach a battle trigger.
-- [ ] Run this fixture through public command/query functions only.
-- [ ] Add assertions for visible state after each step so regressions are localized.
-- [ ] Measure command count, event count, query sizes, and any obvious slow path; record concerns in `DoMM/notes.md`.
-- [ ] Audit: compare the strategic loop against `spec.md`; any missing required behavior becomes immediate work before battle implementation continues.
-- [ ] Gate C: the strategic loop is playable headlessly and remains part of the regression suite.
-- [ ] Commit after this checkpoint.
+- [x] Create or update a single headless strategic fixture that starts a match and plays the non-battle loop: inspect map, move, pick up resources, receive income, build, recruit, interact with an object, and reach a battle trigger.
+- [x] Run this fixture through public command/query functions only.
+- [x] Add assertions for visible state after each step so regressions are localized.
+- [x] Measure command count, event count, query sizes, and any obvious slow path; record concerns in `DoMM/notes.md`.
+- [x] Audit: compare the strategic loop against `spec.md`; any missing required behavior becomes immediate work before battle implementation continues.
+- [x] Gate C: the strategic loop is playable headlessly and remains part of the regression suite.
+- [x] Commit after this checkpoint.
 
 ## 12. Battle Engine Baseline
 

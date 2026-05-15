@@ -16,6 +16,7 @@ pub mod map;
 pub mod movement;
 pub mod neutral;
 pub mod rng;
+pub mod strategic;
 pub mod town;
 pub mod world_object;
 
@@ -95,6 +96,11 @@ pub use neutral::{
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,
     roll_between_inclusive,
+};
+pub use strategic::{
+    StrategicBackend, StrategicCall, StrategicCommandReceipt, StrategicError,
+    StrategicFixtureBackend, StrategicGameView, StrategicGateReport, StrategicHeadlessDriver,
+    StrategicStepView, run_first_playable_strategic_gate,
 };
 pub use town::{
     ArmyStackRecord, BuildPreview, ChampionTownRecord, RecruitPreview, RecruitTarget,

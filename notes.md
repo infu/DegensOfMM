@@ -252,6 +252,24 @@ Suggested follow-up:
 
 Checkpoint 6A should consume only these public DTOs in the thin client/probe and record any missing fields. Durable map seeding and public canister entrypoints should reuse the same DTO/redaction contract when generated IcyDB repositories are wired in later checkpoints.
 
+## 2026-05-15 - Checkpoint 6A Thin Client Probe Audit
+
+Area: client probe and public DTO contract
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 6A added `testing/client-probe` as a separate workspace crate with split backend, render, and DTO modules. The probe starts the first playable fixture through the public headless lobby flow, loads the active match, participant, paged map chunks, paged objects, events, and sync-required state, then renders a 24x24 ASCII opening viewport from public DTOs only. Gate B now asserts visible champion, town, resource, neutral, event, and sync state render without exposing the hidden east champion.
+
+Impact:
+
+The probe found two public contract gaps before it could stay outside backend internals: setup events needed a paged public `EventPage`, and opening viewport constants needed root-level exports from `domm-game`. Both were fixed. The probe backend still uses fixture-backed pure state internally because generated IcyDB read APIs are not wired yet, but the client-facing `ThinClientProbe` talks only to public query-style methods and DTOs.
+
+Suggested follow-up:
+
+When canister entrypoints land, mirror the probe backend trait with real query calls and keep the Gate B test as an external contract test. Later checkpoints should add DTO fields before client code needs private rows, especially for resources, town actions, movement previews, and battle state.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

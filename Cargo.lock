@@ -288,6 +288,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "domm-client-probe"
+version = "0.1.0"
+dependencies = [
+ "candid",
+ "domm-game",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "domm-degens-canister"
 version = "0.1.0"
 dependencies = [

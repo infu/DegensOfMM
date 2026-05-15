@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::command::{
-    CommandActor, CommandCoreError, EffectStatus, EventAudience, GameCommandPayload,
+    CommandActor, CommandCoreError, EffectStatus, EventAudience, EventPage, GameCommandPayload,
     GameEventDraft, LobbyCommandJournal, LobbyCommandPayload, SessionCommandJournal,
 };
 use crate::content::{
@@ -318,6 +318,25 @@ impl LifecycleBackend {
             .take(limit)
             .map(|(_, entry)| entry.clone())
             .collect())
+    }
+
+    pub fn get_events(
+        &self,
+        caller: Principal,
+        session_id: &str,
+        events_after_seq: u64,
+        limit: usize,
+    ) -> Result<EventPage, LifecycleError> {
+        let player = self.player_for_principal(caller)?;
+        let participant = self.participant_for_player(session_id, &player.view.player_id)?;
+        let audience = EventAudience::participant(participant.view.participant_id.clone());
+        let journal = self.session_command_journal(session_id).ok_or_else(|| {
+            LifecycleError::SessionNotFound {
+                session_id: session_id.to_string(),
+            }
+        })?;
+
+        Ok(journal.event_page_after_seq(events_after_seq, Some(&audience), limit))
     }
 
     pub fn cancel_session(

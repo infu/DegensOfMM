@@ -548,6 +548,13 @@ pub struct EventView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct EventPage {
+    pub events: Vec<EventView>,
+    pub next_event_seq: Option<u64>,
+    pub has_more: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct GameEventTurnSummaryRecord {
     pub session_id: String,
     pub audience_key: String,
@@ -1044,18 +1051,40 @@ impl SessionCommandJournal {
         audience: Option<&EventAudience>,
         limit: usize,
     ) -> Vec<EventView> {
+        self.event_page_after_seq(events_after_seq, audience, limit)
+            .events
+    }
+
+    #[must_use]
+    pub fn event_page_after_seq(
+        &self,
+        events_after_seq: u64,
+        audience: Option<&EventAudience>,
+        limit: usize,
+    ) -> EventPage {
+        let limit = limit.max(1);
         let mut events = self
             .events
             .iter()
             .filter(|event| event.event_seq > events_after_seq)
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.event_seq);
+        let has_more = events.len() > limit;
 
-        events
+        let events = events
             .into_iter()
             .take(limit)
             .map(|event| event.view_for(audience))
-            .collect()
+            .collect::<Vec<_>>();
+        let next_event_seq = has_more
+            .then(|| events.last().map(|event| event.event_seq))
+            .flatten();
+
+        EventPage {
+            events,
+            next_event_seq,
+            has_more,
+        }
     }
 
     #[must_use]

@@ -15,7 +15,7 @@ pub mod rng;
 pub use command::{
     ActorKind, CommandActor, CommandCoreError, CommandEffectRecord, CommandPhase, CommandStatus,
     CommandStatusView, CommandSubmitOutcome, EffectStatus, EventAppendOutcome, EventAudience,
-    EventView, GameCommandPayload, GameCommandRecord, GameEventDraft, GameEventRecord,
+    EventPage, EventView, GameCommandPayload, GameCommandRecord, GameEventDraft, GameEventRecord,
     GameEventTurnSummaryRecord, LobbyCommandJournal, LobbyCommandPayload, LobbyCommandRecord,
     LobbyCommandSubmitOutcome, PendingEffectDraft, PendingEffectRecord, RecoveryBudget,
     RecoveryOutcome, SessionCommandJournal, recovery_effect_key, recovery_event_key,
@@ -45,10 +45,12 @@ pub use lifecycle::{
 pub use map::{
     FirstPlayableMapState, MAP_FLAG_BLOCKING_TERRAIN, MAP_FLAG_PASSABLE, MAP_FLAG_ROAD,
     MapChunkPage, MapChunkRecord, MapChunkView, MapError, MapOccupancyRecord, MapSubjectRecord,
-    ObjectView, ObjectViewPage, OpeningViewportSnapshot, ParticipantKnownObjectRecord,
-    SubjectViewResult, Viewport, VisibilityChunkRecord, WorldObjectRecord,
-    build_first_playable_map_state, build_first_playable_map_state_for_ids, empty_visibility_blob,
-    read_visibility_bit, set_visibility_bit,
+    OPENING_VIEWPORT_EAST_X, OPENING_VIEWPORT_EAST_Y, OPENING_VIEWPORT_HEIGHT,
+    OPENING_VIEWPORT_WEST_X, OPENING_VIEWPORT_WEST_Y, OPENING_VIEWPORT_WIDTH, ObjectView,
+    ObjectViewPage, OpeningViewportSnapshot, ParticipantKnownObjectRecord, SubjectViewResult,
+    Viewport, VisibilityChunkRecord, WorldObjectRecord, build_first_playable_map_state,
+    build_first_playable_map_state_for_ids, empty_visibility_blob, read_visibility_bit,
+    set_visibility_bit,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

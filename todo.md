@@ -117,13 +117,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 6A. Thin Client Skeleton And API Probe
 
-- [ ] Build the smallest possible client/probe that can connect to the backend or fixture, load a match, and render map chunks, visible champions, towns, resources, events, and sync-required state.
-- [ ] Use only public APIs and DTOs; do not read repository internals or test-only state.
-- [ ] Add a minimal component or integration test for loading the opening viewport.
-- [ ] Run backend regression tests after adding the probe.
-- [ ] Audit: record every missing DTO field, ambiguous API behavior, or inefficient read pattern in `DoMM/notes.md`; fix backend contract gaps before advancing.
-- [ ] Gate B: verify the first playable map renders from public DTOs.
-- [ ] Commit after this checkpoint.
+- [x] Build the smallest possible client/probe that can connect to the backend or fixture, load a match, and render map chunks, visible champions, towns, resources, events, and sync-required state.
+- [x] Use only public APIs and DTOs; do not read repository internals or test-only state.
+- [x] Add a minimal component or integration test for loading the opening viewport.
+- [x] Run backend regression tests after adding the probe.
+- [x] Audit: record every missing DTO field, ambiguous API behavior, or inefficient read pattern in `DoMM/notes.md`; fix backend contract gaps before advancing.
+- [x] Gate B: verify the first playable map renders from public DTOs.
+- [x] Commit after this checkpoint.
 
 ## 7. Resources, Economy, And Lazy State
 

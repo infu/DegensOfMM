@@ -3,6 +3,7 @@ members = [
     "canisters/degens",
     "crates/domm-game",
     "schema/degens",
+    "testing/client-probe",
     "testing/generated-session",
     "testing/macro-tests",
     "testing/pocket-ic",

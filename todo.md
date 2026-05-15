@@ -185,12 +185,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 11A. Neutral Armies And Encounter Starts
 
-- [ ] Implement neutral army rows, stacks, strength labels, visibility redaction, occupancy, and growth fields.
-- [ ] Implement neutral-army encounter triggers from strategic movement and object interaction.
-- [ ] Implement v1 neutral behavior: guard aggression, no roaming unless promoted by a later spec update, optional join logic disabled unless bounded by Part 2.
-- [ ] Unit test strength-label calculation, growth materialization or explicit no-op, occupancy blocking, battle creation from neutral contact, and cleanup after defeat.
-- [ ] Audit: confirm neutral-army behavior supports the first playable map and matches the canister AI limits for neutral battle behavior.
-- [ ] Commit after this checkpoint.
+- [x] Implement neutral army rows, stacks, strength labels, visibility redaction, occupancy, and growth fields.
+- [x] Implement neutral-army encounter triggers from strategic movement and object interaction.
+- [x] Implement v1 neutral behavior: guard aggression, no roaming unless promoted by a later spec update, optional join logic disabled unless bounded by Part 2.
+- [x] Unit test strength-label calculation, growth materialization or explicit no-op, occupancy blocking, battle creation from neutral contact, and cleanup after defeat.
+- [x] Audit: confirm neutral-army behavior supports the first playable map and matches the canister AI limits for neutral battle behavior.
+- [x] Commit after this checkpoint.
 
 ## 11B. Strategic Headless Playable Gate
 

@@ -14,6 +14,7 @@ pub mod fixtures;
 pub mod lifecycle;
 pub mod map;
 pub mod movement;
+pub mod neutral;
 pub mod rng;
 pub mod town;
 pub mod world_object;
@@ -82,6 +83,14 @@ pub use movement::{
     MovementSystemCommandRecord, MovementTimeView, ObjectStopDraft,
     build_first_playable_movement_state, preview_move_path, run_first_playable_movement_smoke,
     submit_move_intent, sync_session_turn,
+};
+pub use neutral::{
+    NeutralArmyEncounterRecord, NeutralArmyRecord, NeutralArmyStackRecord, NeutralArmyView,
+    NeutralArmyViewResult, NeutralBehaviorPolicy, NeutralError, NeutralGrowthOutcome,
+    NeutralSmokeView, NeutralState, apply_neutral_encounters_from_movement,
+    build_first_playable_neutral_state, defeat_neutral_army, materialize_neutral_growth,
+    run_first_playable_neutral_smoke, start_guarded_object_encounter, start_neutral_encounter,
+    strength_label_for_quantity,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

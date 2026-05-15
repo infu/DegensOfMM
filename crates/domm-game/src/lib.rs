@@ -7,6 +7,7 @@
 pub mod command;
 pub mod content;
 pub mod driver;
+pub mod economy;
 pub mod fixtures;
 pub mod lifecycle;
 pub mod map;
@@ -34,6 +35,13 @@ pub use content::{
 pub use driver::{
     ActiveMatchView, DriverCall, DriverError, HeadlessBackend, HeadlessGameDriver, PlayerView,
     ScriptedBackend, SessionView,
+};
+pub use economy::{
+    BASE_TOWN_GOLD_INCOME, EconomyError, EconomyParticipantRecord, EconomySmokeView, EconomyState,
+    IncomeSourceRecord, ResourceApplyBudget, ResourceApplyOutcome, ResourceBalances,
+    ResourceCapMode, ResourceDelta, ResourceLedgerEntryRecord, ResourceLedgerTurnSummaryRecord,
+    ResourcePileEconomyRecord, build_first_playable_economy_state,
+    run_first_playable_economy_smoke,
 };
 pub use fixtures::{
     CommandNonces, FIRST_PLAYABLE_SCENARIO_SEED, FixtureClock, FixtureIds, FixturePrincipals,

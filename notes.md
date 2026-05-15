@@ -270,6 +270,24 @@ Suggested follow-up:
 
 When canister entrypoints land, mirror the probe backend trait with real query calls and keep the Gate B test as an external contract test. Later checkpoints should add DTO fields before client code needs private rows, especially for resources, town actions, movement previews, and battle state.
 
+## 2026-05-15 - Checkpoint 7 Economy Audit
+
+Area: resources, ledger, lazy income
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 7 added a split pure economy module for participant balances, income sources, resource piles, resource ledger entries, turn summaries, lazy income materialization, cap handling, and first-playable economy smoke coverage. Resource mutations flow through deterministic ledger keys and idempotent `command_id + ledger_key` rows; replay skips applied rows, resumes after bounded partial application, and fails closed on balance mismatches. Lazy income is bounded to 14 turns, setup starts `last_income_turn` at turn 1, player rewards fail over cap, and system income can saturate at the numeric cap.
+
+Impact:
+
+The first playable economy path can collect a resource pile, capture an income source, materialize income, and summarize ledger rows without double-applying rewards or income. Ownership cutover materializes old-owner and new-owner income before changing the source owner, then delays new source income until subsequent turns. This remains pure harness state; durable IcyDB repository writes and public canister command endpoints are still future work.
+
+Suggested follow-up:
+
+Checkpoint 8 should consume `EconomyState` through the same ledger protocol before build/recruit spends. When generated repositories are wired, preserve the same recovery order: command/effect row, deterministic resource ledger rows, participant balance update, then event/output row.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

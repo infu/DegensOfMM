@@ -127,13 +127,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 7. Resources, Economy, And Lazy State
 
-- [ ] Implement participant balances, resource ledger entries, income sources, turn summaries, and bounded lazy materialization.
-- [ ] Enforce resource caps and saturating math.
-- [ ] Implement ownership cutover rules for income-producing sources.
-- [ ] Extend the headless smoke path with a resource pickup and one income materialization.
-- [ ] Unit test idempotent ledger writes, partial recovery, income catch-up caps, capture cutover, cap rejection, and summary generation.
-- [ ] Audit: confirm every resource mutation can recover safely after a trap and cannot double-apply.
-- [ ] Commit after this checkpoint.
+- [x] Implement participant balances, resource ledger entries, income sources, turn summaries, and bounded lazy materialization.
+- [x] Enforce resource caps and saturating math.
+- [x] Implement ownership cutover rules for income-producing sources.
+- [x] Extend the headless smoke path with a resource pickup and one income materialization.
+- [x] Unit test idempotent ledger writes, partial recovery, income catch-up caps, capture cutover, cap rejection, and summary generation.
+- [x] Audit: confirm every resource mutation can recover safely after a trap and cannot double-apply.
+- [x] Commit after this checkpoint.
 
 ## 8. Towns, Buildings, And Recruitment
 

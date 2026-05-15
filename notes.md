@@ -288,6 +288,24 @@ Suggested follow-up:
 
 Checkpoint 8 should consume `EconomyState` through the same ledger protocol before build/recruit spends. When generated repositories are wired, preserve the same recovery order: command/effect row, deterministic resource ledger rows, participant balance update, then event/output row.
 
+## 2026-05-15 - Checkpoint 8 Town And Recruitment Audit
+
+Area: towns, buildings, recruitment
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 8 added a split pure town module for town rows, authoritative building rows, recruit pools, garrison/champion stacks, champion-location checks, build/recruit previews, build/recruit commands, cache repair, lazy recruit growth, and the first-playable build/recruit smoke path. Build and recruit spends go through `EconomyState` resource ledger rows before town mutations. Retry paths detect already-applied spend ledger rows and finish missing building/stack mutations without charging again.
+
+Impact:
+
+The first playable town loop can build `freehold-training-yard`, create a `mudhook-levy` recruit pool, grow it lazily by week, and recruit into a town garrison. Tests cover missing prerequisites, duplicate buildings, affordability, lazy growth caps, champion-at-town validation, full or incompatible stack targets, cache repair from building rows, and recovery after build/recruit spend interruptions. No durable occupancy updates or public canister command rows are wired yet; this remains a pure rules layer.
+
+Suggested follow-up:
+
+Checkpoint 9 should consume the same army stack shape for champion strategic state. When movement and real canister commands land, town/recruit commands need to update map occupancy/events through the command/effect saga after the resource ledger and stack mutations complete.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

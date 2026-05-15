@@ -12,6 +12,7 @@ pub mod fixtures;
 pub mod lifecycle;
 pub mod map;
 pub mod rng;
+pub mod town;
 
 pub use command::{
     ActorKind, CommandActor, CommandCoreError, CommandEffectRecord, CommandPhase, CommandStatus,
@@ -63,4 +64,9 @@ pub use map::{
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,
     roll_between_inclusive,
+};
+pub use town::{
+    ArmyStackRecord, BuildPreview, ChampionTownRecord, RecruitPreview, RecruitTarget,
+    TownBuildingRecord, TownError, TownRecord, TownRecruitPoolRecord, TownSmokeView, TownState,
+    build_first_playable_town_state, run_first_playable_town_smoke,
 };

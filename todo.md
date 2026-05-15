@@ -137,13 +137,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 8. Towns, Buildings, And Recruitment
 
-- [ ] Implement town ownership, buildings, recruit pools, build commands, recruit commands, target selection, and garrison/champion stack merge rules.
-- [ ] Keep derived town caches repairable from authoritative rows.
-- [ ] Implement `preview_build_town_structure` and `preview_recruit_units` with the same validation and affordability rules but without writes.
-- [ ] Extend the headless smoke path with one build and one recruit action from the first playable walkthrough.
-- [ ] Unit test build prerequisites, duplicate builds, recruit pool growth, champion-at-town checks, full target errors, stack compatibility, and resource spend rollback/recovery.
-- [ ] Audit: confirm town state, recruit state, resources, events, and occupancy remain coherent through command recovery.
-- [ ] Commit after this checkpoint.
+- [x] Implement town ownership, buildings, recruit pools, build commands, recruit commands, target selection, and garrison/champion stack merge rules.
+- [x] Keep derived town caches repairable from authoritative rows.
+- [x] Implement `preview_build_town_structure` and `preview_recruit_units` with the same validation and affordability rules but without writes.
+- [x] Extend the headless smoke path with one build and one recruit action from the first playable walkthrough.
+- [x] Unit test build prerequisites, duplicate builds, recruit pool growth, champion-at-town checks, full target errors, stack compatibility, and resource spend rollback/recovery.
+- [x] Audit: confirm town state, recruit state, resources, events, and occupancy remain coherent through command recovery.
+- [x] Commit after this checkpoint.
 
 ## 9. Champions, Armies, Artifacts, And Strategic State
 

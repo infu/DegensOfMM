@@ -79,6 +79,11 @@ fn important_unique_indexes_match_checkpoint_one_invariants() {
     );
     assert_unique_index(ResourceLedgerEntry::MODEL, &["command_id", "ledger_key"]);
     assert_unique_index(CommandEffect::MODEL, &["command_id", "effect_key"]);
+    assert_unique_index(PendingEffect::MODEL, &["session_id", "effect_key"]);
+    assert_unique_index(
+        GameEventTurnSummary::MODEL,
+        &["session_id", "audience_key", "turn_number"],
+    );
     assert_unique_index(
         BattleOccupancy::MODEL,
         &["battle_id", "battle_x", "battle_y"],

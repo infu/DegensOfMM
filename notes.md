@@ -144,6 +144,42 @@ Suggested follow-up:
 
 Use `account_principal` consistently in checkpoint 5 account/lobby APIs, or update `spec.md` to match the valid IcyDB field name.
 
+## 2026-05-15 - Checkpoint 2 Command/Event/Recovery Audit
+
+Area: command core
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 2 added a pure command journal that mirrors the durable `GameCommand`, `LobbyCommand`, `CommandEffect`, `PendingEffect`, and `GameEvent` row contracts. It covers actor kinds, lifecycle/status views, SHA-256 payload hashes, nonce idempotency, retryable failures, bounded recovery, event-key idempotency, numeric event cursors, per-audience redaction, and turn summaries.
+
+Impact:
+
+There are no real gameplay mutations yet beyond the harness, so the audit target is the reusable mutation surface rather than lobby/movement/economy write paths. Query-style reads in this core return status/event DTOs without performing recovery writes; later gameplay systems must route every mutation through this command/effect/event layer before marking their checkpoint complete.
+
+Suggested follow-up:
+
+When checkpoint 5 introduces public lobby/session APIs, add repository-backed integration tests that prove the pure command journal semantics are preserved through generated IcyDB create/query/update calls.
+
+## 2026-05-15 - IcyDB Created At Field Is Implicit
+
+Area: IcyDB ergonomics
+Severity: low
+Status: open
+
+Observation:
+
+`GameCommand` and `LobbyCommand` indexes can reference `created_at` even though the field is not declared in the handwritten entity field list. Adding an explicit `created_at` field caused duplicate-field macro errors, which indicates IcyDB supplies this audit field implicitly.
+
+Impact:
+
+The schema matches the command recovery lookup intent, but future agents should not add explicit `created_at` fields just because only the indexes mention them.
+
+Suggested follow-up:
+
+Document implicit entity fields in the local schema notes or upstream IcyDB docs if this remains surprising during repository-wrapper work.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

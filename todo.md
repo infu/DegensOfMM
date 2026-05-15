@@ -66,13 +66,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 2. Command, Event, And Recovery Core
 
-- [ ] Implement `GameCommand`, `LobbyCommand`, `CommandEffect`, `PendingEffect`, `GameEvent`, and event sequence allocation.
-- [ ] Implement command lifecycle states, idempotency keys, payload hashes, actor model, retryable errors, and command status reads.
-- [ ] Implement bounded recovery for pending/applying commands before turn advancement.
-- [ ] Implement the durable event log as the replay/audit surface with audience redaction, numeric cursors, event summaries, and event-key idempotency.
-- [ ] Unit test command dedupe, payload mismatch rejection, retry recovery, event key idempotency, event sequence gaps, and budget exhaustion.
-- [ ] Audit: verify every gameplay mutation has a command/effect/event recovery surface and that query methods do not perform recovery writes.
-- [ ] Commit after this checkpoint.
+- [x] Implement `GameCommand`, `LobbyCommand`, `CommandEffect`, `PendingEffect`, `GameEvent`, and event sequence allocation.
+- [x] Implement command lifecycle states, idempotency keys, payload hashes, actor model, retryable errors, and command status reads.
+- [x] Implement bounded recovery for pending/applying commands before turn advancement.
+- [x] Implement the durable event log as the replay/audit surface with audience redaction, numeric cursors, event summaries, and event-key idempotency.
+- [x] Unit test command dedupe, payload mismatch rejection, retry recovery, event key idempotency, event sequence gaps, and budget exhaustion.
+- [x] Audit: verify every gameplay mutation has a command/effect/event recovery surface and that query methods do not perform recovery writes.
+- [x] Commit after this checkpoint.
 
 ## 3. Deterministic Pseudo-Random Module
 

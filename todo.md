@@ -165,14 +165,14 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 10. Movement Intents And Turn Sync
 
-- [ ] Implement replaceable movement intents, submit-time validation, movement snapshots, turn-final movement resolution, partial cursors, and `sync_session_turn`.
-- [ ] Resolve simultaneous movement in deterministic microsteps.
-- [ ] Use idempotent system commands for turn resolution.
-- [ ] Implement `preview_move_path` with the same deterministic validation rules but without writes.
-- [ ] Extend the headless smoke path with movement across at least two turn windows.
-- [ ] Unit test intent replacement, hidden blockers, tile conflicts, crossing conflicts, object interaction stops, partial sync, budget exhaustion, and recovery after a trap.
-- [ ] Audit: confirm update calls recover pending/applying commands before advancing the turn and queries never finalize movement.
-- [ ] Commit after this checkpoint.
+- [x] Implement replaceable movement intents, submit-time validation, movement snapshots, turn-final movement resolution, partial cursors, and `sync_session_turn`.
+- [x] Resolve simultaneous movement in deterministic microsteps.
+- [x] Use idempotent system commands for turn resolution.
+- [x] Implement `preview_move_path` with the same deterministic validation rules but without writes.
+- [x] Extend the headless smoke path with movement across at least two turn windows.
+- [x] Unit test intent replacement, hidden blockers, tile conflicts, crossing conflicts, object interaction stops, partial sync, budget exhaustion, and recovery after a trap.
+- [x] Audit: confirm update calls recover pending/applying commands before advancing the turn and queries never finalize movement.
+- [x] Commit after this checkpoint.
 
 ## 11. World Objects, Pickups, Mines, And Captures
 

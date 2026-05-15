@@ -13,6 +13,7 @@ pub mod effects;
 pub mod fixtures;
 pub mod lifecycle;
 pub mod map;
+pub mod movement;
 pub mod rng;
 pub mod town;
 
@@ -72,6 +73,14 @@ pub use map::{
     Viewport, VisibilityChunkRecord, WorldObjectRecord, build_first_playable_map_state,
     build_first_playable_map_state_for_ids, empty_visibility_blob, read_visibility_bit,
     set_visibility_bit,
+};
+pub use movement::{
+    BattleStartDraft, MoveCoord, MovementError, MovementIntentRecord, MovementIntentSubmitOutcome,
+    MovementPathStop, MovementPreview, MovementResolutionCursor, MovementSmokeView,
+    MovementSnapshotRecord, MovementState, MovementSyncBudget, MovementSyncOutcome,
+    MovementSystemCommandRecord, MovementTimeView, ObjectStopDraft,
+    build_first_playable_movement_state, preview_move_path, run_first_playable_movement_smoke,
+    submit_move_intent, sync_session_turn,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

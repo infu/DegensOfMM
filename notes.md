@@ -486,6 +486,24 @@ Suggested follow-up:
 
 Checkpoint 15 can add deterministic AI on top of the same public command surfaces. Checkpoint 16 still needs to wire the pure backend contracts into generated IcyDB repositories and canister-facing DTOs without weakening the Gate D idempotency and query-only boundaries.
 
+## 2026-05-15 - Checkpoint 15 AI Audit
+
+Area: deterministic canister-safe AI
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 15 added a split pure `ai` module for bounded actor inputs, small actor state, deterministic command drafts, candidate caps, per-update command caps, no-op fallback, battle defend decisions, and strategic build/recruit/sync/move candidates based on public DTOs. AI command nonces and tie-breaks use the existing keyed `RollKey`/`hash64` helper with explicit session seed, turn, actor, and candidate inputs.
+
+Impact:
+
+The AI layer emits command drafts only; it does not mutate gameplay state directly. The normal command/recovery/event paths remain responsible for applying AI actions. Focused tests cover same-state same-command determinism, legal battle defend fallback, actor/command caps, no-available no-op behavior, fail-closed zero budget, and unsupported actor rejection.
+
+Suggested follow-up:
+
+Checkpoint 16 should expose these AI command drafts through canister update APIs and generated IcyDB command rows using `actor_kind = "ai"`. Full bot opponents remain deferred; the current v1 surface covers neutral battle behavior and optional autopilot-style command generation.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

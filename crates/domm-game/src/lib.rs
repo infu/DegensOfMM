@@ -5,6 +5,7 @@
 //! rules can be tested before and alongside persistence work.
 
 pub mod aftermath;
+pub mod ai;
 pub mod battle;
 pub mod champion;
 pub mod command;
@@ -31,6 +32,11 @@ pub use aftermath::{
     resolve_neutral_battle_for_fixture, retreat_surrender_policy,
     run_first_playable_aftermath_smoke, seed_resolved_champion_defeat_battle,
     seed_resolved_town_capture_battle,
+};
+pub use ai::{
+    AI_MAX_ACTORS_PER_UPDATE, AI_MAX_CANDIDATES_PER_ACTOR, AI_MAX_EMITTED_COMMANDS_PER_UPDATE,
+    AiActorStateRecord, AiCommandDraft, AiDecisionInput, AiError, AiUpdateReport, decide_for_actor,
+    run_ai_update,
 };
 pub use battle::{
     BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,

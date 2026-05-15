@@ -242,12 +242,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 15. AI Player
 
-- [ ] Implement deterministic canister-safe AI command generation.
-- [ ] Keep AI decisions bounded, fast, and based only on visible/persisted state plus deterministic pseudo-random keyed rolls.
-- [ ] Enforce per-turn AI command caps.
-- [ ] Unit test same-state same-command behavior, command caps, no available action behavior, and fail-closed budget behavior.
-- [ ] Audit: scan AI code for IC randomness, wall-clock branching, unbounded search, hidden-information reads, and direct gameplay writes.
-- [ ] Commit after this checkpoint.
+- [x] Implement deterministic canister-safe AI command generation.
+- [x] Keep AI decisions bounded, fast, and based only on visible/persisted state plus deterministic pseudo-random keyed rolls.
+- [x] Enforce per-turn AI command caps.
+- [x] Unit test same-state same-command behavior, command caps, no available action behavior, and fail-closed budget behavior.
+- [x] Audit: scan AI code for IC randomness, wall-clock branching, unbounded search, hidden-information reads, and direct gameplay writes.
+- [x] Commit after this checkpoint.
 
 ## 16. API DTOs And Client Contract
 

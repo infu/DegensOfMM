@@ -55,14 +55,14 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 1. IcyDB Schema Baseline
 
-- [ ] Implement the Part 2 entity schema in IcyDB.
-- [ ] Keep indexes within IcyDB limits and match the spec's intended lookup paths.
-- [ ] Model strong and weak relations according to ownership and cleanup requirements.
-- [ ] Add generated or hand-written repository access wrappers where needed.
-- [ ] Keep generic SQL/DDL disabled for public gameplay APIs; allow diagnostics or fixture loading only behind controller/test-only gates.
-- [ ] Unit test important schema invariants: unique command keys, event sequence uniqueness, occupancy uniqueness, participant/session uniqueness, and relation cleanup assumptions.
-- [ ] Audit: compare every implemented entity, relation, unique index, status field, and default against `spec.md`.
-- [ ] Commit after this checkpoint.
+- [x] Implement the Part 2 entity schema in IcyDB.
+- [x] Keep indexes within IcyDB limits and match the spec's intended lookup paths.
+- [x] Model strong and weak relations according to ownership and cleanup requirements.
+- [x] Add generated or hand-written repository access wrappers where needed.
+- [x] Keep generic SQL/DDL disabled for public gameplay APIs; allow diagnostics or fixture loading only behind controller/test-only gates.
+- [x] Unit test important schema invariants: unique command keys, event sequence uniqueness, occupancy uniqueness, participant/session uniqueness, and relation cleanup assumptions.
+- [x] Audit: compare every implemented entity, relation, unique index, status field, and default against `spec.md`.
+- [x] Commit after this checkpoint.
 
 ## 2. Command, Event, And Recovery Core
 

@@ -9,6 +9,7 @@ description = "Schema and macro regression tests for Degens of Misery & Mayhem"
 
 [dependencies]
 domm-degens-schema = { workspace = true }
+icydb = { workspace = true }
 
 [lints]
 workspace = true

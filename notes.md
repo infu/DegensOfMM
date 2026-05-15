@@ -108,6 +108,42 @@ Suggested follow-up:
 
 Revisit after IcyDB supports a cleaner no-SQL native build, or keep the generated SQL feature compiled but config-disabled for controller/test-only surfaces.
 
+## 2026-05-15 - Checkpoint 1 Schema Baseline Audit
+
+Area: schema
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 1 implemented the 45 Part 2 IcyDB entities from `spec.md`, including content definitions, sessions, participants, map/visibility/occupancy, towns, champions, artifacts, neutral armies, battles, commands, events, and pending effects. Macro tests now assert key unique indexes and selected strong/weak relation cleanup assumptions.
+
+Impact:
+
+The schema can compile and register generated model metadata for the full first-playable durable state surface before command systems are implemented.
+
+Suggested follow-up:
+
+Checkpoint 2 should add command/effect/event repository code and convert metadata-only command invariant tests into write-path idempotency tests.
+
+## 2026-05-15 - Reserved Principal Field Name
+
+Area: schema
+Severity: low
+Status: resolved
+
+Observation:
+
+IcyDB rejects a field named `principal` because `principal` is reserved by Candid. `PlayerAccount.principal` from `spec.md` was implemented as `account_principal` with the same unique lookup semantics.
+
+Impact:
+
+This is a small schema naming deviation from the text spec, but it preserves the intended principal-to-player uniqueness invariant and keeps generated Candid/Rust code valid.
+
+Suggested follow-up:
+
+Use `account_principal` consistently in checkpoint 5 account/lobby APIs, or update `spec.md` to match the valid IcyDB field name.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

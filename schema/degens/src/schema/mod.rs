@@ -1,5 +1,9 @@
 use icydb::design::prelude::*;
 
+pub mod entities;
+
+pub use entities::*;
+
 pub const DATA_MEMORY_ID: u8 = 20;
 pub const INDEX_MEMORY_ID: u8 = 21;
 pub const SCHEMA_MEMORY_ID: u8 = 22;

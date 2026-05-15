@@ -336,6 +336,7 @@ name = "domm-schema-macro-tests"
 version = "0.1.0"
 dependencies = [
  "domm-degens-schema",
+ "icydb",
 ]
 
 [[package]]

@@ -468,6 +468,24 @@ Suggested follow-up:
 
 Checkpoint 14A should drive the same path through public backend commands and queries from lobby start to victory. Checkpoint 16 should preserve these aftermath command, event, and idempotency semantics when generated IcyDB repositories replace the in-memory fixture state.
 
+## 2026-05-15 - Checkpoint 14A Backend Gate Audit
+
+Area: backend-only first playable gate
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 14A added a split `playable` gate module that runs the existing public strategic backend from player registration and lobby start through the neutral blocker, then continues through public battle, sync, aftermath, town-capture, champion-defeat, match-inspection, and event-refresh calls. The gate includes an exact battle-action retry with the same nonce, a turn sync, a battle sync, resource pickup/income/build/recruit mutations, the neutral movement blocker, and a final event page refresh.
+
+Impact:
+
+Gate D now completes the first playable backend path to victory in the normal regression suite. Current deterministic metrics are 32 command/update calls, 42 events, 19 queries, 190 estimated storage rows, and a 5072-byte max query estimate. No slow-query or row-growth concern crossed the current gate thresholds.
+
+Suggested follow-up:
+
+Checkpoint 15 can add deterministic AI on top of the same public command surfaces. Checkpoint 16 still needs to wire the pure backend contracts into generated IcyDB repositories and canister-facing DTOs without weakening the Gate D idempotency and query-only boundaries.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

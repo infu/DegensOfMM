@@ -35,7 +35,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate A after checkpoint 5: a headless test can create, join, start, and inspect an active match.
 - [x] Gate B after checkpoint 6A: a minimal client/probe can render the first playable map from public DTOs.
 - [x] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
-- [ ] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
+- [x] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
 - [ ] Gate E after checkpoint 18: the web client can play the first playable match path end to end.
 - [ ] Gate F after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable scope.
 - [ ] Gate G after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
@@ -232,13 +232,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 14A. Backend Match Playable Gate
 
-- [ ] Create a backend-only first playable fixture that starts from lobby creation and ends in victory using public command/query functions.
-- [ ] Include at least one recovery retry, one turn sync, one battle sync, one resource mutation, one recruit, one movement conflict or blocker case, and one event refresh.
-- [ ] Keep the fixture deterministic and fast enough to run in the normal regression suite.
-- [ ] Measure command costs, event volume, storage row growth, and slow queries; record concerns in `DoMM/notes.md`.
-- [ ] Audit: read the first playable requirements in `spec.md` and fix any missing backend behavior before starting AI or full client work.
-- [ ] Gate D: the backend can complete a real match path without private test hooks.
-- [ ] Commit after this checkpoint.
+- [x] Create a backend-only first playable fixture that starts from lobby creation and ends in victory using public command/query functions.
+- [x] Include at least one recovery retry, one turn sync, one battle sync, one resource mutation, one recruit, one movement conflict or blocker case, and one event refresh.
+- [x] Keep the fixture deterministic and fast enough to run in the normal regression suite.
+- [x] Measure command costs, event volume, storage row growth, and slow queries; record concerns in `DoMM/notes.md`.
+- [x] Audit: read the first playable requirements in `spec.md` and fix any missing backend behavior before starting AI or full client work.
+- [x] Gate D: the backend can complete a real match path without private test hooks.
+- [x] Commit after this checkpoint.
 
 ## 15. AI Player
 

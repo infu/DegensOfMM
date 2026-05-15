@@ -1,5 +1,8 @@
 use candid::Principal;
 
+use crate::aftermath::{
+    AftermathError, AftermathState, MatchSessionRecord, build_first_playable_aftermath_state,
+};
 use crate::champion::{ChampionState, build_first_playable_champion_state};
 use crate::driver::{ActiveMatchView, HeadlessBackend, PlayerView, SessionView};
 use crate::economy::{EconomyState, build_first_playable_economy_state};
@@ -65,6 +68,40 @@ impl StrategicFixtureBackend {
     #[must_use]
     pub fn calls(&self) -> &[StrategicCall] {
         &self.calls
+    }
+
+    #[must_use]
+    pub fn command_count(&self) -> u32 {
+        self.command_count
+    }
+
+    #[must_use]
+    pub fn event_count(&self) -> u32 {
+        self.event_count
+    }
+
+    #[must_use]
+    pub fn query_count(&self) -> u32 {
+        self.query_count
+    }
+
+    pub fn export_aftermath_state(&self) -> Result<AftermathState, AftermathError> {
+        let mut state = build_first_playable_aftermath_state()?;
+        state.session = MatchSessionRecord {
+            session_id: self.fixture.ids.session_id.clone(),
+            state: "active".to_string(),
+            current_turn: self.movement.current_turn,
+            max_turns: state.session.max_turns,
+            winner_participant_id: None,
+            finish_reason: None,
+            last_command_id: Some("command:strategic:export-aftermath".to_string()),
+        };
+        state.champions = self.champions.clone();
+        state.town = self.town.clone();
+        state.economy = self.economy.clone();
+        state.map = self.map.clone();
+        state.neutral = self.neutral.clone();
+        Ok(state)
     }
 
     fn participant_for_caller(&self, caller: Principal) -> Result<&str, StrategicError> {

@@ -17,6 +17,7 @@ pub mod lifecycle;
 pub mod map;
 pub mod movement;
 pub mod neutral;
+pub mod playable;
 pub mod rng;
 pub mod strategic;
 pub mod town;
@@ -118,6 +119,10 @@ pub use neutral::{
     build_first_playable_neutral_state, defeat_neutral_army, materialize_neutral_growth,
     run_first_playable_neutral_smoke, start_guarded_object_encounter, start_neutral_encounter,
     strength_label_for_quantity,
+};
+pub use playable::{
+    PlayableBattleView, PlayableCall, PlayableCommandReceipt, PlayableError, PlayableEventPage,
+    PlayableFixtureBackend, PlayableGateReport, PlayableMatchView, run_first_playable_backend_gate,
 };
 pub use rng::{
     BoundedRoll, DeterministicRoll, RngError, RollAudit, RollKey, hash64, roll_below,

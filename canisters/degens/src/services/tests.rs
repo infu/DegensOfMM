@@ -94,7 +94,7 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
 
     let mut final_start = None;
     let mut final_start_nonce = String::new();
-    for step in 0..16 {
+    for step in 0..18 {
         let nonce = format!("nonce:service:start:{step}");
         let response =
             account_lobby_session::start_session(player_one, session_id.clone(), nonce.clone())

@@ -14,20 +14,20 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
         assert!(!endpoint.fixture_mapping.is_empty());
     }
 
-    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 49);
+    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 54);
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Update)
             .count(),
-        22
+        23
     );
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Query)
             .count(),
-        27
+        31
     );
     assert!(names.contains("register_player"));
     assert!(names.contains("get_game_view"));
@@ -50,6 +50,11 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
     assert!(names.contains("sync_objectives"));
     assert!(names.contains("sync_world_events"));
     assert!(names.contains("sync_advanced_victory"));
+    assert!(names.contains("get_skirmish_settings"));
+    assert!(names.contains("get_procedural_map_state"));
+    assert!(names.contains("get_naval_routes"));
+    assert!(names.contains("get_siege_rules"));
+    assert!(names.contains("sync_world_generation"));
 }
 
 #[test]
@@ -150,6 +155,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/api/game_view.rs",
         "src/api/movement.rs",
         "src/api/scenario_progress.rs",
+        "src/api/worldgen.rs",
         "src/api/town.rs",
         "src/api/battle.rs",
         "src/api/champion_magic.rs",
@@ -163,6 +169,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/game_view.rs",
         "src/services/movement.rs",
         "src/services/scenario_progress.rs",
+        "src/services/worldgen.rs",
         "src/services/town.rs",
         "src/services/battle.rs",
         "src/services/champion_magic.rs",
@@ -174,6 +181,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/diagnostics.rs",
         "src/repos/players.rs",
         "src/repos/scenario_progress.rs",
+        "src/repos/worldgen.rs",
         "src/repos/sessions.rs",
         "src/repos/commands_events_effects.rs",
         "src/repos/content.rs",

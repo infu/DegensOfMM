@@ -4928,7 +4928,15 @@ GameView {
 }
 ```
 
-The backend assembles content names, asset keys, ownership, effective movement, visible object state, and action affordances so the frontend does not need N+1 reads.
+The pure backend can assemble content names, asset keys, ownership, effective
+movement, visible object state, and action affordances into one render-ready
+view. The canister backend keeps `get_game_view` as a lightweight session shell
+and exposes the same detail through dedicated bounded endpoints
+(`get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`,
+`get_champion_view`, `get_town_view`, `get_events_after`, and
+`get_battle_state`) because combining the full render view in one canister query
+exceeds the IC single-message instruction budget after the durable schema
+expansion.
 
 Core DTO names and required fields:
 
@@ -5782,7 +5790,8 @@ Authoritative triage artifact: `docs/full-spec-expansion-triage.md`.
 | Tavern hiring, defeated champion reappearance, marketplace trading, external dwellings, direct map recruitment, advanced economy buildings, additional resource sources | promote-to-Part-2-first | Checkpoint 23 |
 | Central objective tracking, one opening quest, weekly world events, quest reward claim, and typed scenario rules | promoted and implemented | Checkpoint 24 |
 | Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond disabled row visibility | promote-to-Part-2-first | Future scenario expansion |
-| Complex siege engines, walls/gates/towers, naval maps, boats, water movement layers, seeded procedural generation, skirmish settings, larger map variants | promote-to-Part-2-first | Checkpoint 25 |
+| Skirmish settings, deterministic first-playable procedural preview metadata, and disabled naval/siege/larger-map boundary rows | promoted and implemented | Checkpoint 25 |
+| Active boats, water movement layers, naval map gameplay, complex siege engines, walls/gates/towers, siege actions, and larger procedural map materialization | promote-to-Part-2-first | Future world-generation expansion |
 | Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
 | Full bot opponents and general strategic planners | still-deferred | Requires a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
 | Sequential player turns and hotseat-only backend rules | removed from implementation scope | Superseded by simultaneous timed turns. Multiple local players can use normal account/session flows. |
@@ -5848,14 +5857,17 @@ surfaces; deterministic event/reward keys; caps for active quests, objective
 rows, event rows, rule rows, and victory checks per update; redacted
 progress/reward DTOs; cleanup; and Pocket-IC endpoint coverage.
 
-Checkpoint 25, siege/naval/procedural/skirmish, must define map-generation jobs,
-generated content manifests, water/boat occupancy, siege objects, fortification
-state, and skirmish settings. It must add indexes by session, generation step,
-chunk, object, occupant, battle, and scenario hash; generation, boat movement,
-siege action, and skirmish creation endpoints; deterministic generation,
-movement, and siege keys; caps for map dimensions, generated chunks per update,
-path length, water crossings, siege objects, battle obstacles, and visibility
-fan-out; map/battle DTOs; cleanup; and Pocket-IC endpoint coverage.
+Checkpoint 25, siege/naval/procedural/skirmish, implemented the bounded
+first world-generation slice: skirmish settings, deterministic first-playable
+procedural preview metadata, and explicit disabled rows for naval routes,
+siege rules, and larger-map gameplay. It adds indexes by session, generation
+key, route key, rule key, and status; skirmish/procedural/naval/siege query
+endpoints plus a generation sync update; deterministic generation keys; caps
+for map dimensions, generated chunks per update, route rows, water crossings,
+siege rule rows, and battle obstacles; DTOs; cleanup; and Pocket-IC endpoint
+coverage. Active boat movement, water movement layers, siege actions, and
+larger procedural map materialization remain future world-generation expansion
+work.
 
 Checkpoint 26, meta and long-term systems, must define rematch, campaign,
 leaderboard, guild, diplomacy, and expanded history rows. It must add indexes by
@@ -6278,3 +6290,158 @@ QuestState links strongly to the owning participant and weakly to accept/claim c
 WorldEventState and ScenarioRuleState keep weak command audit links.
 ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
 ```
+
+## 24.8 Checkpoint 25 World Generation Boundaries
+
+Checkpoint 25 promotes a bounded first slice of siege/naval/procedural/skirmish
+systems: persisted skirmish settings, deterministic first-playable procedural
+preview metadata, and explicit disabled rows for naval route and siege rule
+surfaces. Active boat movement, siege actions, walls/gates/towers gameplay, and
+larger generated map materialization remain future expansion work.
+
+IcyDB schema:
+
+```text
+SkirmishSettingsState:
+  session_id, profile_key, status, map_seed, map_width, map_height, chunk_size
+  player_count, fog_enabled, neutral_difficulty, victory_condition
+  generation_key, naval_enabled, siege_enabled, larger_map_enabled
+  last_command_id
+
+ProceduralMapState:
+  session_id, generation_key, status, map_seed, map_width, map_height
+  chunk_size, chunk_count, land_tile_count, water_tile_count, road_tile_count
+  town_count, mine_count, scenario_hash, generated_turn, last_command_id
+
+NavalRouteState:
+  session_id, route_key, status, from_x, from_y, to_x, to_y
+  water_crossings, boat_required, disabled_reason, last_command_id
+
+SiegeRuleState:
+  session_id, rule_key, status, fortification_level, wall_segments, gate_count
+  tower_count, siege_engine_slots, battle_obstacle_cap, disabled_reason
+  last_command_id
+```
+
+Indexes and lookup paths:
+
+```text
+SkirmishSettingsState:
+  session_id unique
+  profile_key + status
+  generation_key
+
+ProceduralMapState:
+  session_id + generation_key unique
+  session_id + status
+  generation_key
+
+NavalRouteState:
+  session_id + route_key unique
+  session_id + status
+
+SiegeRuleState:
+  session_id + rule_key unique
+  session_id + status
+```
+
+Public endpoints and command paths:
+
+```text
+get_skirmish_settings(session_id) -> SkirmishSettingsView
+get_procedural_map_state(session_id) -> ProceduralMapView
+get_naval_routes(session_id) -> NavalRoutesView
+get_siege_rules(session_id) -> SiegeRulesView
+sync_world_generation(session_id, client_nonce) -> CommandResponse
+```
+
+Recovery and idempotency:
+
+```text
+sync_world_generation uses GameCommand actor/session/client_nonce idempotency.
+Exact retries replay the same CommandResponse.
+Same nonce with different payload returns duplicate_nonce_payload_mismatch.
+SkirmishSettingsState and ProceduralMapState record last_command_id during sync.
+GameEvent and CommandEffect use stable per-command world-generation keys.
+Read endpoints are query-only projections and do not materialize missing rows.
+Setup seeds the first world-generation rows through an idempotent setup effect.
+```
+
+Deterministic keys and caps:
+
+```text
+skirmish profile key: skirmish:first-playable-compact
+procedural generation key: procedural:first-playable-preview
+naval route key: naval:west-river-disabled
+siege rule key: siege:first-playable-disabled
+
+procedural terrain uses session seed, domain = procedural_map, y, x, terrain, water
+procedural hash uses session seed, dimensions, chunk size, water count, and road count
+
+generated map dimension cap: 64x64
+generated chunks per sync/update: 16
+naval route rows per session: 8
+siege rule rows per session: 8
+water crossings per route/path: 8
+siege battle obstacle cap: 24
+```
+
+Visibility and disabled state:
+
+```text
+SkirmishSettingsState is public to session participants because it describes match setup.
+ProceduralMapState exposes aggregate preview metadata and scenario_hash, not raw generated tiles.
+NavalRouteState and SiegeRuleState are visible disabled affordances.
+Disabled naval/siege/larger-map behavior uses disabled_reason = checkpoint_25_schema_only.
+```
+
+Tests:
+
+```text
+Pure Rust tests cover deterministic procedural preview stability, generation caps, skirmish disabled flags, boat-route validation, and siege caps.
+Schema/macro tests cover the four new entities, unique indexes, weak command links, and cleanup ordering.
+Canister unit tests cover Candid endpoint export, repository inventory, layout, diagnostics, and indexed hot-path plans.
+Pocket-IC tests call every new query/update endpoint, verify exact sync retry, and assert persisted skirmish, procedural, naval, and siege rows through public Candid methods.
+```
+
+Cleanup:
+
+```text
+SkirmishSettingsState, ProceduralMapState, NavalRouteState, and SiegeRuleState are GameSession children.
+All four rows keep weak command audit links.
+GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session command/event retention policy.
+```
+
+## 24.9 Future World-Generation Expansion Hold
+
+The checkpoint 25 runtime intentionally does not implement active siege engines,
+water movement, boat ownership, naval occupancy, wall/gate/tower combat, siege
+actions, generated chunk materialization, or larger map variants. Before any of
+those features can be implemented, a future spec subsection must be added and
+reviewed with these details:
+
+```text
+Siege engines:
+  entities for engine ownership, placement, transport, ammunition/durability, targeting, and destruction
+  battle action DTOs for engine fire, wall/gate damage, repair, breach, and disabled reasons
+  indexes by session, battle, owner participant, engine key, target fortification, command, and status
+  deterministic damage/miss/critical keys and caps for engines per battle, shots per round, and affected tiles
+
+Fortifications:
+  authoritative wall segment, gate, tower, breach, and fortification-state rows
+  cleanup and repair rules for town capture, battle aftermath, surrender, and abandoned sessions
+  hot query projections for battle view and town view that stay below IC query budgets
+
+Naval movement:
+  boat ownership/occupancy rows, embark/disembark commands, water terrain costs, route validation, and visibility redaction
+  indexes by session, participant, boat, occupant, water route, coordinate, command, and status
+  deterministic encounter/current/weather keys only after their rules are specified
+
+Procedural/larger maps:
+  generation job rows, chunk materialization rows, content manifests, seed/version migration rules, and scenario hash contracts
+  bounded generation batches, visibility fan-out caps, paging contracts, and Pocket-IC instruction/storage budgets
+```
+
+The todo for that future checkpoint must remain unchecked until the subsection
+above exists, all public endpoints are inventoried, and Pocket-IC e2e tests cover
+every new canister method.

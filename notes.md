@@ -1001,3 +1001,45 @@ Implementation notes:
   enlarged schema below Pocket-IC's update instruction cap. The public e2e
   tests drive sync loops until the expected event appears instead of assuming a
   fixed two-step update.
+
+## Checkpoint 25: Siege, Naval Movement, Procedural Maps, And Skirmish Settings
+
+Promoted the first bounded world-generation slice into Part 2 and runtime:
+persisted skirmish settings, deterministic first-playable procedural preview
+metadata, and explicit disabled rows for naval and siege surfaces.
+
+Implementation notes:
+
+- New IcyDB entities are `SkirmishSettingsState`, `ProceduralMapState`,
+  `NavalRouteState`, and `SiegeRuleState`, with unique/session indexes for the
+  skirmish profile, generation key, route key, rule key, and status lookups.
+- New canister endpoints are `get_skirmish_settings`,
+  `get_procedural_map_state`, `get_naval_routes`, `get_siege_rules`, and
+  `sync_world_generation`.
+- The first slice intentionally stores aggregate procedural metadata and a
+  deterministic scenario hash instead of materializing larger maps or raw
+  generated chunks. The current first-playable map remains the authoritative
+  playable map.
+- Naval routes, siege rules, and larger-map behavior are persisted as disabled
+  affordances with `checkpoint_25_schema_only`; active boats, water movement,
+  siege engines, gates, walls, towers, and larger map generation remain future
+  bounded expansion work.
+- Pocket-IC endpoint coverage calls every new public method, verifies exact
+  `sync_world_generation` retry replay, and checks that the new rows are visible
+  through controller-gated IcyDB diagnostics.
+- Checkpoint 25 pushed the canister Wasm over the IC code-section limit by a
+  small margin. The workspace release profile now uses LTO, one codegen unit,
+  `panic = abort`, and symbol stripping while keeping `opt-level = 3`; size-only
+  optimization made setup phases exceed the Pocket-IC update instruction cap.
+- The canister `get_game_view` remains a lightweight shell. Dedicated
+  `get_visible_map_chunks`, `get_visible_objects`, champion, town, event, and
+  battle endpoints carry detail because the aggregate map/object query no longer
+  fits the single-query instruction budget as the schema grows.
+- `get_champion_view` keeps artifact DTOs but renders the first-playable
+  equipped artifact from the indexed equipment row and known content slug instead
+  of loading artifact instance plus artifact definition rows on the hot query
+  path.
+- Active siege engines, wall/gate/tower combat, naval movement, boat ownership,
+  and larger procedural map materialization are held behind a future spec/todo
+  gate. The current rows are intentionally disabled affordances, not partial
+  gameplay.

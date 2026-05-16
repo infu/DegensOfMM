@@ -18,6 +18,7 @@ use crate::town::{
     ArmyStackRecord, BuildPreview, RecruitPreview, TownBuildingRecord, TownRecord,
     TownRecruitPoolRecord,
 };
+use crate::worldgen::WorldGenerationReceipt;
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct ApiError {
@@ -230,6 +231,7 @@ pub enum CommandResult {
     ChampionMagic(ChampionMagicReceipt),
     ExpandedEconomy(ExpandedEconomyReceipt),
     AdvancedScenario(AdvancedScenarioReceipt),
+    WorldGeneration(WorldGenerationReceipt),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]

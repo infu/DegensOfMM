@@ -49,6 +49,9 @@ pub(crate) fn preview_build_town_structure(
     let context = session_context::require_active_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let building_slug = slug_from_public_id(&building_def_id, "building:");
+    if building_slug == "freehold-training-yard" {
+        return first_playable_build_preview(&context.participant, &town, building_slug);
+    }
     let ruleset_id = ruleset_id()?;
     let building =
         content::find_building_by_ruleset_slug(ruleset_id, &building_slug)?.ok_or_else(|| {
@@ -80,6 +83,44 @@ pub(crate) fn preview_build_town_structure(
         })
     };
 
+    Ok(BuildPreview {
+        allowed: disabled_reason.is_none(),
+        disabled_reason,
+        town_id: town.id().to_string(),
+        building_slug,
+        cost,
+    })
+}
+
+fn first_playable_build_preview(
+    participant: &GameParticipant,
+    town: &Town,
+    building_slug: String,
+) -> Result<BuildPreview, ApiError> {
+    let manifest = domm_game::first_playable_content_manifest();
+    let building = manifest.building(&building_slug).ok_or_else(|| {
+        ApiError::new(
+            "building_not_found",
+            "building definition was not found",
+            false,
+        )
+    })?;
+    let cost = resource_balances(
+        building.cost.gold,
+        building.cost.wood,
+        building.cost.stone,
+        building.cost.iron,
+        building.cost.crystal,
+        building.cost.ember,
+        building.cost.aether,
+    );
+    let disabled_reason = if town.owner_participant_id != Some(participant.id().key()) {
+        Some("not_owner".to_string())
+    } else if town.last_built_turn > 0 {
+        Some("already_built".to_string())
+    } else {
+        (!can_afford(participant, &cost)).then(|| "insufficient_resources".to_string())
+    };
     Ok(BuildPreview {
         allowed: disabled_reason.is_none(),
         disabled_reason,

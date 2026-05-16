@@ -15,9 +15,10 @@ use domm_game::{
     DwellingRecruitPreview, FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView,
     GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT,
     MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage,
-    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, OPENING_QUEST_KEY,
-    ObjectViewPage, ObjectiveProgressView, ParticipantView, PlayerView, QuestPreview,
-    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, TavernOffersView,
+    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
+    OPENING_QUEST_KEY, ObjectViewPage, ObjectiveProgressView, PROCEDURAL_GENERATION_KEY,
+    ParticipantView, PlayerView, ProceduralMapView, QuestPreview, RecruitPreview, RecruitTarget,
+    ScenarioRulesView, SessionView, SiegeRulesView, SkirmishSettingsView, TavernOffersView,
     WorldEventsView, opening_viewport_for_slot,
 };
 
@@ -205,7 +206,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     );
 
     let mut active_start = None;
-    for step in 0..16 {
+    for step in 0..18 {
         let nonce = format!("nonce:presence:start:{step}");
         let started = update_as::<LobbyCommandResponse>(
             &fixture,
@@ -469,20 +470,20 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             GameViewRequest {
                 viewport: viewport.clone(),
                 chunk_cursor: None,
-                chunk_limit: 2,
+                chunk_limit: 1,
                 object_cursor: None,
-                object_limit: 4,
+                object_limit: 1,
                 events_after_seq: 0,
-                event_limit: 10,
+                event_limit: 1,
                 include_battle: false,
             },
         ),
     )
     .expect("get_game_view should decode")
     .expect("game view should load from IcyDB rows");
-    assert_eq!(game_view.map_chunks.len(), 2);
+    assert!(game_view.map_chunks.is_empty());
     assert!(game_view.map_page_info.has_more);
-    assert_eq!(game_view.objects.len(), 4);
+    assert!(game_view.objects.is_empty());
     assert!(game_view.object_page_info.has_more);
     assert!(
         game_view
@@ -579,6 +580,70 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             && rule.status == "disabled"
             && rule.disabled_reason.as_deref() == Some("checkpoint_24_schema_only")
     }));
+
+    let skirmish = query_as::<SkirmishSettingsView>(
+        &fixture,
+        player_one,
+        "get_skirmish_settings",
+        (session_id.clone(),),
+    )
+    .expect("get_skirmish_settings should decode")
+    .expect("skirmish settings should load from IcyDB rows");
+    assert_eq!(
+        skirmish.settings.profile_key,
+        "skirmish:first-playable-compact"
+    );
+    assert_eq!(skirmish.settings.generation_key, PROCEDURAL_GENERATION_KEY);
+    assert!(skirmish.settings.fog_enabled);
+    assert!(!skirmish.settings.naval_enabled);
+    assert!(!skirmish.settings.siege_enabled);
+    assert!(!skirmish.settings.larger_map_enabled);
+
+    let procedural = query_as::<ProceduralMapView>(
+        &fixture,
+        player_one,
+        "get_procedural_map_state",
+        (session_id.clone(),),
+    )
+    .expect("get_procedural_map_state should decode")
+    .expect("procedural map state should load from IcyDB rows");
+    assert_eq!(procedural.maps.len(), 1);
+    let procedural_map = &procedural.maps[0];
+    assert_eq!(procedural_map.generation_key, PROCEDURAL_GENERATION_KEY);
+    assert_eq!(procedural_map.status, "validated");
+    assert_eq!(procedural_map.chunk_count, 9);
+    assert!(procedural_map.water_tile_count > 0);
+    assert!(!procedural_map.scenario_hash.is_empty());
+
+    let naval_routes = query_as::<NavalRoutesView>(
+        &fixture,
+        player_one,
+        "get_naval_routes",
+        (session_id.clone(),),
+    )
+    .expect("get_naval_routes should decode")
+    .expect("naval route rows should load from IcyDB rows");
+    assert_eq!(naval_routes.routes.len(), 1);
+    assert_eq!(naval_routes.routes[0].status, "disabled");
+    assert_eq!(
+        naval_routes.routes[0].disabled_reason.as_deref(),
+        Some("checkpoint_25_schema_only")
+    );
+
+    let siege_rules = query_as::<SiegeRulesView>(
+        &fixture,
+        player_one,
+        "get_siege_rules",
+        (session_id.clone(),),
+    )
+    .expect("get_siege_rules should decode")
+    .expect("siege rule rows should load from IcyDB rows");
+    assert_eq!(siege_rules.rules.len(), 1);
+    assert_eq!(siege_rules.rules[0].status, "disabled");
+    assert_eq!(
+        siege_rules.rules[0].disabled_reason.as_deref(),
+        Some("checkpoint_25_schema_only")
+    );
 
     let world_events = query_as::<WorldEventsView>(
         &fixture,
@@ -713,6 +778,44 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("sync_advanced_victory replay should decode")
     .expect("sync_advanced_victory replay should succeed");
     assert_eq!(synced_victory_replay.command_id, synced_victory.command_id);
+
+    let synced_worldgen = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_world_generation",
+        (
+            session_id.clone(),
+            "nonce:presence:worldgen:sync".to_string(),
+        ),
+    )
+    .expect("sync_world_generation should decode")
+    .expect("sync_world_generation should succeed");
+    assert_eq!(synced_worldgen.status, CommandStatus::Applied);
+    match &synced_worldgen.result {
+        CommandResult::WorldGeneration(receipt) => {
+            assert_eq!(receipt.action, "sync_world_generation");
+            assert_eq!(receipt.generation_key, PROCEDURAL_GENERATION_KEY);
+            assert_eq!(receipt.state, "validated");
+            assert_eq!(receipt.chunk_count, 9);
+            assert!(!receipt.scenario_hash.is_empty());
+        }
+        other => panic!("sync_world_generation returned unexpected result: {other:?}"),
+    }
+    let synced_worldgen_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_world_generation",
+        (
+            session_id.clone(),
+            "nonce:presence:worldgen:sync".to_string(),
+        ),
+    )
+    .expect("sync_world_generation replay should decode")
+    .expect("sync_world_generation replay should succeed");
+    assert_eq!(
+        synced_worldgen_replay.command_id,
+        synced_worldgen.command_id
+    );
 
     let claimed_quest = update_as::<CommandResponse>(
         &fixture,
@@ -2192,9 +2295,31 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     )
     .expect("opening game view should load");
     assert_eq!(opening_view.session.state, "active");
-    assert!(opening_view.map_chunks.len() >= 4);
+    assert!(opening_view.map_chunks.is_empty());
+    let opening_chunks = gate_query_as::<MapChunkPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (
+            session_id.clone(),
+            viewport.clone(),
+            None::<u32>,
+            MAX_CHUNK_LIMIT,
+        ),
+    )
+    .expect("opening map chunks should load");
+    assert!(opening_chunks.chunks.len() >= 4);
+    let opening_objects = gate_query_as::<ObjectViewPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 128_u32),
+    )
+    .expect("opening objects should load");
     assert!(
-        opening_view
+        opening_objects
             .objects
             .iter()
             .any(|object| object.subject_id_text == "pile:west-wood-1")
@@ -2675,6 +2800,10 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert!(row_count(&final_storage, "QuestState") > 0);
     assert!(row_count(&final_storage, "WorldEventState") > 0);
     assert!(row_count(&final_storage, "ScenarioRuleState") > 0);
+    assert!(row_count(&final_storage, "SkirmishSettingsState") > 0);
+    assert!(row_count(&final_storage, "ProceduralMapState") > 0);
+    assert!(row_count(&final_storage, "NavalRouteState") > 0);
+    assert!(row_count(&final_storage, "SiegeRuleState") > 0);
     assert!(row_count(&final_storage, "TownBuilding") > 0);
     assert!(row_count(&final_storage, "TownGarrisonStack") > 0);
     assert!(row_count(&final_storage, "WorldObject") > 0);
@@ -2940,7 +3069,7 @@ fn start_active_two_player_session(
     .expect("player two ready should decode")
     .expect("player two ready should succeed");
 
-    for step in 0..16 {
+    for step in 0..18 {
         let started = update_as::<LobbyCommandResponse>(
             fixture,
             player_one,
@@ -2986,6 +3115,10 @@ const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
     "QuestState",
     "WorldEventState",
     "ScenarioRuleState",
+    "SkirmishSettingsState",
+    "ProceduralMapState",
+    "NavalRouteState",
+    "SiegeRuleState",
     "ResourceLedgerEntry",
     "ResourceLedgerTurnSummary",
     "TownBuilding",
@@ -3049,6 +3182,10 @@ const GATE_L_ENTITIES: &[&str] = &[
     "QuestState",
     "WorldEventState",
     "ScenarioRuleState",
+    "SkirmishSettingsState",
+    "ProceduralMapState",
+    "NavalRouteState",
+    "SiegeRuleState",
 ];
 
 impl GateJMetrics {
@@ -3230,7 +3367,7 @@ fn gate_start_active_two_player_session(
     .expect("player two ready should succeed");
     metrics.observe_lobby_response(&ready_two);
 
-    for step in 0..16 {
+    for step in 0..18 {
         let started = gate_update_as::<LobbyCommandResponse>(
             metrics,
             fixture,

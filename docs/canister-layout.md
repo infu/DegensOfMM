@@ -13,6 +13,7 @@ Public Candid endpoints live under `canisters/degens/src/api/`:
 - `town.rs`: town reads, build previews/commands, and recruitment previews/commands.
 - `economy_expansion.rs`: tavern offers/hiring, market trades, and external dwelling recruitment.
 - `scenario_progress.rs`: objective progress, scenario rules, world events, and quest endpoints.
+- `worldgen.rs`: skirmish settings, deterministic procedural preview metadata, and disabled naval/siege boundary endpoints.
 - `battle.rs`: battle read, battle sync, and battle action endpoints.
 - `events.rs`: event paging and command-status reads.
 - `content.rs`: content manifest reads.
@@ -40,6 +41,7 @@ durable row ownership:
 - economy
 - economy expansion
 - scenario progress
+- world generation
 - towns
 - champions/artifacts
 - movement

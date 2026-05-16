@@ -7,7 +7,7 @@ use icydb::{
 use super::{
     aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects, content,
     economy_expansion, foundation, map_visibility_occupancy, movement, players, scenario_progress,
-    sessions, towns,
+    sessions, towns, worldgen,
 };
 
 fn bootstrap_repo_memory() {
@@ -323,6 +323,26 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
                 .expect("scenario rule status plan should build"),
         ),
         (
+            "skirmish settings",
+            worldgen::skirmish_settings_plan_text(session_id)
+                .expect("skirmish settings plan should build"),
+        ),
+        (
+            "procedural map",
+            worldgen::procedural_map_plan_text(session_id, "procedural:first-playable-preview")
+                .expect("procedural map plan should build"),
+        ),
+        (
+            "naval routes",
+            worldgen::naval_routes_plan_text(session_id, "disabled")
+                .expect("naval route plan should build"),
+        ),
+        (
+            "siege rules",
+            worldgen::siege_rules_plan_text(session_id, "disabled")
+                .expect("siege rule plan should build"),
+        ),
+        (
             "active battles",
             battles::active_battles_plan_text(session_id, "active", 2)
                 .expect("battle plan should build"),
@@ -377,6 +397,13 @@ fn repository_query_inventory_covers_required_hot_paths() {
         scenario_progress::SCENARIO_RULE_BY_KEY_LOOKUP,
         scenario_progress::SCENARIO_RULES_BY_STATE_LOOKUP,
         scenario_progress::SCENARIO_RULES_BY_STATUS_LOOKUP,
+        worldgen::SKIRMISH_SETTINGS_BY_SESSION_LOOKUP,
+        worldgen::PROCEDURAL_MAP_BY_KEY_LOOKUP,
+        worldgen::PROCEDURAL_MAPS_BY_STATUS_LOOKUP,
+        worldgen::NAVAL_ROUTE_BY_KEY_LOOKUP,
+        worldgen::NAVAL_ROUTES_BY_STATUS_LOOKUP,
+        worldgen::SIEGE_RULE_BY_KEY_LOOKUP,
+        worldgen::SIEGE_RULES_BY_STATUS_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPION_SPELLS_LOOKUP,
         movement::MOVEMENT_INTENT_UNIQUE_LOOKUP,
@@ -425,6 +452,7 @@ fn gameplay_repositories_do_not_use_generic_sql_or_core_db() {
         include_str!("scenario_progress.rs"),
         include_str!("sessions.rs"),
         include_str!("towns.rs"),
+        include_str!("worldgen.rs"),
     ];
 
     for source in repo_sources {

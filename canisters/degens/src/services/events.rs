@@ -37,6 +37,7 @@ const GAME_COMMAND_TYPES: &[&str] = &[
     "sync_objectives",
     "sync_world_events",
     "sync_advanced_victory",
+    "sync_world_generation",
     "sync_battle",
     "submit_battle_action",
 ];
@@ -191,6 +192,8 @@ fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
         &["sync_objectives"]
     } else if client_nonce.contains("world-event") || client_nonce.contains("event") {
         &["sync_world_events"]
+    } else if client_nonce.contains("worldgen") || client_nonce.contains("generation") {
+        &["sync_world_generation"]
     } else if client_nonce.contains("victory") {
         &["sync_advanced_victory"]
     } else if client_nonce.contains("battle-action") {

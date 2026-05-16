@@ -5,7 +5,8 @@ pub(crate) use domm_game::{
     ChampionHirePreview, ChampionMagicReceipt, ChampionProgressionView, ChampionView,
     CommandResponse, CommandStatusView, ContentManifestResponse, DwellingPoolView,
     DwellingRecruitPreview, GameView, GameViewRequest, LobbyCommandResponse, MapChunkPage,
-    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
-    ObjectiveProgressView, ParticipantView, PlayerView, QuestPreview, RecruitPreview,
-    RecruitTarget, ScenarioRulesView, SessionView, TavernOffersView, Viewport, WorldEventsView,
+    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
+    ObjectViewPage, ObjectiveProgressView, ParticipantView, PlayerView, ProceduralMapView,
+    QuestPreview, RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
+    SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
 };

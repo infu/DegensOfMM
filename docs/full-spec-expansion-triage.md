@@ -27,7 +27,8 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 | Defeated champion reappearance, advanced economy buildings, and broader resource-source variety | promote-to-Part-2-first | Future economy expansion |
 | Central objective tracking, one opening quest, weekly world events, quest reward claim, and typed scenario rules | promoted and implemented | Checkpoint 24 |
 | Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond the disabled row contract | promote-to-Part-2-first | Future scenario expansion |
-| Complex siege engines, walls/gates/towers, naval maps, boats, water movement layers, seeded procedural generation, skirmish settings, larger map variants | promote-to-Part-2-first | Checkpoint 25 |
+| Skirmish settings, deterministic first-playable procedural preview metadata, and disabled naval/siege/larger-map boundary rows | promoted and implemented | Checkpoint 25 |
+| Active boats, water movement layers, naval map gameplay, complex siege engines, walls/gates/towers, siege actions, and larger procedural map materialization | promote-to-Part-2-first | Future world-generation expansion |
 | Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
 | Full bot opponents and general strategic planners | still-deferred | Allowed only by a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
 | Sequential player turns and hotseat-only backend rules | removed from implementation scope | Superseded by simultaneous timed turns. Multiple local players can use normal account/session flows. |
@@ -59,8 +60,17 @@ checkpoint must update `spec.md` with all of the following:
 | 22 | Define skill/spell/status entities or prove existing `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, artifact rows, and effect keys are sufficient. Add indexes by session, champion, participant, battle, skill key, spell key, and status key. Add commands such as level-up choice, spell learning, battle cast, adventure cast, and previews. Cap skill options, spellbook size, casts per turn/round, status instances, and effect targets. |
 | 23 | Implemented tavern offers, hire records, market/trade rows, dwelling pools, indexes by session/week/participant/town/object/offer/command, hire/trade/dwelling preview and update endpoints, and caps for offers, trade amounts, pool growth, and visible candidates. |
 | 24 | Implemented objective progress, quest state, world event state, scenario rule state, indexed lookup paths by session/participant/key/window/victory state, quest accept/claim, objective sync, world-event sync, advanced-victory sync, and caps for active quests, objective rows, event rows, rule rows, and victory checks. |
-| 25 | Define map-generation jobs, generated content manifests, water/boat occupancy, siege objects, fortification state, and skirmish settings. Add indexes by session, generation step, chunk, object, occupant, battle, and scenario hash. Add generation, boat movement, siege action, and skirmish creation endpoints. Cap map dimensions, generated chunks per update, path length, water crossings, siege objects, battle obstacles, and visibility fan-out. |
+| 25 | Implemented skirmish settings, deterministic first-playable procedural preview metadata, and explicit disabled naval/siege boundary rows. Added indexes by session, generation key, status, route key, and rule key; added skirmish/procedural/naval/siege query endpoints plus `sync_world_generation`; capped generated dimensions, generated chunks per update, water crossings, route/rule rows, and siege battle obstacles. Active boat movement, siege actions, and larger map materialization remain future world-generation expansion work. |
 | 26 | Define rematch, campaign, leaderboard, guild, diplomacy, and expanded history rows. Add indexes by player, principal, session, season, guild, campaign, rank bucket, and history cursor. Add privacy-preserving endpoints for rematch, campaign, ranking, guild, diplomacy, and history flows. Cap rows per player/guild/season, page sizes, retention windows, and hot gameplay writes. |
+
+Future world-generation runtime work is explicitly blocked until a new
+bounded spec subsection exists for the exact slice. Siege-engine work must
+define engine ownership, placement, ammunition/durability, targeting,
+wall/gate/tower/breach state, action DTOs, indexes, recovery, cleanup,
+deterministic damage keys, caps, and Pocket-IC budgets before code starts.
+Naval and larger-map work have the same requirement for boat occupancy,
+water movement, generation jobs, chunk materialization, manifest/version
+contracts, visibility fan-out, paging, and public endpoint coverage.
 
 ## Audit Finding
 

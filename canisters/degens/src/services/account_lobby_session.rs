@@ -101,6 +101,11 @@ const SETUP_EFFECTS: &[SetupEffectSpec] = &[
         effect_type: "scenario_progress",
         target_kind: "scenario_rule",
     },
+    SetupEffectSpec {
+        key: "seed_worldgen",
+        effect_type: "world_generation",
+        target_kind: "procedural_map",
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1042,6 +1047,7 @@ fn apply_setup_effect(
         "seed_scenario_progress" => {
             first_playable_setup::seed_first_playable_scenario_progress(session, participants)
         }
+        "seed_worldgen" => first_playable_setup::seed_first_playable_worldgen(session),
         _ => Ok(()),
     }
 }

@@ -23,3 +23,4 @@ pub(crate) mod session_context;
 #[cfg(test)]
 mod tests;
 pub(crate) mod town;
+pub(crate) mod worldgen;

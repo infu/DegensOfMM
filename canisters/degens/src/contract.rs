@@ -254,6 +254,36 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::sync_advanced_victory",
     },
     EndpointSpec {
+        name: "get_skirmish_settings",
+        kind: EndpointKind::Query,
+        group: "worldgen",
+        fixture_mapping: "FixtureApiBackend::get_skirmish_settings",
+    },
+    EndpointSpec {
+        name: "get_procedural_map_state",
+        kind: EndpointKind::Query,
+        group: "worldgen",
+        fixture_mapping: "FixtureApiBackend::get_procedural_map_state",
+    },
+    EndpointSpec {
+        name: "get_naval_routes",
+        kind: EndpointKind::Query,
+        group: "worldgen",
+        fixture_mapping: "FixtureApiBackend::get_naval_routes",
+    },
+    EndpointSpec {
+        name: "get_siege_rules",
+        kind: EndpointKind::Query,
+        group: "worldgen",
+        fixture_mapping: "FixtureApiBackend::get_siege_rules",
+    },
+    EndpointSpec {
+        name: "sync_world_generation",
+        kind: EndpointKind::Update,
+        group: "worldgen",
+        fixture_mapping: "FixtureApiBackend::sync_world_generation",
+    },
+    EndpointSpec {
         name: "get_town_view",
         kind: EndpointKind::Query,
         group: "render_query",

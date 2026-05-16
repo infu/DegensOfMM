@@ -28,6 +28,7 @@ pub mod scenario;
 pub mod strategic;
 pub mod town;
 pub mod world_object;
+pub mod worldgen;
 
 pub use aftermath::{
     AftermathError, AftermathEventRecord, AftermathSmokeView, AftermathState,
@@ -218,4 +219,13 @@ pub use world_object::{
     apply_movement_object_interactions, build_first_playable_world_object_state,
     interact_with_world_object, record_champion_object_visit, record_participant_object_visit,
     run_first_playable_world_object_smoke, world_object_scoreboard,
+};
+pub use worldgen::{
+    MAX_GENERATED_CHUNKS_PER_UPDATE, MAX_GENERATED_MAP_HEIGHT, MAX_GENERATED_MAP_WIDTH,
+    MAX_NAVAL_ROUTE_ROWS_PER_SESSION, MAX_SIEGE_RULE_ROWS_PER_SESSION, NAVAL_ROUTE_KEY,
+    NavalRouteRecord, NavalRoutesView, PROCEDURAL_GENERATION_KEY, ProceduralMapRecord,
+    ProceduralMapView, SIEGE_RULE_KEY, SKIRMISH_PROFILE_KEY, SiegeRuleRecord, SiegeRulesView,
+    SkirmishSettingsRecord, SkirmishSettingsView, WorldGenerationReceipt, WorldgenError,
+    deterministic_procedural_map, first_playable_naval_route, first_playable_siege_rule,
+    first_playable_skirmish_settings, validate_boat_movement, validate_generation_caps,
 };

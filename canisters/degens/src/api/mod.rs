@@ -14,3 +14,4 @@ mod inventory;
 mod movement;
 mod scenario_progress;
 mod town;
+mod worldgen;

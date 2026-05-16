@@ -1,7 +1,7 @@
 use candid::Principal as CandidPrincipal;
 use domm_game::{
     ApiError, ApiEventView, ChampionView, EventPageInfo, GameView, GameViewRequest, MapChunkPage,
-    ObjectViewPage, ParticipantSummary, RenderTimeMeta, Viewport,
+    ObjectViewPage, PageInfo, ParticipantSummary, RenderTimeMeta, Viewport,
 };
 use icydb::{traits::EntityValue, types::Timestamp};
 
@@ -16,26 +16,27 @@ pub(crate) fn get_game_view(
 ) -> Result<GameView, ApiError> {
     validate_game_view_request(&request)?;
     let context = session_context::require_session_caller(caller, &session_id)?;
-    let chunks = render_projection::visible_map_chunks(
-        &context,
-        &request.viewport,
-        request.chunk_cursor,
-        request.chunk_limit,
-    )?;
-    let objects = render_projection::visible_objects(
-        &context,
-        &request.viewport,
-        request.object_cursor,
-        request.object_limit,
-    )?;
+    // Keep the aggregate view as a session shell. Map/object/town/battle detail
+    // stays on dedicated endpoints because combining them exceeds IC query caps
+    // as the durable schema grows.
+    let chunks = Vec::new();
+    let objects = Vec::new();
     let champions = Vec::new();
     let towns = Vec::new();
     let events = opening_event_page(&context, request.events_after_seq, request.event_limit);
     let render_time = render_time_meta(&context.session);
     let action_affordances =
         render_projection::action_affordances(&champions, &towns, render_time.sync_required);
-    let map_page_info = render_projection::map_page_info(&chunks, request.chunk_limit);
-    let object_page_info = render_projection::object_page_info(&objects, request.object_limit);
+    let map_page_info = PageInfo {
+        next_cursor: request.chunk_cursor,
+        has_more: request.chunk_limit > 0,
+        limit: request.chunk_limit,
+    };
+    let object_page_info = PageInfo {
+        next_cursor: request.object_cursor,
+        has_more: request.object_limit > 0,
+        limit: request.object_limit,
+    };
 
     Ok(GameView {
         session: session_context::session_summary(&context.session)?,
@@ -43,9 +44,9 @@ pub(crate) fn get_game_view(
             &context.participant,
         )?),
         viewport: request.viewport,
-        map_chunks: chunks.chunks,
+        map_chunks: chunks,
         map_page_info,
-        objects: objects.objects,
+        objects,
         object_page_info,
         champions,
         towns,

@@ -1634,6 +1634,188 @@ pub struct ScenarioRuleState {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
+    index(fields = "session_id", unique),
+    index(fields = "profile_key, status"),
+    index(fields = "generation_key"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "profile_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "active"
+        ),
+        field(ident = "map_seed", value(item(prim = "Nat64"))),
+        field(ident = "map_width", value(item(prim = "Nat16"))),
+        field(ident = "map_height", value(item(prim = "Nat16"))),
+        field(ident = "chunk_size", value(item(prim = "Nat8"))),
+        field(ident = "player_count", value(item(prim = "Nat8"))),
+        field(ident = "fog_enabled", value(item(prim = "Bool")), default = true),
+        field(
+            ident = "neutral_difficulty",
+            value(item(prim = "Text", max_len = 24)),
+            default = "standard"
+        ),
+        field(
+            ident = "victory_condition",
+            value(item(prim = "Text", max_len = 32)),
+            default = "conquest"
+        ),
+        field(ident = "generation_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "naval_enabled", value(item(prim = "Bool")), default = false),
+        field(ident = "siege_enabled", value(item(prim = "Bool")), default = false),
+        field(
+            ident = "larger_map_enabled",
+            value(item(prim = "Bool")),
+            default = false
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct SkirmishSettingsState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, generation_key", unique),
+    index(fields = "session_id, status"),
+    index(fields = "generation_key"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "generation_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "planned"
+        ),
+        field(ident = "map_seed", value(item(prim = "Nat64"))),
+        field(ident = "map_width", value(item(prim = "Nat16"))),
+        field(ident = "map_height", value(item(prim = "Nat16"))),
+        field(ident = "chunk_size", value(item(prim = "Nat8"))),
+        field(ident = "chunk_count", value(item(prim = "Nat32"))),
+        field(ident = "land_tile_count", value(item(prim = "Nat32"))),
+        field(ident = "water_tile_count", value(item(prim = "Nat32"))),
+        field(ident = "road_tile_count", value(item(prim = "Nat32"))),
+        field(ident = "town_count", value(item(prim = "Nat32"))),
+        field(ident = "mine_count", value(item(prim = "Nat32"))),
+        field(ident = "scenario_hash", value(item(prim = "Text", max_len = 64))),
+        field(ident = "generated_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct ProceduralMapState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, route_key", unique),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "route_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "disabled"
+        ),
+        field(ident = "from_x", value(item(prim = "Nat16"))),
+        field(ident = "from_y", value(item(prim = "Nat16"))),
+        field(ident = "to_x", value(item(prim = "Nat16"))),
+        field(ident = "to_y", value(item(prim = "Nat16"))),
+        field(ident = "water_crossings", value(item(prim = "Nat16"))),
+        field(ident = "boat_required", value(item(prim = "Bool")), default = true),
+        field(
+            ident = "disabled_reason",
+            value(opt, item(prim = "Text", max_len = 128))
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct NavalRouteState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, rule_key", unique),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "rule_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "disabled"
+        ),
+        field(
+            ident = "fortification_level",
+            value(item(prim = "Text", max_len = 24)),
+            default = "palisade"
+        ),
+        field(ident = "wall_segments", value(item(prim = "Nat16"))),
+        field(ident = "gate_count", value(item(prim = "Nat8"))),
+        field(ident = "tower_count", value(item(prim = "Nat8"))),
+        field(ident = "siege_engine_slots", value(item(prim = "Nat8"))),
+        field(ident = "battle_obstacle_cap", value(item(prim = "Nat16"))),
+        field(
+            ident = "disabled_reason",
+            value(opt, item(prim = "Text", max_len = 128))
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct SiegeRuleState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
     index(fields = "session_id, x, y"),
     index(fields = "session_id, chunk_x, chunk_y, state"),
     index(fields = "owner_champion_id, slot"),

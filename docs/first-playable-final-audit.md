@@ -17,14 +17,14 @@ layer.
 | Area | Audit result |
 | --- | --- |
 | IcyDB schema and repositories | Implemented with typed domain repositories, indexed hot-path plan tests, relation/deletion tests, and generic SQL scans limited to diagnostics. |
-| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoints 22-24 expand the live inventory to 49 with champion progression, magic, tavern, market, external dwelling, objective, quest, world-event, and scenario-rule endpoints. |
+| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoints 22-25 expand the live inventory to 54 with champion progression, magic, tavern, market, external dwelling, objective, quest, world-event, scenario-rule, skirmish, procedural-map, naval-route, and siege-rule endpoints. |
 | Lobby/session/setup | IcyDB-backed registration, create/join/ready/start, setup phases, setup recovery, participant rows, and match-history shells are implemented. |
 | Content/opening views | First-playable content, map, visibility, objects, champions, towns, neutrals, economy, and opening viewport projections are persisted and queryable. |
 | Strategic gameplay | Movement intents, sync slicing, resource pickup, mine capture/income, building, recruitment, object visits, visibility, and battle handoff persist IcyDB rows. |
 | Battle/aftermath/victory | Battle views/actions/sync, timeout commands, neutral defeat, champion defeat, town capture, victory, summaries, and history persist IcyDB rows. |
 | Web/client contract | Fixture-backed and canister-backed client probes complete the first-match route through result/history panels. |
 | Idempotency and recovery | Command nonce replay, payload mismatch, setup recovery, movement sync recovery, battle action retry, and timeout sync recovery are covered. |
-| Query contracts | Render/query endpoints enforce limits and remain projection/read surfaces; update endpoints own materialization and recovery. |
+| Query contracts | Render/query endpoints enforce limits and remain projection/read surfaces; update endpoints own materialization and recovery. The canister `get_game_view` is a lightweight session shell; clients compose map/object/town/champion/battle detail through dedicated endpoints to stay below IC query budgets. |
 | Determinism | Gameplay pseudo-randomness uses explicit keyed helpers; canister public time-sensitive endpoints derive time at the boundary rather than trusting caller time. |
 | Performance and storage | Pocket-IC gates record update/query counts, response sizes, selected row growth, and stable-memory observations. |
 
@@ -41,10 +41,13 @@ layer.
 The following Part 1 systems remain deferred until later checkpoints promote
 them into bounded Part 2 specs: quest chains/huts beyond the opening quest,
 monthly world events, artifact victory, king-of-the-hill, survival,
-scenario-specific defeat, naval movement, complex siege, procedural maps,
-ranked, guilds, diplomacy, campaign persistence, durable rematch creation, and
-broader product meta systems. Checkpoint 21 records the authoritative
-classification in `docs/full-spec-expansion-triage.md`.
+scenario-specific defeat, active naval movement, complex siege gameplay,
+larger procedural map materialization, ranked, guilds, diplomacy, campaign
+persistence, durable rematch creation, and broader product meta systems.
+Checkpoint 21 records the authoritative classification in
+`docs/full-spec-expansion-triage.md`; checkpoint 25 adds persisted
+world-generation boundary rows and explicit disabled states for the remaining
+naval/siege/larger-map gameplay.
 
 ## Known Follow-Up
 

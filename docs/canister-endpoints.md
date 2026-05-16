@@ -47,6 +47,11 @@ fixture loading, not for normal gameplay.
 | `sync_objectives` | update | `FixtureApiBackend::sync_objectives` |
 | `sync_world_events` | update | `FixtureApiBackend::sync_world_events` |
 | `sync_advanced_victory` | update | `FixtureApiBackend::sync_advanced_victory` |
+| `get_skirmish_settings` | query | `FixtureApiBackend::get_skirmish_settings` |
+| `get_procedural_map_state` | query | `FixtureApiBackend::get_procedural_map_state` |
+| `get_naval_routes` | query | `FixtureApiBackend::get_naval_routes` |
+| `get_siege_rules` | query | `FixtureApiBackend::get_siege_rules` |
+| `sync_world_generation` | update | `FixtureApiBackend::sync_world_generation` |
 | `get_town_view` | query | `FixtureApiBackend::get_town_view` |
 | `get_battle_state` | query | `FixtureApiBackend::get_battle_state` |
 | `get_content_manifest` | query | `FixtureApiBackend::get_content_manifest` |
@@ -68,6 +73,13 @@ and diagnostics.
 Endpoint methods are implemented under `canisters/degens/src/api/` by domain,
 with matching service boundaries under `services/` and durable row ownership
 boundaries under `repos/`. See `docs/canister-layout.md`.
+
+`get_game_view` is intentionally a lightweight session shell on the canister.
+It returns session, participant, render-time, content-hash, and opening event
+metadata while leaving map chunks, objects, towns, champion roster/detail, and
+battle detail to the dedicated endpoints. Combining those pages in one query no
+longer fits the Pocket-IC single-query instruction budget after the durable
+schema expansion.
 
 `get_my_champions` is intentionally a bounded roster/list query. It returns
 owned champion render metadata from the participant's persisted IcyDB
@@ -98,6 +110,14 @@ Checkpoint 24 scenario-progress updates use the same `GameCommand`
 idempotency. Quest accept/claim, objective sync, world-event sync, and
 advanced-victory sync exact retries replay the original `CommandResponse`;
 objective/rule/event/quest reads are query-only projections over IcyDB rows.
+
+Checkpoint 25 world-generation updates use the same `GameCommand`
+idempotency. `sync_world_generation` refreshes the deterministic procedural
+preview metadata and exact retries replay the original `CommandResponse`;
+skirmish settings, procedural map state, naval routes, and siege rules are
+query-only projections over IcyDB rows. Naval movement, siege actions, and
+larger-map gameplay remain disabled by persisted rows with explicit disabled
+reasons until a later bounded spec expands them.
 
 ## Deferred Endpoint Decisions
 

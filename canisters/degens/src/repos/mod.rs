@@ -17,6 +17,7 @@ pub(crate) mod players;
 pub(crate) mod scenario_progress;
 pub(crate) mod sessions;
 pub(crate) mod towns;
+pub(crate) mod worldgen;
 
 #[cfg(test)]
 mod tests;

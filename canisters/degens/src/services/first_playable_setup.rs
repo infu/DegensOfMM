@@ -414,6 +414,10 @@ pub(crate) fn seed_first_playable_scenario_progress(
     super::scenario_progress::ensure_seeded_scenario_progress(session, participants)
 }
 
+pub(crate) fn seed_first_playable_worldgen(session: &GameSession) -> foundation::RepoResult<()> {
+    super::worldgen::ensure_seeded_worldgen_state(session, None).map(|_| ())
+}
+
 fn participants_by_slot(participants: &[GameParticipant]) -> BTreeMap<u8, GameParticipant> {
     participants
         .iter()

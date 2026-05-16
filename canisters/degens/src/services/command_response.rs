@@ -4,6 +4,7 @@ use domm_game::{
     AdvancedScenarioReceipt, ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome,
     ChampionMagicReceipt, ChangedSubject, CommandPhase, CommandResponse, CommandResult,
     CommandStatus, ExpandedEconomyReceipt, ResourceBalances, StrategicCommandReceipt,
+    WorldGenerationReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -118,6 +119,7 @@ fn is_recoverable_movement_command(command_type: &str) -> bool {
             | "sync_objectives"
             | "sync_world_events"
             | "sync_advanced_victory"
+            | "sync_world_generation"
     )
 }
 
@@ -391,6 +393,9 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
         | "sync_advanced_victory" => {
             CommandResult::AdvancedScenario(advanced_scenario_from_json(command))
         }
+        "sync_world_generation" => {
+            CommandResult::WorldGeneration(world_generation_from_json(command))
+        }
         _ => CommandResult::StrategicReceipt(receipt_from_json(
             &command.command_type,
             &command.id().to_string(),
@@ -398,6 +403,21 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
             0,
             command.result_json.as_deref(),
         )),
+    }
+}
+
+fn world_generation_from_json(command: &GameCommand) -> WorldGenerationReceipt {
+    let json = command.result_json.as_deref();
+    WorldGenerationReceipt {
+        command_id: command.id().to_string(),
+        action: json_string_field(json, "action").unwrap_or_else(|| command.command_type.clone()),
+        generation_key: json_string_field(json, "generation_key").unwrap_or_default(),
+        state: json_string_field(json, "state").unwrap_or_else(|| "validated".to_string()),
+        current_turn: json_u32_field(json, "current_turn").unwrap_or(command.turn_number),
+        map_width: json_u32_field(json, "map_width").unwrap_or(0) as u16,
+        map_height: json_u32_field(json, "map_height").unwrap_or(0) as u16,
+        chunk_count: json_u32_field(json, "chunk_count").unwrap_or(0),
+        scenario_hash: json_string_field(json, "scenario_hash").unwrap_or_default(),
     }
 }
 

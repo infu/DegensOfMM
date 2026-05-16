@@ -498,12 +498,21 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 25. Siege, Naval Movement, Procedural Maps, And Skirmish Settings
 
-- [ ] Promote and implement complex siege engines, naval movement, seeded procedural map generation, skirmish settings, and larger map variants only after Part 2 is expanded for them.
-- [ ] Add deterministic generation fixtures and cap checks before allowing larger maps or extra movement layers.
-- [ ] Unit test seeded map stability, water/boat movement, siege obstacles, gates/walls/towers, pathfinding limits, visibility, and battle setup.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
-- [ ] Audit: confirm generated or larger content still satisfies canister performance budgets and query contracts.
-- [ ] Commit after this checkpoint.
+- [x] Promote and implement the bounded checkpoint 25 slice: skirmish settings, deterministic first-playable procedural preview metadata, and explicit disabled IcyDB rows for naval route, siege rule, and larger-map affordances.
+- [x] Add deterministic generation fixtures and cap checks before allowing larger maps or extra movement layers. Larger map materialization remains disabled until a future spec is written.
+- [x] Unit test seeded map stability, generation caps, disabled naval route validation, siege caps, and skirmish disabled flags.
+- [x] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
+- [x] Audit: confirm generated or larger content still satisfies canister performance budgets and query contracts.
+- [x] Commit after this checkpoint.
+
+## 25A. Future Siege/Naval/Larger-Map Spec Hold
+
+- [ ] Do not implement active siege engines, gates/walls/towers combat, naval movement, boats, water occupancy, or larger procedural map materialization until `spec.md` has a new bounded subsection for that exact runtime slice.
+- [ ] Before siege-engine runtime code starts, define IcyDB rows for engine ownership/placement/ammunition/durability/targeting/destruction, wall/gate/tower/breach state, command/effect/event recovery, cleanup, deterministic damage keys, public DTOs, and Pocket-IC budgets.
+- [ ] Before naval runtime code starts, define boat ownership/occupancy, embark/disembark commands, water terrain costs, route validation, visibility/redaction, deterministic keys, indexes, cleanup, and endpoint contracts.
+- [ ] Before larger procedural map runtime code starts, define generation jobs, chunk materialization, content manifest/versioning, scenario hash contracts, migration rules, visibility fan-out caps, paging, and install/query/update budget limits.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking any future world-generation runtime bucket complete.
+- [ ] Keep the checkpoint 25 disabled rows and `checkpoint_25_schema_only` reasons in place until a future spec subsection replaces them with active gameplay semantics.
 
 ## 26. Multiplayer Meta, Campaign, And Long-Term Product Systems
 

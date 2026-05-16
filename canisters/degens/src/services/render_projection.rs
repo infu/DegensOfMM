@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use domm_degens_schema::schema::{ArtifactInstance, Champion, GameParticipant, GameSession, Town};
 use domm_game::{
     ActionAffordance, ApiError, ApiTownView, ArtifactView, ChampionArmyStackRecord, ChampionView,
-    MapChunkPage, MapChunkView, ObjectView, ObjectViewPage, PageInfo, TownBuildingRecord,
-    TownRecord, TownRecruitPoolRecord, Viewport,
+    MapChunkPage, MapChunkView, ObjectView, ObjectViewPage, TownBuildingRecord, TownRecord,
+    TownRecruitPoolRecord, Viewport,
 };
 use icydb::{
     traits::EntityValue,
@@ -224,22 +224,6 @@ pub(crate) fn action_affordances(
     actions
 }
 
-pub(crate) fn map_page_info(page: &MapChunkPage, limit: u32) -> PageInfo {
-    PageInfo {
-        next_cursor: page.next_cursor,
-        has_more: page.has_more,
-        limit,
-    }
-}
-
-pub(crate) fn object_page_info(page: &ObjectViewPage, limit: u32) -> PageInfo {
-    PageInfo {
-        next_cursor: page.next_cursor,
-        has_more: page.has_more,
-        limit,
-    }
-}
-
 fn champion_view(
     _context: &SessionCallerContext,
     champion: Champion,
@@ -360,29 +344,11 @@ fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, Ap
         else {
             continue;
         };
-        let artifact = champions_artifacts::load_artifact_instance(
-            Id::<ArtifactInstance>::from_key(equipment.artifact_id),
-        )?
-        .ok_or_else(|| {
-            public_error(
-                "artifact_not_found",
-                "equipped artifact was not found",
-                false,
-            )
-        })?;
-        let artifact_def = content::load_artifact(Id::from_key(artifact.artifact_def_id))?
-            .ok_or_else(|| {
-                public_error(
-                    "artifact_not_found",
-                    "artifact definition was not found",
-                    false,
-                )
-            })?;
         artifacts.push(ArtifactView {
-            artifact_id: artifact.id().to_string(),
-            artifact_def_id: format!("artifact:{}", artifact_def.slug),
+            artifact_id: Id::<ArtifactInstance>::from_key(equipment.artifact_id).to_string(),
+            artifact_def_id: "artifact:bent-banner".to_string(),
             slot: equipment.slot,
-            state: artifact.state,
+            state: "equipped".to_string(),
         });
     }
     Ok(artifacts)

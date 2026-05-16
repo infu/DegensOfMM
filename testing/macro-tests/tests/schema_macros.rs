@@ -6,12 +6,13 @@ use domm_degens_schema::schema::{
     ChampionArmyStack, ChampionClassDefinition, ChampionObjectVisit, ChampionSpell, CommandEffect,
     DATA_MEMORY_ID, DegensCanister, DegensStore, FactionDefinition, GameCommand, GameEvent,
     GameEventTurnSummary, GameParticipant, GameSession, INDEX_MEMORY_ID, LobbyCommand, MapChunk,
-    MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot, NeutralArmy,
-    NeutralArmyStack, ObjectiveProgress, ParticipantKnownObject, ParticipantObjectVisit,
-    PendingEffect, PlayerAccount, PlayerMatchSummary, QuestState, ResourceLedgerEntry,
-    ResourceLedgerTurnSummary, RulesetDefinition, SCHEMA_MEMORY_ID, ScenarioRuleState,
-    SpellDefinition, TerrainDefinition, Town, TownBuilding, TownGarrisonStack, TownRecruitPool,
-    UnitDefinition, VisibilityChunk, WorldEventState, WorldObject,
+    MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot, NavalRouteState,
+    NeutralArmy, NeutralArmyStack, ObjectiveProgress, ParticipantKnownObject,
+    ParticipantObjectVisit, PendingEffect, PlayerAccount, PlayerMatchSummary, ProceduralMapState,
+    QuestState, ResourceLedgerEntry, ResourceLedgerTurnSummary, RulesetDefinition,
+    SCHEMA_MEMORY_ID, ScenarioRuleState, SiegeRuleState, SkirmishSettingsState, SpellDefinition,
+    TerrainDefinition, Town, TownBuilding, TownGarrisonStack, TownRecruitPool, UnitDefinition,
+    VisibilityChunk, WorldEventState, WorldObject,
 };
 use icydb::{
     model::{
@@ -44,7 +45,7 @@ fn part_two_entity_surface_is_registered() {
         .map(|model| model.name())
         .collect::<Vec<_>>();
 
-    assert_eq!(names.len(), 50);
+    assert_eq!(names.len(), 54);
     assert!(names.contains(&"PlayerAccount"));
     assert!(names.contains(&"GameSession"));
     assert!(names.contains(&"GameCommand"));
@@ -101,6 +102,10 @@ fn important_unique_indexes_match_checkpoint_one_invariants() {
     );
     assert_unique_index(WorldEventState::MODEL, &["session_id", "event_key"]);
     assert_unique_index(ScenarioRuleState::MODEL, &["session_id", "rule_key"]);
+    assert_unique_index(SkirmishSettingsState::MODEL, &["session_id"]);
+    assert_unique_index(ProceduralMapState::MODEL, &["session_id", "generation_key"]);
+    assert_unique_index(NavalRouteState::MODEL, &["session_id", "route_key"]);
+    assert_unique_index(SiegeRuleState::MODEL, &["session_id", "rule_key"]);
 }
 
 #[test]
@@ -173,6 +178,10 @@ fn weak_history_relations_remain_safe_for_retained_rows() {
         (ScenarioRuleState::MODEL, "owner_participant_id"),
         (ScenarioRuleState::MODEL, "winner_participant_id"),
         (ScenarioRuleState::MODEL, "last_command_id"),
+        (SkirmishSettingsState::MODEL, "last_command_id"),
+        (ProceduralMapState::MODEL, "last_command_id"),
+        (NavalRouteState::MODEL, "last_command_id"),
+        (SiegeRuleState::MODEL, "last_command_id"),
     ] {
         assert_relation_strength(model, field_name, RelationStrength::Weak);
     }
@@ -444,6 +453,14 @@ fn deletion_policy_lists_strong_children_before_targets() {
         DeleteEdge::new(WorldEventState::MODEL, "session_id", GameSession::MODEL),
         DeleteEdge::new(ScenarioRuleState::MODEL, "session_id", GameSession::MODEL),
         DeleteEdge::new(
+            SkirmishSettingsState::MODEL,
+            "session_id",
+            GameSession::MODEL,
+        ),
+        DeleteEdge::new(ProceduralMapState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(NavalRouteState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(SiegeRuleState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
             ParticipantObjectVisit::MODEL,
             "session_id",
             GameSession::MODEL,
@@ -555,6 +572,10 @@ fn entity_models() -> Vec<&'static EntityModel> {
         QuestState::MODEL,
         WorldEventState::MODEL,
         ScenarioRuleState::MODEL,
+        SkirmishSettingsState::MODEL,
+        ProceduralMapState::MODEL,
+        NavalRouteState::MODEL,
+        SiegeRuleState::MODEL,
         ParticipantObjectVisit::MODEL,
         ChampionObjectVisit::MODEL,
         ParticipantKnownObject::MODEL,
@@ -737,6 +758,10 @@ fn deletion_policy_order() -> &'static [&'static str] {
         "QuestState",
         "WorldEventState",
         "ScenarioRuleState",
+        "SkirmishSettingsState",
+        "ProceduralMapState",
+        "NavalRouteState",
+        "SiegeRuleState",
         "WorldObject",
         "ArtifactInstance",
         "Battle",

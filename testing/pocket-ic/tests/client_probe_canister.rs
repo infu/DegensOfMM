@@ -45,6 +45,10 @@ const GATE_M_ENTITIES: &[&str] = &[
     "WorldObject",
     "NeutralArmy",
     "MapOccupancy",
+    "SkirmishSettingsState",
+    "ProceduralMapState",
+    "NavalRouteState",
+    "SiegeRuleState",
 ];
 
 #[test]
@@ -96,6 +100,10 @@ fn gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter() {
     assert!(row_count(&final_storage, "Battle") >= 3);
     assert!(row_count(&final_storage, "BattleStack") > 0);
     assert!(row_count(&final_storage, "BattleObstacle") > 0);
+    assert!(row_count(&final_storage, "SkirmishSettingsState") > 0);
+    assert!(row_count(&final_storage, "ProceduralMapState") > 0);
+    assert!(row_count(&final_storage, "NavalRouteState") > 0);
+    assert!(row_count(&final_storage, "SiegeRuleState") > 0);
     assert!(final_storage.total_rows > initial_storage.total_rows);
     assert!(final_storage.stable_memory_pages >= initial_storage.stable_memory_pages);
 
@@ -740,7 +748,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         client_nonce: &str,
     ) -> LobbyCommandResponse {
         let mut last = None;
-        for step in 0..16 {
+        for step in 0..18 {
             let response = self
                 .update_lobby_response(
                     caller,

@@ -2,6 +2,7 @@ use candid::{CandidType, Principal};
 use serde::{Deserialize, Serialize};
 
 use crate::battle::{BattleActionReceipt, BattleCoord, BattleSyncOutcome, BattleView};
+use crate::champion::ChampionMagicReceipt;
 use crate::champion::ChampionView;
 use crate::command::{CommandPhase, CommandStatus, CommandStatusView};
 use crate::content::ContentManifest;
@@ -224,6 +225,7 @@ pub enum CommandResult {
     MovementPreview(MovementPreview),
     BattleAction(BattleActionReceipt),
     BattleSync(BattleSyncOutcome),
+    ChampionMagic(ChampionMagicReceipt),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
@@ -283,6 +285,7 @@ pub struct BattleActionInput {
     pub battle_id: String,
     pub battle_stack_id: String,
     pub action: String,
+    pub ability_key: Option<String>,
     pub target_stack_id: Option<String>,
     pub destination: Option<BattleCoord>,
 }

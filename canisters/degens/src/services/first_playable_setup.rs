@@ -415,7 +415,7 @@ fn seed_towns(
             )?,
         };
         if towns::find_town_building(town.id(), hall.id())?.is_none() {
-            towns::create_town_building(session.id(), town.id(), hall.id(), 1)?;
+            towns::create_town_building(session.id(), town.id(), hall.id(), hall.slug.clone(), 1)?;
         }
         town_keys.insert(start.town_key.clone(), town.id());
     }
@@ -456,6 +456,10 @@ fn seed_champions(
                 1,
                 1,
                 10,
+                10,
+                1,
+                1,
+                Vec::new(),
                 scenario.starting_state.champion_movement,
                 scenario.starting_state.champion_movement,
                 1,

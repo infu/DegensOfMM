@@ -1,10 +1,9 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{GameParticipant, GameSession, Town};
 use domm_game::{
-    ApiError, ApiTownView, ArmyStackRecord, BuildPreview, CommandResponse, RecruitPreview,
-    RecruitTarget, TownBuildingRecord, TownRecord, TownRecruitPoolRecord,
+    ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
 };
 use icydb::{traits::EntityValue, types::Id};
 
@@ -23,9 +22,21 @@ pub(crate) fn get_town_view(
     let context = session_context::require_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     if town.owner_participant_id == Some(context.participant.id().key()) {
-        own_town_view(&town)
+        render_projection::town_view(&town)
     } else {
-        render_projection::town_view_by_id(&context, &town_id)
+        if !render_projection::is_visible_at(
+            &context.session,
+            context.participant.id(),
+            town.x,
+            town.y,
+        )? {
+            return Err(session_context::public_error(
+                "not_visible",
+                "town is not visible",
+                false,
+            ));
+        }
+        render_projection::town_view(&town)
     }
 }
 
@@ -225,6 +236,7 @@ pub(crate) fn submit_build_town_structure(
             context.session.id(),
             town.id(),
             building.id(),
+            building_slug.clone(),
             context.session.current_turn,
         )?,
     };
@@ -241,6 +253,7 @@ pub(crate) fn submit_build_town_structure(
                 context.session.id(),
                 town.id(),
                 unit.id(),
+                unit_slug.clone(),
                 u32::from(unit.weekly_growth),
                 1,
             )?;
@@ -383,6 +396,7 @@ pub(crate) fn submit_recruit_units(
         context.session.id(),
         town.id(),
         unit.id(),
+        unit_slug.clone(),
         unit.max_hp,
         quantity,
         target,
@@ -444,105 +458,6 @@ fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> 
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))
 }
 
-fn own_town_view(town: &Town) -> Result<ApiTownView, ApiError> {
-    let ruleset_id = ruleset_id()?;
-    let building_slug_by_id = content::page_buildings_by_ruleset(ruleset_id)?
-        .into_iter()
-        .map(|building| (building.id, building.slug))
-        .collect::<BTreeMap<_, _>>();
-    let unit_slug_by_id = content::page_units_by_ruleset(ruleset_id)?
-        .into_iter()
-        .map(|unit| (unit.id, (unit.slug, unit.max_hp)))
-        .collect::<BTreeMap<_, _>>();
-    let faction_slug = domm_game::first_playable_scenario()
-        .starts
-        .iter()
-        .find(|start| start.town_x == town.x && start.town_y == town.y)
-        .map(|start| start.faction_slug.clone())
-        .unwrap_or_else(|| "unknown".to_string());
-    let buildings = towns::page_town_buildings(town.id(), domm_game::MAX_LIST_LIMIT, None)?
-        .items
-        .into_iter()
-        .map(|building| TownBuildingRecord {
-            building_id: building.id().to_string(),
-            session_id: Id::<GameSession>::from_key(building.session_id).to_string(),
-            town_id: town.id().to_string(),
-            building_slug: building_slug_by_id
-                .get(&building.building_def_id)
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string()),
-            built_turn: building.built_turn,
-        })
-        .collect();
-    let recruit_pools = towns::page_town_recruit_pools(town.id(), domm_game::MAX_LIST_LIMIT, None)?
-        .items
-        .into_iter()
-        .map(|pool| TownRecruitPoolRecord {
-            pool_id: pool.id().to_string(),
-            session_id: Id::<GameSession>::from_key(pool.session_id).to_string(),
-            town_id: town.id().to_string(),
-            unit_slug: unit_slug_by_id
-                .get(&pool.unit_id)
-                .map(|(slug, _)| slug.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            available: pool.available,
-            last_growth_week: pool.last_growth_week,
-            last_command_id: pool
-                .last_command_id
-                .map(|id| Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()),
-        })
-        .collect();
-    let garrison_stacks = towns::page_town_garrison(town.id(), domm_game::MAX_LIST_LIMIT, None)?
-        .items
-        .into_iter()
-        .map(|stack| ArmyStackRecord {
-            stack_id: stack.id().to_string(),
-            session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
-            owner_kind: "town".to_string(),
-            owner_id: town.id().to_string(),
-            unit_slug: unit_slug_by_id
-                .get(&stack.unit_id)
-                .map(|(slug, _)| slug.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            slot_index: stack.slot_index,
-            quantity: stack.quantity,
-            front_hp: stack.front_hp,
-            status: "active".to_string(),
-            last_command_id: stack
-                .last_command_id
-                .map(|id| Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()),
-        })
-        .collect();
-
-    Ok(ApiTownView {
-        town: TownRecord {
-            town_id: town.id().to_string(),
-            session_id: Id::<GameSession>::from_key(town.session_id).to_string(),
-            owner_participant_id: town
-                .owner_participant_id
-                .map(|id| Id::<GameParticipant>::from_key(id).to_string())
-                .unwrap_or_default(),
-            faction_slug,
-            name: town.name.clone(),
-            x: town.x,
-            y: town.y,
-            status: town.status.clone(),
-            hall_level: town.hall_level,
-            fort_level: town.fort_level,
-            last_built_turn: town.last_built_turn,
-            captured_turn: town.captured_turn,
-            income_started_turn: town.income_started_turn,
-            unrest_until_turn: town.unrest_until_turn,
-            last_command_id: town
-                .last_command_id
-                .map(|id| Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()),
-        },
-        buildings,
-        recruit_pools,
-        garrison_stacks,
-    })
-}
-
 fn built_building_ids(
     town_id: Id<domm_degens_schema::schema::Town>,
 ) -> Result<BTreeSet<icydb::types::Ulid>, ApiError> {
@@ -580,6 +495,7 @@ fn recruit_to_garrison(
     session_id: Id<domm_degens_schema::schema::GameSession>,
     town_id: Id<domm_degens_schema::schema::Town>,
     unit_id: Id<domm_degens_schema::schema::UnitDefinition>,
+    unit_slug: String,
     front_hp: u16,
     quantity: u32,
     target: RecruitTarget,
@@ -611,7 +527,7 @@ fn recruit_to_garrison(
         }
         None => {
             let mut stack = towns::create_town_garrison_stack(
-                session_id, town_id, unit_id, slot_index, quantity, front_hp,
+                session_id, town_id, unit_id, unit_slug, slot_index, quantity, front_hp,
             )?;
             stack.last_command_id = Some(command_id.key());
             towns::update_town_garrison_stack(stack)?

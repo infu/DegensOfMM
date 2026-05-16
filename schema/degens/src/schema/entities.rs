@@ -960,6 +960,11 @@ pub struct Town {}
             ident = "building_def_id",
             value(item(rel = "BuildingDefinition", prim = "Ulid", strong))
         ),
+        field(
+            ident = "building_slug",
+            value(item(prim = "Text", max_len = 64)),
+            default = ""
+        ),
         field(ident = "built_turn", value(item(prim = "Nat32")))
     )
 )]
@@ -987,6 +992,11 @@ pub struct TownBuilding {}
         field(
             ident = "unit_id",
             value(item(rel = "UnitDefinition", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "unit_slug",
+            value(item(prim = "Text", max_len = 64)),
+            default = ""
         ),
         field(ident = "available", value(item(prim = "Nat32")), default = 0u32),
         field(
@@ -1023,6 +1033,11 @@ pub struct TownRecruitPool {}
         field(
             ident = "unit_id",
             value(item(rel = "UnitDefinition", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "unit_slug",
+            value(item(prim = "Text", max_len = 64)),
+            default = ""
         ),
         field(ident = "slot_index", value(item(prim = "Nat8"))),
         field(ident = "quantity", value(item(prim = "Nat32"))),
@@ -1096,7 +1111,11 @@ pub struct TownGarrisonStack {}
         field(
             ident = "last_command_id",
             value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
-        )
+        ),
+        field(ident = "mana_max", value(item(prim = "Nat16")), default = 10u16),
+        field(ident = "mana_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "skill_points", value(item(prim = "Nat16")), default = 0u16),
+        field(ident = "skill_keys", value(many, item(prim = "Text", max_len = 64)))
     )
 )]
 pub struct Champion {}
@@ -1169,7 +1188,11 @@ pub struct ChampionArmyStack {}
             ident = "spell_id",
             value(item(rel = "SpellDefinition", prim = "Ulid", strong))
         ),
-        field(ident = "learned_turn", value(item(prim = "Nat32")))
+        field(ident = "learned_turn", value(item(prim = "Nat32"))),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
     )
 )]
 pub struct ChampionSpell {}

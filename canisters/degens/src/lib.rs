@@ -14,11 +14,11 @@ mod tests;
 
 #[allow(unused_imports)]
 use crate::dto::public::{
-    ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
-    CommandResponse, CommandStatusView, ContentManifestResponse, GameView, GameViewRequest,
-    LobbyCommandResponse, MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview,
-    ObjectViewPage, ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView,
-    Viewport,
+    ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
+    ChampionMagicReceipt, ChampionProgressionView, ChampionView, CommandResponse,
+    CommandStatusView, ContentManifestResponse, GameView, GameViewRequest, LobbyCommandResponse,
+    MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage, ParticipantView,
+    PlayerView, RecruitPreview, RecruitTarget, SessionView, Viewport,
 };
 
 pub use contract::{

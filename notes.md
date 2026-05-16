@@ -911,3 +911,29 @@ Audit notes:
   scope, not pending features.
 - Future expansion checkpoints now explicitly require Candid inventory and
   Pocket-IC e2e coverage for every new canister endpoint.
+
+## Checkpoint 22: Champion Progression And Magic
+
+Promoted the first bounded champion progression slice into Part 2 and runtime:
+level-up choices, selected skill keys, spell learning, mana reset by turn,
+adventure casting, battle spellcasting, and bounded battle status keys.
+
+Implementation notes:
+
+- `Champion` now carries `mana_max`, `mana_turn`, `skill_points`, and
+  `skill_keys`; `ChampionSpell` now records `last_command_id` so spell learning
+  can be tied back to the applying command.
+- New canister endpoints are `preview_champion_progression`,
+  `select_champion_level_up`, `learn_champion_spell`, and
+  `cast_adventure_spell`. Battle casting uses the existing
+  `submit_battle_action` endpoint with `action = CastAbility` and a spell
+  `ability_key`.
+- Hot render views intentionally do not load learned spell rows per champion.
+  Spellbook details are behind `preview_champion_progression` to keep
+  `get_my_champions` and `get_game_view` within Pocket-IC query budgets.
+- Gate M exposed `get_town_view` as another hot query near the Pocket-IC
+  instruction limit after several turn-sync rows exist. Town child rows now
+  denormalize building/unit slugs so the view can avoid content-definition
+  joins while keeping strong definition relations for command validation.
+- The first promoted content is small and capped: three skill choices,
+  `hex-spark`, and `spite-march`.

@@ -9,13 +9,14 @@ use domm_degens_canister::{
     CanisterEndpointView, DiagnosticStorageSnapshot, REQUIRED_GAME_ENDPOINTS,
 };
 use domm_game::{
-    ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
-    CommandResponse, CommandResult, CommandStatus, CommandStatusView, ContentManifestResponse,
-    FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest,
-    LobbyCommandResponse, LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_LIST_LIMIT,
-    MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage, MatchHistoryPage, MoveCoord,
-    MovementPreview, ObjectViewPage, ParticipantView, PlayerView, RecruitPreview, RecruitTarget,
-    SessionView, opening_viewport_for_slot,
+    ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
+    ChampionProgressionView, ChampionView, CommandResponse, CommandResult, CommandStatus,
+    CommandStatusView, ContentManifestResponse, FIRST_PLAYABLE_RULESET_ID,
+    FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest, LobbyCommandResponse,
+    LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT,
+    MAX_OBJECT_LIMIT, MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
+    ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView,
+    opening_viewport_for_slot,
 };
 
 #[test]
@@ -330,6 +331,122 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("get_champion_view should decode")
     .expect("own champion should be visible");
     assert_eq!(champion.champion_id, champion_id);
+    assert_eq!(champion.skill_points, 1);
+
+    let progression = query_as::<ChampionProgressionView>(
+        &fixture,
+        player_one,
+        "preview_champion_progression",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("preview_champion_progression should decode")
+    .expect("champion progression should be readable");
+    assert_eq!(progression.champion_id, champion_id);
+    assert!(
+        progression
+            .level_up_choices
+            .iter()
+            .any(|choice| choice.skill_key == "sour_sorcery" && choice.enabled)
+    );
+
+    let skill_choice = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "select_champion_level_up",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "sour_sorcery".to_string(),
+            "nonce:presence:skill:sour".to_string(),
+        ),
+    )
+    .expect("select_champion_level_up should decode")
+    .expect("skill choice should succeed");
+    assert_eq!(skill_choice.status, CommandStatus::Applied);
+    assert!(matches!(
+        skill_choice.result,
+        CommandResult::ChampionMagic(_)
+    ));
+    let skill_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "select_champion_level_up",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "sour_sorcery".to_string(),
+            "nonce:presence:skill:sour".to_string(),
+        ),
+    )
+    .expect("select_champion_level_up replay should decode")
+    .expect("skill choice replay should succeed");
+    assert_eq!(skill_replay.command_id, skill_choice.command_id);
+
+    let learned_hex = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "learn_champion_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "hex-spark".to_string(),
+            "nonce:presence:learn:hex".to_string(),
+        ),
+    )
+    .expect("learn_champion_spell hex should decode")
+    .expect("hex-spark learning should succeed");
+    assert_eq!(learned_hex.status, CommandStatus::Applied);
+
+    let learned_march = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "learn_champion_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "spite-march".to_string(),
+            "nonce:presence:learn:march".to_string(),
+        ),
+    )
+    .expect("learn_champion_spell march should decode")
+    .expect("spite-march learning should succeed");
+    assert_eq!(learned_march.status, CommandStatus::Applied);
+
+    let cast_march = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "cast_adventure_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "spite-march".to_string(),
+            "nonce:presence:cast:march".to_string(),
+        ),
+    )
+    .expect("cast_adventure_spell should decode")
+    .expect("spite-march cast should succeed");
+    assert_eq!(cast_march.status, CommandStatus::Applied);
+
+    let progressed = query_as::<ChampionProgressionView>(
+        &fixture,
+        player_one,
+        "preview_champion_progression",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("progression after magic should decode")
+    .expect("progression after magic should be readable");
+    assert!(progressed.skill_keys.contains(&"sour_sorcery".to_string()));
+    assert!(
+        progressed
+            .learned_spell_slugs
+            .contains(&"hex-spark".to_string())
+    );
+    assert!(
+        progressed
+            .learned_spell_slugs
+            .contains(&"spite-march".to_string())
+    );
+    assert_eq!(progressed.mana, 8);
 
     let game_view = query_as::<GameView>(
         &fixture,
@@ -882,37 +999,35 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         .active_stack_id
         .clone()
         .expect("battle should have an active stack");
-    let action = battle
-        .legal_actions_for_caller
+    let active_side = battle
+        .stacks
         .iter()
-        .find(|action| action.enabled && !action.targets.is_empty())
-        .or_else(|| {
-            battle
-                .legal_actions_for_caller
-                .iter()
-                .find(|action| action.enabled && !action.path.is_empty())
-        })
-        .or_else(|| {
-            battle
-                .legal_actions_for_caller
-                .iter()
-                .find(|action| action.enabled)
-        })
-        .expect("caller should eventually control an active battle stack")
+        .find(|stack| stack.battle_stack_id == active_stack_id)
+        .expect("active stack should be present")
+        .side
         .clone();
+    let spell_target_stack_id = battle
+        .stacks
+        .iter()
+        .find(|stack| stack.side != active_side && stack.status == "active" && stack.quantity > 0)
+        .expect("battle spell should have an enemy target")
+        .battle_stack_id
+        .clone();
+    let battle_spell_input = BattleActionInput {
+        battle_id: battle_id.clone(),
+        battle_stack_id: active_stack_id,
+        action: "CastAbility".to_string(),
+        ability_key: Some("spell:hex-spark".to_string()),
+        target_stack_id: Some(spell_target_stack_id),
+        destination: None,
+    };
     let submitted_battle = update_as::<CommandResponse>(
         &fixture,
         player_one,
         "submit_battle_action",
         (
             session_id.clone(),
-            BattleActionInput {
-                battle_id: battle_id.clone(),
-                battle_stack_id: active_stack_id,
-                action: action.action.clone(),
-                target_stack_id: action.targets.first().cloned(),
-                destination: action.path.first().copied(),
-            },
+            battle_spell_input.clone(),
             "nonce:presence:battle-action".to_string(),
         ),
     )
@@ -923,22 +1038,19 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         submitted_battle.result,
         CommandResult::BattleAction(_)
     ));
+    assert!(
+        submitted_battle
+            .events
+            .iter()
+            .any(|event| event.event_type == "battle_spell_cast")
+    );
     let battle_replay = update_as::<CommandResponse>(
         &fixture,
         player_one,
         "submit_battle_action",
         (
             session_id.clone(),
-            BattleActionInput {
-                battle_id: battle_id.clone(),
-                battle_stack_id: battle
-                    .active_stack_id
-                    .clone()
-                    .unwrap_or_else(|| "missing".to_string()),
-                action: action.action,
-                target_stack_id: action.targets.first().cloned(),
-                destination: action.path.first().copied(),
-            },
+            battle_spell_input,
             "nonce:presence:battle-action".to_string(),
         ),
     )
@@ -971,7 +1083,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         battle_events
             .events
             .iter()
-            .any(|event| event.event_type == "battle_action_applied")
+            .any(|event| event.event_type == "battle_spell_cast")
     );
 }
 
@@ -3212,6 +3324,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
                 battle_id: view.battle_id.clone(),
                 battle_stack_id: active_stack_id,
                 action: action.action.clone(),
+                ability_key: None,
                 target_stack_id: action.targets.first().cloned(),
                 destination: None,
             };
@@ -3226,6 +3339,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
             battle_id: view.battle_id.clone(),
             battle_stack_id: active_stack_id,
             action: "Move".to_string(),
+            ability_key: None,
             target_stack_id: None,
             destination: best_move_destination(view, action),
         };
@@ -3239,6 +3353,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
         battle_id: view.battle_id.clone(),
         battle_stack_id: active_stack_id,
         action: action.action.clone(),
+        ability_key: None,
         target_stack_id: action.targets.first().cloned(),
         destination: action.path.first().copied(),
     }

@@ -63,6 +63,11 @@ impl ContentManifest {
     }
 
     #[must_use]
+    pub fn spell(&self, slug: &str) -> Option<&SpellContent> {
+        self.spells.iter().find(|item| item.slug == slug)
+    }
+
+    #[must_use]
     pub fn artifact(&self, slug: &str) -> Option<&ArtifactContent> {
         self.artifacts.iter().find(|item| item.slug == slug)
     }
@@ -416,7 +421,7 @@ pub fn first_playable_content_manifest() -> ContentManifest {
         terrain: first_playable_terrain(&ruleset_id),
         units: first_playable_units(&ruleset_id),
         buildings: first_playable_buildings(&ruleset_id),
-        spells: Vec::new(),
+        spells: first_playable_spells(&ruleset_id),
         artifacts: first_playable_artifacts(&ruleset_id),
         map_objects: first_playable_map_objects(&ruleset_id),
         asset_keys: first_playable_asset_keys(),
@@ -1007,6 +1012,33 @@ fn first_playable_buildings(ruleset_id: &str) -> Vec<BuildingContent> {
     ]
 }
 
+fn first_playable_spells(ruleset_id: &str) -> Vec<SpellContent> {
+    vec![
+        spell(
+            ruleset_id,
+            "hex-spark",
+            "Hex Spark",
+            "misery",
+            1,
+            3,
+            "enemy_battle_stack",
+            "spell:hex_spark_damage_15",
+            2,
+        ),
+        spell(
+            ruleset_id,
+            "spite-march",
+            "Spite March",
+            "misery",
+            1,
+            2,
+            "self_champion",
+            "spell:spite_march_movement_30",
+            0,
+        ),
+    ]
+}
+
 fn first_playable_artifacts(ruleset_id: &str) -> Vec<ArtifactContent> {
     vec![ArtifactContent {
         id: "artifact:bent-banner".to_string(),
@@ -1309,6 +1341,8 @@ fn first_playable_asset_keys() -> Vec<String> {
         "icon:object:gold-mine",
         "icon:object:misery-beacon",
         "icon:object:resource-pile",
+        "icon:spell:hex-spark",
+        "icon:spell:spite-march",
         "portrait:class:ash-auditor",
         "portrait:class:toll-broken-captain",
         "sprite:object:crystal-mine",
@@ -1436,6 +1470,33 @@ fn building(
             .collect(),
         unlocks_unit_slug: unlocks_unit_slug.map(str::to_string),
         effect_key: effect_key.map(str::to_string),
+    }
+}
+
+fn spell(
+    ruleset_id: &str,
+    slug: &str,
+    name: &str,
+    school: &str,
+    level: u8,
+    mana_cost: u16,
+    target_type: &str,
+    effect_key: &str,
+    duration_rounds: u8,
+) -> SpellContent {
+    SpellContent {
+        id: format!("spell:{slug}"),
+        ruleset_id: ruleset_id.to_string(),
+        slug: slug.to_string(),
+        name: name.to_string(),
+        description: Some("First playable misery spell.".to_string()),
+        icon_key: Some(format!("icon:spell:{slug}")),
+        school: school.to_string(),
+        level,
+        mana_cost,
+        target_type: target_type.to_string(),
+        effect_key: effect_key.to_string(),
+        duration_rounds,
     }
 }
 
@@ -1938,7 +1999,7 @@ mod tests {
         );
         assert_eq!(
             manifest.ruleset.content_manifest_hash,
-            "915464be3bcad6ec19d5fbf0a891afa20c9dcb94a789fcf84dc682fc8802a799"
+            "9d892785a14dd2c4ba3fba2dfd7d4d14d256a32ba8e8e468f441fd0fb55a0979"
         );
         assert_eq!(manifest.ruleset.content_manifest_hash.len(), 64);
         assert!(get_content_manifest("missing", FIRST_PLAYABLE_RULESET_VERSION).is_none());
@@ -1953,7 +2014,7 @@ mod tests {
         assert_eq!(manifest.terrain.len(), 6);
         assert_eq!(manifest.units.len(), 9);
         assert_eq!(manifest.buildings.len(), 8);
-        assert!(manifest.spells.is_empty());
+        assert_eq!(manifest.spells.len(), 2);
         assert_eq!(manifest.artifacts.len(), 1);
         assert_eq!(manifest.map_objects.len(), 4);
         assert!(!manifest.asset_keys.is_empty());

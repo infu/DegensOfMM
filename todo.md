@@ -471,12 +471,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 22. Champion Progression, Skills, Magic, And Spellbook Expansion
 
-- [ ] Promote and implement champion skill trees, level-up choices, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, and advanced status effects only after Part 2 is expanded for them.
-- [ ] Add or update entities if `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, and effect keys are insufficient.
-- [ ] Unit test XP rewards, level-up choices, skill prerequisites, spell targeting, mana costs, status duration, dispel/stacking rules, deterministic rolls, and DTO/legal-action behavior.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
-- [ ] Audit: confirm progression and magic do not break v1 battle determinism, command recovery, or frontend action affordances.
-- [ ] Commit after this checkpoint.
+- [x] Promote and implement champion skill trees, level-up choices, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, and advanced status effects only after Part 2 is expanded for them.
+- [x] Add or update entities if `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, and effect keys are insufficient.
+- [x] Unit test XP rewards, level-up choices, skill prerequisites, spell targeting, mana costs, status duration, dispel/stacking rules, deterministic rolls, and DTO/legal-action behavior.
+- [x] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
+- [x] Audit: confirm progression and magic do not break v1 battle determinism, command recovery, or frontend action affordances.
+- [x] Commit after this checkpoint.
 
 ## 23. Expanded Economy, Taverns, Marketplace, And External Dwellings
 

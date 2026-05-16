@@ -63,6 +63,21 @@ impl ChampionState {
                 .effective_movement(champion_id, current_turn)
                 .unwrap_or(champion.movement_remaining),
             movement_max: champion.movement_max,
+            mana: self
+                .effective_mana(champion_id, current_turn)
+                .unwrap_or(champion.mana),
+            mana_max: champion.mana_max,
+            skill_points: champion.skill_points,
+            skill_keys: if own {
+                champion.skill_keys.clone()
+            } else {
+                Vec::new()
+            },
+            spell_slugs: if own {
+                self.learned_spell_slugs(champion_id)
+            } else {
+                Vec::new()
+            },
             vision_radius: champion.vision_radius,
             strength_label: strength_label(&army_stacks),
             army_stacks,

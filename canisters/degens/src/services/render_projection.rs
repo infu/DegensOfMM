@@ -162,18 +162,6 @@ pub(crate) fn champion_view_by_id(
     champion_view(context, champion, own)
 }
 
-pub(crate) fn town_view_by_id(
-    context: &SessionCallerContext,
-    town_id: &str,
-) -> Result<ApiTownView, ApiError> {
-    let town = resolve_town(&context.session, town_id)?;
-    let own = town.owner_participant_id == Some(context.participant.id().key());
-    if !own && !is_visible_at(&context.session, context.participant.id(), town.x, town.y)? {
-        return Err(public_error("not_visible", "town is not visible", false));
-    }
-    town_view(&town)
-}
-
 pub(crate) fn action_affordances(
     champions: &[ChampionView],
     towns: &[ApiTownView],
@@ -248,6 +236,15 @@ fn champion_view(
         y: champion.y,
         effective_movement: champion.movement_remaining,
         movement_max: champion.movement_max,
+        mana: champion.mana,
+        mana_max: champion.mana_max,
+        skill_points: champion.skill_points,
+        skill_keys: if own {
+            champion.skill_keys.clone()
+        } else {
+            Vec::new()
+        },
+        spell_slugs: Vec::new(),
         vision_radius: champion.vision_radius,
         strength_label: strength_label(&stacks),
         army_stacks: stacks,
@@ -321,42 +318,30 @@ fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, Ap
     Ok(artifacts)
 }
 
-fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
-    let faction = content::load_faction(Id::from_key(town.faction_id))?
-        .ok_or_else(|| public_error("faction_not_found", "town faction was not found", false))?;
-    let buildings = towns::page_town_buildings(town.id(), domm_game::MAX_LIST_LIMIT, None)?
+pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
+    let faction_slug = town_faction_slug(town);
+    let buildings = towns::page_town_buildings(town.id(), 16, None)?
         .items
         .into_iter()
         .map(|row| {
-            let building =
-                content::load_building(Id::from_key(row.building_def_id))?.ok_or_else(|| {
-                    public_error(
-                        "building_not_found",
-                        "town building definition was not found",
-                        false,
-                    )
-                })?;
             Ok(TownBuildingRecord {
                 building_id: row.id().to_string(),
                 session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
                 town_id: town.id().to_string(),
-                building_slug: building.slug,
+                building_slug: row.building_slug,
                 built_turn: row.built_turn,
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let recruit_pools = towns::page_town_recruit_pools(town.id(), domm_game::MAX_LIST_LIMIT, None)?
+    let recruit_pools = towns::page_town_recruit_pools(town.id(), 16, None)?
         .items
         .into_iter()
         .map(|row| {
-            let unit = content::load_unit(Id::from_key(row.unit_id))?.ok_or_else(|| {
-                public_error("unit_not_found", "town recruit unit was not found", false)
-            })?;
             Ok(TownRecruitPoolRecord {
                 pool_id: row.id().to_string(),
                 session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
                 town_id: town.id().to_string(),
-                unit_slug: unit.slug,
+                unit_slug: row.unit_slug,
                 available: row.available,
                 last_growth_week: row.last_growth_week,
                 last_command_id: row.last_command_id.map(|id| {
@@ -365,29 +350,27 @@ fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let garrison_stacks = towns::page_town_garrison(town.id(), domm_game::MAX_LIST_LIMIT, None)?
-        .items
-        .into_iter()
-        .map(|row| {
-            let unit = content::load_unit(Id::from_key(row.unit_id))?.ok_or_else(|| {
-                public_error("unit_not_found", "town garrison unit was not found", false)
-            })?;
-            Ok(domm_game::ArmyStackRecord {
-                stack_id: row.id().to_string(),
-                session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
-                owner_kind: "town".to_string(),
-                owner_id: town.id().to_string(),
-                unit_slug: unit.slug,
-                slot_index: row.slot_index,
-                quantity: row.quantity,
-                front_hp: row.front_hp,
-                status: "active".to_string(),
-                last_command_id: row.last_command_id.map(|id| {
-                    Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
-                }),
+    let garrison_stacks =
+        towns::page_town_garrison(town.id(), u32::from(domm_game::MAX_ARMY_SLOTS), None)?
+            .items
+            .into_iter()
+            .map(|row| {
+                Ok(domm_game::ArmyStackRecord {
+                    stack_id: row.id().to_string(),
+                    session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
+                    owner_kind: "town".to_string(),
+                    owner_id: town.id().to_string(),
+                    unit_slug: row.unit_slug,
+                    slot_index: row.slot_index,
+                    quantity: row.quantity,
+                    front_hp: row.front_hp,
+                    status: "active".to_string(),
+                    last_command_id: row.last_command_id.map(|id| {
+                        Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
+                    }),
+                })
             })
-        })
-        .collect::<Result<Vec<_>, ApiError>>()?;
+            .collect::<Result<Vec<_>, ApiError>>()?;
     Ok(ApiTownView {
         town: TownRecord {
             town_id: town.id().to_string(),
@@ -396,7 +379,7 @@ fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
                 .owner_participant_id
                 .map(|id| Id::<GameParticipant>::from_key(id).to_string())
                 .unwrap_or_default(),
-            faction_slug: faction.slug,
+            faction_slug,
             name: town.name.clone(),
             x: town.x,
             y: town.y,
@@ -415,6 +398,15 @@ fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
         recruit_pools,
         garrison_stacks,
     })
+}
+
+fn town_faction_slug(town: &Town) -> String {
+    domm_game::first_playable_scenario()
+        .starts
+        .iter()
+        .find(|start| start.town_x == town.x && start.town_y == town.y)
+        .map(|start| start.faction_slug.clone())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn object_view_from_known(
@@ -623,22 +615,7 @@ fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion
     .ok_or_else(|| public_error("not_found", "champion not found", false))
 }
 
-fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
-    if let Ok(id) = Ulid::from_str(town_id).map(Id::<Town>::from_key) {
-        return towns::load_town(id)?
-            .ok_or_else(|| public_error("not_found", "town not found", false));
-    }
-    let scenario = domm_game::first_playable_scenario();
-    let start = scenario
-        .starts
-        .iter()
-        .find(|start| start.town_key == town_id)
-        .ok_or_else(|| public_error("not_found", "town not found", false))?;
-    towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
-        .ok_or_else(|| public_error("not_found", "town not found", false))
-}
-
-fn is_visible_at(
+pub(crate) fn is_visible_at(
     session: &GameSession,
     participant_id: Id<GameParticipant>,
     x: u16,

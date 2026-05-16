@@ -6,7 +6,7 @@ use domm_game::{ApiError, ApiEventView, ChangedSubject, MAX_LIST_LIMIT};
 use icydb::{traits::EntityValue, types::Id};
 
 use crate::repos::{
-    aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects,
+    aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects, content,
     map_visibility_occupancy, neutrals, players, sessions, towns,
 };
 
@@ -347,10 +347,19 @@ fn write_town_garrison_survivors(
         .filter(|stack| stack.side == "attacker" && stack.status == "active" && stack.quantity > 0)
         .enumerate()
     {
+        let unit = content::load_unit(Id::<UnitDefinition>::from_key(battle_stack.unit_id))?
+            .ok_or_else(|| {
+                ApiError::new(
+                    "unit_not_found",
+                    "battle stack unit definition was not found",
+                    true,
+                )
+            })?;
         let mut stack = towns::create_town_garrison_stack(
             session_id,
             town_id,
-            Id::<UnitDefinition>::from_key(battle_stack.unit_id),
+            unit.id(),
+            unit.slug,
             u8::try_from(slot_index).unwrap_or(u8::MAX),
             battle_stack.quantity,
             battle_stack.front_hp,

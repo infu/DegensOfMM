@@ -166,12 +166,14 @@ pub(crate) fn create_town_building(
     session_id: Id<GameSession>,
     town_id: Id<Town>,
     building_def_id: Id<BuildingDefinition>,
+    building_slug: String,
     built_turn: u32,
 ) -> RepoResult<TownBuilding> {
     let input: Create<TownBuilding> = Create::<TownBuilding> {
         session_id: Some(session_id.key()),
         town_id: Some(town_id.key()),
         building_def_id: Some(building_def_id.key()),
+        building_slug: Some(building_slug),
         built_turn: Some(built_turn),
     };
 
@@ -216,6 +218,7 @@ pub(crate) fn create_town_recruit_pool(
     session_id: Id<GameSession>,
     town_id: Id<Town>,
     unit_id: Id<UnitDefinition>,
+    unit_slug: String,
     available: u32,
     last_growth_week: u32,
 ) -> RepoResult<TownRecruitPool> {
@@ -223,6 +226,7 @@ pub(crate) fn create_town_recruit_pool(
         session_id: Some(session_id.key()),
         town_id: Some(town_id.key()),
         unit_id: Some(unit_id.key()),
+        unit_slug: Some(unit_slug),
         available: Some(available),
         last_growth_week: Some(last_growth_week),
         last_command_id: Some(None),
@@ -273,6 +277,7 @@ pub(crate) fn create_town_garrison_stack(
     session_id: Id<GameSession>,
     town_id: Id<Town>,
     unit_id: Id<UnitDefinition>,
+    unit_slug: String,
     slot_index: u8,
     quantity: u32,
     front_hp: u16,
@@ -281,6 +286,7 @@ pub(crate) fn create_town_garrison_stack(
         session_id: Some(session_id.key()),
         town_id: Some(town_id.key()),
         unit_id: Some(unit_id.key()),
+        unit_slug: Some(unit_slug),
         slot_index: Some(slot_index),
         quantity: Some(quantity),
         front_hp: Some(front_hp),

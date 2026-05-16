@@ -42,6 +42,10 @@ pub fn build_first_playable_champion_state_for_ids(ids: &FixtureIds) -> Champion
             wisdom: 1,
             command: 1,
             mana: 10,
+            mana_max: 10,
+            mana_turn: 1,
+            skill_points: 0,
+            skill_keys: Vec::new(),
             movement_max: scenario.starting_state.champion_movement,
             movement_remaining: scenario.starting_state.champion_movement,
             movement_turn: 1,
@@ -74,6 +78,7 @@ pub fn build_first_playable_champion_state_for_ids(ids: &FixtureIds) -> Champion
     ChampionState {
         session_id: ids.session_id.clone(),
         champions,
+        champion_spells: Vec::new(),
         army_stacks,
         artifact_instances: vec![ArtifactInstanceRecord {
             artifact_id: artifact_id.clone(),

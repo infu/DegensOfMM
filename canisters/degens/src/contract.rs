@@ -128,6 +128,30 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::get_champion_view",
     },
     EndpointSpec {
+        name: "preview_champion_progression",
+        kind: EndpointKind::Query,
+        group: "champion_magic",
+        fixture_mapping: "FixtureApiBackend::preview_champion_progression",
+    },
+    EndpointSpec {
+        name: "select_champion_level_up",
+        kind: EndpointKind::Update,
+        group: "champion_magic",
+        fixture_mapping: "FixtureApiBackend::select_champion_level_up",
+    },
+    EndpointSpec {
+        name: "learn_champion_spell",
+        kind: EndpointKind::Update,
+        group: "champion_magic",
+        fixture_mapping: "FixtureApiBackend::learn_champion_spell",
+    },
+    EndpointSpec {
+        name: "cast_adventure_spell",
+        kind: EndpointKind::Update,
+        group: "champion_magic",
+        fixture_mapping: "FixtureApiBackend::cast_adventure_spell",
+    },
+    EndpointSpec {
         name: "get_town_view",
         kind: EndpointKind::Query,
         group: "render_query",

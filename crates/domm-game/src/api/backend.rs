@@ -489,10 +489,15 @@ impl FixtureApiBackend {
     ) -> CommandResponse {
         let command_type = "submit_battle_action";
         let payload = format!(
-            r#"{{"battle_id":"{}","stack":"{}","action":"{}","now_ms":{now_ms}}}"#,
+            r#"{{"battle_id":"{}","stack":"{}","action":"{}","ability_key":{},"now_ms":{now_ms}}}"#,
             escape_json(&input.battle_id),
             escape_json(&input.battle_stack_id),
-            escape_json(&input.action)
+            escape_json(&input.action),
+            input
+                .ability_key
+                .as_deref()
+                .map(|key| format!(r#""{}""#, escape_json(key)))
+                .unwrap_or_else(|| "null".to_string())
         );
         self.apply_strategic_command(
             caller,

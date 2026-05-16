@@ -1,8 +1,8 @@
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{Battle, BattleStack, GameCommand, GameSession};
+use domm_degens_schema::schema::{Battle, BattleStack, Champion, GameCommand, GameSession};
 use domm_game::{
     ApiError, BattleActionInput, BattleActionReceipt, BattleCommandBudget, BattleCoord,
-    BattleError, BattleSyncOutcome, BattleView, CommandResponse, CommandResult,
+    BattleError, BattleSyncOutcome, BattleView, CommandResponse, CommandResult, RollKey,
     legal_actions_for_stack,
 };
 use icydb::{
@@ -10,7 +10,7 @@ use icydb::{
     types::{Id, Timestamp},
 };
 
-use crate::repos::{battles, commands_events_effects};
+use crate::repos::{battles, champions_artifacts, commands_events_effects, content};
 
 use super::{
     battle_aftermath, battle_rows,
@@ -235,6 +235,16 @@ fn apply_player_action(
 
     let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
     validate_player_action(&state, participant_id, input, now_ms)?;
+    if input.action == "CastAbility" {
+        return apply_cast_ability_command(
+            session,
+            participant_id,
+            command,
+            input,
+            events,
+            changed_subjects,
+        );
+    }
     let battle_command = battle_rows::battle_action_command(
         &command,
         &input.battle_id,
@@ -264,6 +274,223 @@ fn apply_player_action(
     ));
 
     battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error)
+}
+
+fn apply_cast_ability_command(
+    session: &mut GameSession,
+    participant_id: &str,
+    command: GameCommand,
+    input: &BattleActionInput,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<BattleActionReceipt, ApiError> {
+    let ability_key = input.ability_key.as_deref().ok_or_else(|| {
+        public_error(
+            "battle_ability_required",
+            "CastAbility requires an ability_key",
+            false,
+        )
+    })?;
+    let spell_slug = ability_key.strip_prefix("spell:").ok_or_else(|| {
+        public_error(
+            "battle_ability_not_supported",
+            "only spell abilities can be cast in checkpoint 22",
+            false,
+        )
+    })?;
+    let target_stack_id = input.target_stack_id.as_deref().ok_or_else(|| {
+        public_error(
+            "battle_target_required",
+            "CastAbility requires a target stack",
+            false,
+        )
+    })?;
+    let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
+    state.commands.push(battle_rows::battle_action_command(
+        &command,
+        &input.battle_id,
+        Some(participant_id.to_string()),
+        input.battle_stack_id.clone(),
+        input.action.clone(),
+        input.target_stack_id.clone(),
+        input.destination,
+        false,
+    ));
+    let battle = state
+        .battle(&input.battle_id)
+        .map_err(map_battle_error)?
+        .clone();
+    let caster_stack = state
+        .stack(&input.battle_stack_id)
+        .map_err(map_battle_error)?
+        .clone();
+    let caster_champion_id = caster_champion_for_battle(&battle, &caster_stack)?;
+    let champion_id = session_context::parse_id::<Champion>(&caster_champion_id, "champion_id")?;
+    let mut champion = champions_artifacts::load_champion(champion_id)?.ok_or_else(|| {
+        public_error(
+            "champion_not_found",
+            "casting champion was not found",
+            false,
+        )
+    })?;
+    if Id::<domm_degens_schema::schema::GameParticipant>::from_key(champion.participant_id)
+        .to_string()
+        != participant_id
+    {
+        return Err(public_error(
+            "champion_not_owned",
+            "casting champion does not belong to the caller",
+            false,
+        ));
+    }
+    let spell = content::find_spell_by_ruleset_slug(Id::from_key(session.ruleset_id), spell_slug)?
+        .ok_or_else(|| public_error("spell_not_found", "spell definition was not found", false))?;
+    if spell.target_type != "enemy_battle_stack" {
+        return Err(public_error(
+            "invalid_spell_target",
+            "battle spell must target an enemy battle stack",
+            false,
+        ));
+    }
+    if champions_artifacts::find_champion_spell(champion.id(), spell.id())?.is_none() {
+        return Err(public_error(
+            "spell_not_learned",
+            "champion has not learned this spell",
+            false,
+        ));
+    }
+    if champion.last_command_id == Some(command.id().key()) {
+        return battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error);
+    }
+    let available_mana = if champion.mana_turn == session.current_turn {
+        champion.mana
+    } else {
+        champion.mana_max
+    };
+    if spell.mana_cost > available_mana {
+        return Err(public_error(
+            "insufficient_mana",
+            "champion does not have enough mana",
+            false,
+        ));
+    }
+
+    let roll = RollKey::new(
+        session.seed.to_string(),
+        "battle_spell_damage",
+        u32::from(battle.current_round),
+        &command.id().to_string(),
+        &input.battle_stack_id,
+        target_stack_id,
+        0,
+    )
+    .roll_between_inclusive(12, 18)
+    .map_err(|error| public_error("rng_error", error.to_string(), true))?;
+    let damage = (roll.value + champion.wisdom.max(0) as u64).min(u64::from(u32::MAX)) as u32;
+    domm_game::apply_damage_to_stack(
+        &mut state,
+        target_stack_id,
+        damage,
+        &command.id().to_string(),
+    )
+    .map_err(map_battle_error)?;
+    let status_key = format!(
+        "hexed_until_round:{}",
+        battle
+            .current_round
+            .saturating_add(u16::from(spell.duration_rounds))
+    );
+    {
+        let target = state.stack_mut(target_stack_id).map_err(map_battle_error)?;
+        if !target.status_keys.iter().any(|key| key == &status_key) {
+            target.status_keys.push(status_key.clone());
+            target.status_keys.sort();
+        }
+        domm_game::validate_battle_stack_status_keys(target).map_err(map_battle_error)?;
+    }
+    {
+        let caster = state
+            .stack_mut(&input.battle_stack_id)
+            .map_err(map_battle_error)?;
+        caster.cast_round = battle.current_round;
+        caster.acted_round = battle.current_round;
+        caster.last_command_id = Some(command.id().to_string());
+    }
+    domm_game::append_battle_event(
+        &mut state,
+        &input.battle_id,
+        &command.id().to_string(),
+        "battle_spell_cast",
+        &input.battle_stack_id,
+        &format!(
+            r#"{{"spell_slug":"{}","target_stack_id":"{}","damage":{},"roll":{}}}"#,
+            command_response::escape_json(spell_slug),
+            command_response::escape_json(target_stack_id),
+            damage,
+            roll.value
+        ),
+    );
+    champion.mana_turn = session.current_turn;
+    champion.mana = available_mana - spell.mana_cost;
+    champion.last_command_id = Some(command.id().key());
+    champions_artifacts::update_champion(champion)?;
+    battle_rows::persist_battle_state(&state, command.id())?;
+    command_response::ensure_command_effect(
+        session.id(),
+        command.id(),
+        format!("battle_spell:{spell_slug}:{}", input.battle_stack_id),
+        "battle_spell_cast".to_string(),
+        "battle_stack".to_string(),
+        target_stack_id.to_string(),
+        format!(
+            r#"{{"spell_slug":"{}","damage":{},"status_key":"{}"}}"#,
+            command_response::escape_json(spell_slug),
+            damage,
+            command_response::escape_json(&status_key)
+        ),
+    )?;
+    append_new_battle_events(session, command.id(), &state, events)?;
+    battle_aftermath::apply_resolved_battle_aftermath(
+        session,
+        command.id(),
+        session_context::parse_id::<Battle>(&input.battle_id, "battle_id")?,
+        events,
+        changed_subjects,
+    )?;
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &input.battle_id,
+        "update",
+    ));
+    changed_subjects.push(command_response::changed(
+        "champion",
+        &caster_champion_id,
+        "update",
+    ));
+    battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error)
+}
+
+fn caster_champion_for_battle(
+    battle: &domm_game::BattleRecord,
+    caster_stack: &domm_game::BattleStackRecord,
+) -> Result<String, ApiError> {
+    if caster_stack.side == domm_game::BATTLE_SIDE_ATTACKER {
+        battle.attacker_champion_id.clone().ok_or_else(|| {
+            public_error(
+                "caster_champion_missing",
+                "attacker champion is missing for battle cast",
+                false,
+            )
+        })
+    } else {
+        battle.defender_champion_id.clone().ok_or_else(|| {
+            public_error(
+                "caster_champion_missing",
+                "defender champion is missing for battle cast",
+                false,
+            )
+        })
+    }
 }
 
 fn recover_applying_battle_commands(
@@ -297,35 +524,53 @@ fn recover_applying_battle_commands(
                 let participant_id = command.actor_participant_id.map(|id| {
                     Id::<domm_degens_schema::schema::GameParticipant>::from_key(id).to_string()
                 });
-                let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
-                let battle_command = battle_rows::battle_action_command(
-                    &command,
-                    &input.battle_id,
-                    participant_id,
-                    input.battle_stack_id,
-                    input.action,
-                    input.target_stack_id,
-                    input.destination,
-                    false,
-                );
-                state.commands.push(battle_command);
-                domm_game::apply_battle_command_by_id(
-                    &mut state,
-                    &command.id().to_string(),
-                    command.created_at.as_millis().try_into().unwrap_or(0),
-                )
-                .map_err(map_battle_error)?;
-                battle_rows::persist_battle_state(&state, command.id())?;
-                append_new_battle_events(session, command.id(), &state, events)?;
-                battle_aftermath::apply_resolved_battle_aftermath(
-                    session,
-                    command.id(),
-                    battle_id,
-                    events,
-                    changed_subjects,
-                )?;
-                let receipt = battle_action_receipt(&state, &command.id().to_string())
+                let receipt = if input.action == "CastAbility" {
+                    let participant_id = participant_id.ok_or_else(|| {
+                        public_error(
+                            "battle_actor_missing",
+                            "cast recovery is missing participant",
+                            true,
+                        )
+                    })?;
+                    apply_cast_ability_command(
+                        session,
+                        &participant_id,
+                        command.clone(),
+                        &input,
+                        events,
+                        changed_subjects,
+                    )?
+                } else {
+                    let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
+                    let battle_command = battle_rows::battle_action_command(
+                        &command,
+                        &input.battle_id,
+                        participant_id,
+                        input.battle_stack_id,
+                        input.action,
+                        input.target_stack_id,
+                        input.destination,
+                        false,
+                    );
+                    state.commands.push(battle_command);
+                    domm_game::apply_battle_command_by_id(
+                        &mut state,
+                        &command.id().to_string(),
+                        command.created_at.as_millis().try_into().unwrap_or(0),
+                    )
                     .map_err(map_battle_error)?;
+                    battle_rows::persist_battle_state(&state, command.id())?;
+                    append_new_battle_events(session, command.id(), &state, events)?;
+                    battle_aftermath::apply_resolved_battle_aftermath(
+                        session,
+                        command.id(),
+                        battle_id,
+                        events,
+                        changed_subjects,
+                    )?;
+                    battle_action_receipt(&state, &command.id().to_string())
+                        .map_err(map_battle_error)?
+                };
                 let result_json = battle_action_result_json(&receipt);
                 let mut applied = command;
                 applied.status = "applied".to_string();
@@ -576,6 +821,9 @@ fn validate_player_action(
             participant_id: participant_id.to_string(),
         }));
     }
+    if input.action == "CastAbility" {
+        return validate_cast_ability_action(state, input);
+    }
     let legal_actions = legal_actions_for_stack(state, &input.battle_id, &input.battle_stack_id)
         .map_err(map_battle_error)?;
     let Some(action) = legal_actions
@@ -622,6 +870,7 @@ fn validate_player_action(
             }
         }
         "Defend" | "Wait" => {}
+        "CastAbility" => {}
         other => {
             return Err(public_error(
                 "battle_action_not_supported",
@@ -629,6 +878,53 @@ fn validate_player_action(
                 false,
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_cast_ability_action(
+    state: &domm_game::BattleState,
+    input: &BattleActionInput,
+) -> Result<(), ApiError> {
+    let ability_key = input.ability_key.as_deref().ok_or_else(|| {
+        public_error(
+            "battle_ability_required",
+            "CastAbility requires an ability_key",
+            false,
+        )
+    })?;
+    if !ability_key.starts_with("spell:") {
+        return Err(public_error(
+            "battle_ability_not_supported",
+            "only learned spell abilities are supported by CastAbility",
+            false,
+        ));
+    }
+    let target_id = input.target_stack_id.as_deref().ok_or_else(|| {
+        public_error(
+            "battle_target_required",
+            "CastAbility requires a target stack",
+            false,
+        )
+    })?;
+    let battle = state.battle(&input.battle_id).map_err(map_battle_error)?;
+    let caster = state
+        .stack(&input.battle_stack_id)
+        .map_err(map_battle_error)?;
+    if caster.cast_round >= battle.current_round {
+        return Err(public_error(
+            "battle_stack_already_cast",
+            "this stack already cast this round",
+            false,
+        ));
+    }
+    let target = state.stack(target_id).map_err(map_battle_error)?;
+    if caster.side == target.side || !target.is_living() {
+        return Err(public_error(
+            "battle_target_not_legal",
+            "CastAbility target must be a living enemy stack",
+            false,
+        ));
     }
     Ok(())
 }
@@ -694,10 +990,15 @@ fn command_mentions_battle(command: &GameCommand, battle_id: Id<Battle>) -> bool
 
 fn battle_action_payload_json(input: &BattleActionInput) -> String {
     format!(
-        r#"{{"battle_id":"{}","battle_stack_id":"{}","action":"{}","target_stack_id":{},"destination":{}}}"#,
+        r#"{{"battle_id":"{}","battle_stack_id":"{}","action":"{}","ability_key":{},"target_stack_id":{},"destination":{}}}"#,
         command_response::escape_json(&input.battle_id),
         command_response::escape_json(&input.battle_stack_id),
         command_response::escape_json(&input.action),
+        input
+            .ability_key
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string()),
         input
             .target_stack_id
             .as_deref()
@@ -733,6 +1034,7 @@ fn parse_battle_action_input(payload: &str) -> Result<BattleActionInput, ApiErro
                 true,
             )
         })?,
+        ability_key: json_nullable_field(payload, "ability_key"),
         target_stack_id: json_nullable_field(payload, "target_stack_id"),
         destination: parse_destination(payload),
     })

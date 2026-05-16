@@ -340,6 +340,7 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
             battle_id: battle_id.clone(),
             battle_stack_id: active_stack_id,
             action: "Defend".to_string(),
+            ability_key: None,
             target_stack_id: None,
             destination: None,
         };

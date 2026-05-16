@@ -17,7 +17,7 @@ layer.
 | Area | Audit result |
 | --- | --- |
 | IcyDB schema and repositories | Implemented with typed domain repositories, indexed hot-path plan tests, relation/deletion tests, and generic SQL scans limited to diagnostics. |
-| Public canister endpoints | 28 required 19A endpoints are exported in Candid, inventoried, and called by Pocket-IC tests. |
+| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoint 22 expands the live inventory to 32 with champion progression and magic endpoints. |
 | Lobby/session/setup | IcyDB-backed registration, create/join/ready/start, setup phases, setup recovery, participant rows, and match-history shells are implemented. |
 | Content/opening views | First-playable content, map, visibility, objects, champions, towns, neutrals, economy, and opening viewport projections are persisted and queryable. |
 | Strategic gameplay | Movement intents, sync slicing, resource pickup, mine capture/income, building, recruitment, object visits, visibility, and battle handoff persist IcyDB rows. |

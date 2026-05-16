@@ -76,8 +76,8 @@ fn first_playable_content_effect_keys_have_handlers() {
 #[test]
 fn unsupported_systems_return_typed_disabled_reasons() {
     for (domain, reason) in [
-        (EffectDomain::Spell, "spellbook_deferred_v1"),
-        (EffectDomain::SkillTree, "skill_tree_deferred_v1"),
+        (EffectDomain::Spell, "unsupported_spell_effect"),
+        (EffectDomain::SkillTree, "unsupported_skill_effect"),
         (EffectDomain::Morale, "morale_disabled_v1"),
         (EffectDomain::Luck, "luck_disabled_v1"),
         (EffectDomain::Status, "complex_status_deferred_v1"),
@@ -138,7 +138,7 @@ fn cast_ability_is_never_enabled_for_v1_content() {
             assert!(!action.enabled);
             assert_eq!(
                 action.disabled_reason.as_deref(),
-                Some("cast_ability_deferred_v1")
+                Some("unsupported_cast_ability")
             );
         }
     }

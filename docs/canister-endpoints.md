@@ -26,6 +26,10 @@ fixture loading, not for normal gameplay.
 | `get_visible_objects` | query | `FixtureApiBackend::get_visible_objects` |
 | `get_my_champions` | query | `FixtureApiBackend::get_my_champions` |
 | `get_champion_view` | query | `FixtureApiBackend::get_champion_view` |
+| `preview_champion_progression` | query | `FixtureApiBackend::preview_champion_progression` |
+| `select_champion_level_up` | update | `FixtureApiBackend::select_champion_level_up` |
+| `learn_champion_spell` | update | `FixtureApiBackend::learn_champion_spell` |
+| `cast_adventure_spell` | update | `FixtureApiBackend::cast_adventure_spell` |
 | `get_town_view` | query | `FixtureApiBackend::get_town_view` |
 | `get_battle_state` | query | `FixtureApiBackend::get_battle_state` |
 | `get_content_manifest` | query | `FixtureApiBackend::get_content_manifest` |
@@ -57,6 +61,10 @@ or `submit_battle_action`. Pocket-IC tests advance Pocket-IC time when they
 need turn deadlines or battle action deadlines to elapse. Server time is also
 excluded from command idempotency payloads so exact nonce retries replay the
 original command instead of failing due to a later clock value.
+
+Checkpoint 22 battle spellcasting uses `submit_battle_action` with
+`action = CastAbility` and `ability_key = spell:<slug>`, so it remains under the
+same canister-time and command-idempotency contract.
 
 ## Deferred Endpoint Decisions
 

@@ -192,6 +192,11 @@ impl ChampionState {
         let computed_level =
             1 + (champion.experience / 1_000).min(u64::from(CHAMPION_LEVEL_CAP - 1));
         champion.level = (computed_level as u16).min(CHAMPION_LEVEL_CAP);
+        if champion.level > level_before {
+            champion.skill_points = champion
+                .skill_points
+                .saturating_add(champion.level.saturating_sub(level_before));
+        }
         champion.last_command_id = Some(command_id.to_string());
         Ok(ChampionProgressionResult {
             champion_id: champion_id.to_string(),
@@ -199,7 +204,12 @@ impl ChampionState {
             experience_after: champion.experience,
             level_before,
             level_after: champion.level,
-            skill_choice_status: "deferred_v1_no_skill_tree_choice".to_string(),
+            skill_points_after: champion.skill_points,
+            skill_choice_status: if champion.skill_points > 0 {
+                "pending_skill_choice".to_string()
+            } else {
+                "no_skill_choice_pending".to_string()
+            },
         })
     }
 

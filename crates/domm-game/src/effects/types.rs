@@ -90,8 +90,21 @@ pub fn dispatch_effect(request: EffectRequest) -> EffectResolution {
             "score_central_objective" => supported(request, "object:score_central_objective", &[]),
             _ => disabled(request, "unsupported_object_effect"),
         },
-        EffectDomain::Spell => disabled(request, "spellbook_deferred_v1"),
-        EffectDomain::SkillTree => disabled(request, "skill_tree_deferred_v1"),
+        EffectDomain::Spell => match request.effect_key.as_str() {
+            "spell:hex_spark_damage_15" => {
+                supported(request, "spell:hex_spark_damage_15", &["hexed"])
+            }
+            "spell:spite_march_movement_30" => {
+                supported(request, "spell:spite_march_movement_30", &[])
+            }
+            _ => disabled(request, "unsupported_spell_effect"),
+        },
+        EffectDomain::SkillTree => match request.effect_key.as_str() {
+            "skill:sour_sorcery" => supported(request, "skill:sour_sorcery", &[]),
+            "skill:dirty_tactics" => supported(request, "skill:dirty_tactics", &[]),
+            "skill:grim_logistics" => supported(request, "skill:grim_logistics", &[]),
+            _ => disabled(request, "unsupported_skill_effect"),
+        },
         EffectDomain::Morale => disabled(request, "morale_disabled_v1"),
         EffectDomain::Luck => disabled(request, "luck_disabled_v1"),
         EffectDomain::Status => disabled(request, "complex_status_deferred_v1"),
@@ -124,15 +137,20 @@ pub fn validate_status_keys(status_keys: &[String]) -> Result<(), EffectError> {
 
 #[must_use]
 pub fn legal_effect_action(action: &str, effect_key: &str) -> LegalEffectAction {
-    if action == "CastAbility" {
+    if action == "CastAbility" && !effect_key.starts_with("spell:") {
         return LegalEffectAction {
             action: action.to_string(),
             effect_key: effect_key.to_string(),
             enabled: false,
-            disabled_reason: Some("cast_ability_deferred_v1".to_string()),
+            disabled_reason: Some("unsupported_cast_ability".to_string()),
         };
     }
-    let resolution = dispatch_effect(EffectRequest::new(EffectDomain::Ability, effect_key));
+    let domain = if effect_key.starts_with("spell:") {
+        EffectDomain::Spell
+    } else {
+        EffectDomain::Ability
+    };
+    let resolution = dispatch_effect(EffectRequest::new(domain, effect_key));
     LegalEffectAction {
         action: action.to_string(),
         effect_key: effect_key.to_string(),

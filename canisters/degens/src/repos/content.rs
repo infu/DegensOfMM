@@ -439,6 +439,10 @@ pub(crate) fn find_spell_by_ruleset_slug(
     )
 }
 
+pub(crate) fn load_spell(id: Id<SpellDefinition>) -> RepoResult<Option<SpellDefinition>> {
+    foundation::load_by_id("content.load_spell", id)
+}
+
 pub(crate) fn page_spells_by_ruleset(
     ruleset_id: Id<RulesetDefinition>,
 ) -> RepoResult<Vec<SpellDefinition>> {

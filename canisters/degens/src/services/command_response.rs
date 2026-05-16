@@ -1,8 +1,9 @@
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession};
 use domm_game::{
-    ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome, ChangedSubject, CommandPhase,
-    CommandResponse, CommandResult, CommandStatus, StrategicCommandReceipt,
+    ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome, ChampionMagicReceipt,
+    ChangedSubject, CommandPhase, CommandResponse, CommandResult, CommandStatus,
+    StrategicCommandReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -102,7 +103,13 @@ pub(crate) fn begin_participant_command(
 fn is_recoverable_movement_command(command_type: &str) -> bool {
     matches!(
         command_type,
-        "submit_move_intent" | "sync_session_turn" | "submit_battle_action" | "sync_battle"
+        "submit_move_intent"
+            | "sync_session_turn"
+            | "submit_battle_action"
+            | "sync_battle"
+            | "select_champion_level_up"
+            | "learn_champion_spell"
+            | "cast_adventure_spell"
     )
 }
 
@@ -363,6 +370,9 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
     match command.command_type.as_str() {
         "submit_battle_action" => CommandResult::BattleAction(battle_action_from_json(command)),
         "sync_battle" => CommandResult::BattleSync(battle_sync_from_json(command)),
+        "select_champion_level_up" | "learn_champion_spell" | "cast_adventure_spell" => {
+            CommandResult::ChampionMagic(champion_magic_from_json(command))
+        }
         _ => CommandResult::StrategicReceipt(receipt_from_json(
             &command.command_type,
             &command.id().to_string(),
@@ -370,6 +380,24 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
             0,
             command.result_json.as_deref(),
         )),
+    }
+}
+
+fn champion_magic_from_json(command: &GameCommand) -> ChampionMagicReceipt {
+    let json = command.result_json.as_deref();
+    ChampionMagicReceipt {
+        command_id: command.id().to_string(),
+        champion_id: json_string_field(json, "champion_id").unwrap_or_default(),
+        action: json_string_field(json, "action").unwrap_or_else(|| command.command_type.clone()),
+        skill_key: json_string_field(json, "skill_key"),
+        spell_slug: json_string_field(json, "spell_slug"),
+        mana_after: json_u32_field(json, "mana_after")
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(0),
+        movement_remaining_after: json_u32_field(json, "movement_remaining_after")
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(0),
+        status_keys: Vec::new(),
     }
 }
 

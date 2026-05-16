@@ -14,25 +14,29 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
         assert!(!endpoint.fixture_mapping.is_empty());
     }
 
-    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 28);
+    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 32);
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Update)
             .count(),
-        11
+        14
     );
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Query)
             .count(),
-        17
+        18
     );
     assert!(names.contains("register_player"));
     assert!(names.contains("get_game_view"));
     assert!(names.contains("submit_battle_action"));
     assert!(names.contains("preview_move_path"));
+    assert!(names.contains("preview_champion_progression"));
+    assert!(names.contains("select_champion_level_up"));
+    assert!(names.contains("learn_champion_spell"));
+    assert!(names.contains("cast_adventure_spell"));
 }
 
 #[test]
@@ -94,6 +98,7 @@ fn final_gameplay_services_do_not_call_fixture_or_placeholder_backends() {
         include_str!("services/battle_aftermath.rs"),
         include_str!("services/battle_rows.rs"),
         include_str!("services/battle_start.rs"),
+        include_str!("services/champion_magic.rs"),
         include_str!("services/command_response.rs"),
         include_str!("services/content.rs"),
         include_str!("services/events.rs"),
@@ -131,6 +136,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/api/movement.rs",
         "src/api/town.rs",
         "src/api/battle.rs",
+        "src/api/champion_magic.rs",
         "src/api/events.rs",
         "src/api/content.rs",
         "src/api/history.rs",
@@ -141,6 +147,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/movement.rs",
         "src/services/town.rs",
         "src/services/battle.rs",
+        "src/services/champion_magic.rs",
         "src/services/events.rs",
         "src/services/content.rs",
         "src/services/history.rs",

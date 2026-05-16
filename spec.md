@@ -3405,6 +3405,11 @@ pub struct Town {}
 
 `TownBuilding` rows are authoritative. `Town.hall_level` and `Town.fort_level` are derived caches updated only by the build/capture saga. If cache fields and building rows disagree, building rows win and a repair command updates the cache.
 
+Town child rows also carry denormalized display slugs for their definition
+references. The strong definition relations remain authoritative for command
+validation, while `get_town_view` can render bounded town details without
+joining content definition rows on every hot query.
+
 ```rust
 #[entity(
     store = "DegensStore",
@@ -3424,6 +3429,7 @@ pub struct Town {}
         field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
         field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
         field(ident = "building_def_id", value(item(rel = "BuildingDefinition", prim = "Ulid", strong))),
+        field(ident = "building_slug", value(item(prim = "Text", max_len = 64)), default = ""),
 
         field(ident = "built_turn", value(item(prim = "Nat32")))
     )
@@ -3450,6 +3456,7 @@ pub struct TownBuilding {}
         field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
         field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
         field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+        field(ident = "unit_slug", value(item(prim = "Text", max_len = 64)), default = ""),
 
         field(ident = "available", value(item(prim = "Nat32")), default = 0u32),
         field(ident = "last_growth_week", value(item(prim = "Nat32")), default = 0u32),
@@ -3477,6 +3484,7 @@ pub struct TownRecruitPool {}
         field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
         field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
         field(ident = "unit_id", value(item(rel = "UnitDefinition", prim = "Ulid", strong))),
+        field(ident = "unit_slug", value(item(prim = "Text", max_len = 64)), default = ""),
 
         field(ident = "slot_index", value(item(prim = "Nat8"))),
         field(ident = "quantity", value(item(prim = "Nat32"))),
@@ -5861,3 +5869,146 @@ endpoint coverage.
 No Part 1 system may be silently implemented as partial canister behavior. Until
 its bounded Part 2 subsection exists, the runtime representation must remain a
 content omission, a typed disabled response, or an explicit deferred checkpoint.
+
+## 24.5 Checkpoint 22 Champion Progression And Magic
+
+Checkpoint 22 promotes a bounded first slice of champion progression, skills,
+spell learning, adventure casting, battle spellcasting, mana reset rules, and
+advanced battle statuses.
+
+IcyDB schema:
+
+```text
+Champion appends:
+  mana_max: Nat16 default 10
+  mana_turn: Nat32 default 0
+  skill_points: Nat16 default 0
+  skill_keys: Vec<Text max 64>
+
+ChampionSpell appends:
+  last_command_id: weak GameCommand relation
+
+Existing rows retained:
+  SpellDefinition owns spell metadata, mana_cost, target_type, effect_key, duration_rounds.
+  BattleStack.cast_round and BattleStack.status_keys store per-round casting and bounded status tags.
+  CommandEffect records skill, spell learning, adventure cast, and battle cast application.
+```
+
+Indexes and lookup paths:
+
+```text
+Champion:
+  session_id + participant_id
+  participant_id + status
+  in_battle_id
+
+ChampionSpell:
+  champion_id + spell_id unique
+  champion_id
+  session_id
+  spell_id
+
+SpellDefinition:
+  ruleset_id + slug unique
+  ruleset_id + school + level
+
+BattleStack:
+  battle_id + side
+  battle_id + side + slot_index unique
+```
+
+Public endpoints and command paths:
+
+```text
+preview_champion_progression(session_id, champion_id) -> ChampionProgressionView
+select_champion_level_up(session_id, champion_id, skill_key, client_nonce) -> CommandResponse
+learn_champion_spell(session_id, champion_id, spell_slug, client_nonce) -> CommandResponse
+cast_adventure_spell(session_id, champion_id, spell_slug, client_nonce) -> CommandResponse
+submit_battle_action(... BattleActionInput { action = "CastAbility", ability_key = "spell:<slug>" })
+```
+
+`ChampionProgressionView` returns level, experience, skill points, selected skill
+keys, effective mana, learned spell slugs, and legal level-up choices. Normal
+`ChampionView` exposes only cheap render metadata plus skill/mana summary fields;
+learned spell details remain on the progression preview endpoint so hot render
+queries do not add per-champion spellbook lookups.
+
+Recovery and idempotency:
+
+```text
+All update endpoints use GameCommand actor/session/client_nonce idempotency.
+Exact retries replay the same CommandResponse.
+Same nonce with different payload returns duplicate_nonce_payload_mismatch.
+Champion.last_command_id and ChampionSpell.last_command_id make partially applied magic commands resumable.
+CommandEffect uses one effect key per skill choice, spell learning, adventure cast, or battle cast.
+GameEvent uses stable event keys per command subject.
+```
+
+Deterministic pseudo-random keys:
+
+```text
+battle_spell_damage:
+  session seed
+  domain = "battle_spell_damage"
+  battle current_round
+  command_id
+  caster battle_stack_id
+  target battle_stack_id
+  roll_index
+```
+
+Caps:
+
+```text
+skill options per level-up: 3
+selected skill keys per champion: 8
+learned spells per champion: 8
+battle spell casts per stack per round: 1
+status keys per battle stack: 8
+first promoted spells: hex-spark and spite-march
+```
+
+Implemented first promoted skills:
+
+```text
+sour_sorcery:
+  +1 wisdom, +2 mana_max, prerequisite for first-tier spell learning
+dirty_tactics:
+  +1 might
+grim_logistics:
+  +1 command, +10 movement_max
+```
+
+Implemented first promoted spells:
+
+```text
+hex-spark:
+  target_type = enemy_battle_stack
+  mana_cost = 3
+  effect_key = spell:hex_spark_damage_15
+  applies deterministic battle spell damage and a bounded hexed_until_round status key
+
+spite-march:
+  target_type = self_champion
+  mana_cost = 2
+  effect_key = spell:spite_march_movement_30
+  restores up to 30 movement without exceeding movement_max
+```
+
+Tests:
+
+```text
+Pure Rust tests cover XP rewards, skill choices, spell learning, adventure spell mana reset, battle spell damage/status, deterministic roll inputs, caps, and DTO/legal-action behavior.
+Schema/macro tests cover the appended schema surface.
+Canister unit tests cover Candid endpoint export and repository inventory.
+Pocket-IC tests call every new endpoint and cast hex-spark through submit_battle_action.
+```
+
+Cleanup:
+
+```text
+ChampionSpell is a strong child of Champion and GameSession.
+Champion.skill_keys and mana fields are compacted with Champion.
+CommandEffect/GameEvent cleanup follows the existing finished-session command/event retention policy.
+BattleStack.status_keys are compacted with battle operational rows.
+```

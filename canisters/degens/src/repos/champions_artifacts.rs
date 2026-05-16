@@ -2,7 +2,8 @@
 
 use domm_degens_schema::schema::{
     ArtifactDefinition, ArtifactEquipment, ArtifactInstance, Battle, Champion, ChampionArmyStack,
-    ChampionClassDefinition, GameParticipant, GameSession, UnitDefinition,
+    ChampionClassDefinition, ChampionSpell, GameCommand, GameParticipant, GameSession,
+    SpellDefinition, UnitDefinition,
 };
 use icydb::{Create, db::query::FieldRef, types::Id};
 
@@ -43,6 +44,13 @@ pub(crate) const CHAMPION_COORD_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     bounded_limit: Some(1),
 };
 
+pub(crate) const CHAMPION_SPELLS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "champions.spells_by_champion",
+    entity: "ChampionSpell",
+    indexed_fields: &["champion_id"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_champion(
     session_id: Id<GameSession>,
@@ -62,6 +70,10 @@ pub(crate) fn create_champion(
     wisdom: i16,
     command: i16,
     mana: u16,
+    mana_max: u16,
+    mana_turn: u32,
+    skill_points: u16,
+    skill_keys: Vec<String>,
     movement_max: u16,
     movement_remaining: u16,
     movement_turn: u32,
@@ -87,6 +99,10 @@ pub(crate) fn create_champion(
         wisdom: Some(wisdom),
         command: Some(command),
         mana: Some(mana),
+        mana_max: Some(mana_max),
+        mana_turn: Some(mana_turn),
+        skill_points: Some(skill_points),
+        skill_keys: Some(skill_keys),
         movement_max: Some(movement_max),
         movement_remaining: Some(movement_remaining),
         movement_turn: Some(movement_turn),
@@ -210,6 +226,57 @@ pub(crate) fn update_champion_army_stack(
     stack: ChampionArmyStack,
 ) -> RepoResult<ChampionArmyStack> {
     foundation::update("champions.update_army_stack", stack)
+}
+
+pub(crate) fn page_champion_spells(
+    champion_id: Id<Champion>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<ChampionSpell>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        CHAMPION_SPELLS_LOOKUP.name,
+        crate::db()
+            .load::<ChampionSpell>()
+            .filter(FieldRef::new("champion_id").eq(champion_id.key()))
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn find_champion_spell(
+    champion_id: Id<Champion>,
+    spell_id: Id<SpellDefinition>,
+) -> RepoResult<Option<ChampionSpell>> {
+    foundation::storage_result(
+        "champions.spell_by_champion_spell",
+        crate::db()
+            .load::<ChampionSpell>()
+            .filter(FieldRef::new("champion_id").eq(champion_id.key()))
+            .filter(FieldRef::new("spell_id").eq(spell_id.key()))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_champion_spell(
+    session_id: Id<GameSession>,
+    champion_id: Id<Champion>,
+    spell_id: Id<SpellDefinition>,
+    learned_turn: u32,
+    command_id: Id<GameCommand>,
+) -> RepoResult<ChampionSpell> {
+    let input: Create<ChampionSpell> = Create::<ChampionSpell> {
+        session_id: Some(session_id.key()),
+        champion_id: Some(champion_id.key()),
+        spell_id: Some(spell_id.key()),
+        learned_turn: Some(learned_turn),
+        last_command_id: Some(Some(command_id.key())),
+    };
+
+    foundation::create("champions.create_champion_spell", input)
 }
 
 pub(crate) fn find_equipment_by_champion_slot(

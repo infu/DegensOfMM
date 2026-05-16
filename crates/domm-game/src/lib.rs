@@ -68,9 +68,11 @@ pub use battle::{
 };
 pub use champion::{
     ArtifactCaptureResult, ArtifactEquipmentRecord, ArtifactInstanceRecord, ArtifactView,
-    CHAMPION_LEVEL_CAP, ChampionArmyStackRecord, ChampionError, ChampionProgressionResult,
-    ChampionRecord, ChampionState, ChampionView, ChampionViewResult,
-    build_first_playable_champion_state,
+    CHAMPION_BATTLE_CASTS_PER_ROUND, CHAMPION_LEVEL_CAP, CHAMPION_SKILL_CAP,
+    CHAMPION_SKILL_OPTIONS_PER_LEVEL, CHAMPION_SPELLBOOK_CAP, ChampionArmyStackRecord,
+    ChampionError, ChampionMagicReceipt, ChampionProgressionResult, ChampionProgressionView,
+    ChampionRecord, ChampionSkillChoiceView, ChampionSpellRecord, ChampionState, ChampionView,
+    ChampionViewResult, build_first_playable_champion_state,
 };
 pub use cleanup::{
     ACTIVE_SESSION_LIMIT, CLEANUP_MAX_FINISHED_SESSIONS_PER_UPDATE, CLEANUP_MAX_ROWS_PER_UPDATE,
@@ -187,9 +189,9 @@ pub use strategic::{
     StrategicStepView, run_first_playable_strategic_gate,
 };
 pub use town::{
-    ArmyStackRecord, BuildPreview, ChampionTownRecord, RecruitPreview, RecruitTarget,
-    TownBuildingRecord, TownError, TownRecord, TownRecruitPoolRecord, TownSmokeView, TownState,
-    build_first_playable_town_state, run_first_playable_town_smoke,
+    ArmyStackRecord, BuildPreview, ChampionTownRecord, MAX_ARMY_SLOTS, RecruitPreview,
+    RecruitTarget, TownBuildingRecord, TownError, TownRecord, TownRecruitPoolRecord, TownSmokeView,
+    TownState, build_first_playable_town_state, run_first_playable_town_smoke,
 };
 pub use world_object::{
     ChampionObjectVisitRecord, ObjectCommandEffectRecord, ObjectInteractionCommandRecord,

@@ -2,6 +2,7 @@
 
 mod account_lobby_session;
 mod battle;
+mod champion_magic;
 mod cleanup;
 mod content;
 mod diagnostics;

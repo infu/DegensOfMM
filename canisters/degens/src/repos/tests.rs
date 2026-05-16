@@ -333,6 +333,7 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_OWNER_LOOKUP,
+        champions_artifacts::CHAMPION_SPELLS_LOOKUP,
         movement::MOVEMENT_INTENT_UNIQUE_LOOKUP,
         movement::MOVEMENT_SNAPSHOT_UNIQUE_LOOKUP,
         movement::MOVEMENT_SNAPSHOTS_BY_CHAMPION_LOOKUP,

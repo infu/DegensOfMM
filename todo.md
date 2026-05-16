@@ -368,13 +368,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19E. IcyDB-Backed Content, Map, Visibility, Town, Champion, And Opening Views
 
-- [ ] Seed first-playable ruleset/content definition rows into IcyDB during setup or a controller-gated fixture loader that the canister tests can call.
-- [ ] Persist map chunks, terrain/movement/flag blobs, visibility chunks, known objects, occupancy rows, towns, recruit pools, champions, champion stacks, artifacts, neutrals, and initial economy rows in IcyDB.
-- [ ] Implement `get_content_manifest`, `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, and `get_town_view` from IcyDB rows.
-- [ ] Preserve visibility redaction and hidden-object behavior exactly at the canister boundary.
-- [ ] Add Pocket-IC tests that render the opening viewport from canister calls only and verify the same public DTO facts as Gate B.
-- [ ] Audit: confirm queries are read-only and do not materialize movement, income, visibility writes, recovery, or events.
-- [ ] Commit after this checkpoint.
+- [x] Seed first-playable ruleset/content definition rows into IcyDB during setup or a controller-gated fixture loader that the canister tests can call.
+- [x] Persist map chunks, terrain/movement/flag blobs, visibility chunks, known objects, occupancy rows, towns, recruit pools when present, champions, champion stacks, artifacts, opening neutrals, opening occupancy, and initial economy rows in IcyDB.
+- [x] Implement `get_content_manifest`, `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, and `get_town_view` from IcyDB rows. 19E keeps heavy champion/town detail on the dedicated endpoints because embedding those rows in `get_game_view` exceeds the Pocket-IC single-query instruction cap.
+- [x] Preserve visibility redaction and hidden-object behavior exactly at the canister boundary.
+- [x] Add Pocket-IC tests that render the opening viewport from canister calls only and verify the same public DTO facts as Gate B.
+- [x] Audit: confirm queries are read-only and do not materialize movement, income, visibility writes, recovery, or events.
+- [x] Commit after this checkpoint.
 
 ## 19F. Pocket-IC Endpoint Completeness Gate
 

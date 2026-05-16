@@ -1,9 +1,10 @@
 //! Repository boundary for towns, buildings, recruit pools, and garrisons.
 
 use domm_degens_schema::schema::{
-    GameParticipant, GameSession, Town, TownBuilding, TownGarrisonStack, TownRecruitPool,
+    BuildingDefinition, FactionDefinition, GameParticipant, GameSession, Town, TownBuilding,
+    TownGarrisonStack, TownRecruitPool, UnitDefinition,
 };
-use icydb::{db::query::FieldRef, types::Id};
+use icydb::{Create, db::query::FieldRef, types::Id};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -34,6 +35,75 @@ pub(crate) const TOWN_GARRISON_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     indexed_fields: &["town_id"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
+
+pub(crate) const TOWN_COORD_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "towns.by_session_xy",
+    entity: "Town",
+    indexed_fields: &["session_id", "x", "y"],
+    bounded_limit: Some(1),
+};
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_town(
+    session_id: Id<GameSession>,
+    owner_participant_id: Option<Id<GameParticipant>>,
+    faction_id: Id<FactionDefinition>,
+    name: String,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    status: String,
+    hall_level: u8,
+    fort_level: u8,
+    last_built_turn: u32,
+    captured_turn: u32,
+    income_started_turn: u32,
+    unrest_until_turn: u32,
+) -> RepoResult<Town> {
+    let input: Create<Town> = Create::<Town> {
+        session_id: Some(session_id.key()),
+        owner_participant_id: Some(owner_participant_id.map(|id| id.key())),
+        faction_id: Some(faction_id.key()),
+        name: Some(name),
+        x: Some(x),
+        y: Some(y),
+        chunk_x: Some(chunk_x),
+        chunk_y: Some(chunk_y),
+        status: Some(status),
+        hall_level: Some(hall_level),
+        fort_level: Some(fort_level),
+        last_built_turn: Some(last_built_turn),
+        captured_turn: Some(captured_turn),
+        income_started_turn: Some(income_started_turn),
+        unrest_until_turn: Some(unrest_until_turn),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("towns.create_town", input)
+}
+
+pub(crate) fn load_town(id: Id<Town>) -> RepoResult<Option<Town>> {
+    foundation::load_by_id("towns.load_town", id)
+}
+
+pub(crate) fn find_town_by_session_xy(
+    session_id: Id<GameSession>,
+    x: u16,
+    y: u16,
+) -> RepoResult<Option<Town>> {
+    foundation::storage_result(
+        TOWN_COORD_LOOKUP.name,
+        crate::db()
+            .load::<Town>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("x").eq(x))
+            .filter(FieldRef::new("y").eq(y))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
 
 pub(crate) fn page_towns_by_owner(
     session_id: Id<GameSession>,
@@ -72,6 +142,38 @@ pub(crate) fn page_town_buildings(
     )
 }
 
+pub(crate) fn find_town_building(
+    town_id: Id<Town>,
+    building_def_id: Id<BuildingDefinition>,
+) -> RepoResult<Option<TownBuilding>> {
+    foundation::storage_result(
+        "towns.building_by_town_definition",
+        crate::db()
+            .load::<TownBuilding>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("building_def_id").eq(building_def_id.key()))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_town_building(
+    session_id: Id<GameSession>,
+    town_id: Id<Town>,
+    building_def_id: Id<BuildingDefinition>,
+    built_turn: u32,
+) -> RepoResult<TownBuilding> {
+    let input: Create<TownBuilding> = Create::<TownBuilding> {
+        session_id: Some(session_id.key()),
+        town_id: Some(town_id.key()),
+        building_def_id: Some(building_def_id.key()),
+        built_turn: Some(built_turn),
+    };
+
+    foundation::create("towns.create_town_building", input)
+}
+
 pub(crate) fn page_town_recruit_pools(
     town_id: Id<Town>,
     limit: u32,
@@ -90,6 +192,41 @@ pub(crate) fn page_town_recruit_pools(
     )
 }
 
+pub(crate) fn find_town_recruit_pool(
+    town_id: Id<Town>,
+    unit_id: Id<UnitDefinition>,
+) -> RepoResult<Option<TownRecruitPool>> {
+    foundation::storage_result(
+        "towns.recruit_pool_by_town_unit",
+        crate::db()
+            .load::<TownRecruitPool>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("unit_id").eq(unit_id.key()))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_town_recruit_pool(
+    session_id: Id<GameSession>,
+    town_id: Id<Town>,
+    unit_id: Id<UnitDefinition>,
+    available: u32,
+    last_growth_week: u32,
+) -> RepoResult<TownRecruitPool> {
+    let input: Create<TownRecruitPool> = Create::<TownRecruitPool> {
+        session_id: Some(session_id.key()),
+        town_id: Some(town_id.key()),
+        unit_id: Some(unit_id.key()),
+        available: Some(available),
+        last_growth_week: Some(last_growth_week),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("towns.create_town_recruit_pool", input)
+}
+
 pub(crate) fn page_town_garrison(
     town_id: Id<Town>,
     limit: u32,
@@ -106,6 +243,43 @@ pub(crate) fn page_town_garrison(
         limit,
         cursor,
     )
+}
+
+pub(crate) fn find_town_garrison_stack(
+    town_id: Id<Town>,
+    slot_index: u8,
+) -> RepoResult<Option<TownGarrisonStack>> {
+    foundation::storage_result(
+        "towns.garrison_by_town_slot",
+        crate::db()
+            .load::<TownGarrisonStack>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("slot_index").eq(slot_index))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_town_garrison_stack(
+    session_id: Id<GameSession>,
+    town_id: Id<Town>,
+    unit_id: Id<UnitDefinition>,
+    slot_index: u8,
+    quantity: u32,
+    front_hp: u16,
+) -> RepoResult<TownGarrisonStack> {
+    let input: Create<TownGarrisonStack> = Create::<TownGarrisonStack> {
+        session_id: Some(session_id.key()),
+        town_id: Some(town_id.key()),
+        unit_id: Some(unit_id.key()),
+        slot_index: Some(slot_index),
+        quantity: Some(quantity),
+        front_hp: Some(front_hp),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("towns.create_town_garrison_stack", input)
 }
 
 #[cfg(test)]

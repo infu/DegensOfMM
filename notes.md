@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19E IcyDB Opening Views
+
+Area: canister content/map/visibility/town/champion queries
+Severity: medium
+Status: resolved for 19E; aggregate view optimization continues in 19F+
+
+Observation:
+
+Checkpoint 19E seeds first-playable content, map chunks, visibility chunks, known objects, opening occupancy, towns, champions, champion stacks, artifacts, opening neutrals, and initial economy rows through phased `start_session` setup. `get_content_manifest`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, and `get_town_view` now read typed IcyDB rows through domain repositories, and Pocket-IC verifies the opening viewport, hidden east champion redaction, own champion details, and west town details through public canister calls.
+
+Impact:
+
+Full setup cannot fit in one canister update, so `start_session` now advances deterministic setup phases over repeated idempotent calls and marks the session `active` only after all phase markers are applied. `get_game_view` reads session, participant, map chunk, and visible object data from IcyDB, but 19E intentionally leaves detailed champion and town lists out of the aggregate response. Adding champion detail to the same query exceeded the Pocket-IC 5B instruction limit; those views remain available through the dedicated IcyDB-backed endpoints.
+
+Suggested follow-up:
+
+19F/19G should keep reducing aggregate query cost before expanding gameplay commands. Candidate work: narrower indexed visibility/window queries, lighter champion/town summary DTOs for `get_game_view`, or split aggregate loading into client-driven endpoint calls while preserving the public Candid contract.
+
 ## 2026-05-16 - Checkpoint 19D IcyDB Lobby, Session, Commands, And Setup
 
 Area: canister account/lobby/session services

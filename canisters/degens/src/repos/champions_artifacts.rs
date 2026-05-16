@@ -1,10 +1,10 @@
 //! Repository boundary for champions, army stacks, artifacts, equipment, spells, and statuses.
 
 use domm_degens_schema::schema::{
-    ArtifactEquipment, ArtifactInstance, Battle, Champion, ChampionArmyStack, GameParticipant,
-    GameSession,
+    ArtifactDefinition, ArtifactEquipment, ArtifactInstance, Battle, Champion, ChampionArmyStack,
+    ChampionClassDefinition, GameParticipant, GameSession, UnitDefinition,
 };
-use icydb::{db::query::FieldRef, types::Id};
+use icydb::{Create, db::query::FieldRef, types::Id};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -35,6 +35,90 @@ pub(crate) const ARTIFACTS_BY_SESSION_STATE_LOOKUP: IndexedQueryPlan = IndexedQu
     indexed_fields: &["session_id", "state"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
+
+pub(crate) const CHAMPION_COORD_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "champions.by_session_xy",
+    entity: "Champion",
+    indexed_fields: &["session_id", "x", "y"],
+    bounded_limit: Some(1),
+};
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_champion(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    class_def_id: Id<ChampionClassDefinition>,
+    name: String,
+    class_key: String,
+    status: String,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    level: u16,
+    experience: u64,
+    might: i16,
+    guard: i16,
+    wisdom: i16,
+    command: i16,
+    mana: u16,
+    movement_max: u16,
+    movement_remaining: u16,
+    movement_turn: u32,
+    vision_radius: u8,
+    defeated_turn: u32,
+) -> RepoResult<Champion> {
+    let input: Create<Champion> = Create::<Champion> {
+        session_id: Some(session_id.key()),
+        participant_id: Some(participant_id.key()),
+        class_def_id: Some(class_def_id.key()),
+        name: Some(name),
+        class_key: Some(class_key),
+        status: Some(status),
+        in_battle_id: Some(None),
+        x: Some(x),
+        y: Some(y),
+        chunk_x: Some(chunk_x),
+        chunk_y: Some(chunk_y),
+        level: Some(level),
+        experience: Some(experience),
+        might: Some(might),
+        guard: Some(guard),
+        wisdom: Some(wisdom),
+        command: Some(command),
+        mana: Some(mana),
+        movement_max: Some(movement_max),
+        movement_remaining: Some(movement_remaining),
+        movement_turn: Some(movement_turn),
+        vision_radius: Some(vision_radius),
+        defeated_turn: Some(defeated_turn),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("champions.create_champion", input)
+}
+
+pub(crate) fn load_champion(id: Id<Champion>) -> RepoResult<Option<Champion>> {
+    foundation::load_by_id("champions.load_champion", id)
+}
+
+pub(crate) fn find_champion_by_session_xy(
+    session_id: Id<GameSession>,
+    x: u16,
+    y: u16,
+) -> RepoResult<Option<Champion>> {
+    foundation::storage_result(
+        CHAMPION_COORD_LOOKUP.name,
+        crate::db()
+            .load::<Champion>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("x").eq(x))
+            .filter(FieldRef::new("y").eq(y))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
 
 pub(crate) fn page_champions_by_owner_status(
     owner_participant_id: Id<GameParticipant>,
@@ -73,6 +157,45 @@ pub(crate) fn page_champion_army_stacks(
     )
 }
 
+pub(crate) fn find_champion_army_stack(
+    champion_id: Id<Champion>,
+    slot_index: u8,
+) -> RepoResult<Option<ChampionArmyStack>> {
+    foundation::storage_result(
+        "champions.army_stack_by_champion_slot",
+        crate::db()
+            .load::<ChampionArmyStack>()
+            .filter(FieldRef::new("champion_id").eq(champion_id.key()))
+            .filter(FieldRef::new("slot_index").eq(slot_index))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_champion_army_stack(
+    session_id: Id<GameSession>,
+    champion_id: Id<Champion>,
+    unit_id: Id<UnitDefinition>,
+    slot_index: u8,
+    quantity: u32,
+    front_hp: u16,
+    status: String,
+) -> RepoResult<ChampionArmyStack> {
+    let input: Create<ChampionArmyStack> = Create::<ChampionArmyStack> {
+        session_id: Some(session_id.key()),
+        champion_id: Some(champion_id.key()),
+        unit_id: Some(unit_id.key()),
+        slot_index: Some(slot_index),
+        quantity: Some(quantity),
+        front_hp: Some(front_hp),
+        status: Some(status),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("champions.create_champion_army_stack", input)
+}
+
 pub(crate) fn find_equipment_by_champion_slot(
     champion_id: Id<Champion>,
     slot: &str,
@@ -106,6 +229,59 @@ pub(crate) fn page_session_artifacts_by_state(
         limit,
         cursor,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_artifact_instance(
+    session_id: Id<GameSession>,
+    artifact_def_id: Id<ArtifactDefinition>,
+    owner_champion_id: Option<Id<Champion>>,
+    slot: Option<String>,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    state: String,
+) -> RepoResult<ArtifactInstance> {
+    let input: Create<ArtifactInstance> = Create::<ArtifactInstance> {
+        session_id: Some(session_id.key()),
+        artifact_def_id: Some(artifact_def_id.key()),
+        owner_champion_id: Some(owner_champion_id.map(|id| id.key())),
+        slot: Some(slot),
+        x: Some(x),
+        y: Some(y),
+        chunk_x: Some(chunk_x),
+        chunk_y: Some(chunk_y),
+        state: Some(state),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("artifacts.create_artifact_instance", input)
+}
+
+pub(crate) fn load_artifact_instance(
+    id: Id<ArtifactInstance>,
+) -> RepoResult<Option<ArtifactInstance>> {
+    foundation::load_by_id("artifacts.load_artifact_instance", id)
+}
+
+pub(crate) fn create_artifact_equipment(
+    session_id: Id<GameSession>,
+    champion_id: Id<Champion>,
+    artifact_id: Id<ArtifactInstance>,
+    slot: String,
+    equipped_turn: u32,
+) -> RepoResult<ArtifactEquipment> {
+    let input: Create<ArtifactEquipment> = Create::<ArtifactEquipment> {
+        session_id: Some(session_id.key()),
+        champion_id: Some(champion_id.key()),
+        artifact_id: Some(artifact_id.key()),
+        slot: Some(slot),
+        equipped_turn: Some(equipped_turn),
+        last_command_id: Some(None),
+    };
+
+    foundation::create("artifacts.create_artifact_equipment", input)
 }
 
 pub(crate) fn page_champions_in_battle(

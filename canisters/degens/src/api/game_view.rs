@@ -5,36 +5,52 @@ use crate::dto::public::{
 };
 
 #[query]
-fn get_game_view(_session_id: String, _request: GameViewRequest) -> Result<GameView, ApiError> {
-    crate::services::game_view::unavailable("get_game_view")
+fn get_game_view(session_id: String, request: GameViewRequest) -> Result<GameView, ApiError> {
+    crate::services::game_view::get_game_view(canic_cdk::api::msg_caller(), session_id, request)
 }
 
 #[query]
 fn get_visible_map_chunks(
-    _session_id: String,
-    _viewport: Viewport,
-    _cursor: Option<u32>,
-    _limit: u32,
+    session_id: String,
+    viewport: Viewport,
+    cursor: Option<u32>,
+    limit: u32,
 ) -> Result<MapChunkPage, ApiError> {
-    crate::services::game_view::unavailable("get_visible_map_chunks")
+    crate::services::game_view::get_visible_map_chunks(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        viewport,
+        cursor,
+        limit,
+    )
 }
 
 #[query]
 fn get_visible_objects(
-    _session_id: String,
-    _viewport: Viewport,
-    _cursor: Option<u32>,
-    _limit: u32,
+    session_id: String,
+    viewport: Viewport,
+    cursor: Option<u32>,
+    limit: u32,
 ) -> Result<ObjectViewPage, ApiError> {
-    crate::services::game_view::unavailable("get_visible_objects")
+    crate::services::game_view::get_visible_objects(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        viewport,
+        cursor,
+        limit,
+    )
 }
 
 #[query]
-fn get_my_champions(_session_id: String) -> Result<Vec<ChampionView>, ApiError> {
-    crate::services::game_view::unavailable("get_my_champions")
+fn get_my_champions(session_id: String) -> Result<Vec<ChampionView>, ApiError> {
+    crate::services::game_view::get_my_champions(canic_cdk::api::msg_caller(), session_id)
 }
 
 #[query]
-fn get_champion_view(_session_id: String, _champion_id: String) -> Result<ChampionView, ApiError> {
-    crate::services::game_view::unavailable("get_champion_view")
+fn get_champion_view(session_id: String, champion_id: String) -> Result<ChampionView, ApiError> {
+    crate::services::game_view::get_champion_view(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        champion_id,
+    )
 }

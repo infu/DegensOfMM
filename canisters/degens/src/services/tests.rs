@@ -86,25 +86,30 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     session.state = "starting".to_string();
     sessions::update_session(session).expect("starting state update should persist");
 
-    let started = account_lobby_session::start_session(
-        player_one,
-        session_id.clone(),
-        "nonce:service:start".to_string(),
-    )
-    .expect("start recovery should not trap");
-    assert_eq!(started.status, CommandStatus::Applied);
-    let started_command_id = started.command_id.clone();
-    match started.result {
-        LobbyCommandResult::Session(session) => assert_eq!(session.state, "active"),
-        other => panic!("start_session returned unexpected result: {other:?}"),
+    let mut final_start = None;
+    let mut final_start_nonce = String::new();
+    for step in 0..16 {
+        let nonce = format!("nonce:service:start:{step}");
+        let response =
+            account_lobby_session::start_session(player_one, session_id.clone(), nonce.clone())
+                .expect("start recovery step should not trap");
+        assert_eq!(response.status, CommandStatus::Applied);
+        let state = match &response.result {
+            LobbyCommandResult::Session(session) => session.state.as_str(),
+            other => panic!("start_session returned unexpected result: {other:?}"),
+        };
+        if state == "active" {
+            final_start_nonce = nonce;
+            final_start = Some(response);
+            break;
+        }
     }
+    let started = final_start.expect("phased setup should reach active state");
+    let started_command_id = started.command_id.clone();
 
-    let start_replay = account_lobby_session::start_session(
-        player_one,
-        session_id.clone(),
-        "nonce:service:start".to_string(),
-    )
-    .expect("start replay should not trap");
+    let start_replay =
+        account_lobby_session::start_session(player_one, session_id.clone(), final_start_nonce)
+            .expect("start replay should not trap");
     assert_eq!(start_replay.command_id, started_command_id);
 
     let participant_two = account_lobby_session::get_my_participant(player_two, session_id)

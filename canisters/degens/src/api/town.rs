@@ -5,8 +5,8 @@ use crate::dto::public::{
 };
 
 #[query]
-fn get_town_view(_session_id: String, _town_id: String) -> Result<ApiTownView, ApiError> {
-    crate::services::town::unavailable("get_town_view")
+fn get_town_view(session_id: String, town_id: String) -> Result<ApiTownView, ApiError> {
+    crate::services::town::get_town_view(canic_cdk::api::msg_caller(), session_id, town_id)
 }
 
 #[query]

@@ -3,14 +3,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister};
+use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_degens_canister::{CanisterEndpointView, REQUIRED_GAME_ENDPOINTS};
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
     CommandResponse, CommandStatus, CommandStatusView, ContentManifestResponse,
-    FIRST_PLAYABLE_RULESET_ID, GameView, GameViewRequest, LobbyCommandResponse, LobbyCommandResult,
-    MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage, ParticipantView,
-    PlayerView, RecruitPreview, RecruitTarget, SessionView, opening_viewport_for_slot,
+    FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest,
+    LobbyCommandResponse, LobbyCommandResult, MapChunkPage, MatchHistoryPage, MoveCoord,
+    MovementPreview, ObjectViewPage, ParticipantView, PlayerView, RecruitPreview, RecruitTarget,
+    SessionView, opening_viewport_for_slot,
 };
 
 #[test]
@@ -18,8 +19,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-player-one");
     let player_two = candid::Principal::self_authenticating(b"domm-pocket-player-two");
-    let champion_id = "champion:presence".to_string();
-    let town_id = "town:presence".to_string();
     let battle_id = "battle:presence".to_string();
     let viewport = opening_viewport_for_slot(0);
 
@@ -199,19 +198,27 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         "not_session_creator"
     );
 
-    let started = update_as::<LobbyCommandResponse>(
-        &fixture,
-        player_one,
-        "start_session",
-        (session_id.clone(), "nonce:presence:start".to_string()),
-    )
-    .expect("start_session should decode")
-    .expect("start_session should succeed");
-    assert_eq!(started.status, CommandStatus::Applied);
-    match started.result {
-        LobbyCommandResult::Session(session) => assert_eq!(session.state, "active"),
-        other => panic!("start_session returned unexpected result: {other:?}"),
+    let mut active_start = None;
+    for step in 0..16 {
+        let started = update_as::<LobbyCommandResponse>(
+            &fixture,
+            player_one,
+            "start_session",
+            (session_id.clone(), format!("nonce:presence:start:{step}")),
+        )
+        .expect("start_session should decode")
+        .expect("start_session should succeed");
+        assert_eq!(started.status, CommandStatus::Applied);
+        let state = match &started.result {
+            LobbyCommandResult::Session(session) => session.state.as_str(),
+            other => panic!("start_session returned unexpected result: {other:?}"),
+        };
+        if state == "active" {
+            active_start = Some(started);
+            break;
+        }
     }
+    active_start.expect("phased start_session should finish setup");
 
     let participant_two = query_as::<ParticipantView>(
         &fixture,
@@ -230,8 +237,88 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .expect("pending match shells should not appear in history yet");
     assert!(history.entries.is_empty());
 
-    assert_query_unimplemented::<GameView>(
+    let manifest = query_as::<ContentManifestResponse>(
         &fixture,
+        player_one,
+        "get_content_manifest",
+        (FIRST_PLAYABLE_RULESET_SLUG.to_string(), 1_u32),
+    )
+    .expect("get_content_manifest should decode")
+    .expect("content manifest should be backed by seeded rows");
+    assert_eq!(manifest.manifest.ruleset.slug, FIRST_PLAYABLE_RULESET_SLUG);
+    assert_eq!(manifest.manifest.ruleset.content_manifest_hash.len(), 64);
+
+    let chunk_page = query_as::<MapChunkPage>(
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 8_u32),
+    )
+    .expect("get_visible_map_chunks should decode")
+    .expect("visible map chunks should load from IcyDB rows");
+    assert_eq!(chunk_page.chunks.len(), 4);
+    assert!(!chunk_page.has_more);
+
+    let object_page = query_as::<ObjectViewPage>(
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 128_u32),
+    )
+    .expect("get_visible_objects should decode")
+    .expect("visible objects should load from IcyDB rows");
+    assert!(object_page.objects.iter().any(|object| {
+        object.subject_kind == "champion"
+            && object.display_name.as_deref() == Some("Mara of the Toll")
+    }));
+    assert!(object_page.objects.iter().any(|object| {
+        object.subject_kind == "town" && object.display_name.as_deref() == Some("West Woe")
+    }));
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "pile:west-wood-1")
+    );
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "neutral:west-mine")
+    );
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .all(|object| object.subject_id_text != "champion:east")
+    );
+
+    let champions = query_as::<Vec<ChampionView>>(
+        &fixture,
+        player_one,
+        "get_my_champions",
+        (session_id.clone(),),
+    )
+    .expect("get_my_champions should decode")
+    .expect("champions should load from IcyDB rows");
+    assert_eq!(champions.len(), 1);
+    let champion_id = champions[0].champion_id.clone();
+    assert_eq!(champions[0].name.as_deref(), Some("Mara of the Toll"));
+    assert_eq!(champions[0].army_stacks.len(), 2);
+
+    let champion = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("get_champion_view should decode")
+    .expect("own champion should be visible");
+    assert_eq!(champion.champion_id, champion_id);
+
+    let game_view = query_as::<GameView>(
+        &fixture,
+        player_one,
         "get_game_view",
         (
             session_id.clone(),
@@ -246,41 +333,40 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
                 include_battle: false,
             },
         ),
+    )
+    .expect("get_game_view should decode")
+    .expect("game view should load from IcyDB rows");
+    assert_eq!(game_view.map_chunks.len(), 2);
+    assert!(game_view.map_page_info.has_more);
+    assert_eq!(game_view.objects.len(), 4);
+    assert!(game_view.object_page_info.has_more);
+    assert!(
+        game_view
+            .events
+            .iter()
+            .any(|event| event.event_type == "session_started")
     );
-    assert_query_unimplemented::<MapChunkPage>(
+    let town_id = "town:west".to_string();
+
+    let town = query_as::<ApiTownView>(
         &fixture,
-        "get_visible_map_chunks",
-        (session_id.clone(), viewport.clone(), None::<u32>, 2_u32),
-    );
-    assert_query_unimplemented::<ObjectViewPage>(
-        &fixture,
-        "get_visible_objects",
-        (session_id.clone(), viewport.clone(), None::<u32>, 4_u32),
-    );
-    assert_query_unimplemented::<Vec<ChampionView>>(
-        &fixture,
-        "get_my_champions",
-        (session_id.clone(),),
-    );
-    assert_query_unimplemented::<ChampionView>(
-        &fixture,
-        "get_champion_view",
-        (session_id.clone(), champion_id.clone()),
-    );
-    assert_query_unimplemented::<ApiTownView>(
-        &fixture,
+        player_one,
         "get_town_view",
         (session_id.clone(), town_id.clone()),
+    )
+    .expect("get_town_view should decode")
+    .expect("own town should be visible");
+    assert_eq!(town.town.name, "West Woe");
+    assert!(
+        town.buildings
+            .iter()
+            .any(|building| building.building_slug == "crumbling-hall")
     );
+
     assert_query_unimplemented::<BattleView>(
         &fixture,
         "get_battle_state",
         (session_id.clone(), battle_id.clone(), 1_000_u64),
-    );
-    assert_query_unimplemented::<ContentManifestResponse>(
-        &fixture,
-        "get_content_manifest",
-        ("ruleset:first-playable".to_string(), 1_u32),
     );
     assert_query_unimplemented::<ApiEventPage>(
         &fixture,
@@ -468,9 +554,10 @@ fn install_degens_canister_fixture() -> StandaloneCanisterFixture {
     let wasm_path = build_degens_canister();
     let wasm = fs::read(&wasm_path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", wasm_path.display()));
-    install_prebuilt_canister(
+    install_prebuilt_canister_with_cycles(
         wasm,
         candid::encode_args(()).expect("empty init args encode"),
+        10_000_000_000_000,
     )
 }
 

@@ -3,7 +3,7 @@
 use domm_degens_schema::schema::{
     GameParticipant, GameSession, ResourceLedgerEntry, ResourceLedgerTurnSummary,
 };
-use icydb::{db::query::FieldRef, types::Id};
+use icydb::{Create, db::query::FieldRef, types::Id};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -57,4 +57,20 @@ pub(crate) fn find_resource_turn_summary(
             .limit(1)
             .try_entity(),
     )
+}
+
+pub(crate) fn create_resource_turn_summary(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    turn_number: u32,
+    summary_json: String,
+) -> RepoResult<ResourceLedgerTurnSummary> {
+    let input: Create<ResourceLedgerTurnSummary> = Create::<ResourceLedgerTurnSummary> {
+        session_id: Some(session_id.key()),
+        participant_id: Some(participant_id.key()),
+        turn_number: Some(turn_number),
+        summary_json: Some(summary_json),
+    };
+
+    foundation::create("economy.create_resource_turn_summary", input)
 }

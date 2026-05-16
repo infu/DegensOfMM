@@ -21,6 +21,8 @@ use crate::repos::{
     aftermath_history, commands_events_effects, content, foundation, players, sessions,
 };
 
+use super::first_playable_setup;
+
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
 const SETUP_EFFECTS: &[SetupEffectSpec] = &[
@@ -58,6 +60,21 @@ const SETUP_EFFECTS: &[SetupEffectSpec] = &[
         key: "seed_visibility",
         effect_type: "visibility",
         target_kind: "visibility_chunk",
+    },
+    SetupEffectSpec {
+        key: "seed_neutrals",
+        effect_type: "neutral_armies",
+        target_kind: "neutral_army",
+    },
+    SetupEffectSpec {
+        key: "seed_world_objects",
+        effect_type: "world_objects",
+        target_kind: "world_object",
+    },
+    SetupEffectSpec {
+        key: "seed_economy",
+        effect_type: "economy",
+        target_kind: "resource_summary",
     },
 ];
 
@@ -488,16 +505,19 @@ pub(crate) fn start_session(
                 session = sessions::update_session(session)?;
             }
             let setup_command = ensure_setup_command(&session)?;
-            run_setup(&mut session, &setup_command, &participants)?;
-            session.state = "active".to_string();
-            session = sessions::update_session(session)?;
+            let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+            if setup_complete {
+                session.state = "active".to_string();
+                session = sessions::update_session(session)?;
+            }
             let session_view = session_view(&session)?;
             apply_lobby_command(
                 command,
                 client_nonce,
                 Some(format!(
-                    r#"{{"session_id":"{}","setup_complete":true}}"#,
-                    session.id()
+                    r#"{{"session_id":"{}","setup_complete":{}}}"#,
+                    session.id(),
+                    setup_complete
                 )),
                 Vec::new(),
                 vec![changed("session", &session_view.session_id, "update")],
@@ -926,9 +946,22 @@ fn run_setup(
     session: &mut GameSession,
     setup_command: &GameCommand,
     participants: &[GameParticipant],
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     for effect in SETUP_EFFECTS {
-        ensure_setup_effects(session.id(), setup_command.id(), effect)?;
+        if commands_events_effects::find_command_effect(setup_command.id(), effect.key)?.is_none() {
+            apply_setup_effect(session, participants, effect)?;
+            ensure_setup_effects(session.id(), setup_command.id(), effect)?;
+            let mut command = setup_command.clone();
+            command.status = "applying".to_string();
+            command.phase = "effects_applied".to_string();
+            command.result_json = Some(format!(
+                r#"{{"setup_complete":false,"last_effect":"{}"}}"#,
+                effect.key
+            ));
+            command.retryable = true;
+            commands_events_effects::update_game_command(command)?;
+            return Ok(false);
+        }
     }
     ensure_setup_event(session, setup_command.id())?;
     ensure_match_summary_shells(session.id(), participants)?;
@@ -940,7 +973,39 @@ fn run_setup(
     command.retryable = false;
     command.applied_at = Some(Timestamp::now());
     commands_events_effects::update_game_command(command)?;
-    Ok(())
+    Ok(true)
+}
+
+fn apply_setup_effect(
+    session: &GameSession,
+    participants: &[GameParticipant],
+    effect: &SetupEffectSpec,
+) -> Result<(), ApiError> {
+    match effect.key {
+        "seed_ruleset_content" => {
+            first_playable_setup::ensure_first_playable_content_rows().map(|_| ())
+        }
+        "seed_participants" => Ok(()),
+        "seed_towns" => first_playable_setup::seed_first_playable_towns(session, participants),
+        "seed_champions" => {
+            first_playable_setup::seed_first_playable_champions(session, participants)
+        }
+        "seed_map_chunks" => {
+            first_playable_setup::seed_first_playable_map_chunks(session, participants)
+        }
+        "seed_occupancy" => {
+            first_playable_setup::seed_first_playable_occupancy(session, participants)
+        }
+        "seed_visibility" => {
+            first_playable_setup::seed_first_playable_visibility(session, participants)
+        }
+        "seed_world_objects" => {
+            first_playable_setup::seed_first_playable_world_objects(session, participants)
+        }
+        "seed_neutrals" => first_playable_setup::seed_first_playable_neutrals(session),
+        "seed_economy" => first_playable_setup::seed_first_playable_economy(session, participants),
+        _ => Ok(()),
+    }
 }
 
 fn ensure_setup_effects(

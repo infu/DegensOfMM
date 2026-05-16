@@ -42,7 +42,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate E after checkpoint 18: the web client can play the fixture-backed first playable match path end to end.
 - [x] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
 - [x] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
-- [ ] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
+- [x] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
 - [ ] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
 - [ ] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
 - [ ] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
@@ -346,15 +346,15 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19C. IcyDB Repository Foundation
 
-- [ ] Implement typed IcyDB repository helpers around `db().load`, `db().create`, `db().insert`, `db().update`, `insert_many_atomic`, and paged query flows.
-- [ ] Prohibit generic SQL from gameplay repositories. SQL may be used only in controller-gated diagnostics, fixture loading, or test-only tooling.
-- [ ] Add repository error mapping from IcyDB errors into stable gameplay/API errors without leaking storage internals to clients.
-- [ ] Implement indexed lookup helpers for principal/account, session/participant, command idempotency, event feed cursors, map chunk windows, occupancy, visibility, town/champion/battle ownership, and match history.
-- [ ] Add native repository tests for create/read/update/page/delete behavior against generated schema types where possible.
-- [ ] Add tests proving repository queries use bounded limits and indexed lookup fields for every hot path.
-- [ ] Audit: compare every repository helper against the schema indexes and Part 2 lookup paths.
-- [ ] Gate H: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
-- [ ] Commit after this checkpoint.
+- [x] Implement typed IcyDB repository helpers around `db().load`, `db().create`, `db().insert`, `db().update`, `insert_many_atomic`, and paged query flows.
+- [x] Prohibit generic SQL from gameplay repositories. SQL may be used only in controller-gated diagnostics, fixture loading, or test-only tooling.
+- [x] Add repository error mapping from IcyDB errors into stable gameplay/API errors without leaking storage internals to clients.
+- [x] Implement indexed lookup helpers for principal/account, session/participant, command idempotency, event feed cursors, map chunk windows, occupancy, visibility, town/champion/battle ownership, and match history.
+- [x] Add native repository tests for create/read/update/page/delete behavior against generated schema types where possible.
+- [x] Add tests proving repository queries use bounded limits and indexed lookup fields for every hot path.
+- [x] Audit: compare every repository helper against the schema indexes and Part 2 lookup paths.
+- [x] Gate H: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
+- [x] Commit after this checkpoint.
 
 ## 19D. IcyDB-Backed Lobby, Session, Commands, And Setup
 

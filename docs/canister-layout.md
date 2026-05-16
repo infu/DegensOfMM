@@ -44,6 +44,11 @@ durable row ownership:
 - aftermath/history
 - cleanup
 
+Checkpoint 19C adds `foundation.rs`, which owns shared typed IcyDB helpers,
+bounded pagination, sanitized repository error mapping, and common create,
+insert, update, load, and delete wrappers. Domain files keep their own lookup
+functions and query-plan metadata instead of growing one monolithic repository.
+
 Gameplay endpoints must call typed repository helpers instead of generic SQL.
 Generated SQL/DDL remains outside public gameplay paths and must stay
 controller-gated if enabled for diagnostics or fixture loading.

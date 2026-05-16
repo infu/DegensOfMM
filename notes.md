@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19C IcyDB Repository Foundation
+
+Area: IcyDB repositories, canister backend
+Severity: medium
+Status: resolved for repository foundation; endpoint behavior continues in 19D+
+
+Observation:
+
+Checkpoint 19C added shared typed repository helpers around generated `db()` sessions plus domain lookup modules for accounts, content, sessions, commands/events/effects, map/visibility/occupancy, economy, towns, champions/artifacts, movement, neutrals, battles, history, and cleanup. Native tests now create/read/update/page/delete generated schema rows, cover `insert`, `insert_many_atomic`, sanitized storage error mapping, forbidden generic SQL scans, and IcyDB explain-plan checks for the required hot paths.
+
+Impact:
+
+Later endpoint work can wire services to repositories without calling `FixtureApiBackend`, generic SQL, or `core_db()`. The endpoint shells still return `icydb_repository_not_implemented` until 19D+ wires behavior.
+
+Suggested follow-up:
+
+IcyDB generated create inputs require explicit values for every authorable field, including schema defaults and `Some(None)` for nullable fields. Optional indexed relation lookups should compare against the raw relation key for non-null matches. Preserve those conventions when adding 19D service bodies and fixture loaders.
+
 ## 2026-05-16 - Checkpoint 19B Canister Module Layout
 
 Area: canister API, IcyDB integration

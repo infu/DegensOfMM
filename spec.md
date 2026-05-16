@@ -37,20 +37,21 @@ A scenario is a prebuilt map with defined players, starting towns, objectives, t
 
 ## 2.2 Skirmish Mode
 
-Players choose settings such as:
+The v1 first playable uses one fixed skirmish profile:
 
-* Number of players
-* Map size
-* Factions
-* Starting resources
-* Neutral difficulty
-* Victory condition
-* Fog of war enabled/disabled
-* Procedural map seed
+```text
+2 players
+hand-authored compact map
+fixed starting resources
+fixed neutral difficulty
+conquest victory
+fog of war enabled
+```
 
-## 2.3 Campaign Mode
+## 2.3 Expansion Modes
 
-Redacted for the first implementation. Campaign carryover is deferred by Part 2 and should not shape the initial IcyDB schema.
+Outside the v1 implementation contract. Expansion modes are tracked in
+`spec.v2.md` and must not shape v1 IcyDB schema or endpoints.
 
 ---
 
@@ -455,27 +456,11 @@ Expert: +3 vision radius
 Master: reveals enemy army strength category
 ```
 
-### Diplomacy
+### V2-Only Skill Lines
 
-Improves interactions with neutral armies.
-
-```text
-Novice: small chance neutral army offers to leave
-Adept: chance to bribe neutral army
-Expert: chance to recruit compatible neutral units
-Master: neutral armies may join at discounted cost
-```
-
-### Engineering
-
-Improves siege warfare.
-
-```text
-Novice: +10% siege damage
-Adept: build battlefield barricade in siege
-Expert: siege weapons act faster
-Master: breach wall section before combat starts
-```
+Skill lines that add new neutral negotiation systems or fortified-town combat
+systems belong in `spec.v2.md` until promoted into a bounded v1-compatible
+schema and endpoint contract.
 
 ---
 
@@ -617,7 +602,7 @@ Champions ignore forest movement penalties.
 
 ### Ironvein League
 
-Theme: engineers, mercenaries, constructs, siege power.
+Theme: engineers, mercenaries, constructs, and fortified craftsmanship.
 
 Trait:
 
@@ -716,7 +701,8 @@ Generates gold.
 Palisade → Fort → Citadel → Bastion
 ```
 
-Improves siege defense.
+Improves town durability and unlocks future defensive content. Active
+fortified-town combat belongs in `spec.v2.md`.
 
 ### Unit Dwellings
 
@@ -736,7 +722,7 @@ Champion Hall
 ```text
 Marketplace
 Resource Silo
-Trade Guild
+Trading House
 Warehouse
 ```
 
@@ -754,7 +740,6 @@ Mana Well
 ```text
 Tavern
 Blacksmith
-Shipyard
 Portal Gate
 Scout Tower
 ```
@@ -812,7 +797,6 @@ Units can be recruited from:
 * External dwellings
 * Special map structures
 * Events
-* Diplomacy
 * Quests
 
 ## 13.1 Recruitment Rule
@@ -977,7 +961,7 @@ Examples:
 
 ```text
 Reveal Area
-Summon Boat
+Summon Scout
 Town Portal
 Bless Mine
 Road of Wind
@@ -1121,7 +1105,7 @@ Example formula:
 ```text
 join_score =
   champion_command * 5
-  + diplomacy_bonus
+  + influence_bonus
   + faction_affinity_bonus
   - neutral_strength_rating
   - alignment_conflict_penalty
@@ -1149,13 +1133,6 @@ Grid size: 12 columns x 10 rows
 Attacker deploys on left side.
 Defender deploys on right side.
 Obstacles may appear depending on terrain.
-```
-
-For sieges:
-
-```text
-Defender has walls, gate, towers, and protected deployment.
-Attacker may have siege engines.
 ```
 
 ## 18.2 Battle Participants
@@ -1462,74 +1439,10 @@ surrender_cost = surviving_army_gold_value * 0.75
 
 ---
 
-# 19. Siege Battles
+# 19. Fortified-Town Combat
 
-A siege occurs when a champion attacks a fortified town.
-
-## 19.1 Siege Setup
-
-Defender receives:
-
-```text
-Walls
-Gate
-Towers
-Moat or obstacle, depending on fort level
-Defensive deployment zone
-```
-
-Attacker may receive:
-
-```text
-Catapult
-Siege tower
-Battering ram
-Engineering bonuses
-```
-
-## 19.2 Wall Rules
-
-Walls block movement and line of sight.
-
-Wall sections have HP:
-
-```text
-Palisade wall: 100 HP
-Fort wall: 200 HP
-Citadel wall: 350 HP
-Bastion wall: 500 HP
-```
-
-## 19.3 Gate Rules
-
-The gate can be attacked.
-
-```text
-Gate HP depends on fortification level.
-Friendly defender units may pass through gate.
-Enemy units may pass only if gate is destroyed or opened.
-```
-
-## 19.4 Tower Rules
-
-Towers attack automatically each round.
-
-Example:
-
-```text
-Palisade: 1 weak tower
-Fort: 2 towers
-Citadel: 2 strong towers
-Bastion: 3 strong towers
-```
-
-Tower target priority:
-
-```text
-1. Siege engines
-2. Highest threat ranged units
-3. Closest enemy stack
-```
+Outside the v1 implementation contract. V1 town capture uses the normal battle
+and aftermath route; active fortified-town combat is tracked in `spec.v2.md`.
 
 ---
 
@@ -1733,9 +1646,9 @@ This is optional and should probably be disabled in v1 for simplicity.
 
 ---
 
-# 24. Boats and Water
+# 24. Water Tiles
 
-Water can be handled in two possible ways.
+Water is a map barrier in v1.
 
 ## 24.1 Simple Water Rule
 
@@ -1745,16 +1658,8 @@ Water exists only as map barrier.
 
 ## 24.2 Advanced Water Rule
 
-Champions can board boats at shipyards.
-
-```text
-Boarding costs remaining movement.
-Disembarking costs remaining movement.
-Boats move on water tiles.
-Some units or factions gain bonuses at sea.
-```
-
-For first implementation, use the simple rule unless naval maps are required.
+Outside the v1 implementation contract. Active water transport and water-map
+gameplay are tracked in `spec.v2.md`.
 
 ---
 
@@ -1954,7 +1859,7 @@ This allows:
 * Replays
 * Debugging
 * Multiplayer sync
-* Fair procedural generation
+* Reproducible generated previews
 
 ## 27.1 Pseudo-Random Roll Rule
 
@@ -2111,21 +2016,12 @@ Event feed
 Win condition: eliminate all enemy towns/champs
 ```
 
-## 31.2 Defer Until Later
+## 31.2 Expansion Backlog
 
-```text
-Naval movement
-Complex diplomacy
-Campaign carryover
-Seeded procedural map generation
-Advanced siege weapons
-Large spell trees
-Artifact sets
-Dozens of factions
-Guilds
-Ranked leaderboard
-Campaign persistence
-```
+Systems outside this first playable belong in `spec.v2.md`. Do not implement
+them from Part 1 background notes unless they are first promoted back into this
+file with bounded schema, indexes, endpoints, recovery, deterministic keys,
+numeric caps, cleanup, DTOs, and Pocket-IC coverage.
 
 ---
 
@@ -2195,7 +2091,7 @@ Chain Lightning: jumps between enemy stacks.
 
 ```text
 Time Fracture: target ally acts again later this round.
-Earthquake: damages siege walls and all grounded units.
+Earthquake: damages battlefield obstacles and all grounded units.
 Judgment Ray: massive light damage to one enemy.
 Army of Thorns: summons temporary nature units.
 ```
@@ -2428,7 +2324,8 @@ This schema uses **Champion** instead of Hero, since your game can brand them as
 
 **Tone:** darkly comic, scrappy, and competitive. The first version should express the “Degens of Misery & Mayhem” brand through names, event text, faction flavor, and risk/reward objectives, not through extra systems that expand MVP scope.
 
-**First playable product shape:** 1v1 PvP on one hand-authored map. Seeded procedural map generation, ranked ladders, guilds, campaign persistence, large spellbooks, and complex siege are explicitly deferred.
+**First playable product shape:** 1v1 PvP on one hand-authored map. V2 product
+expansion is tracked in `spec.v2.md`, not in this v1 implementation contract.
 
 **Acceptance tests for v1:**
 
@@ -4221,7 +4118,10 @@ Arrays are allowed only for small bounded sets such as BattleStack.status_keys; 
 JSON fields may describe typed command payloads, event summaries, or cold per-object instance details; JSON must not be required for hot ownership, balance, movement, visibility, combat, or occupancy queries.
 ```
 
-The main remaining database risk is scope creep: if new gameplay adds quests, diplomacy, markets, timed buffs, or multi-player alliances, add typed rows and indexes for those systems before building client flows around JSON payloads.
+The main remaining database risk is scope creep: if V2 gameplay adds new hot
+ownership, balance, movement, visibility, combat, or occupancy flows, add typed
+rows and indexes for those systems before building client flows around JSON
+payloads.
 
 ---
 
@@ -4443,7 +4343,12 @@ Movement validation:
 1. Caller owns the participant.
 2. Participant owns the champion.
 3. Session is active.
-4. Current server time is inside the turn window for intent submission.
+4. V1 clients submit while the render-time DTO reports `turn_expired = false`.
+   If `sync_required = true`, clients call `sync_session_turn` before relying on
+   turn-sensitive state. Hard canister-side rejection of a late
+   `submit_move_intent` after `turn_deadline_at` is a non-blocking contract
+   cleanup tracked in `spec.v2.md`; turn-final resolution remains
+   authoritative in v1.
 5. Champion is active and not in battle.
 6. Path starts adjacent to champion position.
 7. Path does not pass through impassable terrain.
@@ -5257,7 +5162,8 @@ bot_participant
 autopilot_participant
 ```
 
-V1 should implement only neutral-army battle behavior and optional autopilot for disconnected humans. Full bot opponents are deferred unless the first playable needs solo onboarding.
+V1 implements only neutral-army battle behavior and optional autopilot for
+disconnected humans. Broader AI expansion belongs in `spec.v2.md`.
 
 AI execution entrypoints:
 
@@ -5691,24 +5597,10 @@ battle view
 event feed
 match result
 first-match checklist with suggested move/build/recruit actions
-rematch button
 basic match history and win/loss stats
 ```
 
-Defer:
-
-```text
-full spellbook
-champion skill trees
-quests
-naval movement
-complex siege engines
-artifact sets
-seeded procedural map generation
-guilds
-ranked leaderboard
-campaign persistence
-```
+Out-of-v1 product and gameplay expansion is tracked in `spec.v2.md`.
 
 ---
 
@@ -5771,677 +5663,29 @@ That gives us a clean foundation for timed simultaneous turns and keeps the logi
 
 ---
 
-# 24. Full Spec Expansion Triage
+# 24. V1 Release Scope
 
-Checkpoint 21 keeps the first playable implementation closed and classifies the
-remaining Part 1 systems before any runtime code expands scope.
+The v1 implementation target is the complete first-playable 1v1 game route on
+the hand-authored map using public canister endpoints backed by IcyDB rows.
+That scope includes lobby/session setup, content, map visibility, movement,
+resource pickup, income, town building, recruitment, neutral battles, battle
+actions and sync, aftermath, town capture, victory, match history, the
+canister-backed client probe, and the bounded runtime slices already shipped for
+champion progression/magic, expanded economy, scenario progress, and
+world-generation boundary rows.
 
-No deferred Part 1 system is `implement-now`. Gate N completed the first
-playable canister/IcyDB surface, so every remaining system is either
-`promote-to-Part-2-first` or `still-deferred/removed`.
+V2-only expansion scope has been moved to `spec.v2.md`. Do not implement
+systems from that file in v1 unless they are first promoted back into this file
+with a bounded data model, indexed IcyDB access paths, Candid endpoint
+contracts, command recovery, deterministic pseudo-random keys, numeric caps,
+cleanup rules, and Pocket-IC e2e coverage.
 
-Authoritative triage artifact: `docs/full-spec-expansion-triage.md`.
-
-## 24.1 Classification
-
-| Part 1 system | Classification | Destination |
-| --- | --- | --- |
-| Champion skill trees, level-up choices, skill ranks, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, advanced statuses, dispel/stacking, artifact-set-style effect expansion | promote-to-Part-2-first | Checkpoint 22 |
-| Tavern hiring, defeated champion reappearance, marketplace trading, external dwellings, direct map recruitment, advanced economy buildings, additional resource sources | promote-to-Part-2-first | Checkpoint 23 |
-| Central objective tracking, one opening quest, weekly world events, quest reward claim, and typed scenario rules | promoted and implemented | Checkpoint 24 |
-| Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond disabled row visibility | promote-to-Part-2-first | Future scenario expansion |
-| Skirmish settings, deterministic first-playable procedural preview metadata, and disabled naval/siege/larger-map boundary rows | promoted and implemented | Checkpoint 25 |
-| Active boats, water movement layers, naval map gameplay, complex siege engines, walls/gates/towers, siege actions, and larger procedural map materialization | promote-to-Part-2-first | Future world-generation expansion |
-| Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
-| Full bot opponents and general strategic planners | still-deferred | Requires a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
-| Sequential player turns and hotseat-only backend rules | removed from implementation scope | Superseded by simultaneous timed turns. Multiple local players can use normal account/session flows. |
-| Single serialized `GameState` row | removed from implementation scope | Superseded by durable IcyDB entities, command/effect rows, and event rows. |
-| Generic SQL gameplay access | removed from implementation scope | SQL remains controller/test/diagnostic only and must not power public gameplay endpoints. |
-| Unbounded content expansions | still-deferred | Needs a content-pack spec with caps, migration policy, content hashes, and canister budget tests. |
-
-## 24.2 Promotion Gates
-
-Before any promoted bucket can start runtime implementation, the corresponding
-checkpoint must update this section with the following bounded Part 2 details:
+The only remaining v1 work should be release hardening:
 
 ```text
-IcyDB schema:
-  entities, fields, relation strength, defaults, append-only migration behavior
-Indexes:
-  every hot lookup, unique/idempotency key, pagination order, cleanup lookup, and visibility/recovery lookup
-Commands and endpoints:
-  public update/query method names, typed Candid DTOs, preview endpoints, disabled responses, and ownership checks
-Recovery and idempotency:
-  GameCommand, CommandEffect, PendingEffect, event keys, retry behavior, partial-application resume order, and budget exhaustion behavior
-Deterministic pseudo-random keys:
-  explicit domain keys and input fields; no IC raw randomness, wall-clock elapsed time, row order, or mutable RNG cursors
-Numeric caps:
-  per-session, per-turn, per-participant, per-object, per-query, and per-update caps with fail-closed errors
-DTOs and frontend:
-  render-ready public views, legal action affordances, disabled reasons, pagination/cursor contracts, redaction rules, and retry/sync expectations
-Tests:
-  pure unit tests, schema/macro tests, generated-session or repository tests, endpoint inventory tests, and Pocket-IC e2e coverage for every public endpoint in the bucket
-Cleanup and retention:
-  strong/weak relation cleanup order, summary rows, raw log retention, active-session protection, and bounded retry behavior
+produce the final implementation coverage table
+run the full regression and playability gates
+resolve or explicitly defer the late submit_move_intent contract cleanup
+verify docs/todo/spec agree on v1 scope
+keep v2 features represented as content omissions, typed disabled responses, or spec.v2.md backlog items
 ```
-
-Any implementation that does not satisfy these gates is out of scope, even if a
-similar Part 1 rule exists.
-
-## 24.3 Bucket Minimums
-
-Checkpoint 22, champion progression and magic, must define skill/spell/status
-entities or prove existing `ChampionSpell`, `SpellDefinition`,
-`BattleStack.status_keys`, artifact rows, and effect keys are sufficient. It
-must add indexes by session, champion, participant, battle, skill key, spell
-key, and status key; commands for level-up choice, spell learning, battle cast,
-adventure cast, and previews; recovery through command/effect/pending-effect
-rows; deterministic keys for offers, casts, effect rolls, and status ticks; caps
-for skill options, spellbook size, casts per turn/round, status instances, and
-effect targets; champion/battle DTO affordances; cleanup; and Pocket-IC endpoint
-coverage.
-
-Checkpoint 23, expanded economy, must define tavern offers, hire records,
-market/trade rows, dwelling pools, and any new income/growth rows. It must add
-indexes by session, week/turn, participant, town/object, offer key, and ledger
-key; hire, trade, dwelling recruitment, and preview endpoints; deterministic
-tavern/market/growth keys; caps for offers, market operations, trade amounts,
-pool growth, and visible candidates; no-double-spend recovery; frontend
-affordances; cleanup; and Pocket-IC endpoint coverage.
-
-Checkpoint 24, quests/objectives/victory, implemented quest/objective/event and
-victory state rows plus reward effects. It added indexes by session,
-participant, objective, quest key, event window, and victory state; quest
-accept/claim, objective sync, event sync, and advanced victory query/update
-surfaces; deterministic event/reward keys; caps for active quests, objective
-rows, event rows, rule rows, and victory checks per update; redacted
-progress/reward DTOs; cleanup; and Pocket-IC endpoint coverage.
-
-Checkpoint 25, siege/naval/procedural/skirmish, implemented the bounded
-first world-generation slice: skirmish settings, deterministic first-playable
-procedural preview metadata, and explicit disabled rows for naval routes,
-siege rules, and larger-map gameplay. It adds indexes by session, generation
-key, route key, rule key, and status; skirmish/procedural/naval/siege query
-endpoints plus a generation sync update; deterministic generation keys; caps
-for map dimensions, generated chunks per update, route rows, water crossings,
-siege rule rows, and battle obstacles; DTOs; cleanup; and Pocket-IC endpoint
-coverage. Active boat movement, water movement layers, siege actions, and
-larger procedural map materialization remain future world-generation expansion
-work.
-
-Checkpoint 26, meta and long-term systems, must define rematch, campaign,
-leaderboard, guild, diplomacy, and expanded history rows. It must add indexes by
-player, principal, session, season, guild, campaign, rank bucket, and history
-cursor; privacy-preserving endpoints for rematch, campaign, ranking, guild,
-diplomacy, and history flows; deterministic keys only where gameplay rewards are
-created; caps for rows per player/guild/season, page sizes, retention windows,
-and hot gameplay writes; frontend history/social DTOs; cleanup; and Pocket-IC
-endpoint coverage.
-
-## 24.4 Audit Rule
-
-No Part 1 system may be silently implemented as partial canister behavior. Until
-its bounded Part 2 subsection exists, the runtime representation must remain a
-content omission, a typed disabled response, or an explicit deferred checkpoint.
-
-## 24.5 Checkpoint 22 Champion Progression And Magic
-
-Checkpoint 22 promotes a bounded first slice of champion progression, skills,
-spell learning, adventure casting, battle spellcasting, mana reset rules, and
-advanced battle statuses.
-
-IcyDB schema:
-
-```text
-Champion appends:
-  mana_max: Nat16 default 10
-  mana_turn: Nat32 default 0
-  skill_points: Nat16 default 0
-  skill_keys: Vec<Text max 64>
-
-ChampionSpell appends:
-  last_command_id: weak GameCommand relation
-
-Existing rows retained:
-  SpellDefinition owns spell metadata, mana_cost, target_type, effect_key, duration_rounds.
-  BattleStack.cast_round and BattleStack.status_keys store per-round casting and bounded status tags.
-  CommandEffect records skill, spell learning, adventure cast, and battle cast application.
-```
-
-Indexes and lookup paths:
-
-```text
-Champion:
-  session_id + participant_id
-  participant_id + status
-  in_battle_id
-
-ChampionSpell:
-  champion_id + spell_id unique
-  champion_id
-  session_id
-  spell_id
-
-SpellDefinition:
-  ruleset_id + slug unique
-  ruleset_id + school + level
-
-BattleStack:
-  battle_id + side
-  battle_id + side + slot_index unique
-```
-
-Public endpoints and command paths:
-
-```text
-preview_champion_progression(session_id, champion_id) -> ChampionProgressionView
-select_champion_level_up(session_id, champion_id, skill_key, client_nonce) -> CommandResponse
-learn_champion_spell(session_id, champion_id, spell_slug, client_nonce) -> CommandResponse
-cast_adventure_spell(session_id, champion_id, spell_slug, client_nonce) -> CommandResponse
-submit_battle_action(... BattleActionInput { action = "CastAbility", ability_key = "spell:<slug>" })
-```
-
-`ChampionProgressionView` returns level, experience, skill points, selected skill
-keys, effective mana, learned spell slugs, and legal level-up choices. Normal
-`get_my_champions` returns a bounded roster/list projection with cheap render
-metadata plus skill/mana summary fields. Army stack and equipped-artifact
-detail stays behind `get_champion_view`, and learned spell details remain on
-the progression preview endpoint so hot render queries do not add
-per-champion child-row lookups.
-
-Recovery and idempotency:
-
-```text
-All update endpoints use GameCommand actor/session/client_nonce idempotency.
-Exact retries replay the same CommandResponse.
-Same nonce with different payload returns duplicate_nonce_payload_mismatch.
-Champion.last_command_id and ChampionSpell.last_command_id make partially applied magic commands resumable.
-CommandEffect uses one effect key per skill choice, spell learning, adventure cast, or battle cast.
-GameEvent uses stable event keys per command subject.
-```
-
-Deterministic pseudo-random keys:
-
-```text
-battle_spell_damage:
-  session seed
-  domain = "battle_spell_damage"
-  battle current_round
-  command_id
-  caster battle_stack_id
-  target battle_stack_id
-  roll_index
-```
-
-Caps:
-
-```text
-skill options per level-up: 3
-selected skill keys per champion: 8
-learned spells per champion: 8
-battle spell casts per stack per round: 1
-status keys per battle stack: 8
-first promoted spells: hex-spark and spite-march
-```
-
-Implemented first promoted skills:
-
-```text
-sour_sorcery:
-  +1 wisdom, +2 mana_max, prerequisite for first-tier spell learning
-dirty_tactics:
-  +1 might
-grim_logistics:
-  +1 command, +10 movement_max
-```
-
-Implemented first promoted spells:
-
-```text
-hex-spark:
-  target_type = enemy_battle_stack
-  mana_cost = 3
-  effect_key = spell:hex_spark_damage_15
-  applies deterministic battle spell damage and a bounded hexed_until_round status key
-
-spite-march:
-  target_type = self_champion
-  mana_cost = 2
-  effect_key = spell:spite_march_movement_30
-  restores up to 30 movement without exceeding movement_max
-```
-
-Tests:
-
-```text
-Pure Rust tests cover XP rewards, skill choices, spell learning, adventure spell mana reset, battle spell damage/status, deterministic roll inputs, caps, and DTO/legal-action behavior.
-Schema/macro tests cover the appended schema surface.
-Canister unit tests cover Candid endpoint export and repository inventory.
-Pocket-IC tests call every new endpoint and cast hex-spark through submit_battle_action.
-```
-
-Cleanup:
-
-```text
-ChampionSpell is a strong child of Champion and GameSession.
-Champion.skill_keys and mana fields are compacted with Champion.
-CommandEffect/GameEvent cleanup follows the existing finished-session command/event retention policy.
-BattleStack.status_keys are compacted with battle operational rows.
-```
-
-## 24.6 Checkpoint 23 Expanded Economy, Taverns, Marketplace, And External Dwellings
-
-Checkpoint 23 promotes a bounded first slice of expanded economy systems:
-tavern champion hiring, deterministic weekly offers, fixed-rate marketplace
-trades, one external dwelling, direct map recruitment, and weekly dwelling pool
-growth. Defeated champion reappearance, advanced economy buildings, and broader
-resource-source variety remain future expansion work unless added by a later
-bounded subsection.
-
-IcyDB schema:
-
-```text
-TavernOffer:
-  session_id, town_id, participant_id, champion_class_id
-  week_number, offer_slot, offer_key, champion_class_slug, candidate_name
-  cost_gold, status, hired_champion_id, hired_command_id
-
-ChampionHire:
-  session_id, participant_id, town_id, offer_id, command_id
-  champion_id, cost_gold, hired_turn, status
-
-MarketTrade:
-  session_id, participant_id, command_id, turn_number
-  from_resource, to_resource, amount_in, amount_out, rate_key, status
-
-DwellingPool:
-  session_id, object_id, participant_id, unit_id, unit_slug
-  available, last_growth_week, growth_per_week, direct_recruit, last_command_id
-
-DwellingRecruitment:
-  session_id, participant_id, object_id, pool_id, champion_id, unit_id
-  unit_slug, command_id, quantity, recruited_turn, status
-```
-
-Indexes and lookup paths:
-
-```text
-TavernOffer:
-  session_id + town_id + week_number
-  town_id + week_number + offer_slot unique
-  session_id + participant_id + status
-  offer_key unique
-
-ChampionHire:
-  command_id unique
-  session_id + participant_id
-  session_id + town_id
-  offer_id
-
-MarketTrade:
-  command_id unique
-  session_id + participant_id + turn_number
-  session_id + from_resource + to_resource
-
-DwellingPool:
-  object_id + unit_id unique
-  session_id + participant_id
-  session_id + object_id
-
-DwellingRecruitment:
-  command_id unique
-  session_id + participant_id
-  object_id
-```
-
-Public endpoints and command paths:
-
-```text
-get_tavern_offers(session_id, town_id) -> TavernOffersView
-preview_hire_champion(session_id, town_id, offer_key) -> ChampionHirePreview
-hire_tavern_champion(session_id, town_id, offer_key, client_nonce) -> CommandResponse
-preview_market_trade(session_id, from_resource, to_resource, amount_in) -> MarketTradePreview
-submit_market_trade(session_id, from_resource, to_resource, amount_in, client_nonce) -> CommandResponse
-get_dwelling_pool(session_id, object_id) -> DwellingPoolView
-preview_dwelling_recruit(session_id, object_id, unit_slug, quantity, champion_id) -> DwellingRecruitPreview
-submit_dwelling_recruit(session_id, object_id, unit_slug, quantity, champion_id, client_nonce) -> CommandResponse
-```
-
-Recovery and idempotency:
-
-```text
-All update endpoints use GameCommand actor/session/client_nonce idempotency.
-Exact retries replay the same CommandResponse.
-Same nonce with different payload returns duplicate_nonce_payload_mismatch.
-Resource spends/gains write ResourceLedgerEntry rows keyed by command and effect.
-ChampionHire, MarketTrade, and DwellingRecruitment have command_id unique indexes.
-TavernOffer.hired_command_id and DwellingPool.last_command_id mark applied state.
-GameEvent and CommandEffect use stable per-command subject keys.
-```
-
-Deterministic keys and rates:
-
-```text
-Tavern offers:
-  offer_key = tavern:<town_id>:week:<week_number>:slot:<offer_slot>
-  class/name roll inputs = session seed, town id, week number, offer slot, domain
-
-Marketplace rates:
-  wood -> crystal: 10 to 1
-  stone -> crystal: 10 to 1
-  crystal|ember|aether -> gold: 5 to 1000
-  gold -> crystal|ember|aether: 2500 to 1
-```
-
-Caps:
-
-```text
-tavern offers per town per week: 2
-tavern hire base cost: 2500 gold, +500 gold by offer slot
-market trade max input: 25000
-dwelling pool cap: 99
-dwelling weekly growth: 4
-dwelling recruit max quantity: 25
-first promoted external dwelling: Mudhook Den
-```
-
-Tests:
-
-```text
-Pure Rust tests cover tavern determinism, market rates/caps, and dwelling growth/cost caps.
-Schema/macro tests cover the new entity surface and unique/indexed paths.
-Canister unit tests cover Candid endpoint export, repository inventory, layout, and hot-path plans.
-Pocket-IC tests call every new query/update endpoint, verify exact update retries, and assert persisted tavern, market, and dwelling effects through public Candid methods.
-```
-
-Cleanup:
-
-```text
-TavernOffer, ChampionHire, MarketTrade, DwellingPool, and DwellingRecruitment are GameSession children.
-ChampionHire keeps weak command/champion links for retained command history.
-MarketTrade and DwellingRecruitment use command_id as the recovery/audit key.
-DwellingPool is compacted with the owning WorldObject/session.
-ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
-```
-
-## 24.7 Checkpoint 24 Quests, Objectives, Advanced Victory, And Scenario Rules
-
-Checkpoint 24 promotes a bounded first slice of scenario systems:
-persisted central-objective progress, one opening scenario quest, deterministic
-weekly world events, and typed scenario-rule/victory rows. Artifact victory,
-king-of-the-hill, survival, and scenario-specific defeat are represented as
-disabled rule rows until a later bounded section defines their gameplay rules.
-
-IcyDB schema:
-
-```text
-ObjectiveProgress:
-  session_id, participant_id, object_id, objective_key, objective_type
-  progress_value, required_value, status, visible_to, last_scored_turn
-  last_command_id
-
-QuestState:
-  session_id, participant_id, quest_key, title, objective_key, status
-  progress_value, required_value, reward_gold, accepted_turn, claimed_turn
-  accepted_command_id, claimed_command_id, last_command_id
-
-WorldEventState:
-  session_id, event_key, event_type, event_window
-  starts_turn, ends_turn, status, payload_json, last_command_id
-
-ScenarioRuleState:
-  session_id, rule_key, rule_type, status, victory_state
-  required_value, current_value, owner_participant_id, winner_participant_id
-  disabled_reason, last_checked_turn, last_command_id
-```
-
-Indexes and lookup paths:
-
-```text
-ObjectiveProgress:
-  session_id + objective_key unique
-  session_id + participant_id
-  object_id
-  session_id + status
-
-QuestState:
-  session_id + participant_id + quest_key unique
-  session_id + participant_id + status
-  session_id + quest_key
-
-WorldEventState:
-  session_id + event_key unique
-  session_id + event_window
-  session_id + status
-
-ScenarioRuleState:
-  session_id + rule_key unique
-  session_id + victory_state
-  session_id + status
-```
-
-Public endpoints and command paths:
-
-```text
-get_objective_progress(session_id) -> ObjectiveProgressView
-get_scenario_rules(session_id) -> ScenarioRulesView
-get_world_events(session_id) -> WorldEventsView
-preview_quest(session_id, quest_key) -> QuestPreview
-accept_quest(session_id, quest_key, client_nonce) -> CommandResponse
-claim_quest_reward(session_id, quest_key, client_nonce) -> CommandResponse
-sync_objectives(session_id, client_nonce) -> CommandResponse
-sync_world_events(session_id, client_nonce) -> CommandResponse
-sync_advanced_victory(session_id, client_nonce) -> CommandResponse
-```
-
-Recovery and idempotency:
-
-```text
-All update endpoints use GameCommand actor/session/client_nonce idempotency.
-Exact retries replay the same CommandResponse.
-Same nonce with different payload returns duplicate_nonce_payload_mismatch.
-Quest rewards write ResourceLedgerEntry rows keyed by command and quest reward effect.
-QuestState command fields record accept/claim application.
-Objective, event, and rule sync rows record last_command_id.
-GameEvent and CommandEffect use stable per-command subject keys.
-```
-
-Deterministic keys and caps:
-
-```text
-opening quest key: quest:opening-ledger
-opening quest objective key: objective:opening-ledger
-opening quest reward: 500 gold
-world event key = world:event:week:<week>:<seeded_hash>
-event windows use week_for_turn(turn)
-
-objective rows per session: 16
-active quests per participant: 4
-world event rows per session: 16
-scenario rule rows per session: 16
-advanced victory checks per update: 8
-```
-
-Visibility and rule state:
-
-```text
-ObjectiveProgress is public in the first slice because central objectives are public map goals.
-QuestState is participant-scoped; non-owner quest DTOs redact progress and reward fields.
-WorldEventState is public for the first weekly omen event stream.
-ScenarioRuleState exposes active conquest, central-objective, quest-victory, and max-turn rows.
-Artifact victory, king-of-the-hill, survival, and scenario-specific defeat are disabled rows with disabled_reason = checkpoint_24_schema_only.
-```
-
-Tests:
-
-```text
-Pure Rust tests cover objective progress, quest reward idempotency, quest redaction, deterministic event keys, bounded victory checks, and max-turn state.
-Schema/macro tests cover the four new entities, unique indexes, weak command links, and cleanup ordering.
-Canister unit tests cover Candid endpoint export, repository inventory, layout, diagnostics, and indexed hot-path plans.
-Pocket-IC tests call every new query/update endpoint, verify exact update retries, and assert persisted objective, quest, event, and rule state through public Candid methods.
-```
-
-Cleanup:
-
-```text
-ObjectiveProgress, QuestState, WorldEventState, and ScenarioRuleState are GameSession children.
-ObjectiveProgress links strongly to the tracked WorldObject and optional owner participant.
-QuestState links strongly to the owning participant and weakly to accept/claim commands.
-WorldEventState and ScenarioRuleState keep weak command audit links.
-ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
-```
-
-## 24.8 Checkpoint 25 World Generation Boundaries
-
-Checkpoint 25 promotes a bounded first slice of siege/naval/procedural/skirmish
-systems: persisted skirmish settings, deterministic first-playable procedural
-preview metadata, and explicit disabled rows for naval route and siege rule
-surfaces. Active boat movement, siege actions, walls/gates/towers gameplay, and
-larger generated map materialization remain future expansion work.
-
-IcyDB schema:
-
-```text
-SkirmishSettingsState:
-  session_id, profile_key, status, map_seed, map_width, map_height, chunk_size
-  player_count, fog_enabled, neutral_difficulty, victory_condition
-  generation_key, naval_enabled, siege_enabled, larger_map_enabled
-  last_command_id
-
-ProceduralMapState:
-  session_id, generation_key, status, map_seed, map_width, map_height
-  chunk_size, chunk_count, land_tile_count, water_tile_count, road_tile_count
-  town_count, mine_count, scenario_hash, generated_turn, last_command_id
-
-NavalRouteState:
-  session_id, route_key, status, from_x, from_y, to_x, to_y
-  water_crossings, boat_required, disabled_reason, last_command_id
-
-SiegeRuleState:
-  session_id, rule_key, status, fortification_level, wall_segments, gate_count
-  tower_count, siege_engine_slots, battle_obstacle_cap, disabled_reason
-  last_command_id
-```
-
-Indexes and lookup paths:
-
-```text
-SkirmishSettingsState:
-  session_id unique
-  profile_key + status
-  generation_key
-
-ProceduralMapState:
-  session_id + generation_key unique
-  session_id + status
-  generation_key
-
-NavalRouteState:
-  session_id + route_key unique
-  session_id + status
-
-SiegeRuleState:
-  session_id + rule_key unique
-  session_id + status
-```
-
-Public endpoints and command paths:
-
-```text
-get_skirmish_settings(session_id) -> SkirmishSettingsView
-get_procedural_map_state(session_id) -> ProceduralMapView
-get_naval_routes(session_id) -> NavalRoutesView
-get_siege_rules(session_id) -> SiegeRulesView
-sync_world_generation(session_id, client_nonce) -> CommandResponse
-```
-
-Recovery and idempotency:
-
-```text
-sync_world_generation uses GameCommand actor/session/client_nonce idempotency.
-Exact retries replay the same CommandResponse.
-Same nonce with different payload returns duplicate_nonce_payload_mismatch.
-SkirmishSettingsState and ProceduralMapState record last_command_id during sync.
-GameEvent and CommandEffect use stable per-command world-generation keys.
-Read endpoints are query-only projections and do not materialize missing rows.
-Setup seeds the first world-generation rows through an idempotent setup effect.
-```
-
-Deterministic keys and caps:
-
-```text
-skirmish profile key: skirmish:first-playable-compact
-procedural generation key: procedural:first-playable-preview
-naval route key: naval:west-river-disabled
-siege rule key: siege:first-playable-disabled
-
-procedural terrain uses session seed, domain = procedural_map, y, x, terrain, water
-procedural hash uses session seed, dimensions, chunk size, water count, and road count
-
-generated map dimension cap: 64x64
-generated chunks per sync/update: 16
-naval route rows per session: 8
-siege rule rows per session: 8
-water crossings per route/path: 8
-siege battle obstacle cap: 24
-```
-
-Visibility and disabled state:
-
-```text
-SkirmishSettingsState is public to session participants because it describes match setup.
-ProceduralMapState exposes aggregate preview metadata and scenario_hash, not raw generated tiles.
-NavalRouteState and SiegeRuleState are visible disabled affordances.
-Disabled naval/siege/larger-map behavior uses disabled_reason = checkpoint_25_schema_only.
-```
-
-Tests:
-
-```text
-Pure Rust tests cover deterministic procedural preview stability, generation caps, skirmish disabled flags, boat-route validation, and siege caps.
-Schema/macro tests cover the four new entities, unique indexes, weak command links, and cleanup ordering.
-Canister unit tests cover Candid endpoint export, repository inventory, layout, diagnostics, and indexed hot-path plans.
-Pocket-IC tests call every new query/update endpoint, verify exact sync retry, and assert persisted skirmish, procedural, naval, and siege rows through public Candid methods.
-```
-
-Cleanup:
-
-```text
-SkirmishSettingsState, ProceduralMapState, NavalRouteState, and SiegeRuleState are GameSession children.
-All four rows keep weak command audit links.
-GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session command/event retention policy.
-```
-
-## 24.9 Future World-Generation Expansion Hold
-
-The checkpoint 25 runtime intentionally does not implement active siege engines,
-water movement, boat ownership, naval occupancy, wall/gate/tower combat, siege
-actions, generated chunk materialization, or larger map variants. Before any of
-those features can be implemented, a future spec subsection must be added and
-reviewed with these details:
-
-```text
-Siege engines:
-  entities for engine ownership, placement, transport, ammunition/durability, targeting, and destruction
-  battle action DTOs for engine fire, wall/gate damage, repair, breach, and disabled reasons
-  indexes by session, battle, owner participant, engine key, target fortification, command, and status
-  deterministic damage/miss/critical keys and caps for engines per battle, shots per round, and affected tiles
-
-Fortifications:
-  authoritative wall segment, gate, tower, breach, and fortification-state rows
-  cleanup and repair rules for town capture, battle aftermath, surrender, and abandoned sessions
-  hot query projections for battle view and town view that stay below IC query budgets
-
-Naval movement:
-  boat ownership/occupancy rows, embark/disembark commands, water terrain costs, route validation, and visibility redaction
-  indexes by session, participant, boat, occupant, water route, coordinate, command, and status
-  deterministic encounter/current/weather keys only after their rules are specified
-
-Procedural/larger maps:
-  generation job rows, chunk materialization rows, content manifests, seed/version migration rules, and scenario hash contracts
-  bounded generation batches, visibility fan-out caps, paging contracts, and Pocket-IC instruction/storage budgets
-```
-
-The todo for that future checkpoint must remain unchecked until the subsection
-above exists, all public endpoints are inventoried, and Pocket-IC e2e tests cover
-every new canister method.

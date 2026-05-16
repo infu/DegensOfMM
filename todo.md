@@ -1,6 +1,8 @@
 # Degens of Misery & Mayhem Implementation Todo
 
-This file accompanies `spec.md`. It should not restate the spec. Its job is to drive implementation in small, auditable checkpoints until the game is playable, the Part 2 spec is fully executed, and deferred Part 1 systems have either been promoted into bounded Part 2 implementation specs or explicitly left in the future backlog.
+This file accompanies `spec.md`. It should not restate the spec. Its job is to
+drive the v1 first-playable implementation through final release hardening.
+Expansion backlog belongs in `spec.v2.md`, not in the v1 todo.
 
 `DoMM/` is the game repository. Run game implementation, tests, audits, and commits from this repo root. The surrounding `icydb` workspace is dependency/context, not the game repo.
 
@@ -49,7 +51,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
 - [x] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
 - [x] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
-- [ ] Gate O after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
+- [x] Gate O after checkpoint 26: the v1 release audit passes and V2-only backlog is isolated in `spec.v2.md`.
 
 ## 0. Project Harness
 
@@ -168,7 +170,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 ## 9A. Effects, Abilities, Spells, And Status Hooks
 
 - [x] Implement a bounded effect-key dispatch layer for unit abilities, artifact effects, building effects, object rewards, and spell effects.
-- [x] Support the v1 required effects and explicitly disable/defer unsupported spellbook, skill-tree, morale, luck, and complex status behavior through typed disabled reasons.
+- [x] Support the v1 required effects and return typed disabled reasons for unsupported advanced effect behavior.
 - [x] Ensure `CastAbility` is either fully supported for the v1 content that uses it or never returned as an enabled legal action.
 - [x] Unit test effect dispatch, unsupported effect rejection, deterministic pseudo-random effect rolls, status key caps, and DTO disabled reasons.
 - [x] Audit: compare all `effect_key`, `ability_keys`, `SpellDefinition`, `ChampionSpell`, artifact, building, and object effect usage in the first playable content against implemented handlers.
@@ -301,7 +303,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Render map, towns, champions, resources, events, movement intents, battle state, legal battle actions, command status, and sync-required states.
 - [x] Implement retry behavior for idempotent commands and sync flows.
 - [x] Run the first playable walkthrough manually through the web client.
-- [x] Include first-match checklist, match result, rematch entry point, and basic match history/win-loss display from the spec's frontend scope.
+- [x] Include first-match checklist, match result, and basic match history/win-loss display from the spec's frontend scope.
 - [x] Add UI-level tests for key flows where practical.
 - [x] Run backend regression tests after client integration changes.
 - [x] Audit: confirm no client flow requires an endpoint, DTO field, or event that the backend does not provide.
@@ -324,7 +326,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
 - [x] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
 - [x] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
-- [x] Decide and document whether `leave_session`, `cancel_session`, `surrender`, `retreat`, and `request_rematch` are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
+- [x] Decide and document whether out-of-route session actions are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
 - [x] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
 - [x] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
 - [x] Add a Pocket-IC endpoint-presence test that calls every required method at least once and proves missing methods fail the test as method-not-found/trap rather than being silently skipped.
@@ -438,7 +440,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 - [x] Add a canister-backed client/probe adapter that implements the same web-client backend trait used by the fixture client.
 - [x] Run the Gate E web client walkthrough against Pocket-IC canister endpoints, not `FixtureApiBackend`.
-- [x] Verify client retry, sync-required, event refresh, battle panel, result panel, rematch affordance, and match-history behavior through the canister adapter.
+- [x] Verify client retry, sync-required, event refresh, battle panel, result panel, and match-history behavior through the canister adapter.
 - [x] Compare fixture DTOs and canister DTOs for representative states to catch drift between pure rules and persisted projections.
 - [x] Measure real canister update/query response sizes, IcyDB row growth, stable-memory growth, command/event retention, and cleanup behavior for the first playable path.
 - [x] Add manual smoke instructions for running canister-backed tests locally.
@@ -496,38 +498,22 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Audit: confirm every advanced victory path is indexed, bounded, recoverable, and visible to the client.
 - [x] Commit after this checkpoint.
 
-## 25. Siege, Naval Movement, Procedural Maps, And Skirmish Settings
+## 25. World-Generation Boundary Rows And Skirmish Settings
 
-- [x] Promote and implement the bounded checkpoint 25 slice: skirmish settings, deterministic first-playable procedural preview metadata, and explicit disabled IcyDB rows for naval route, siege rule, and larger-map affordances.
-- [x] Add deterministic generation fixtures and cap checks before allowing larger maps or extra movement layers. Larger map materialization remains disabled until a future spec is written.
-- [x] Unit test seeded map stability, generation caps, disabled naval route validation, siege caps, and skirmish disabled flags.
+- [x] Promote and implement the bounded checkpoint 25 slice: skirmish settings, deterministic first-playable generated preview metadata, and explicit disabled IcyDB rows for V2 world-expansion affordances.
+- [x] Add deterministic generation fixtures and cap checks before allowing larger maps or extra movement layers. Larger-map materialization remains disabled until a future spec is written.
+- [x] Unit test seeded preview stability, generation caps, disabled route/rule validation, and skirmish disabled flags.
 - [x] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [x] Audit: confirm generated or larger content still satisfies canister performance budgets and query contracts.
 - [x] Commit after this checkpoint.
 
-## 25A. Future Siege/Naval/Larger-Map Spec Hold
+## 26. V1 Final Audit
 
-- [ ] Do not implement active siege engines, gates/walls/towers combat, naval movement, boats, water occupancy, or larger procedural map materialization until `spec.md` has a new bounded subsection for that exact runtime slice.
-- [ ] Before siege-engine runtime code starts, define IcyDB rows for engine ownership/placement/ammunition/durability/targeting/destruction, wall/gate/tower/breach state, command/effect/event recovery, cleanup, deterministic damage keys, public DTOs, and Pocket-IC budgets.
-- [ ] Before naval runtime code starts, define boat ownership/occupancy, embark/disembark commands, water terrain costs, route validation, visibility/redaction, deterministic keys, indexes, cleanup, and endpoint contracts.
-- [ ] Before larger procedural map runtime code starts, define generation jobs, chunk materialization, content manifest/versioning, scenario hash contracts, migration rules, visibility fan-out caps, paging, and install/query/update budget limits.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking any future world-generation runtime bucket complete.
-- [ ] Keep the checkpoint 25 disabled rows and `checkpoint_25_schema_only` reasons in place until a future spec subsection replaces them with active gameplay semantics.
-
-## 26. Multiplayer Meta, Campaign, And Long-Term Product Systems
-
-- [ ] Promote and implement diplomacy, ranked leaderboard, guilds, campaign persistence, broader match history, rematch flows, and any social/meta systems only after Part 2 is expanded for them.
-- [ ] Add privacy, retention, cleanup, pagination, and abuse-resistance rules for each system.
-- [ ] Unit test ranking updates, history pagination, campaign carryover, guild membership, cleanup, and authorization.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
-- [ ] Audit: confirm meta systems stay outside hot gameplay command paths unless explicitly required.
-- [ ] Commit after this checkpoint.
-
-## 27. Full Spec Final Audit
-
-- [ ] Re-read `spec.md` end to end and produce an implementation coverage table: implemented, promoted and implemented, explicitly deferred, or removed from the spec.
-- [ ] Re-run the full regression suite, all playability gates, all schema/migration tests, and all client contract tests.
-- [ ] Verify `DoMM/notes.md` contains actionable IcyDB ergonomics, blocker, performance, and limitation notes discovered during the full implementation.
-- [ ] Fix every full-spec audit finding or update `spec.md` and this todo to make the intended scope explicit.
-- [ ] Gate O: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
-- [ ] Commit the full-spec audit fixes.
+- [x] Re-read `spec.md` end to end and produce a v1 implementation coverage table: implemented, intentionally disabled in v1, or removed from v1 scope.
+- [x] Verify V2-only features live in `spec.v2.md` and are not listed as active v1 implementation tasks.
+- [x] Decide the late `submit_move_intent` contract cleanup: fix it for v1 or explicitly document it as a v2/non-blocking contract cleanup.
+- [x] Re-run the full regression suite, all playability gates, all schema/migration tests, and all client contract tests.
+- [x] Verify `DoMM/notes.md` contains actionable IcyDB ergonomics, blocker, performance, and limitation notes discovered during the full implementation.
+- [x] Fix every v1 audit finding or update `spec.md` and this todo to make the intended scope explicit.
+- [x] Gate O: the v1 release audit passes and V2-only backlog is isolated in `spec.v2.md`.
+- [x] Commit the full-spec audit fixes.

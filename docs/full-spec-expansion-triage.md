@@ -1,12 +1,15 @@
 # Full Spec Expansion Triage
 
+Historical note: this checkpoint-21 triage is no longer the active v1 todo.
+The authoritative backlog for non-v1 systems is `spec.v2.md`.
+
 Checkpoint 21 classifies the Part 1 systems that were deliberately left out of
 the first playable canister/IcyDB implementation.
 
 ## Result
 
 No deferred Part 1 system is approved for immediate runtime implementation.
-Every candidate system must first land a bounded Part 2 design and then be
+Every candidate system must first land a bounded design and then be
 implemented through typed IcyDB entities, domain repositories, public Candid
 endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 
@@ -29,7 +32,7 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 | Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond the disabled row contract | promote-to-Part-2-first | Future scenario expansion |
 | Skirmish settings, deterministic first-playable procedural preview metadata, and disabled naval/siege/larger-map boundary rows | promoted and implemented | Checkpoint 25 |
 | Active boats, water movement layers, naval map gameplay, complex siege engines, walls/gates/towers, siege actions, and larger procedural map materialization | promote-to-Part-2-first | Future world-generation expansion |
-| Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
+| Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | `spec.v2.md` |
 | Full bot opponents and general strategic planners | still-deferred | Allowed only by a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
 | Sequential player turns and hotseat-only backend rules | removed from implementation scope | Superseded by simultaneous timed turns. Multiple local players can use normal account/session flows. |
 | Single serialized `GameState` row | removed from implementation scope | Superseded by durable IcyDB entities, command/effect rows, and event rows. |
@@ -39,7 +42,9 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 ## Promotion Gates
 
 Before any promoted bucket can start runtime implementation, the corresponding
-checkpoint must update `spec.md` with all of the following:
+V2 subsection must be defined in `spec.v2.md` and then promoted back into
+`spec.md` only if it becomes part of the v1 implementation contract. The design
+must include all of the following:
 
 | Gate | Required design detail |
 | --- | --- |
@@ -61,7 +66,7 @@ checkpoint must update `spec.md` with all of the following:
 | 23 | Implemented tavern offers, hire records, market/trade rows, dwelling pools, indexes by session/week/participant/town/object/offer/command, hire/trade/dwelling preview and update endpoints, and caps for offers, trade amounts, pool growth, and visible candidates. |
 | 24 | Implemented objective progress, quest state, world event state, scenario rule state, indexed lookup paths by session/participant/key/window/victory state, quest accept/claim, objective sync, world-event sync, advanced-victory sync, and caps for active quests, objective rows, event rows, rule rows, and victory checks. |
 | 25 | Implemented skirmish settings, deterministic first-playable procedural preview metadata, and explicit disabled naval/siege boundary rows. Added indexes by session, generation key, status, route key, and rule key; added skirmish/procedural/naval/siege query endpoints plus `sync_world_generation`; capped generated dimensions, generated chunks per update, water crossings, route/rule rows, and siege battle obstacles. Active boat movement, siege actions, and larger map materialization remain future world-generation expansion work. |
-| 26 | Define rematch, campaign, leaderboard, guild, diplomacy, and expanded history rows. Add indexes by player, principal, session, season, guild, campaign, rank bucket, and history cursor. Add privacy-preserving endpoints for rematch, campaign, ranking, guild, diplomacy, and history flows. Cap rows per player/guild/season, page sizes, retention windows, and hot gameplay writes. |
+| V2 meta backlog | Define rematch, campaign, leaderboard, guild, diplomacy, and expanded history rows in `spec.v2.md` before implementation. Add indexes by player, principal, session, season, guild, campaign, rank bucket, and history cursor. Add privacy-preserving endpoints for rematch, campaign, ranking, guild, diplomacy, and history flows. Cap rows per player/guild/season, page sizes, retention windows, and hot gameplay writes. |
 
 Future world-generation runtime work is explicitly blocked until a new
 bounded spec subsection exists for the exact slice. Siege-engine work must

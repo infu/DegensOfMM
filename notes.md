@@ -12,6 +12,29 @@ Add an entry whenever you find:
 - A spec ambiguity that slowed implementation.
 - A test gap or fixture weakness.
 
+## 2026-05-16 - Checkpoint 26 V1 Release Audit
+
+Area: Gate O audit, v1/v2 scope split, movement contract cleanup
+
+Status: resolved for Gate O
+
+Checkpoint 26 isolates expansion scope in `spec.v2.md`, keeps `spec.md` and
+`todo.md` focused on the playable v1 release, and adds the final coverage table
+in `docs/first-playable-final-audit.md`. The audit classifies active v1
+systems as implemented, disabled in v1, or removed from v1 scope.
+
+Late hard rejection for new `submit_move_intent` calls after
+`turn_deadline_at` is explicitly deferred as non-blocking contract cleanup. V1
+continues to use the current sync-driven turn boundary: queries expose
+`sync_required`, clients call `sync_session_turn`, and turn-final resolution is
+the authoritative materialization path. Promoting hard rejection later needs
+exact retry, nonce mismatch, pre-submit sync, client recovery, and Pocket-IC
+race coverage.
+
+Baseline `make regression` passed before the checkpoint-26 docs edits, and
+post-edit `make regression` passed again after the v1 coverage table, V2 split,
+and movement-contract documentation updates.
+
 ## 2026-05-16 - Checkpoint 20 First Playable Final Audit
 
 Area: Gate N audit, public canister contract, IcyDB command idempotency
@@ -731,7 +754,7 @@ The AI layer emits command drafts only; it does not mutate gameplay state direct
 
 Suggested follow-up:
 
-Checkpoint 16 should expose these AI command drafts through canister update APIs and generated IcyDB command rows using `actor_kind = "ai"`. Full bot opponents remain deferred; the current v1 surface covers neutral battle behavior and optional autopilot-style command generation.
+Checkpoint 16 should expose these AI command drafts through canister update APIs and generated IcyDB command rows using `actor_kind = "ai"`. Broader AI expansion is tracked in `spec.v2.md`; the current v1 surface covers neutral battle behavior and optional autopilot-style command generation.
 
 ## Checkpoint 16: API DTOs And Client Contract
 
@@ -868,7 +891,7 @@ Spec audit notes:
 
 - The Part 2 first-playable surface is marked implemented across schema, command/event/recovery, deterministic RNG, content, lifecycle, map/visibility, client DTOs, economy, towns, champions, effects, movement, objects, neutrals, battles, aftermath/victory, AI, cleanup, limits, migration safety, and the web-client route.
 - No missing required first-playable behavior was found in checkpoint 19.
-- Campaign, large procedural maps, naval movement, complex siege, quests, advanced economy variants, ranked, guild, diplomacy, and broader meta systems remain deferred to checkpoints 24-27 or future bounded specs.
+- Non-v1 expansion work is tracked in `spec.v2.md`. The v1 todo remains focused on final audit, regression, and contract cleanup.
 
 Manual smoke command added:
 
@@ -1040,6 +1063,5 @@ Implementation notes:
   of loading artifact instance plus artifact definition rows on the hot query
   path.
 - Active siege engines, wall/gate/tower combat, naval movement, boat ownership,
-  and larger procedural map materialization are held behind a future spec/todo
-  gate. The current rows are intentionally disabled affordances, not partial
-  gameplay.
+  and larger procedural map materialization are held behind `spec.v2.md`.
+  The current rows are intentionally disabled affordances, not partial gameplay.

@@ -1,9 +1,47 @@
 # First Playable Final Audit
 
-Checkpoint 20 audits the implemented first-playable scope against `spec.md`
-Part 2 and the canister/IcyDB gates added in checkpoints 19A-19K.
+Checkpoint 26 audits the v1 release scope against `spec.md`, `todo.md`, and the
+V2 backlog split in `spec.v2.md`. Checkpoint 20 remains the historical Gate N
+first-playable audit; Gate O is the final docs/spec/regression agreement pass.
 
-## Gate N Result
+## Gate O Result
+
+Status: pass. `make regression` completed successfully for checkpoint 26 on
+2026-05-16.
+
+Baseline before checkpoint-26 docs edits: `make regression` passed from the
+DoMM repo root on 2026-05-16.
+
+Post-edit verification: `make regression` passed again after the v1 coverage
+table, V2 split, and movement-contract documentation updates. This regression
+includes the pure rule tests, canister service/repository tests, schema and
+macro tests, generated-session harness, Pocket-IC endpoint gates, Gate L full
+canister e2e, Gate M canister-backed client probe, and doc tests.
+
+## V1 Coverage Table
+
+| Area | V1 audit result |
+| --- | --- |
+| IcyDB schema and repositories | Implemented for the v1 row surface with typed domain repositories, indexed hot-path tests, relation/deletion tests, and generic SQL limited to controller-gated diagnostics. |
+| Public canister endpoints | Implemented and inventoried in Candid. Pocket-IC coverage calls the account, lobby, setup, content, map, visibility, event, command-status, preview, strategic, battle, history, champion progression/magic, expanded economy, scenario progress, and world-generation boundary endpoints. |
+| Lobby/session/setup | Implemented with registration, create/join/ready/start, setup phases, setup recovery, participant rows, active-session caps, and match-history shell rows. |
+| Content and first playable map | Implemented for the hand-authored compact 1v1 map, content manifest, factions, units, buildings, objects, terrain, towns, champions, neutrals, and walkthrough targets. |
+| Map, visibility, and rendering | Implemented through map chunks, terrain/movement/flag blobs, visibility chunks, known objects, occupancy, redaction, and bounded viewport/list queries. |
+| Movement and turn sync | Implemented with replaceable movement intents, persisted turn-sync slices, movement snapshots, object stops, conflict/blocker handling, visibility refreshes, and IcyDB command/effect/event rows. |
+| Late movement-intent hard rejection | Intentionally deferred from v1. V1 keeps sync-driven turn closure through `sync_required` metadata and `sync_session_turn`; hard canister-side rejection of late new `submit_move_intent` calls is documented in `spec.v2.md` as non-blocking contract cleanup. |
+| Resources and economy | Implemented for pickups, ledger-backed spends/rewards, income materialization, mine ownership cutover, marketplace trading, tavern hiring, and one external dwelling slice. Broader economy variety is V2. |
+| Towns and recruitment | Implemented for town ownership, buildings, build previews/commands, recruit pools, garrison/champion targets, direct recruitment, and recovery-safe resource spends. |
+| Champions, armies, artifacts, magic | Implemented for v1 champion state, army stacks, status, XP/level caps, bounded level-up/spell learning/adventure spell/battle spell slice, artifact ownership/equipment/capture, and explicit unsupported-effect responses. Larger spell/skill/artifact-set expansion is V2. |
+| Objects, quests, objectives, scenario rules | Implemented for pickups, mines, central objective progress, one opening quest slice, deterministic weekly events, and disabled rows for advanced victory variants. Richer scenario systems are V2. |
+| Neutral armies | Implemented for guard behavior, strength labels, visibility redaction, encounter starts, battle handoff, and defeat cleanup. Roaming/join/bribe behavior is disabled or V2. |
+| Battle, aftermath, and victory | Implemented with battle rows, stack/occupancy/obstacle rows, legal actions, timeout sync, action idempotency, aftermath, town capture, champion defeat, victory finalization, summaries, and match history. |
+| AI | Implemented only as bounded deterministic canister-safe command generation and neutral/battle support needed by v1. Full bot opponents/general planners are V2. |
+| Cleanup, retention, budgets, migration | Implemented with bounded cleanup, summaries, active-session protection, retention caps, schema-evolution tests, deletion-order tests, payload/path/query caps, and performance budget coverage. |
+| Client/probe | Implemented for fixture-backed and canister-backed web-client probes. Gate E and Gate M cover the first-playable route through public DTOs. |
+| World-generation/skirmish boundary | Implemented only as skirmish settings, deterministic preview metadata, and explicit disabled boundary rows. Active siege, naval movement, and larger/procedural map gameplay are V2. |
+| Removed from v1 scope | Sequential turns, hotseat-only backend flow, monolithic `GameState` persistence, generic SQL gameplay APIs, active siege/naval gameplay, large procedural maps, durable rematch, ranked/guild/diplomacy/meta systems, large content packs, and full bot opponents. |
+
+## Gate N History
 
 Status: pass. `make regression` completed successfully for checkpoint 20.
 
@@ -38,19 +76,15 @@ layer.
 
 ## Deferred Scope
 
-The following Part 1 systems remain deferred until later checkpoints promote
-them into bounded Part 2 specs: quest chains/huts beyond the opening quest,
-monthly world events, artifact victory, king-of-the-hill, survival,
-scenario-specific defeat, active naval movement, complex siege gameplay,
-larger procedural map materialization, ranked, guilds, diplomacy, campaign
-persistence, durable rematch creation, and broader product meta systems.
-Checkpoint 21 records the authoritative classification in
+Expansion scope outside the v1 first playable is now tracked in `spec.v2.md`.
+Checkpoint 21 records the historical classification in
 `docs/full-spec-expansion-triage.md`; checkpoint 25 adds persisted
-world-generation boundary rows and explicit disabled states for the remaining
+world-generation boundary rows and explicit disabled states rather than active
 naval/siege/larger-map gameplay.
 
 ## Known Follow-Up
 
-Hard rejection of late `submit_move_intent` calls remains a separate contract
-cleanup. The public API no longer trusts caller time, but the current playable
-route still uses the existing sync-driven turn submission behavior.
+Hard rejection of late new `submit_move_intent` calls is explicitly deferred to
+`spec.v2.md` as non-blocking contract cleanup. The public API no longer trusts
+caller time, and the current playable route uses the existing sync-driven turn
+submission behavior with `sync_required` plus `sync_session_turn`.

@@ -119,6 +119,14 @@ query-only projections over IcyDB rows. Naval movement, siege actions, and
 larger-map gameplay remain disabled by persisted rows with explicit disabled
 reasons until a later bounded spec expands them.
 
+Checkpoint 26 keeps late `submit_move_intent` hard rejection out of the v1
+release contract. The canister route is sync-driven: render/query DTOs expose
+`sync_required`, clients call `sync_session_turn` to materialize expired turn
+state, and turn-final resolution remains authoritative. A stricter
+canister-side error for a new movement intent submitted after
+`turn_deadline_at` is tracked in `spec.v2.md` because it needs command replay,
+nonce mismatch, client recovery, and Pocket-IC race coverage before promotion.
+
 ## Deferred Endpoint Decisions
 
 | Endpoint | Decision |

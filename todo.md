@@ -47,7 +47,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
 - [x] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
 - [x] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
-- [ ] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
+- [x] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
 - [ ] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
 - [ ] Gate O after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
 
@@ -436,14 +436,14 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19K. Client Against Real Canister And Canister Performance Gate
 
-- [ ] Add a canister-backed client/probe adapter that implements the same web-client backend trait used by the fixture client.
-- [ ] Run the Gate E web client walkthrough against Pocket-IC canister endpoints, not `FixtureApiBackend`.
-- [ ] Verify client retry, sync-required, event refresh, battle panel, result panel, rematch affordance, and match-history behavior through the canister adapter.
-- [ ] Compare fixture DTOs and canister DTOs for representative states to catch drift between pure rules and persisted projections.
-- [ ] Measure real canister update/query response sizes, IcyDB row growth, stable-memory growth, command/event retention, and cleanup behavior for the first playable path.
-- [ ] Add manual smoke instructions for running canister-backed tests locally.
-- [ ] Gate M: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
-- [ ] Commit after this checkpoint.
+- [x] Add a canister-backed client/probe adapter that implements the same web-client backend trait used by the fixture client.
+- [x] Run the Gate E web client walkthrough against Pocket-IC canister endpoints, not `FixtureApiBackend`.
+- [x] Verify client retry, sync-required, event refresh, battle panel, result panel, rematch affordance, and match-history behavior through the canister adapter.
+- [x] Compare fixture DTOs and canister DTOs for representative states to catch drift between pure rules and persisted projections.
+- [x] Measure real canister update/query response sizes, IcyDB row growth, stable-memory growth, command/event retention, and cleanup behavior for the first playable path.
+- [x] Add manual smoke instructions for running canister-backed tests locally.
+- [x] Gate M: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
+- [x] Commit after this checkpoint.
 
 ## 20. First Playable Final Spec Audit
 

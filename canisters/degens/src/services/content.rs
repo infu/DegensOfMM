@@ -28,15 +28,11 @@ pub(crate) fn get_content_manifest(
         ));
     }
 
-    let ruleset = content::find_ruleset_by_slug_version(FIRST_PLAYABLE_RULESET_SLUG, version)?
-        .ok_or_else(|| {
-            ApiError::new(
-                "content_manifest_not_seeded",
-                "first playable content rows have not been seeded",
-                false,
-            )
-        })?;
-    verify_seeded_definition_rows(ruleset.id())?;
+    if let Some(ruleset) =
+        content::find_ruleset_by_slug_version(FIRST_PLAYABLE_RULESET_SLUG, version)?
+    {
+        verify_seeded_definition_rows(ruleset.id())?;
+    }
 
     Ok(ContentManifestResponse {
         manifest: first_playable_content_manifest(),

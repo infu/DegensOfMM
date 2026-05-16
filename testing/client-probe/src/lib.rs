@@ -8,5 +8,5 @@ pub use render::{ThinClientProbe, render_opening_viewport};
 pub use types::{ClientOpeningViewport, ProbeError, RenderedViewport};
 pub use web::{
     ChecklistItem, CommandLogEntry, MatchHistoryPanel, MatchResultPanel, PlayableWebClient,
-    WebClientState, WebClientViewModel,
+    WebClientBackend, WebClientState, WebClientViewModel,
 };

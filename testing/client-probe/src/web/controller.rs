@@ -1,9 +1,8 @@
 use candid::Principal;
 use domm_game::{
-    ApiEventPage, BattleActionInput, CommandResponse, FIRST_PLAYABLE_RULESET_SLUG,
+    ApiError, ApiEventPage, BattleActionInput, CommandResponse, FIRST_PLAYABLE_RULESET_SLUG,
     FIRST_PLAYABLE_RULESET_VERSION, GameView, GameViewRequest, LobbyCommandResponse,
     LobbyCommandResult, MoveCoord, RecruitTarget, ScenarioFixture, TURN_DURATION_MS,
-    run_first_playable_backend_gate,
 };
 
 use crate::render::render_opening_viewport;
@@ -153,7 +152,30 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
             TURN_DURATION_MS.saturating_mul(7).saturating_add(1_000),
             false,
         )?;
-        self.sync_turn_with_retry(TURN_DURATION_MS.saturating_mul(8), "battle-trigger")?;
+        let mut triggered = false;
+        for attempt in 0_u64..6 {
+            let response = self.sync_turn_with_retry(
+                TURN_DURATION_MS
+                    .saturating_mul(8)
+                    .saturating_add(attempt.saturating_mul(1_000)),
+                &format!("battle-trigger-{attempt}"),
+            )?;
+            if response
+                .events
+                .iter()
+                .any(|event| event.event_type == "neutral_encounter_pending")
+            {
+                triggered = true;
+                break;
+            }
+        }
+        if !triggered && !self.backend.has_first_fixture_battle_id() {
+            return Err(ProbeError::Api(ApiError::new(
+                "neutral_encounter_missing",
+                "movement sync did not emit a neutral encounter event",
+                false,
+            )));
+        }
         self.refresh()?;
         Ok(())
     }
@@ -197,7 +219,11 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
         }
     }
 
-    fn sync_turn_with_retry(&mut self, now_ms: u64, key: &str) -> Result<(), ProbeError> {
+    fn sync_turn_with_retry(
+        &mut self,
+        now_ms: u64,
+        key: &str,
+    ) -> Result<CommandResponse, ProbeError> {
         let session_id = self.session_id()?;
         let nonce = self.nonces.next(&format!("sync-{key}"));
         let first = self
@@ -209,7 +235,7 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
             .sync_session_turn(self.caller, &session_id, now_ms, &nonce);
         self.record_command(&retry, true)?;
         self.record_retry(&first, &retry)?;
-        Ok(())
+        Ok(first)
     }
 
     fn build_training_yard(&mut self) -> Result<(), ProbeError> {
@@ -349,8 +375,11 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
     }
 
     fn finish_match_result(&mut self) -> Result<(), ProbeError> {
-        let report = run_first_playable_backend_gate()?;
-        self.state.apply_playable_result(&report.final_view);
+        let session_id = self.session_id()?;
+        let result = self
+            .backend
+            .finish_first_playable_match(self.caller, &session_id)?;
+        self.state.apply_playable_result(&result);
         Ok(())
     }
 

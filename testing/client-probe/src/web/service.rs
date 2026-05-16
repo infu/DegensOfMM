@@ -2,8 +2,8 @@ use candid::Principal;
 use domm_game::{
     ApiEventPage, ApiMetrics, ApiTownView, BattleActionInput, BattleView, BuildPreview,
     CommandResponse, CommandStatusView, ContentManifestResponse, FixtureApiBackend, GameView,
-    GameViewRequest, LobbyCommandResponse, MatchHistoryPage, MoveCoord, RecruitPreview,
-    RecruitTarget, SessionView,
+    GameViewRequest, LobbyCommandResponse, MatchHistoryPage, MoveCoord, PlayableMatchView,
+    RecruitPreview, RecruitTarget, SessionView, run_first_playable_backend_gate,
 };
 
 use crate::types::ProbeError;
@@ -173,6 +173,14 @@ pub trait WebClientBackend {
     fn start_first_playable_session(&mut self) -> SessionView;
 
     fn first_fixture_battle_id(&self) -> String;
+
+    fn has_first_fixture_battle_id(&self) -> bool;
+
+    fn finish_first_playable_match(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+    ) -> Result<PlayableMatchView, ProbeError>;
 
     fn metrics(&self) -> ApiMetrics;
 }
@@ -431,6 +439,18 @@ impl WebClientBackend for FixtureApiBackend {
 
     fn first_fixture_battle_id(&self) -> String {
         Self::first_fixture_battle_id(self)
+    }
+
+    fn has_first_fixture_battle_id(&self) -> bool {
+        true
+    }
+
+    fn finish_first_playable_match(
+        &mut self,
+        _caller: Principal,
+        _session_id: &str,
+    ) -> Result<PlayableMatchView, ProbeError> {
+        Ok(run_first_playable_backend_gate()?.final_view)
     }
 
     fn metrics(&self) -> ApiMetrics {

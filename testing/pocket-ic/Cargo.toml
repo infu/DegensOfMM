@@ -10,6 +10,7 @@ description = "Pocket-IC canister test scaffold for Degens of Misery & Mayhem"
 [dependencies]
 candid = { workspace = true }
 canic-testkit = "0.35.5"
+domm-client-probe = { path = "../client-probe" }
 domm-degens-canister = { path = "../../canisters/degens" }
 domm-game = { workspace = true }
 serde = { workspace = true }

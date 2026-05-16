@@ -41,10 +41,14 @@ Run these from `/srv/shared/icydb/DoMM` after changing gameplay, API, or client 
 ```text
 make smoke-e2e
 cargo test -p domm-client-probe gate_e -- --nocapture
+cargo test -p domm-pocket-ic-tests --test client_probe_canister gate_m -- --nocapture
+cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_l -- --nocapture
 cargo test -p domm-game gate_d_backend_fixture_reaches_victory_from_public_calls -- --nocapture
 make regression
 ```
 
 Expected result: the checkpoint 19 fixture reaches victory, the Gate E client walkthrough
-completes, the Gate D backend route still reports stable command/event/query/storage counts,
-and the full workspace regression suite passes.
+completes, the Gate M canister-backed client route reports Pocket-IC/IcyDB response and row
+metrics, Gate L still completes the public canister first-playable route, the Gate D backend
+route still reports stable command/event/query/storage counts, and the full workspace
+regression suite passes.

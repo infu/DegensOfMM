@@ -12,6 +12,18 @@ Add an entry whenever you find:
 - A spec ambiguity that slowed implementation.
 - A test gap or fixture weakness.
 
+## 2026-05-16 - Checkpoint 19K Canister-Backed Web Client Gate
+
+Area: web client probe, Pocket-IC canister adapter, IcyDB performance
+
+Status: resolved for Gate M
+
+Checkpoint 19K adds `testing/pocket-ic/tests/client_probe_canister.rs`, a canister-backed implementation of the `domm-client-probe` `WebClientBackend` trait. The same `PlayableWebClient` walkthrough used by Gate E now runs through Pocket-IC public canister endpoints, including lobby/setup, content manifest, visible map/object pages, participant/champion/town reads, command-status polling, move/build/recruit commands, event refresh, battle state/action/sync, match completion, result panel state, rematch affordance, and match-history reads.
+
+The focused Gate M run passed in 211.32s. It reported 90 update calls, 257 query calls, 530 observed event DTOs, 368 selected persisted rows, row growth of 368, stable memory growth from 897 to 182401 pages, 366515 measured Candid response bytes, and a max measured response of 12780 bytes from `get_events_after`. Final assertions verify retained `LobbyCommand`, `GameCommand`, `CommandEffect`, `GameEvent`, movement, ledger, town, battle, player, session, and `PlayerMatchSummary` rows. There is still no public cleanup endpoint; Gate M records retained row counts and stable-memory growth as the current cleanup/retention behavior.
+
+The canister `get_content_manifest` endpoint now returns the canonical first-playable manifest before setup rows exist, while still validating persisted definition rows after setup. The aggregate canister `get_game_view` intentionally remains a bounded map/object/session projection; the web adapter composes the full client DTO from smaller public endpoints instead of relying on one heavy aggregate query. Combining map, objects, town/champion detail, event feed, and full battle state in one canister query exceeds the Pocket-IC single-message instruction cap. Keep battle detail on `get_battle_state` and town/champion detail on their dedicated endpoints unless the aggregate projection is split or optimized further.
+
 Preferred entry format:
 
 ```text

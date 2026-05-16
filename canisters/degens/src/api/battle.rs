@@ -1,18 +1,17 @@
 use canic_cdk::{query, update};
 
-use crate::dto::public::{ApiError, BattleActionInput, BattleView, CommandResponse};
+use crate::{
+    dto::public::{ApiError, BattleActionInput, BattleView, CommandResponse},
+    services::clock,
+};
 
 #[query]
-fn get_battle_state(
-    session_id: String,
-    battle_id: String,
-    now_ms: u64,
-) -> Result<BattleView, ApiError> {
+fn get_battle_state(session_id: String, battle_id: String) -> Result<BattleView, ApiError> {
     crate::services::battle::get_battle_state(
         canic_cdk::api::msg_caller(),
         session_id,
         battle_id,
-        now_ms,
+        clock::now_ms(),
     )
 }
 
@@ -20,14 +19,13 @@ fn get_battle_state(
 fn sync_battle(
     session_id: String,
     battle_id: String,
-    now_ms: u64,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
     crate::services::battle::sync_battle(
         canic_cdk::api::msg_caller(),
         session_id,
         battle_id,
-        now_ms,
+        clock::now_ms(),
         client_nonce,
     )
 }
@@ -37,13 +35,12 @@ fn submit_battle_action(
     session_id: String,
     input: BattleActionInput,
     client_nonce: String,
-    now_ms: u64,
 ) -> Result<CommandResponse, ApiError> {
     crate::services::battle::submit_battle_action(
         canic_cdk::api::msg_caller(),
         session_id,
         input,
         client_nonce,
-        now_ms,
+        clock::now_ms(),
     )
 }

@@ -48,6 +48,16 @@ Endpoint methods are implemented under `canisters/degens/src/api/` by domain,
 with matching service boundaries under `services/` and durable row ownership
 boundaries under `repos/`. See `docs/canister-layout.md`.
 
+## Time Contract
+
+Movement and battle endpoint decisions derive time at the canister boundary.
+Public Candid callers do not provide `now_ms` to `preview_move_path`,
+`submit_move_intent`, `sync_session_turn`, `get_battle_state`, `sync_battle`,
+or `submit_battle_action`. Pocket-IC tests advance Pocket-IC time when they
+need turn deadlines or battle action deadlines to elapse. Server time is also
+excluded from command idempotency payloads so exact nonce retries replay the
+original command instead of failing due to a later clock value.
+
 ## Deferred Endpoint Decisions
 
 | Endpoint | Decision |

@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_degens_canister::{
@@ -422,7 +423,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             session_id.clone(),
             champion_id.clone(),
             vec![MoveCoord::new(champion.x.saturating_add(1), champion.y)],
-            1_000_u64,
         ),
     )
     .expect("preview_move_path should decode")
@@ -575,7 +575,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             session_id.clone(),
             champion_id.clone(),
             vec![MoveCoord::new(champion.x, champion.y); MAX_MOVE_PATH_STEPS_LIMIT + 1],
-            1_000_u64,
         ),
     )
     .expect("oversized movement preview should decode")
@@ -592,7 +591,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             champion_id.clone(),
             move_path.clone(),
             "nonce:presence:move:wood".to_string(),
-            1_000_u64,
         ),
     )
     .expect("submit_move_intent should decode")
@@ -608,7 +606,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             champion_id.clone(),
             move_path,
             "nonce:presence:move:wood".to_string(),
-            1_000_u64,
         ),
     )
     .expect("submit_move_intent replay should decode")
@@ -624,7 +621,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             champion_id.clone(),
             vec![MoveCoord::new(9, 24)],
             "nonce:presence:move:wood".to_string(),
-            1_000_u64,
         ),
     )
     .expect("submit_move_intent mismatch should decode")
@@ -648,13 +644,13 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("move command should be readable by nonce");
     assert_eq!(move_status.status, CommandStatus::Applied);
 
+    advance_time_ms(&fixture, 61_000);
     let synced = update_as::<CommandResponse>(
         &fixture,
         player_one,
         "sync_session_turn",
         (
             session_id.clone(),
-            61_000_u64,
             "nonce:presence:sync-turn:wood".to_string(),
         ),
     )
@@ -789,13 +785,13 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .any(|event| event.event_type == "mine_captured")
     );
 
+    advance_time_ms(&fixture, 61_000);
     let income_sync = update_as::<CommandResponse>(
         &fixture,
         player_one,
         "sync_session_turn",
         (
             session_id.clone(),
-            305_000_u64,
             "nonce:presence:sync-turn:income".to_string(),
         ),
     )
@@ -851,7 +847,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         &fixture,
         player_one,
         "get_battle_state",
-        (session_id.clone(), battle_id.clone(), 489_000_u64),
+        (session_id.clone(), battle_id.clone()),
     )
     .expect("get_battle_state should decode")
     .expect("battle state should be readable");
@@ -859,6 +855,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     assert_eq!(battle.battle_type, "neutral");
     assert!(!battle.stacks.is_empty());
     if battle.legal_actions_for_caller.is_empty() {
+        advance_time_ms(&fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
         let sync = update_as::<CommandResponse>(
             &fixture,
             player_one,
@@ -866,7 +863,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             (
                 session_id.clone(),
                 battle_id.clone(),
-                900_000_u64,
                 "nonce:presence:sync-battle:initial".to_string(),
             ),
         )
@@ -877,7 +873,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             &fixture,
             player_one,
             "get_battle_state",
-            (session_id.clone(), battle_id.clone(), 901_000_u64),
+            (session_id.clone(), battle_id.clone()),
         )
         .expect("get_battle_state after sync should decode")
         .expect("battle state after sync should be readable");
@@ -918,7 +914,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
                 destination: action.path.first().copied(),
             },
             "nonce:presence:battle-action".to_string(),
-            902_000_u64,
         ),
     )
     .expect("submit_battle_action should decode")
@@ -945,7 +940,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
                 destination: action.path.first().copied(),
             },
             "nonce:presence:battle-action".to_string(),
-            902_000_u64,
         ),
     )
     .expect("submit_battle_action replay should decode")
@@ -1088,19 +1082,15 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         &champion_id,
         vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)],
         "nonce:gate-j:move:wood",
-        1_000_u64,
     );
     assert_eq!(moved_to_wood.status, CommandStatus::Applied);
+    advance_time_ms(&fixture, 61_000);
     let synced_wood = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
         player_one,
         "sync_session_turn",
-        (
-            session_id.clone(),
-            61_000_u64,
-            "nonce:gate-j:sync:wood".to_string(),
-        ),
+        (session_id.clone(), "nonce:gate-j:sync:wood".to_string()),
     )
     .expect("wood sync should succeed");
     metrics.observe_command_response(&synced_wood);
@@ -1255,16 +1245,13 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
             > row_count(&recruit_storage, "ParticipantObjectVisit")
     );
 
+    advance_time_ms(&fixture, 61_000);
     let income_sync = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
         player_one,
         "sync_session_turn",
-        (
-            session_id.clone(),
-            305_000_u64,
-            "nonce:gate-j:sync:income".to_string(),
-        ),
+        (session_id.clone(), "nonce:gate-j:sync:income".to_string()),
     )
     .expect("income sync should succeed");
     metrics.observe_command_response(&income_sync);
@@ -1390,7 +1377,7 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         &fixture,
         player_one,
         "get_battle_state",
-        (session_id.clone(), neutral_battle_id.clone(), 1_000_u64),
+        (session_id.clone(), neutral_battle_id.clone()),
     )
     .expect("neutral battle view should decode")
     .expect("neutral battle view should load");
@@ -1489,6 +1476,7 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         "town_encounter_pending",
     );
     let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending");
+    advance_time_ms(&fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
     let town_sync = update_as::<CommandResponse>(
         &fixture,
         player_one,
@@ -1496,7 +1484,6 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         (
             session_id.clone(),
             town_battle_id,
-            366_000_u64,
             "nonce:gate-k:town-battle:sync".to_string(),
         ),
     )
@@ -1652,7 +1639,6 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         &west_champion_id,
         vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)],
         "nonce:gate-l:move:wood",
-        1_000_u64,
     );
     assert_eq!(moved_to_wood.status, CommandStatus::Applied);
     let wood_status = gate_query_as::<CommandStatusView>(
@@ -1665,16 +1651,13 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     .expect("wood movement command status should load");
     assert_eq!(wood_status.status, CommandStatus::Applied);
 
+    advance_time_ms(&fixture, 61_000);
     let synced_wood = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
         player_one,
         "sync_session_turn",
-        (
-            session_id.clone(),
-            61_000_u64,
-            "nonce:gate-l:sync:wood".to_string(),
-        ),
+        (session_id.clone(), "nonce:gate-l:sync:wood".to_string()),
     )
     .expect("wood sync should succeed");
     metrics.observe_command_response(&synced_wood);
@@ -1775,16 +1758,13 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert_eq!(crystal_sync.status, CommandStatus::Applied);
     assert!(crystal_saw_partial_sync);
 
+    advance_time_ms(&fixture, 61_000);
     let income_sync = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
         player_one,
         "sync_session_turn",
-        (
-            session_id.clone(),
-            305_000_u64,
-            "nonce:gate-l:sync:income".to_string(),
-        ),
+        (session_id.clone(), "nonce:gate-l:sync:income".to_string()),
     )
     .expect("income sync should succeed");
     metrics.observe_command_response(&income_sync);
@@ -1980,6 +1960,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         "town_encounter_pending",
     );
     let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending");
+    advance_time_ms(&fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
     let town_sync = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
@@ -1988,7 +1969,6 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         (
             session_id.clone(),
             town_battle_id,
-            793_000_u64,
             "nonce:gate-l:town-battle:sync".to_string(),
         ),
     )
@@ -2718,7 +2698,6 @@ fn gate_submit_move_intent(
     champion_id: &str,
     path: Vec<MoveCoord>,
     client_nonce: &str,
-    now_ms: u64,
 ) -> CommandResponse {
     let response = gate_update_as::<CommandResponse>(
         metrics,
@@ -2730,7 +2709,6 @@ fn gate_submit_move_intent(
             champion_id.to_string(),
             path,
             client_nonce.to_string(),
-            now_ms,
         ),
     )
     .expect("submit_move_intent should succeed");
@@ -2760,7 +2738,6 @@ fn gate_submit_move_and_sync_until_event(
         champion_id,
         path,
         move_nonce,
-        now_ms,
     );
     gate_sync_until_event(
         metrics,
@@ -2780,10 +2757,11 @@ fn gate_sync_until_event(
     player: candid::Principal,
     session_id: &str,
     sync_nonce_prefix: &str,
-    now_ms: u64,
+    _now_ms: u64,
     expected_event_type: &str,
     max_sync_calls: usize,
 ) -> (CommandResponse, bool) {
+    advance_time_ms(fixture, 61_000);
     let mut saw_partial_sync = false;
     for attempt in 0..max_sync_calls {
         let synced = gate_update_as::<CommandResponse>(
@@ -2793,7 +2771,6 @@ fn gate_sync_until_event(
             "sync_session_turn",
             (
                 session_id.to_string(),
-                now_ms.saturating_add((attempt as u64).saturating_mul(1_000)),
                 format!("{sync_nonce_prefix}{attempt}"),
             ),
         )
@@ -2832,15 +2809,12 @@ fn gate_submit_retryable_battle_action(
             fixture,
             player,
             "get_battle_state",
-            (session_id.to_string(), battle_id.to_string(), 1_000_u64),
+            (session_id.to_string(), battle_id.to_string()),
         )
         .expect("battle view should load before retryable action");
         assert_ne!(view.state, "resolved");
         if view.legal_actions_for_caller.is_empty() {
-            let now_ms = view
-                .action_deadline_at
-                .unwrap_or(1_000_u64)
-                .saturating_add(1);
+            advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
             let synced = gate_update_as::<CommandResponse>(
                 metrics,
                 fixture,
@@ -2849,7 +2823,6 @@ fn gate_submit_retryable_battle_action(
                 (
                     session_id.to_string(),
                     battle_id.to_string(),
-                    now_ms,
                     format!("{sync_nonce_prefix}{step}"),
                 ),
             )
@@ -2861,10 +2834,6 @@ fn gate_submit_retryable_battle_action(
         }
 
         let input = choose_battle_action(&view);
-        let now_ms = view
-            .action_deadline_at
-            .unwrap_or(2_000_u64)
-            .saturating_sub(1);
         let submitted = gate_update_as::<CommandResponse>(
             metrics,
             fixture,
@@ -2874,7 +2843,6 @@ fn gate_submit_retryable_battle_action(
                 session_id.to_string(),
                 input.clone(),
                 action_nonce.to_string(),
-                now_ms,
             ),
         )
         .expect("retryable battle action should succeed");
@@ -2889,12 +2857,7 @@ fn gate_submit_retryable_battle_action(
             fixture,
             player,
             "submit_battle_action",
-            (
-                session_id.to_string(),
-                input,
-                action_nonce.to_string(),
-                now_ms,
-            ),
+            (session_id.to_string(), input, action_nonce.to_string()),
         )
         .expect("retryable battle action replay should succeed");
         metrics.observe_command_response(&replay);
@@ -2921,17 +2884,14 @@ fn gate_resolve_battle_to_end(
             fixture,
             player,
             "get_battle_state",
-            (session_id.to_string(), battle_id.to_string(), 1_000_u64),
+            (session_id.to_string(), battle_id.to_string()),
         )
         .expect("battle view should load");
         if view.state == "resolved" {
             return (view, saw_sync_battle);
         }
         if view.legal_actions_for_caller.is_empty() {
-            let now_ms = view
-                .action_deadline_at
-                .unwrap_or(1_000_u64)
-                .saturating_add(1);
+            advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
             let synced = gate_update_as::<CommandResponse>(
                 metrics,
                 fixture,
@@ -2940,7 +2900,6 @@ fn gate_resolve_battle_to_end(
                 (
                     session_id.to_string(),
                     battle_id.to_string(),
-                    now_ms,
                     format!("{nonce_prefix}:sync:{step}"),
                 ),
             )
@@ -2952,10 +2911,6 @@ fn gate_resolve_battle_to_end(
         }
 
         let input = choose_battle_action(&view);
-        let now_ms = view
-            .action_deadline_at
-            .unwrap_or(2_000_u64)
-            .saturating_sub(1);
         let submitted = gate_update_as::<CommandResponse>(
             metrics,
             fixture,
@@ -2965,7 +2920,6 @@ fn gate_resolve_battle_to_end(
                 session_id.to_string(),
                 input,
                 format!("{nonce_prefix}:action:{step}"),
-                now_ms,
             ),
         )
         .expect("submit_battle_action should succeed");
@@ -3057,6 +3011,11 @@ fn row_count(snapshot: &DiagnosticStorageSnapshot, entity: &str) -> u32 {
         .count
 }
 
+fn advance_time_ms(fixture: &StandaloneCanisterFixture, millis: u64) {
+    fixture.pic().advance_time(Duration::from_millis(millis));
+    fixture.pic().tick();
+}
+
 fn json_string_field(json: &str, field: &str) -> Option<String> {
     let needle = format!(r#""{field}":"#);
     let start = json.find(&needle)? + needle.len();
@@ -3089,7 +3048,7 @@ fn submit_move_intent(
     champion_id: &str,
     path: Vec<MoveCoord>,
     client_nonce: &str,
-    now_ms: u64,
+    _now_ms: u64,
 ) -> CommandResponse {
     let response = update_as::<CommandResponse>(
         fixture,
@@ -3100,7 +3059,6 @@ fn submit_move_intent(
             champion_id.to_string(),
             path,
             client_nonce.to_string(),
-            now_ms,
         ),
     )
     .expect("submit_move_intent should decode")
@@ -3146,10 +3104,11 @@ fn sync_until_event(
     player: candid::Principal,
     session_id: &str,
     sync_nonce_prefix: &str,
-    now_ms: u64,
+    _now_ms: u64,
     expected_event_type: &str,
     max_sync_calls: usize,
 ) -> (CommandResponse, bool) {
+    advance_time_ms(fixture, 61_000);
     let mut saw_partial_sync = false;
     for attempt in 0..max_sync_calls {
         let synced = update_as::<CommandResponse>(
@@ -3158,7 +3117,6 @@ fn sync_until_event(
             "sync_session_turn",
             (
                 session_id.to_string(),
-                now_ms.saturating_add((attempt as u64).saturating_mul(1_000)),
                 format!("{sync_nonce_prefix}{attempt}"),
             ),
         )
@@ -3193,7 +3151,7 @@ fn resolve_battle_to_end(
             fixture,
             player,
             "get_battle_state",
-            (session_id.to_string(), battle_id.to_string(), 1_000_u64),
+            (session_id.to_string(), battle_id.to_string()),
         )
         .expect("battle view should decode")
         .expect("battle view should load");
@@ -3201,10 +3159,7 @@ fn resolve_battle_to_end(
             return view;
         }
         if view.legal_actions_for_caller.is_empty() {
-            let now_ms = view
-                .action_deadline_at
-                .unwrap_or(1_000_u64)
-                .saturating_add(1);
+            advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
             let synced = update_as::<CommandResponse>(
                 fixture,
                 player,
@@ -3212,7 +3167,6 @@ fn resolve_battle_to_end(
                 (
                     session_id.to_string(),
                     battle_id.to_string(),
-                    now_ms,
                     format!("{nonce_prefix}:sync:{step}"),
                 ),
             )
@@ -3223,10 +3177,6 @@ fn resolve_battle_to_end(
         }
 
         let input = choose_battle_action(&view);
-        let now_ms = view
-            .action_deadline_at
-            .unwrap_or(2_000_u64)
-            .saturating_sub(1);
         let submitted = update_as::<CommandResponse>(
             fixture,
             player,
@@ -3235,7 +3185,6 @@ fn resolve_battle_to_end(
                 session_id.to_string(),
                 input,
                 format!("{nonce_prefix}:action:{step}"),
-                now_ms,
             ),
         )
         .expect("submit_battle_action should decode")

@@ -12,6 +12,25 @@ Add an entry whenever you find:
 - A spec ambiguity that slowed implementation.
 - A test gap or fixture weakness.
 
+## 2026-05-16 - Checkpoint 20 First Playable Final Audit
+
+Area: Gate N audit, public canister contract, IcyDB command idempotency
+
+Status: resolved for Gate N
+
+Checkpoint 20 found and fixed one first-playable canister/API drift: movement and battle endpoints still accepted fixture-style `now_ms` arguments. The public canister API now derives time at the endpoint boundary and Pocket-IC tests advance Pocket-IC time instead. Time-sensitive command payload hashes also exclude server time so exact nonce retries replay the original command rather than failing after the clock moves.
+
+The audit deliberately did not add a new hard rejection for late `submit_move_intent` calls. The current canister/client route still depends on the existing sync-driven turn model, and adding deadline rejection needs a focused contract pass for client recovery text, command status behavior, and pre-submit sync affordances.
+
+Additional native audit tests now guard the final scope: public time-sensitive endpoint sources must not accept caller-controlled time, canister gameplay services must not call `FixtureApiBackend` or placeholder repository bodies, and time-sensitive idempotency payloads must not include `now_ms`. The stale `services/placeholder.rs` file was removed.
+
+Gate N audit notes:
+
+- Required 19A endpoints remain present in Candid and covered by Pocket-IC endpoint/client gates.
+- Public gameplay paths continue to use typed IcyDB repository/service modules, with generic SQL limited to controller-gated diagnostics.
+- Queries remain render/projection reads; update endpoints own turn sync, battle sync, command recovery, movement, and aftermath materialization.
+- Deferred Part 1 systems remain explicitly deferred to checkpoints 21-27 rather than silently implemented.
+
 ## 2026-05-16 - Checkpoint 19K Canister-Backed Web Client Gate
 
 Area: web client probe, Pocket-IC canister adapter, IcyDB performance

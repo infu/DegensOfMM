@@ -144,7 +144,7 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
         Ulid::from_str(&participant_one.participant_id).expect("participant id should be Ulid"),
     );
     let sync_nonce = "nonce:service:sync:wood".to_string();
-    let sync_payload_json = r#"{"now_ms":61000}"#.to_string();
+    let sync_payload_json = format!(r#"{{"session_id":"{started_session_id}"}}"#);
     let seeded_sync_command = commands_events_effects::create_game_command(
         session_id,
         "player".to_string(),
@@ -168,11 +168,11 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     let synced = movement_service::sync_session_turn(
         player_one,
         started_session_id.clone(),
-        61_000,
+        u64::MAX,
         sync_nonce,
     )
     .expect("turn sync should write movement snapshots");
-    assert_eq!(synced.status, CommandStatus::Applied);
+    assert_eq!(synced.status, CommandStatus::Applied, "{synced:?}");
     assert_eq!(synced.command_id, seeded_sync_command.id().to_string());
 
     let session_key = Ulid::from_str(&started_session_id).expect("service session ids are Ulids");
@@ -215,7 +215,7 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     let partial_guarded_sync = movement_service::sync_session_turn(
         player_one,
         started_session_id.clone(),
-        183_000,
+        u64::MAX,
         "nonce:service:sync:guarded:0".to_string(),
     )
     .expect("guarded movement first sync should park partial progress");
@@ -228,7 +228,7 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     let guarded_sync = movement_service::sync_session_turn(
         player_one,
         started_session_id,
-        184_000,
+        u64::MAX,
         "nonce:service:sync:guarded:1".to_string(),
     )
     .expect("guarded movement second sync should start neutral battle");

@@ -72,6 +72,57 @@ fn exported_candid_contains_every_required_game_endpoint() {
 }
 
 #[test]
+fn public_time_sensitive_endpoints_derive_canister_time() {
+    let movement_api = include_str!("api/movement.rs");
+    let battle_api = include_str!("api/battle.rs");
+
+    for source in [movement_api, battle_api] {
+        assert!(
+            !source.contains("now_ms:"),
+            "public Candid entrypoints must not accept caller-controlled time"
+        );
+    }
+    assert_eq!(movement_api.matches("services::clock::now_ms()").count(), 3);
+    assert_eq!(battle_api.matches("clock::now_ms()").count(), 3);
+}
+
+#[test]
+fn final_gameplay_services_do_not_call_fixture_or_placeholder_backends() {
+    let service_sources = [
+        include_str!("services/account_lobby_session.rs"),
+        include_str!("services/battle.rs"),
+        include_str!("services/battle_aftermath.rs"),
+        include_str!("services/battle_rows.rs"),
+        include_str!("services/battle_start.rs"),
+        include_str!("services/command_response.rs"),
+        include_str!("services/content.rs"),
+        include_str!("services/events.rs"),
+        include_str!("services/first_playable_setup.rs"),
+        include_str!("services/game_view.rs"),
+        include_str!("services/history.rs"),
+        include_str!("services/movement.rs"),
+        include_str!("services/render_projection.rs"),
+        include_str!("services/session_context.rs"),
+        include_str!("services/town.rs"),
+    ];
+
+    for source in service_sources {
+        assert!(!source.contains("FixtureApiBackend"));
+        assert!(!source.contains("repository_not_implemented"));
+        assert!(!source.contains("placeholder::"));
+    }
+}
+
+#[test]
+fn time_sensitive_idempotency_payloads_exclude_server_time() {
+    let movement_service = include_str!("services/movement.rs");
+    let battle_service = include_str!("services/battle.rs");
+
+    assert!(!movement_service.contains(r#""now_ms""#));
+    assert!(!battle_service.contains(r#""now_ms""#));
+}
+
+#[test]
 fn canister_domain_layout_has_required_module_files() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let required_files = [

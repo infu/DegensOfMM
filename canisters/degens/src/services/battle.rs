@@ -44,7 +44,7 @@ pub(crate) fn submit_battle_action(
 ) -> Result<CommandResponse, ApiError> {
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &input.battle_id)?;
-    let payload_json = battle_action_payload_json(&input, now_ms);
+    let payload_json = battle_action_payload_json(&input);
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -137,7 +137,7 @@ pub(crate) fn sync_battle(
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let payload_json = format!(
-        r#"{{"battle_id":"{}","now_ms":{now_ms}}}"#,
+        r#"{{"battle_id":"{}"}}"#,
         command_response::escape_json(&battle_id)
     );
     let command = match command_response::begin_participant_command(
@@ -692,9 +692,9 @@ fn command_mentions_battle(command: &GameCommand, battle_id: Id<Battle>) -> bool
     command.payload_json.contains(&battle_id.to_string())
 }
 
-fn battle_action_payload_json(input: &BattleActionInput, now_ms: u64) -> String {
+fn battle_action_payload_json(input: &BattleActionInput) -> String {
     format!(
-        r#"{{"battle_id":"{}","battle_stack_id":"{}","action":"{}","target_stack_id":{},"destination":{},"now_ms":{now_ms}}}"#,
+        r#"{{"battle_id":"{}","battle_stack_id":"{}","action":"{}","target_stack_id":{},"destination":{}}}"#,
         command_response::escape_json(&input.battle_id),
         command_response::escape_json(&input.battle_stack_id),
         command_response::escape_json(&input.action),

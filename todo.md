@@ -48,7 +48,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
 - [x] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
 - [x] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
-- [ ] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
+- [x] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
 - [ ] Gate O after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
 
 ## 0. Project Harness
@@ -447,19 +447,19 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 20. First Playable Final Spec Audit
 
-- [ ] Perform a full implementation audit against `spec.md`.
-- [ ] Re-run all playability gates from Gate A through Gate M.
-- [ ] Verify every 19A endpoint exists in canister Candid and has Pocket-IC coverage.
-- [ ] Verify every public gameplay endpoint uses typed IcyDB repositories and no generic SQL gameplay path.
-- [ ] Verify all command paths are idempotent and recoverable.
-- [ ] Verify all query paths are read-only and do not materialize gameplay state.
-- [ ] Verify deterministic pseudo-randomness is used everywhere gameplay needs randomness.
-- [ ] Verify all important modules have focused unit tests.
-- [ ] Verify the full regression suite passes from a clean checkout.
-- [ ] Verify `DoMM/notes.md` has useful implementation notes for IcyDB maintainers and no unresolved blocker that invalidates the playable game.
-- [ ] Fix every audit finding or explicitly update `spec.md` and this todo if the intended behavior changed.
-- [ ] Gate N: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
-- [ ] Commit the final audit fixes.
+- [x] Perform a full implementation audit against `spec.md`.
+- [x] Re-run all playability gates from Gate A through Gate M.
+- [x] Verify every 19A endpoint exists in canister Candid and has Pocket-IC coverage.
+- [x] Verify every public gameplay endpoint uses typed IcyDB repositories and no generic SQL gameplay path.
+- [x] Verify all command paths are idempotent and recoverable.
+- [x] Verify all query paths are read-only and do not materialize gameplay state.
+- [x] Verify deterministic pseudo-randomness is used everywhere gameplay needs randomness.
+- [x] Verify all important modules have focused unit tests.
+- [x] Verify the full regression suite passes from a clean checkout.
+- [x] Verify `DoMM/notes.md` has useful implementation notes for IcyDB maintainers and no unresolved blocker that invalidates the playable game.
+- [x] Fix every audit finding or explicitly update `spec.md` and this todo if the intended behavior changed.
+- [x] Gate N: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
+- [x] Commit the final audit fixes.
 
 ## 21. Full Spec Expansion Triage
 

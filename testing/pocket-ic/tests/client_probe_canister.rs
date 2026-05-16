@@ -1,8 +1,10 @@
 use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use candid::{CandidType, Principal};
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
@@ -134,6 +136,7 @@ struct CanisterWebClientBackend {
     opening_game_view: Option<GameView>,
     current_turn: u32,
     server_now_ms: u64,
+    advanced_time_nonces: BTreeSet<String>,
     metrics: RefCell<CanisterProbeMetrics>,
 }
 
@@ -150,12 +153,30 @@ impl CanisterWebClientBackend {
             opening_game_view: None,
             current_turn: 1,
             server_now_ms: 0,
+            advanced_time_nonces: BTreeSet::new(),
             metrics: RefCell::new(CanisterProbeMetrics::default()),
         }
     }
 
     fn probe_metrics(&self) -> CanisterProbeMetrics {
         self.metrics.borrow().clone()
+    }
+
+    fn advance_time_ms(&mut self, millis: u64) {
+        self.fixture
+            .pic()
+            .advance_time(Duration::from_millis(millis));
+        self.fixture.pic().tick();
+        self.server_now_ms = self.server_now_ms.saturating_add(millis);
+    }
+
+    fn advance_once_for_nonce(&mut self, method: &str, client_nonce: &str, millis: u64) {
+        if self
+            .advanced_time_nonces
+            .insert(format!("{method}:{client_nonce}"))
+        {
+            self.advance_time_ms(millis);
+        }
     }
 
     fn default_game_view_request(&self) -> GameViewRequest {
@@ -339,7 +360,6 @@ impl CanisterWebClientBackend {
                 champion_id.to_string(),
                 path.clone(),
                 move_nonce.to_string(),
-                now_ms,
             ),
         )?;
         Self::assert_applied(&moved)?;
@@ -360,10 +380,11 @@ impl CanisterWebClientBackend {
         caller: Principal,
         session_id: &str,
         sync_nonce_prefix: &str,
-        now_ms: u64,
+        _now_ms: u64,
         expected_event_type: &str,
         max_sync_calls: usize,
     ) -> Result<(CommandResponse, bool), ProbeError> {
+        self.advance_time_ms(61_000);
         let mut saw_partial_sync = false;
         for attempt in 0..max_sync_calls {
             let synced = self.update_command_response(
@@ -371,7 +392,6 @@ impl CanisterWebClientBackend {
                 "sync_session_turn",
                 (
                     session_id.to_string(),
-                    now_ms.saturating_add((attempt as u64).saturating_mul(1_000)),
                     format!("{sync_nonce_prefix}{attempt}"),
                 ),
             )?;
@@ -407,23 +427,19 @@ impl CanisterWebClientBackend {
             let view = self.query_result::<BattleView>(
                 caller,
                 "get_battle_state",
-                (session_id.to_string(), battle_id.to_string(), 1_000_u64),
+                (session_id.to_string(), battle_id.to_string()),
             )?;
             if view.state == "resolved" {
                 return Ok(view);
             }
             if view.legal_actions_for_caller.is_empty() {
-                let now_ms = view
-                    .action_deadline_at
-                    .unwrap_or(1_000_u64)
-                    .saturating_add(1);
+                self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
                 let synced = self.update_command_response(
                     caller,
                     "sync_battle",
                     (
                         session_id.to_string(),
                         battle_id.to_string(),
-                        now_ms,
                         format!("{nonce_prefix}:sync:{step}"),
                     ),
                 )?;
@@ -432,10 +448,6 @@ impl CanisterWebClientBackend {
             }
 
             let input = choose_battle_action(&view);
-            let now_ms = view
-                .action_deadline_at
-                .unwrap_or(2_000_u64)
-                .saturating_sub(1);
             let submitted = self.update_command_response(
                 caller,
                 "submit_battle_action",
@@ -443,7 +455,6 @@ impl CanisterWebClientBackend {
                     session_id.to_string(),
                     input,
                     format!("{nonce_prefix}:action:{step}"),
-                    now_ms,
                 ),
             )?;
             Self::assert_applied(&submitted)?;
@@ -548,13 +559,13 @@ impl CanisterWebClientBackend {
             "town_encounter_pending",
         )?;
         let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending")?;
+        self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
         let town_sync = self.update_command_response(
             caller,
             "sync_battle",
             (
                 session_id.to_string(),
                 town_battle_id,
-                793_000_u64,
                 "nonce:gate-m:town-battle:sync".to_string(),
             ),
         )?;
@@ -832,7 +843,7 @@ impl WebClientBackend for CanisterWebClientBackend {
             let view = self.query_result::<BattleView>(
                 caller,
                 "get_battle_state",
-                (session_id.to_string(), battle_id, self.server_now_ms),
+                (session_id.to_string(), battle_id),
             )?;
             battle_summary = Some(BattleSummary::from(&view));
             battle = Some(view);
@@ -895,7 +906,6 @@ impl WebClientBackend for CanisterWebClientBackend {
                 champion_id,
                 path,
                 client_nonce.to_string(),
-                now_ms,
             ),
         )
         .expect("submit_move_intent should succeed through canister")
@@ -909,10 +919,11 @@ impl WebClientBackend for CanisterWebClientBackend {
         client_nonce: &str,
     ) -> CommandResponse {
         self.server_now_ms = now_ms;
+        self.advance_once_for_nonce("sync_session_turn", client_nonce, 61_000);
         self.update_command_response(
             caller,
             "sync_session_turn",
-            (session_id.to_string(), now_ms, client_nonce.to_string()),
+            (session_id.to_string(), client_nonce.to_string()),
         )
         .expect("sync_session_turn should succeed through canister")
     }
@@ -1034,7 +1045,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         self.query_result::<BattleView>(
             caller,
             "get_battle_state",
-            (session_id, battle_id.to_string(), now_ms),
+            (session_id, battle_id.to_string()),
         )
     }
 
@@ -1053,7 +1064,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         self.update_command_response(
             caller,
             "submit_battle_action",
-            (session_id, input, client_nonce.to_string(), now_ms),
+            (session_id, input, client_nonce.to_string()),
         )
         .expect("submit_battle_action should succeed through canister")
     }
@@ -1066,6 +1077,11 @@ impl WebClientBackend for CanisterWebClientBackend {
         client_nonce: &str,
     ) -> CommandResponse {
         self.server_now_ms = now_ms;
+        self.advance_once_for_nonce(
+            "sync_battle",
+            client_nonce,
+            domm_game::BATTLE_ACTION_DEADLINE_MS + 1,
+        );
         let session_id = self
             .session_id
             .clone()
@@ -1073,12 +1089,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         self.update_command_response(
             caller,
             "sync_battle",
-            (
-                session_id,
-                battle_id.to_string(),
-                now_ms,
-                client_nonce.to_string(),
-            ),
+            (session_id, battle_id.to_string(), client_nonce.to_string()),
         )
         .expect("sync_battle should succeed through canister")
     }

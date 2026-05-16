@@ -6,6 +6,7 @@ pub(crate) mod battle_aftermath;
 pub(crate) mod battle_rows;
 pub(crate) mod battle_start;
 pub(crate) mod cleanup;
+pub(crate) mod clock;
 pub(crate) mod command_response;
 pub(crate) mod content;
 pub(crate) mod diagnostics;

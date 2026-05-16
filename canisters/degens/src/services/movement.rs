@@ -57,7 +57,7 @@ pub(crate) fn submit_move_intent(
     champion_id: String,
     path: Vec<MoveCoord>,
     client_nonce: String,
-    now_ms: u64,
+    _now_ms: u64,
 ) -> Result<CommandResponse, ApiError> {
     validate_path_limit(&path)?;
     let context = session_context::require_active_session_caller(caller, &session_id)?;
@@ -66,7 +66,7 @@ pub(crate) fn submit_move_intent(
     validate_path_adjacency(champion.x, champion.y, &path)?;
     validate_path_cost(&context.session, &champion, &path)?;
     let payload_json = format!(
-        r#"{{"champion_id":"{}","path":"{}","now_ms":{now_ms}}}"#,
+        r#"{{"champion_id":"{}","path":"{}"}}"#,
         command_response::escape_json(&champion_id),
         command_response::escape_json(&path_text(&path))
     );
@@ -81,7 +81,6 @@ pub(crate) fn submit_move_intent(
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
     };
-
     let path_hash = command_response::payload_hash(
         "movement_path",
         &champion.id().to_string(),
@@ -163,7 +162,10 @@ pub(crate) fn sync_session_turn(
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
-    let payload_json = format!(r#"{{"now_ms":{now_ms}}}"#);
+    let payload_json = format!(
+        r#"{{"session_id":"{}"}}"#,
+        command_response::escape_json(&session_id)
+    );
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -175,6 +177,15 @@ pub(crate) fn sync_session_turn(
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
     };
+    if now_ms < timestamp_to_u64(context.session.turn_deadline_at) {
+        return command_response::fail_command(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            public_error("turn_not_due", "turn deadline has not elapsed", false),
+        );
+    }
 
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
@@ -2353,4 +2364,8 @@ fn turn_deadline() -> Timestamp {
             .as_millis()
             .saturating_add(i64::try_from(domm_game::TURN_DURATION_MS).unwrap_or(i64::MAX)),
     )
+}
+
+fn timestamp_to_u64(timestamp: Timestamp) -> u64 {
+    u64::try_from(timestamp.as_millis()).unwrap_or(0)
 }

@@ -2,13 +2,19 @@
 
 extern crate canic_cdk as ic_cdk;
 
+mod api;
+mod auth;
 mod contract;
-mod endpoints;
+mod dto;
+mod errors;
+mod metrics;
+mod repos;
+mod services;
 #[cfg(test)]
 mod tests;
 
 #[allow(unused_imports)]
-use domm_game::{
+use crate::dto::public::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
     CommandResponse, CommandStatusView, ContentManifestResponse, GameView, GameViewRequest,
     LobbyCommandResponse, MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview,

@@ -41,7 +41,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
 - [x] Gate E after checkpoint 18: the web client can play the fixture-backed first playable match path end to end.
 - [x] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
-- [ ] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
+- [x] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
 - [ ] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
 - [ ] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
 - [ ] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
@@ -334,15 +334,15 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19B. Canister API, Service, And Repository Layout
 
-- [ ] Split `canisters/degens/src` into domain modules before adding large endpoint bodies: `api/`, `services/`, `repos/`, `dto/`, `auth/`, `errors/`, and `metrics/`.
-- [ ] Keep endpoint files grouped by domain: account/lobby/session, game view/map, movement, economy/town/recruitment, battle, events/command status, content, history, cleanup, diagnostics.
-- [ ] Keep repository files grouped by durable row ownership: players, sessions, commands/events/effects, content, map/visibility/occupancy, economy, towns, champions/artifacts, movement, neutrals, battles, aftermath/history, cleanup.
-- [ ] Implement public canister endpoint shells for the full 19A inventory with typed arguments and typed errors; no endpoint may call `FixtureApiBackend`.
-- [ ] Wire Candid export tests so CI catches endpoint renames, missing methods, or DTO drift.
-- [ ] Keep generated SQL/DDL disabled for public gameplay builds; diagnostics must be controller-gated and never used by game endpoints.
-- [ ] Run `cargo check -p domm-degens-canister` and the Candid endpoint inventory test.
-- [ ] Gate G: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
-- [ ] Commit after this checkpoint.
+- [x] Split `canisters/degens/src` into domain modules before adding large endpoint bodies: `api/`, `services/`, `repos/`, `dto/`, `auth/`, `errors/`, and `metrics/`.
+- [x] Keep endpoint files grouped by domain: account/lobby/session, game view/map, movement, economy/town/recruitment, battle, events/command status, content, history, cleanup, diagnostics.
+- [x] Keep repository files grouped by durable row ownership: players, sessions, commands/events/effects, content, map/visibility/occupancy, economy, towns, champions/artifacts, movement, neutrals, battles, aftermath/history, cleanup.
+- [x] Implement public canister endpoint shells for the full 19A inventory with typed arguments and typed errors; no endpoint may call `FixtureApiBackend`.
+- [x] Wire Candid export tests so CI catches endpoint renames, missing methods, or DTO drift.
+- [x] Keep generated SQL/DDL disabled for public gameplay builds; diagnostics must be controller-gated and never used by game endpoints.
+- [x] Run `cargo check -p domm-degens-canister` and the Candid endpoint inventory test.
+- [x] Gate G: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
+- [x] Commit after this checkpoint.
 
 ## 19C. IcyDB Repository Foundation
 

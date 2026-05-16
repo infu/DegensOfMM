@@ -44,6 +44,10 @@ fixture loading, not for normal gameplay.
 The canister also exposes `get_canister_endpoint_inventory` for contract tests
 and diagnostics.
 
+Endpoint methods are implemented under `canisters/degens/src/api/` by domain,
+with matching service boundaries under `services/` and durable row ownership
+boundaries under `repos/`. See `docs/canister-layout.md`.
+
 ## Deferred Endpoint Decisions
 
 | Endpoint | Decision |

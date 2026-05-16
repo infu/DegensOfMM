@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19B Canister Module Layout
+
+Area: canister API, IcyDB integration
+Severity: low
+Status: resolved
+
+Observation:
+
+Checkpoint 19B split `domm-degens-canister` into `api/`, `services/`, `repos/`, `dto/`, `auth/`, `errors/`, and `metrics/`. Public endpoint shells now live in domain API files, service modules provide the current typed placeholder behavior, repository modules are grouped by durable row ownership, and a native canister layout test asserts the required files exist.
+
+Impact:
+
+The Candid and Pocket-IC endpoint contract remains unchanged from 19A, but future IcyDB-backed work now has bounded files for account/lobby/session, game view/map, movement, town/recruitment, battle, events/status, content, history, cleanup, diagnostics, and repository ownership groups. The endpoints still intentionally return `icydb_repository_not_implemented` until 19C/19D.
+
+Suggested follow-up:
+
+Checkpoint 19C should fill the repository modules with typed IcyDB create/load/update/page helpers. Avoid adding large endpoint bodies directly under `api/`; route validation and orchestration through `services/`.
+
 ## 2026-05-16 - Checkpoint 19A Canister Endpoint Contract
 
 Area: canister API, IcyDB integration

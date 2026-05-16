@@ -40,7 +40,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
 - [x] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
 - [x] Gate E after checkpoint 18: the web client can play the fixture-backed first playable match path end to end.
-- [ ] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
+- [x] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
 - [ ] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
 - [ ] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
 - [ ] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
@@ -320,17 +320,17 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19A. Canister Endpoint Inventory And Contract Gate
 
-- [ ] Create a canonical endpoint inventory for every public game method required by `spec.md`, `FixtureApiBackend`, and the web/client probe.
-- [ ] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
-- [ ] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
-- [ ] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
-- [ ] Decide and document whether `leave_session`, `cancel_session`, `surrender`, `retreat`, and `request_rematch` are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
-- [ ] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
-- [ ] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
-- [ ] Add a Pocket-IC endpoint-presence test that calls every required method at least once and proves missing methods fail the test as method-not-found/trap rather than being silently skipped.
-- [ ] Audit: compare the endpoint list against `spec.md` section 15 and the current `FixtureApiBackend`; every mismatch must become immediate todo work.
-- [ ] Gate F: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
-- [ ] Commit after this checkpoint.
+- [x] Create a canonical endpoint inventory for every public game method required by `spec.md`, `FixtureApiBackend`, and the web/client probe.
+- [x] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
+- [x] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
+- [x] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
+- [x] Decide and document whether `leave_session`, `cancel_session`, `surrender`, `retreat`, and `request_rematch` are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
+- [x] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
+- [x] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
+- [x] Add a Pocket-IC endpoint-presence test that calls every required method at least once and proves missing methods fail the test as method-not-found/trap rather than being silently skipped.
+- [x] Audit: compare the endpoint list against `spec.md` section 15 and the current `FixtureApiBackend`; every mismatch must become immediate todo work.
+- [x] Gate F: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
+- [x] Commit after this checkpoint.
 
 ## 19B. Canister API, Service, And Repository Layout
 

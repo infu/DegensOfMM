@@ -8,7 +8,11 @@ publish = { workspace = true }
 description = "Pocket-IC canister test scaffold for Degens of Misery & Mayhem"
 
 [dependencies]
+candid = { workspace = true }
+canic-testkit = "0.35.5"
+domm-degens-canister = { path = "../../canisters/degens" }
 domm-game = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

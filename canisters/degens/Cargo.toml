@@ -18,8 +18,10 @@ diagnostics = ["icydb/diagnostics"]
 [dependencies]
 candid = { workspace = true }
 canic-cdk = { workspace = true }
+domm-game = { workspace = true }
 domm-degens-schema = { workspace = true }
 icydb = { path = "../../../icydb/crates/icydb", version = "0.156.0", default-features = false }
+serde = { workspace = true }
 
 [build-dependencies]
 domm-degens-schema = { workspace = true }

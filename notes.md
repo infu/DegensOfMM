@@ -36,6 +36,42 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19A Canister Endpoint Contract
+
+Area: canister API, IcyDB integration
+Severity: medium
+Status: inventory resolved; behavior pending later gates
+
+Observation:
+
+Checkpoint 19A added a canonical inventory for 28 required public game endpoints, a canister inventory query, typed Candid endpoint shells in `domm-degens-canister`, Candid export coverage, documentation for deferred `leave_session`, `cancel_session`, `surrender`, `retreat`, and `request_rematch`, and a Pocket-IC endpoint-presence test that installs the canister and calls every required method. The endpoints currently return `ApiError { code: "icydb_repository_not_implemented", retryable: true }` until repository/service wiring starts in 19C/19D.
+
+Impact:
+
+The project now has a real canister API surface and a Pocket-IC proof that missing public methods fail the test. This is endpoint-contract coverage only, not IcyDB-backed gameplay e2e. Public DTOs use `domm-game` Candid types and do not expose raw IcyDB rows. The audit found no missing endpoint names against spec section 15 and `FixtureApiBackend`; argument shapes intentionally follow the current fixture/client DTOs where they have evolved beyond the older spec examples, and final time-source cleanup should happen while wiring real services.
+
+Suggested follow-up:
+
+Checkpoint 19B should keep splitting canister code by API/service/repository domains before endpoint bodies grow. Checkpoint 19C/19D must replace the placeholder errors with typed IcyDB repository calls and derive canister time consistently instead of preserving fixture-only time inputs if the final public API is tightened.
+
+## 2026-05-16 - Pocket-IC Wasm Build Ergonomics
+
+Area: Pocket-IC tests
+Severity: low
+Status: mitigated
+
+Observation:
+
+The Pocket-IC endpoint-presence test needs to build `domm-degens-canister` for `wasm32-unknown-unknown`. Debug wasm was about 111 MiB and exceeded Pocket-IC's 100 MiB wasm chunk-store limit, while release wasm was about 3.7 MiB. Cross-compiling also hit the host rustup/Nix `ld.lld` wrapper issue for build scripts, because stable Cargo does not apply the existing host linker workaround cleanly to cross-build host artifacts.
+
+Impact:
+
+The test helper now builds release wasm and creates a local `cc` wrapper under the test target directory that appends `-fuse-ld=bfd` for the nested canister build. This keeps the workaround local to the Pocket-IC test.
+
+Suggested follow-up:
+
+If the environment linker is repaired, remove the wrapper helper. If canister wasm size grows, add an explicit size check or release profile before Pocket-IC install starts failing again.
+
 ## 2026-05-15 - Standalone Repo Initialization Needed Escalation
 
 Area: repo setup

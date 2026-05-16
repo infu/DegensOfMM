@@ -622,6 +622,31 @@ Audit notes:
 - The match-result panel reuses the existing first-playable backend gate report to represent the finished aftermath/victory state in this fixture layer. The canister-facing API still needs the real checkpoint 19 end-to-end fixture to unify the live web route and final aftermath route.
 - No additional IcyDB dependency was introduced into `domm-client-probe`; it remains a public contract/client test layer over `domm-game`.
 
+## Checkpoint 19: End-To-End First Playable
+
+Added a split `domm_game::e2e` module for the final first-playable checkpoint fixture. The fixture composes the Gate D public backend victory route with a separate deterministic movement-conflict probe so the automated path covers exploration, pickup, building, recruitment, movement conflict, battle, town capture, and victory without growing the existing `playable` backend driver.
+
+Measurement output from the checkpoint fixture:
+
+- commands: 32
+- events: 42
+- queries: 19
+- estimated storage rows: 190
+- max query bytes: 5072
+- estimated response bytes: 5072
+
+Spec audit notes:
+
+- The Part 2 first-playable surface is marked implemented across schema, command/event/recovery, deterministic RNG, content, lifecycle, map/visibility, client DTOs, economy, towns, champions, effects, movement, objects, neutrals, battles, aftermath/victory, AI, cleanup, limits, migration safety, and the web-client route.
+- No missing required first-playable behavior was found in checkpoint 19.
+- Campaign, large procedural maps, naval movement, complex siege, full spellbooks, skill-tree choices, quests, markets, taverns, external dwellings, ranked, guild, diplomacy, and broader meta systems remain deferred to checkpoints 21-27 until bounded Part 2 specs are added.
+
+Manual smoke command added:
+
+```text
+make smoke-e2e
+```
+
 ## Performance And Storage Notes
 
 None yet.

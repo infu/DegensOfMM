@@ -36,7 +36,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate B after checkpoint 6A: a minimal client/probe can render the first playable map from public DTOs.
 - [x] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
 - [x] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
-- [ ] Gate E after checkpoint 18: the web client can play the first playable match path end to end.
+- [x] Gate E after checkpoint 18: the web client can play the first playable match path end to end.
 - [ ] Gate F after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable scope.
 - [ ] Gate G after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
 
@@ -299,13 +299,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19. End-To-End First Playable
 
-- [ ] Create an automated 1v1 fixture that starts a match and plays through exploration, pickup, building, recruitment, movement conflict, battle, town capture, and victory.
-- [ ] Add manual smoke instructions for running the game locally.
-- [ ] Measure command costs, query sizes, event volume, and storage growth for the fixture.
-- [ ] Unit/regression test the full fixture and all smaller modules touched by fixes.
-- [ ] Audit: read `spec.md` from Part 2 start to end and mark every required first-playable behavior implemented, deferred, or missing.
-- [ ] If anything is missing, add new todo entries above this checkpoint, implement them, retest, and commit before continuing.
-- [ ] Commit after this checkpoint.
+- [x] Create an automated 1v1 fixture that starts a match and plays through exploration, pickup, building, recruitment, movement conflict, battle, town capture, and victory.
+- [x] Add manual smoke instructions for running the game locally.
+- [x] Measure command costs, query sizes, event volume, and storage growth for the fixture.
+- [x] Unit/regression test the full fixture and all smaller modules touched by fixes.
+- [x] Audit: read `spec.md` from Part 2 start to end and mark every required first-playable behavior implemented, deferred, or missing.
+- [x] If anything is missing, add new todo entries above this checkpoint, implement them, retest, and commit before continuing.
+- [x] Commit after this checkpoint.
 
 ## 20. First Playable Final Spec Audit
 

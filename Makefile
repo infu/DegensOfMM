@@ -1,4 +1,4 @@
-.PHONY: check-canister regression smoke test test-generated test-pocket test-pure test-schema
+.PHONY: check-canister regression smoke smoke-e2e test test-generated test-pocket test-pure test-schema
 
 test: regression
 
@@ -7,6 +7,9 @@ regression:
 
 smoke:
 	cargo test -p domm-game driver_create_join_start_inspect_smoke
+
+smoke-e2e:
+	cargo test -p domm-game checkpoint_19_e2e_fixture -- --nocapture
 
 test-pure:
 	cargo test -p domm-game

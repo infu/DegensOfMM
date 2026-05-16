@@ -13,6 +13,7 @@ pub mod cleanup;
 pub mod command;
 pub mod content;
 pub mod driver;
+pub mod e2e;
 pub mod economy;
 pub mod effects;
 pub mod fixtures;
@@ -99,6 +100,11 @@ pub use content::{
 pub use driver::{
     ActiveMatchView, DriverCall, DriverError, HeadlessBackend, HeadlessGameDriver, PlayerView,
     ScriptedBackend, SessionView,
+};
+pub use e2e::{
+    EndToEndCoverage, EndToEndError, EndToEndFirstPlayableReport, EndToEndMeasurements,
+    ManualSmokeCommand, MovementConflictReport, SpecAuditRow, SpecAuditStatus, part_two_spec_audit,
+    run_e2e_movement_conflict_probe, run_first_playable_e2e_fixture,
 };
 pub use economy::{
     BASE_TOWN_GOLD_INCOME, EconomyError, EconomyParticipantRecord, EconomySmokeView, EconomyState,

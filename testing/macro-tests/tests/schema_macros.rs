@@ -6,8 +6,8 @@ use domm_degens_schema::schema::{
     ChampionArmyStack, ChampionClassDefinition, ChampionObjectVisit, ChampionSpell, CommandEffect,
     DATA_MEMORY_ID, DegensCanister, DegensStore, FactionDefinition, GameCommand, GameEvent,
     GameEventTurnSummary, GameParticipant, GameSession, INDEX_MEMORY_ID, LobbyCommand, MapChunk,
-    MapObjectDefinition, MapOccupancy, MovementIntent, NeutralArmy, NeutralArmyStack,
-    ParticipantKnownObject, ParticipantObjectVisit, PendingEffect, PlayerAccount,
+    MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot, NeutralArmy,
+    NeutralArmyStack, ParticipantKnownObject, ParticipantObjectVisit, PendingEffect, PlayerAccount,
     PlayerMatchSummary, ResourceLedgerEntry, ResourceLedgerTurnSummary, RulesetDefinition,
     SCHEMA_MEMORY_ID, SpellDefinition, TerrainDefinition, Town, TownBuilding, TownGarrisonStack,
     TownRecruitPool, UnitDefinition, VisibilityChunk, WorldObject,
@@ -43,7 +43,7 @@ fn part_two_entity_surface_is_registered() {
         .map(|model| model.name())
         .collect::<Vec<_>>();
 
-    assert_eq!(names.len(), 45);
+    assert_eq!(names.len(), 46);
     assert!(names.contains(&"PlayerAccount"));
     assert!(names.contains(&"GameSession"));
     assert!(names.contains(&"GameCommand"));
@@ -76,6 +76,10 @@ fn important_unique_indexes_match_checkpoint_one_invariants() {
     assert_unique_index(
         MovementIntent::MODEL,
         &["session_id", "champion_id", "turn_number"],
+    );
+    assert_unique_index(
+        MovementSnapshot::MODEL,
+        &["command_id", "intent_id", "step_index"],
     );
     assert_unique_index(ResourceLedgerEntry::MODEL, &["command_id", "ledger_key"]);
     assert_unique_index(CommandEffect::MODEL, &["command_id", "effect_key"]);
@@ -114,6 +118,11 @@ fn relation_strengths_match_cleanup_assumptions() {
         RelationStrength::Weak,
     );
     assert_relation_strength(GameEvent::MODEL, "command_id", RelationStrength::Weak);
+    assert_relation_strength(
+        MovementSnapshot::MODEL,
+        "command_id",
+        RelationStrength::Weak,
+    );
     assert_relation_strength(TownBuilding::MODEL, "town_id", RelationStrength::Strong);
     assert_relation_strength(Champion::MODEL, "last_command_id", RelationStrength::Weak);
     assert_relation_strength(
@@ -142,6 +151,7 @@ fn weak_history_relations_remain_safe_for_retained_rows() {
         (GameCommand::MODEL, "actor_player_id"),
         (GameCommand::MODEL, "actor_participant_id"),
         (GameCommand::MODEL, "champion_id"),
+        (MovementSnapshot::MODEL, "command_id"),
         (GameEvent::MODEL, "command_id"),
         (GameEvent::MODEL, "actor_participant_id"),
         (CommandEffect::MODEL, "command_id"),
@@ -222,6 +232,28 @@ fn hot_entity_fields_are_append_only_prefixes() {
         ],
     );
     assert_field_prefix(
+        MovementSnapshot::MODEL,
+        &[
+            "id",
+            "session_id",
+            "command_id",
+            "intent_id",
+            "champion_id",
+            "participant_id",
+            "turn_number",
+            "step_index",
+            "from_x",
+            "from_y",
+            "to_x",
+            "to_y",
+            "movement_cost",
+            "remaining_after",
+            "outcome",
+            "interaction_kind",
+            "interaction_id_text",
+        ],
+    );
+    assert_field_prefix(
         GameEvent::MODEL,
         &[
             "id",
@@ -279,6 +311,11 @@ fn composite_indexes_keep_stable_declarations_and_ordinals() {
         MovementIntent::MODEL,
         &["session_id", "champion_id", "turn_number"],
         1,
+    );
+    assert_index_ordinal(
+        MovementSnapshot::MODEL,
+        &["command_id", "intent_id", "step_index"],
+        0,
     );
     assert_index_ordinal(
         MapOccupancy::MODEL,
@@ -343,6 +380,14 @@ fn deletion_policy_lists_strong_children_before_targets() {
             BattleStack::MODEL,
         ),
         DeleteEdge::new(MovementIntent::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(MovementSnapshot::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(MovementSnapshot::MODEL, "intent_id", MovementIntent::MODEL),
+        DeleteEdge::new(MovementSnapshot::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(
+            MovementSnapshot::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
         DeleteEdge::new(
             MovementIntent::MODEL,
             "actor_participant_id",
@@ -500,6 +545,7 @@ fn entity_models() -> Vec<&'static EntityModel> {
         GameCommand::MODEL,
         LobbyCommand::MODEL,
         MovementIntent::MODEL,
+        MovementSnapshot::MODEL,
         CommandEffect::MODEL,
         GameEvent::MODEL,
         GameEventTurnSummary::MODEL,
@@ -645,6 +691,7 @@ fn deletion_policy_order() -> &'static [&'static str] {
         "ParticipantObjectVisit",
         "ChampionObjectVisit",
         "PendingEffect",
+        "MovementSnapshot",
         "MovementIntent",
         "CommandEffect",
         "GameEvent",

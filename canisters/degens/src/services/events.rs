@@ -21,6 +21,14 @@ const LOBBY_COMMAND_TYPES: &[&str] = &[
     "mark_ready",
     "start_session",
 ];
+const GAME_COMMAND_TYPES: &[&str] = &[
+    "submit_move_intent",
+    "sync_session_turn",
+    "submit_build_town_structure",
+    "submit_recruit_units",
+    "sync_battle",
+    "submit_battle_action",
+];
 
 pub(crate) fn get_events_after(
     caller: CandidPrincipal,
@@ -87,12 +95,53 @@ pub(crate) fn get_command_status(
     {
         return Ok(lobby_status_view(command));
     }
+    if let Some(command) = find_game_command_by_nonce(&context, &command_id_or_client_nonce)? {
+        return Ok(game_status_view(command));
+    }
 
     Err(public_error(
         "command_status_not_found",
         "command status was not found for this caller and session",
         false,
     ))
+}
+
+fn find_game_command_by_nonce(
+    context: &session_context::SessionCallerContext,
+    client_nonce: &str,
+) -> Result<Option<GameCommand>, ApiError> {
+    for command_type in game_command_type_candidates(client_nonce) {
+        let nonce = nonce_u64(command_type, client_nonce);
+        let Some(command) = commands_events_effects::find_game_command_by_idempotency(
+            context.session.id(),
+            "player",
+            &context.participant.id().to_string(),
+            nonce,
+        )?
+        else {
+            continue;
+        };
+        return Ok(Some(command));
+    }
+    Ok(None)
+}
+
+fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
+    if client_nonce.contains("move") {
+        &["submit_move_intent"]
+    } else if client_nonce.contains("sync-turn") || client_nonce.contains("income") {
+        &["sync_session_turn"]
+    } else if client_nonce.contains("build") {
+        &["submit_build_town_structure"]
+    } else if client_nonce.contains("recruit") {
+        &["submit_recruit_units"]
+    } else if client_nonce.contains("battle-action") {
+        &["submit_battle_action"]
+    } else if client_nonce.contains("sync-battle") {
+        &["sync_battle"]
+    } else {
+        GAME_COMMAND_TYPES
+    }
 }
 
 fn authorize_audience(

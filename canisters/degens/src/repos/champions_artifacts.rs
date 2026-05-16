@@ -102,6 +102,10 @@ pub(crate) fn load_champion(id: Id<Champion>) -> RepoResult<Option<Champion>> {
     foundation::load_by_id("champions.load_champion", id)
 }
 
+pub(crate) fn update_champion(champion: Champion) -> RepoResult<Champion> {
+    foundation::update("champions.update_champion", champion)
+}
+
 pub(crate) fn find_champion_by_session_xy(
     session_id: Id<GameSession>,
     x: u16,
@@ -194,6 +198,12 @@ pub(crate) fn create_champion_army_stack(
     };
 
     foundation::create("champions.create_champion_army_stack", input)
+}
+
+pub(crate) fn update_champion_army_stack(
+    stack: ChampionArmyStack,
+) -> RepoResult<ChampionArmyStack> {
+    foundation::update("champions.update_army_stack", stack)
 }
 
 pub(crate) fn find_equipment_by_champion_slot(

@@ -287,6 +287,11 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
                 .expect("movement plan should build"),
         ),
         (
+            "movement snapshot",
+            movement::movement_snapshot_plan_text(session_id, 1, champion_id)
+                .expect("movement snapshot plan should build"),
+        ),
+        (
             "active battles",
             battles::active_battles_plan_text(session_id, "active", 2)
                 .expect("battle plan should build"),
@@ -325,9 +330,12 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::MAP_CHUNK_COORD_LOOKUP,
         map_visibility_occupancy::VISIBILITY_CHUNK_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_CELL_LOOKUP,
+        map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_OWNER_LOOKUP,
         movement::MOVEMENT_INTENT_UNIQUE_LOOKUP,
+        movement::MOVEMENT_SNAPSHOT_UNIQUE_LOOKUP,
+        movement::MOVEMENT_SNAPSHOTS_BY_CHAMPION_LOOKUP,
         battles::BATTLES_BY_SESSION_STATE_LOOKUP,
         aftermath_history::MATCH_HISTORY_LOOKUP,
     ];

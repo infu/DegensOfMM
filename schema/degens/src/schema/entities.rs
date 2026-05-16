@@ -1711,6 +1711,61 @@ pub struct MovementIntent {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
+    index(fields = "command_id, intent_id, step_index", unique),
+    index(fields = "session_id, turn_number, champion_id"),
+    index(fields = "session_id, turn_number, participant_id"),
+    index(fields = "intent_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "command_id",
+            value(item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "intent_id",
+            value(item(rel = "MovementIntent", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "champion_id",
+            value(item(rel = "Champion", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "step_index", value(item(prim = "Nat16"))),
+        field(ident = "from_x", value(item(prim = "Nat16"))),
+        field(ident = "from_y", value(item(prim = "Nat16"))),
+        field(ident = "to_x", value(item(prim = "Nat16"))),
+        field(ident = "to_y", value(item(prim = "Nat16"))),
+        field(ident = "movement_cost", value(item(prim = "Nat16"))),
+        field(ident = "remaining_after", value(item(prim = "Nat16"))),
+        field(ident = "outcome", value(item(prim = "Text", max_len = 32))),
+        field(
+            ident = "interaction_kind",
+            value(opt, item(prim = "Text", max_len = 32))
+        ),
+        field(
+            ident = "interaction_id_text",
+            value(opt, item(prim = "Text", max_len = 64))
+        )
+    )
+)]
+pub struct MovementSnapshot {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
     index(fields = "command_id, effect_key", unique),
     index(fields = "session_id, status"),
     fields(

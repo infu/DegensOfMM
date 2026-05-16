@@ -388,12 +388,23 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19G. IcyDB-Backed Strategic Gameplay
 
-- [ ] Implement `submit_move_intent`, `sync_session_turn`, `preview_move_path`, object interactions, resource pickup, lazy income materialization, mine/object ownership changes, `submit_build_town_structure`, `preview_build_town_structure`, `submit_recruit_units`, and `preview_recruit_units` against IcyDB rows.
-- [ ] Persist movement intents, movement snapshots, movement system commands, object visits, object command effects, resource ledger entries, turn summaries, balances, income sources, town buildings, recruit pools, garrison stacks, and related events.
-- [ ] Preserve idempotent command replay, payload mismatch rejection, recovery from pending/applying commands, movement conflict determinism, blocker behavior, object stop behavior, and sync budget slicing.
-- [ ] Add canister tests for pickup, income, build, recruit, movement conflict, neutral contact, command retry, and recovery retry using Pocket-IC.
-- [ ] Audit: compare canister strategic behavior against Gate C and the pure movement/economy/town/world-object/neutral tests.
-- [ ] Commit after this checkpoint.
+19G status: the first IcyDB-backed strategic canister slice is implemented and covered by native and Pocket-IC tests. The implemented slice covers movement intent submission, bounded turn-sync movement application, persisted sync cursor slicing for long movement intents, crossing-conflict resolution through cursor slices, stationary enemy blocker resolution, terrain-cost validation, first-class movement snapshot rows plus command effects, final and partial champion occupancy updates, owner visibility refresh writes, resource pickup, guarded mine contact without premature capture, guarded neutral battle handoff rows, unguarded mine capture/income, town building, recruitment into town garrison, command replay, payload-mismatch rejection, and movement sync recovery from a pending command row. 19I owns full battle view/action/sync and aftermath.
+
+- [x] Wire `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, and `submit_recruit_units` to real IcyDB service implementations instead of placeholder errors.
+- [x] Persist command/effect/event rows, movement intents, movement snapshot rows/effects, participant object visits, resource ledger rows, participant balances, resource turn summaries, town buildings, recruit pools, garrison stacks, world-object updates, champion occupancy updates, visibility chunk updates, and mine ownership/income state for the first strategic slice.
+- [x] Add Pocket-IC coverage for resource pickup, long-intent movement cursor slices, crossing movement conflict, unguarded mine income, guarded neutral contact, build, recruit, exact command retry, and nonce payload mismatch through public canister endpoints.
+- [x] Add schema/macro and native service coverage proving `MovementSnapshot` is a first-class IcyDB entity with indexed lookup and rows written by `sync_session_turn`.
+- [x] Persist partial movement progress by writing champion/occupancy/visibility state, trimming the pending `MovementIntent.path_json`, recording a partial `MovementSnapshot`, and emitting `movement_sync_incomplete` without advancing the turn.
+- [x] Persist guarded neutral battle handoff rows on movement contact: `Battle`, initial `BattleStack`, `BattleOccupancy`, obstacle rows, champion `in_battle_id`, neutral `in_battle` state, command effect, and event payload `battle_id`.
+- [x] Reconcile movement blocker parity for stationary enemy champion blockers and normalize seeded scenario-key champion occupancy rows to persisted champion IDs during movement updates.
+- [x] Implement `submit_move_intent`, `sync_session_turn`, `preview_move_path`, object interactions, resource pickup, lazy income materialization, mine/object ownership changes, `submit_build_town_structure`, `preview_build_town_structure`, `submit_recruit_units`, and `preview_recruit_units` against IcyDB rows.
+- [x] Persist movement intents, movement snapshots, sync command/effect rows, object visits, object command effects, resource ledger entries, turn summaries, balances, income ownership state, town buildings, recruit pools, garrison stacks, and related events.
+- [x] Preserve idempotent command replay, payload mismatch rejection, object stop behavior, and sync budget slicing for the implemented strategic slice.
+- [x] Preserve/reconcile movement recovery from pending/applying command rows against the pure movement coverage.
+- [x] Add Pocket-IC coverage for strategic blocker parity cases not covered by the crossing-conflict test.
+- [x] Add recovery coverage through native seeded-pending movement sync plus Pocket-IC exact command retry and cursor retry flows.
+- [x] Audit: compare canister strategic behavior against Gate C and the pure movement/economy/town/world-object/neutral tests.
+- [x] Commit after this checkpoint.
 
 ## 19H. Pocket-IC Strategic First-Playable Gate
 

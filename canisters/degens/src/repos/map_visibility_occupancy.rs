@@ -1,8 +1,8 @@
 //! Repository boundary for map chunks, terrain blobs, visibility, known objects, and occupancy.
 
 use domm_degens_schema::schema::{
-    GameParticipant, GameSession, MapChunk, MapOccupancy, ParticipantKnownObject, VisibilityChunk,
-    WorldObject,
+    GameParticipant, GameSession, MapChunk, MapOccupancy, ParticipantKnownObject,
+    ParticipantObjectVisit, VisibilityChunk, WorldObject,
 };
 use icydb::{Create, db::query::FieldRef, types::Id};
 
@@ -26,6 +26,18 @@ pub(crate) const OCCUPANCY_CELL_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "map.occupancy_by_cell_layer",
     entity: "MapOccupancy",
     indexed_fields: &["session_id", "x", "y", "layer"],
+    bounded_limit: Some(1),
+};
+
+pub(crate) const OCCUPANCY_OCCUPANT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "map.occupancy_by_occupant",
+    entity: "MapOccupancy",
+    indexed_fields: &[
+        "session_id",
+        "occupant_kind",
+        "occupant_id_text",
+        "occupant_cell_index",
+    ],
     bounded_limit: Some(1),
 };
 
@@ -172,6 +184,10 @@ pub(crate) fn create_visibility_chunk(
     foundation::create("map.create_visibility_chunk", input)
 }
 
+pub(crate) fn update_visibility_chunk(row: VisibilityChunk) -> RepoResult<VisibilityChunk> {
+    foundation::update("map.update_visibility_chunk", row)
+}
+
 pub(crate) fn find_occupancy_cell(
     session_id: Id<GameSession>,
     x: u16,
@@ -186,6 +202,26 @@ pub(crate) fn find_occupancy_cell(
             .filter(FieldRef::new("x").eq(x))
             .filter(FieldRef::new("y").eq(y))
             .filter(FieldRef::new("layer").eq(layer))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn find_occupancy_by_occupant(
+    session_id: Id<GameSession>,
+    occupant_kind: &str,
+    occupant_id_text: &str,
+    occupant_cell_index: u8,
+) -> RepoResult<Option<MapOccupancy>> {
+    foundation::storage_result(
+        OCCUPANCY_OCCUPANT_LOOKUP.name,
+        crate::db()
+            .load::<MapOccupancy>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("occupant_kind").eq(occupant_kind))
+            .filter(FieldRef::new("occupant_id_text").eq(occupant_id_text))
+            .filter(FieldRef::new("occupant_cell_index").eq(occupant_cell_index))
             .order_asc("id")
             .limit(1)
             .try_entity(),
@@ -219,6 +255,10 @@ pub(crate) fn create_occupancy_cell(
     };
 
     foundation::create("map.create_occupancy_cell", input)
+}
+
+pub(crate) fn update_occupancy_cell(row: MapOccupancy) -> RepoResult<MapOccupancy> {
+    foundation::update("map.update_occupancy_cell", row)
 }
 
 pub(crate) fn page_occupancy_for_chunk(
@@ -399,6 +439,67 @@ pub(crate) fn find_world_object_by_session_xy(
 
 pub(crate) fn load_world_object(id: Id<WorldObject>) -> RepoResult<Option<WorldObject>> {
     foundation::load_by_id("map.load_world_object", id)
+}
+
+pub(crate) fn update_world_object(object: WorldObject) -> RepoResult<WorldObject> {
+    foundation::update("map.update_world_object", object)
+}
+
+pub(crate) fn page_world_objects_by_session(
+    session_id: Id<GameSession>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<WorldObject>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        "map.world_objects_by_session",
+        crate::db()
+            .load::<WorldObject>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .order_asc("chunk_y")
+            .order_asc("chunk_x")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn find_participant_object_visit(
+    object_id: Id<WorldObject>,
+    participant_id: Id<GameParticipant>,
+    visit_key: &str,
+) -> RepoResult<Option<ParticipantObjectVisit>> {
+    foundation::storage_result(
+        "map.participant_object_visit_by_key",
+        crate::db()
+            .load::<ParticipantObjectVisit>()
+            .filter(FieldRef::new("object_id").eq(object_id.key()))
+            .filter(FieldRef::new("participant_id").eq(participant_id.key()))
+            .filter(FieldRef::new("visit_key").eq(visit_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_participant_object_visit(
+    session_id: Id<GameSession>,
+    object_id: Id<WorldObject>,
+    participant_id: Id<GameParticipant>,
+    visit_key: String,
+    visit_kind: String,
+    visited_turn: u32,
+) -> RepoResult<ParticipantObjectVisit> {
+    let input: Create<ParticipantObjectVisit> = Create::<ParticipantObjectVisit> {
+        session_id: Some(session_id.key()),
+        object_id: Some(object_id.key()),
+        participant_id: Some(participant_id.key()),
+        visit_key: Some(visit_key),
+        visit_kind: Some(visit_kind),
+        visited_turn: Some(visited_turn),
+    };
+
+    foundation::create("map.create_participant_object_visit", input)
 }
 
 #[cfg(test)]

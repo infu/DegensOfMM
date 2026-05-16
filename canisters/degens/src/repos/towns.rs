@@ -87,6 +87,10 @@ pub(crate) fn load_town(id: Id<Town>) -> RepoResult<Option<Town>> {
     foundation::load_by_id("towns.load_town", id)
 }
 
+pub(crate) fn update_town(town: Town) -> RepoResult<Town> {
+    foundation::update("towns.update_town", town)
+}
+
 pub(crate) fn find_town_by_session_xy(
     session_id: Id<GameSession>,
     x: u16,
@@ -227,6 +231,10 @@ pub(crate) fn create_town_recruit_pool(
     foundation::create("towns.create_town_recruit_pool", input)
 }
 
+pub(crate) fn update_town_recruit_pool(pool: TownRecruitPool) -> RepoResult<TownRecruitPool> {
+    foundation::update("towns.update_recruit_pool", pool)
+}
+
 pub(crate) fn page_town_garrison(
     town_id: Id<Town>,
     limit: u32,
@@ -280,6 +288,12 @@ pub(crate) fn create_town_garrison_stack(
     };
 
     foundation::create("towns.create_town_garrison_stack", input)
+}
+
+pub(crate) fn update_town_garrison_stack(
+    stack: TownGarrisonStack,
+) -> RepoResult<TownGarrisonStack> {
+    foundation::update("towns.update_garrison_stack", stack)
 }
 
 #[cfg(test)]

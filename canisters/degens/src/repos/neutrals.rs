@@ -58,6 +58,10 @@ pub(crate) fn load_neutral_army(id: Id<NeutralArmy>) -> RepoResult<Option<Neutra
     foundation::load_by_id("neutrals.load_neutral_army", id)
 }
 
+pub(crate) fn update_neutral_army(neutral: NeutralArmy) -> RepoResult<NeutralArmy> {
+    foundation::update("neutrals.update_neutral_army", neutral)
+}
+
 pub(crate) fn find_neutral_army_by_session_xy(
     session_id: Id<GameSession>,
     x: u16,

@@ -1,7 +1,7 @@
 //! Repository boundary for balances, ledgers, income sources, and turn summaries.
 
 use domm_degens_schema::schema::{
-    GameParticipant, GameSession, ResourceLedgerEntry, ResourceLedgerTurnSummary,
+    GameCommand, GameParticipant, GameSession, ResourceLedgerEntry, ResourceLedgerTurnSummary,
 };
 use icydb::{Create, db::query::FieldRef, types::Id};
 
@@ -57,6 +57,51 @@ pub(crate) fn find_resource_turn_summary(
             .limit(1)
             .try_entity(),
     )
+}
+
+pub(crate) fn find_resource_ledger_entry(
+    command_id: Id<GameCommand>,
+    ledger_key: &str,
+) -> RepoResult<Option<ResourceLedgerEntry>> {
+    foundation::storage_result(
+        "economy.ledger_by_command_key",
+        crate::db()
+            .load::<ResourceLedgerEntry>()
+            .filter(FieldRef::new("command_id").eq(command_id.key()))
+            .filter(FieldRef::new("ledger_key").eq(ledger_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_resource_ledger_entry(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    command_id: Id<GameCommand>,
+    ledger_key: String,
+    turn_number: u32,
+    resource_key: String,
+    delta: i64,
+    balance_after: u64,
+    reason: String,
+    status: String,
+) -> RepoResult<ResourceLedgerEntry> {
+    let input: Create<ResourceLedgerEntry> = Create::<ResourceLedgerEntry> {
+        session_id: Some(session_id.key()),
+        participant_id: Some(participant_id.key()),
+        command_id: Some(command_id.key()),
+        ledger_key: Some(ledger_key),
+        turn_number: Some(turn_number),
+        resource_key: Some(resource_key),
+        delta: Some(delta),
+        balance_after: Some(balance_after),
+        reason: Some(reason),
+        status: Some(status),
+    };
+
+    foundation::create("economy.create_resource_ledger_entry", input)
 }
 
 pub(crate) fn create_resource_turn_summary(

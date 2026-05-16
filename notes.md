@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19G Partial Strategic Canister Slice
+
+Area: canister strategic gameplay and IcyDB persistence
+Severity: medium
+Status: partial; 19G remains open
+
+Observation:
+
+The canister now executes a first strategic gameplay slice through public Candid endpoints backed by typed IcyDB repositories. `submit_move_intent` and `sync_session_turn` create durable command/effect/event rows, persist replaceable movement intents, apply terrain-costed movement in bounded slices, write first-class `MovementSnapshot` rows plus command effects, update final and partial champion `MapOccupancy`, refresh owner `VisibilityChunk` rows around the champion tile, record resource-pile visits, write resource ledger rows and participant balances, update unguarded mine ownership/income state, block guarded-object capture until the guard encounter, create guarded neutral battle handoff rows, and emit strategic events. `submit_build_town_structure` and `submit_recruit_units` spend resources through ledger rows, create town building/recruit/garrison rows, update town caches, and emit public events. Pocket-IC verifies the slice through pickup, long-intent movement cursor slices, crossing movement conflict, stationary enemy blocker contact, unguarded mine income, build, recruit, guarded neutral contact with `battle_id`, exact command retry, command-status lookup, and nonce payload mismatch.
+
+Impact:
+
+This is the first real canister strategic loop using IcyDB rows instead of fixture state, but it is not Gate J yet. Movement now resolves pending intents in deterministic two-microstep batches and records movement snapshots as dedicated `MovementSnapshot` rows. When a sync hits the canister movement budget, it persists the partial champion position, occupancy, visibility, a partial snapshot, a cursor command effect, and a trimmed pending `MovementIntent.path_json`; the next `sync_session_turn` resumes from those rows without advancing the turn. Exact retries recover pending/applying movement command rows by re-entering the movement handler with the original command row; native coverage seeds a pending `sync_session_turn` command and proves the retry applies that command id. Pocket-IC now covers single-champion long travel, two-champion crossing conflict, and stationary enemy champion blockers through this path. Movement occupancy updates also normalize seeded scenario-key champion occupancy rows, such as `champion:west`, to persisted champion ULIDs before moving them, preventing duplicate occupancy rows during long cursor movement. Guarded neutral contact creates an active `Battle` row with initial attacker/defender stacks, occupancy, fixed first-playable obstacles, champion `in_battle_id`, neutral `in_battle` state, and a public event payload containing the new `battle_id`. Full battle view/action/sync behavior remains checkpoint 19I work.
+
+Suggested follow-up:
+
+Checkpoint 19G is ready to close after the full workspace regression and checkpoint commit. 19H can become the Gate J strategic first-playable proof, while 19I owns full battle view/action/sync, aftermath, victory, and history.
+
 ## 2026-05-16 - Checkpoint 19F Pocket-IC Endpoint Completeness
 
 Area: Pocket-IC canister endpoint coverage

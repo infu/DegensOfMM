@@ -1,13 +1,27 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use candid::Principal as CandidPrincipal;
-use domm_game::{ApiError, MoveCoord, MovementPreview};
-use icydb::traits::EntityValue;
+use domm_degens_schema::schema::{
+    Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
+    NeutralArmy, UnitDefinition, WorldObject,
+};
+use domm_game::{ApiError, CommandResponse, MoveCoord, MovementPathStop, MovementPreview};
+use icydb::{
+    traits::EntityValue,
+    types::{Blob, Id, Timestamp, Ulid},
+};
+
+use crate::repos::{
+    battles, champions_artifacts, content, economy, map_visibility_occupancy, movement, neutrals,
+    sessions,
+};
 
 use super::{
-    render_projection,
+    command_response::{self, GameCommandAction},
     session_context::{self, public_error},
 };
+
+const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 2;
 
 pub(crate) fn preview_move_path(
     caller: CandidPrincipal,
@@ -16,6 +30,2006 @@ pub(crate) fn preview_move_path(
     path: Vec<MoveCoord>,
     _now_ms: u64,
 ) -> Result<MovementPreview, ApiError> {
+    validate_path_limit(&path)?;
+    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let champion = resolve_owned_champion(&context, &champion_id)?;
+    validate_path_bounds(&context.session, &path)?;
+    validate_path_adjacency(champion.x, champion.y, &path)?;
+    let total_cost = validate_path_cost(&context.session, &champion, &path)?;
+    let chunks_touched = chunks_touched(&context.session, &path);
+
+    Ok(MovementPreview {
+        champion_id: champion.id().to_string(),
+        participant_id: context.participant.id().to_string(),
+        turn_number: context.session.current_turn,
+        total_cost,
+        available_movement: effective_movement(&champion, context.session.current_turn),
+        chunks_touched,
+        path,
+        stop: None,
+    })
+}
+
+pub(crate) fn submit_move_intent(
+    caller: CandidPrincipal,
+    session_id: String,
+    champion_id: String,
+    path: Vec<MoveCoord>,
+    client_nonce: String,
+    now_ms: u64,
+) -> Result<CommandResponse, ApiError> {
+    validate_path_limit(&path)?;
+    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let champion = resolve_owned_champion(&context, &champion_id)?;
+    validate_path_bounds(&context.session, &path)?;
+    validate_path_adjacency(champion.x, champion.y, &path)?;
+    validate_path_cost(&context.session, &champion, &path)?;
+    let payload_json = format!(
+        r#"{{"champion_id":"{}","path":"{}","now_ms":{now_ms}}}"#,
+        command_response::escape_json(&champion_id),
+        command_response::escape_json(&path_text(&path))
+    );
+    let command = match command_response::begin_participant_command(
+        caller,
+        &context,
+        "submit_move_intent",
+        &client_nonce,
+        Some(champion.id()),
+        payload_json,
+    )? {
+        GameCommandAction::Apply(command) => command,
+        GameCommandAction::Return(response) => return Ok(response),
+    };
+
+    let path_hash = command_response::payload_hash(
+        "movement_path",
+        &champion.id().to_string(),
+        &client_nonce,
+        &path_text(&path),
+    );
+    let intent = match movement::find_movement_intent(
+        context.session.id(),
+        champion.id(),
+        context.session.current_turn,
+    )? {
+        Some(mut intent) => {
+            intent.command_id = command.id;
+            intent.actor_participant_id = context.participant.id().key();
+            intent.status = "pending".to_string();
+            intent.path_json = path_text(&path);
+            intent.path_hash = path_hash;
+            intent.resolved_at = None;
+            movement::update_movement_intent(intent)?
+        }
+        None => movement::create_movement_intent(
+            context.session.id(),
+            context.session.current_turn,
+            context.participant.id(),
+            champion.id(),
+            command.id(),
+            "pending".to_string(),
+            path_text(&path),
+            path_hash,
+        )?,
+    };
+
+    command_response::ensure_command_effect(
+        context.session.id(),
+        command.id(),
+        format!("movement_intent:{}", intent.id()),
+        "movement_intent".to_string(),
+        "champion".to_string(),
+        champion.id().to_string(),
+        format!(r#"{{"intent_id":"{}"}}"#, intent.id()),
+    )?;
+    let mut session = context.session.clone();
+    let event = command_response::append_public_event(
+        &mut session,
+        command.id(),
+        format!(
+            "movement_intent:{}:{}",
+            champion.id(),
+            context.session.current_turn
+        ),
+        "movement_intent_submitted".to_string(),
+        Some("champion".to_string()),
+        Some(champion.id().to_string()),
+        format!(
+            r#"{{"intent_id":"{}","path_len":{}}}"#,
+            intent.id(),
+            path.len()
+        ),
+    )?;
+    command_response::apply_command(
+        caller,
+        &context,
+        command,
+        &client_nonce,
+        command_response::result_json("submit_move_intent", session.current_turn),
+        vec![event],
+        vec![command_response::changed(
+            "movement_intent",
+            &intent.id().to_string(),
+            "upsert",
+        )],
+    )
+}
+
+pub(crate) fn sync_session_turn(
+    caller: CandidPrincipal,
+    session_id: String,
+    now_ms: u64,
+    client_nonce: String,
+) -> Result<CommandResponse, ApiError> {
+    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let payload_json = format!(r#"{{"now_ms":{now_ms}}}"#);
+    let command = match command_response::begin_participant_command(
+        caller,
+        &context,
+        "sync_session_turn",
+        &client_nonce,
+        None,
+        payload_json,
+    )? {
+        GameCommandAction::Apply(command) => command,
+        GameCommandAction::Return(response) => return Ok(response),
+    };
+
+    let mut changed_subjects = Vec::new();
+    let mut events = Vec::new();
+    let movement_complete = resolve_pending_movement(
+        &mut context.session,
+        command.id(),
+        &mut events,
+        &mut changed_subjects,
+    )?;
+    if let Some(updated_participant) = sessions::load_participant(context.participant.id())? {
+        context.participant = updated_participant;
+    }
+    if !movement_complete {
+        return command_response::apply_command(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            command_response::result_json("sync_session_turn", context.session.current_turn),
+            events,
+            changed_subjects,
+        );
+    }
+
+    let income_turn = context.session.current_turn;
+    let mut participant = context.participant.clone();
+    let income_events = materialize_income(
+        &mut context.session,
+        command.id(),
+        &mut participant,
+        income_turn,
+    )?;
+    if !income_events.is_empty() {
+        events.extend(income_events);
+        changed_subjects.push(command_response::changed(
+            "participant",
+            &participant.id().to_string(),
+            "resources",
+        ));
+    }
+
+    participant.last_action_turn = context.session.current_turn;
+    participant = sessions::update_participant(participant)?;
+    context.participant = participant;
+
+    context.session.current_turn = context.session.current_turn.saturating_add(1);
+    context.session.turn_started_at = Timestamp::now();
+    context.session.turn_deadline_at = turn_deadline();
+    context.session.last_command_id = Some(command.id);
+    context.session = sessions::update_session(context.session)?;
+    changed_subjects.push(command_response::changed(
+        "session",
+        &context.session.id().to_string(),
+        "update",
+    ));
+
+    let session_id_text = context.session.id().to_string();
+    let current_turn = context.session.current_turn;
+    let event = command_response::append_public_event(
+        &mut context.session,
+        command.id(),
+        format!("sync_turn:{session_id_text}:{current_turn}"),
+        "session_turn_synced".to_string(),
+        Some("session".to_string()),
+        Some(session_id_text),
+        format!(r#"{{"current_turn":{current_turn}}}"#),
+    )?;
+    events.push(event);
+
+    command_response::apply_command(
+        caller,
+        &context,
+        command,
+        &client_nonce,
+        command_response::result_json("sync_session_turn", context.session.current_turn),
+        events,
+        changed_subjects,
+    )
+}
+
+#[derive(Clone)]
+struct PendingMovement {
+    intent: MovementIntent,
+    champion: Champion,
+    participant: GameParticipant,
+    path: Vec<MoveCoord>,
+    start: MoveCoord,
+    resolved: bool,
+}
+
+#[derive(Clone)]
+struct MoveCandidate {
+    pending_index: usize,
+    from: MoveCoord,
+    to: MoveCoord,
+    movement_cost: u16,
+    remaining_before: u16,
+    path_distance: u16,
+    tie_break: u64,
+}
+
+struct ObjectInteractionOutcome {
+    event: Option<domm_game::ApiEventView>,
+    stop_path: bool,
+    participant_resources_changed: bool,
+    object_changed: bool,
+}
+
+fn resolve_pending_movement(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<bool, ApiError> {
+    command_response::ensure_command_effect(
+        session.id(),
+        command_id,
+        format!("turn_resolution:{}", session.current_turn),
+        "turn_resolution".to_string(),
+        "session".to_string(),
+        session.id().to_string(),
+        format!(r#"{{"turn_number":{}}}"#, session.current_turn),
+    )?;
+
+    let mut pending = load_pending_movements(session)?;
+    let mut step_index = 0_u16;
+    let mut microsteps_processed = 0_u16;
+    loop {
+        let candidates = movement_candidates(session, &pending, step_index)?;
+        if candidates.is_empty() {
+            break;
+        }
+        if microsteps_processed >= CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC {
+            park_partial_movements(
+                session,
+                command_id,
+                &mut pending,
+                step_index,
+                events,
+                changed_subjects,
+            )?;
+            return Ok(false);
+        }
+
+        let mut active = candidates
+            .into_iter()
+            .map(|candidate| (candidate.pending_index, candidate))
+            .collect::<BTreeMap<_, _>>();
+        resolve_tile_conflicts(
+            session,
+            command_id,
+            &mut pending,
+            &mut active,
+            step_index,
+            changed_subjects,
+        )?;
+        resolve_crossing_conflicts(
+            session,
+            command_id,
+            &mut pending,
+            &mut active,
+            step_index,
+            events,
+            changed_subjects,
+        )?;
+        resolve_blockers_and_guarded_objects(
+            session,
+            command_id,
+            &mut pending,
+            &mut active,
+            step_index,
+            events,
+            changed_subjects,
+        )?;
+        commit_active_moves(
+            session,
+            command_id,
+            &mut pending,
+            active,
+            step_index,
+            events,
+            changed_subjects,
+        )?;
+        step_index = step_index.saturating_add(1);
+        microsteps_processed = microsteps_processed.saturating_add(1);
+    }
+
+    for pending_move in &mut pending {
+        if !pending_move.resolved && pending_move.path.len() <= usize::from(step_index) {
+            mark_pending_resolved(session, command_id, pending_move, changed_subjects)?;
+        }
+    }
+    Ok(true)
+}
+
+fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>, ApiError> {
+    let page = movement::page_movement_intents_by_status(
+        session.id(),
+        session.current_turn,
+        "pending",
+        domm_game::MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN,
+        None,
+    )?;
+    let mut pending = Vec::new();
+    for intent in page.items {
+        let Some(champion) =
+            champions_artifacts::load_champion(Id::<Champion>::from_key(intent.champion_id))?
+        else {
+            continue;
+        };
+        let Some(participant) = sessions::load_participant(Id::<GameParticipant>::from_key(
+            intent.actor_participant_id,
+        ))?
+        else {
+            continue;
+        };
+        pending.push(PendingMovement {
+            path: parse_path_text(&intent.path_json)?,
+            start: MoveCoord::new(champion.x, champion.y),
+            intent,
+            champion,
+            participant,
+            resolved: false,
+        });
+    }
+    pending.sort_by(|left, right| {
+        left.champion
+            .id()
+            .to_string()
+            .cmp(&right.champion.id().to_string())
+    });
+    Ok(pending)
+}
+
+fn movement_candidates(
+    session: &GameSession,
+    pending: &[PendingMovement],
+    step_index: u16,
+) -> Result<Vec<MoveCandidate>, ApiError> {
+    let mut candidates = Vec::new();
+    for (pending_index, pending_move) in pending.iter().enumerate() {
+        if pending_move.resolved || pending_move.champion.status != "active" {
+            continue;
+        }
+        let Some(to) = pending_move.path.get(usize::from(step_index)).copied() else {
+            continue;
+        };
+        let from = MoveCoord::new(pending_move.champion.x, pending_move.champion.y);
+        let movement_cost = u16::from(movement_cost_at(session, to)?);
+        candidates.push(MoveCandidate {
+            pending_index,
+            from,
+            to,
+            movement_cost,
+            remaining_before: effective_movement(&pending_move.champion, session.current_turn),
+            path_distance: step_index.saturating_add(1),
+            tie_break: movement_tie_break(
+                session.seed,
+                session.current_turn,
+                &pending_move.champion.id().to_string(),
+                to,
+            ),
+        });
+    }
+    candidates.sort_by(|left, right| {
+        pending[left.pending_index]
+            .champion
+            .id()
+            .to_string()
+            .cmp(&pending[right.pending_index].champion.id().to_string())
+    });
+    Ok(candidates)
+}
+
+fn resolve_tile_conflicts(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    active: &mut BTreeMap<usize, MoveCandidate>,
+    step_index: u16,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let mut by_tile: BTreeMap<MoveCoord, Vec<MoveCandidate>> = BTreeMap::new();
+    for candidate in active.values() {
+        by_tile
+            .entry(candidate.to)
+            .or_default()
+            .push(candidate.clone());
+    }
+    for group in by_tile.values().filter(|group| group.len() > 1) {
+        let winner = tile_conflict_winner(group);
+        for candidate in group
+            .iter()
+            .filter(|candidate| candidate.pending_index != winner.pending_index)
+        {
+            active.remove(&candidate.pending_index);
+            stop_candidate(
+                session,
+                command_id,
+                pending,
+                candidate,
+                step_index,
+                "stopped_tile_conflict",
+                Some(MovementPathStop {
+                    reason: "tile_conflict".to_string(),
+                    subject_kind: "tile".to_string(),
+                    subject_id_text: format!("{},{}", candidate.to.x, candidate.to.y),
+                    x: candidate.to.x,
+                    y: candidate.to.y,
+                }),
+                changed_subjects,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_crossing_conflicts(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    active: &mut BTreeMap<usize, MoveCandidate>,
+    step_index: u16,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let keys = active.keys().copied().collect::<Vec<_>>();
+    let mut stopped = BTreeSet::new();
+    for left_pos in 0..keys.len() {
+        for right_pos in left_pos + 1..keys.len() {
+            let left_key = keys[left_pos];
+            let right_key = keys[right_pos];
+            if stopped.contains(&left_key) || stopped.contains(&right_key) {
+                continue;
+            }
+            let Some(left) = active.get(&left_key).cloned() else {
+                continue;
+            };
+            let Some(right) = active.get(&right_key).cloned() else {
+                continue;
+            };
+            if left.to == right.from && right.to == left.from {
+                let enemy = pending[left.pending_index].participant.id()
+                    != pending[right.pending_index].participant.id();
+                if enemy {
+                    let event = mark_champion_encounter_pending(
+                        session,
+                        command_id,
+                        pending,
+                        left.pending_index,
+                        right.pending_index,
+                        left.to,
+                    )?;
+                    events.push(event);
+                    changed_subjects.push(command_response::changed(
+                        "champion",
+                        &pending[left.pending_index].champion.id().to_string(),
+                        "status",
+                    ));
+                    changed_subjects.push(command_response::changed(
+                        "champion",
+                        &pending[right.pending_index].champion.id().to_string(),
+                        "status",
+                    ));
+                }
+                active.remove(&left_key);
+                active.remove(&right_key);
+                stopped.insert(left_key);
+                stopped.insert(right_key);
+                stop_candidate(
+                    session,
+                    command_id,
+                    pending,
+                    &left,
+                    step_index,
+                    if enemy {
+                        "started_crossing_battle"
+                    } else {
+                        "stopped_crossing_conflict"
+                    },
+                    Some(MovementPathStop {
+                        reason: "crossing_conflict".to_string(),
+                        subject_kind: "champion".to_string(),
+                        subject_id_text: pending[right.pending_index].champion.id().to_string(),
+                        x: left.to.x,
+                        y: left.to.y,
+                    }),
+                    changed_subjects,
+                )?;
+                stop_candidate(
+                    session,
+                    command_id,
+                    pending,
+                    &right,
+                    step_index,
+                    if enemy {
+                        "started_crossing_battle"
+                    } else {
+                        "stopped_crossing_conflict"
+                    },
+                    Some(MovementPathStop {
+                        reason: "crossing_conflict".to_string(),
+                        subject_kind: "champion".to_string(),
+                        subject_id_text: pending[left.pending_index].champion.id().to_string(),
+                        x: right.to.x,
+                        y: right.to.y,
+                    }),
+                    changed_subjects,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_blockers_and_guarded_objects(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    active: &mut BTreeMap<usize, MoveCandidate>,
+    step_index: u16,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let keys = active.keys().copied().collect::<Vec<_>>();
+    for key in keys {
+        let Some(candidate) = active.get(&key).cloned() else {
+            continue;
+        };
+        if candidate.movement_cost > candidate.remaining_before {
+            active.remove(&key);
+            stop_candidate(
+                session,
+                command_id,
+                pending,
+                &candidate,
+                step_index,
+                "stopped_budget_exhausted",
+                None,
+                changed_subjects,
+            )?;
+            continue;
+        }
+
+        if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
+            session.id(),
+            candidate.to.x,
+            candidate.to.y,
+        )? {
+            if let Some(neutral_id) = object.guarded_neutral_army_id {
+                active.remove(&key);
+                let neutral_id = Id::<NeutralArmy>::from_key(neutral_id);
+                let event = mark_neutral_encounter_pending(
+                    session,
+                    command_id,
+                    pending,
+                    candidate.pending_index,
+                    neutral_id,
+                    object.id().to_string(),
+                    candidate.to,
+                )?;
+                events.push(event);
+                changed_subjects.push(command_response::changed(
+                    "champion",
+                    &pending[candidate.pending_index].champion.id().to_string(),
+                    "status",
+                ));
+                stop_candidate(
+                    session,
+                    command_id,
+                    pending,
+                    &candidate,
+                    step_index,
+                    "started_neutral_battle",
+                    Some(MovementPathStop {
+                        reason: "guarded_object".to_string(),
+                        subject_kind: "neutral_army".to_string(),
+                        subject_id_text: neutral_id.to_string(),
+                        x: candidate.to.x,
+                        y: candidate.to.y,
+                    }),
+                    changed_subjects,
+                )?;
+                continue;
+            }
+        }
+
+        if let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
+            session.id(),
+            candidate.to.x,
+            candidate.to.y,
+            "champion",
+        )? {
+            let moving_id = pending[candidate.pending_index].champion.id().to_string();
+            if blocker.blocking && blocker.occupant_id_text != moving_id {
+                active.remove(&key);
+                let blocker_index = pending.iter().position(|pending_move| {
+                    pending_move.champion.id().to_string() == blocker.occupant_id_text
+                });
+                let stationary_blocker = if blocker_index.is_none() {
+                    load_champion_by_text(&blocker.occupant_id_text)?
+                } else {
+                    None
+                };
+                let enemy = blocker_index
+                    .map(|index| {
+                        pending[index].participant.id()
+                            != pending[candidate.pending_index].participant.id()
+                    })
+                    .or_else(|| {
+                        stationary_blocker.as_ref().map(|champion| {
+                            champion.participant_id
+                                != pending[candidate.pending_index].participant.id().key()
+                        })
+                    })
+                    .unwrap_or(false);
+                if let Some(blocker_index) = blocker_index {
+                    active.remove(&blocker_index);
+                    if enemy {
+                        let event = mark_champion_encounter_pending(
+                            session,
+                            command_id,
+                            pending,
+                            candidate.pending_index,
+                            blocker_index,
+                            candidate.to,
+                        )?;
+                        events.push(event);
+                    }
+                } else if enemy {
+                    let mut blocker_champion =
+                        stationary_blocker.expect("enemy stationary blocker should be loaded");
+                    let event = mark_stationary_champion_encounter_pending(
+                        session,
+                        command_id,
+                        pending,
+                        candidate.pending_index,
+                        &mut blocker_champion,
+                        candidate.to,
+                    )?;
+                    events.push(event);
+                    changed_subjects.push(command_response::changed(
+                        "champion",
+                        &blocker_champion.id().to_string(),
+                        "status",
+                    ));
+                }
+                if enemy {
+                    changed_subjects.push(command_response::changed(
+                        "champion",
+                        &pending[candidate.pending_index].champion.id().to_string(),
+                        "status",
+                    ));
+                }
+                stop_candidate(
+                    session,
+                    command_id,
+                    pending,
+                    &candidate,
+                    step_index,
+                    if enemy {
+                        "started_champion_battle"
+                    } else {
+                        "stopped_champion_blocker"
+                    },
+                    Some(MovementPathStop {
+                        reason: if enemy {
+                            "enemy_champion_blocker".to_string()
+                        } else {
+                            "friendly_champion_blocker".to_string()
+                        },
+                        subject_kind: "champion".to_string(),
+                        subject_id_text: blocker.occupant_id_text,
+                        x: candidate.to.x,
+                        y: candidate.to.y,
+                    }),
+                    changed_subjects,
+                )?;
+                continue;
+            }
+        }
+
+        if let Some(town) = map_visibility_occupancy::find_occupancy_cell(
+            session.id(),
+            candidate.to.x,
+            candidate.to.y,
+            "town",
+        )? {
+            if town.blocking {
+                active.remove(&key);
+                stop_candidate(
+                    session,
+                    command_id,
+                    pending,
+                    &candidate,
+                    step_index,
+                    "stopped_town_interaction",
+                    Some(MovementPathStop {
+                        reason: "town_interaction".to_string(),
+                        subject_kind: "town".to_string(),
+                        subject_id_text: town.occupant_id_text,
+                        x: candidate.to.x,
+                        y: candidate.to.y,
+                    }),
+                    changed_subjects,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn commit_active_moves(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    active: BTreeMap<usize, MoveCandidate>,
+    step_index: u16,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    for candidate in active.values() {
+        commit_candidate_move(
+            session,
+            command_id,
+            pending,
+            candidate,
+            step_index,
+            "moved",
+            None,
+            changed_subjects,
+        )?;
+        let interaction = apply_world_object_at(
+            session,
+            command_id,
+            &mut pending[candidate.pending_index].participant,
+            &pending[candidate.pending_index].champion,
+            candidate.to,
+        )?;
+        if let Some(event) = interaction.event {
+            events.push(event);
+        }
+        if interaction.participant_resources_changed {
+            pending[candidate.pending_index]
+                .participant
+                .last_action_turn = session.current_turn;
+            pending[candidate.pending_index].participant =
+                sessions::update_participant(pending[candidate.pending_index].participant.clone())?;
+            changed_subjects.push(command_response::changed(
+                "participant",
+                &pending[candidate.pending_index]
+                    .participant
+                    .id()
+                    .to_string(),
+                "resources",
+            ));
+        }
+        if interaction.object_changed {
+            changed_subjects.push(command_response::changed(
+                "world_object",
+                &format!("{},{}", candidate.to.x, candidate.to.y),
+                "update",
+            ));
+        }
+        if interaction.stop_path
+            || pending[candidate.pending_index].path.len() <= usize::from(step_index) + 1
+        {
+            record_movement_snapshot(
+                session,
+                command_id,
+                &pending[candidate.pending_index],
+                step_index,
+                candidate.from,
+                candidate.to,
+                candidate.movement_cost,
+                pending[candidate.pending_index].champion.movement_remaining,
+                if interaction.stop_path {
+                    "stopped_object_interaction"
+                } else {
+                    "moved"
+                },
+                None,
+            )?;
+            mark_pending_resolved(
+                session,
+                command_id,
+                &mut pending[candidate.pending_index],
+                changed_subjects,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn commit_candidate_move(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    candidate: &MoveCandidate,
+    step_index: u16,
+    outcome: &str,
+    stop: Option<MovementPathStop>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let pending_move = &mut pending[candidate.pending_index];
+    let old = MoveCoord::new(pending_move.champion.x, pending_move.champion.y);
+    let remaining_after = candidate
+        .remaining_before
+        .saturating_sub(candidate.movement_cost);
+    pending_move.champion.x = candidate.to.x;
+    pending_move.champion.y = candidate.to.y;
+    pending_move.champion.chunk_x = chunk_coord(session, candidate.to.x);
+    pending_move.champion.chunk_y = chunk_coord(session, candidate.to.y);
+    pending_move.champion.movement_remaining = remaining_after;
+    pending_move.champion.movement_turn = session.current_turn;
+    pending_move.champion.last_command_id = Some(command_id.key());
+    if outcome != "moved" {
+        record_movement_snapshot(
+            session,
+            command_id,
+            pending_move,
+            step_index,
+            old,
+            candidate.to,
+            candidate.movement_cost,
+            remaining_after,
+            outcome,
+            stop,
+        )?;
+    }
+    changed_subjects.push(command_response::changed(
+        "champion",
+        &pending_move.champion.id().to_string(),
+        "update",
+    ));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn stop_candidate(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    candidate: &MoveCandidate,
+    step_index: u16,
+    outcome: &str,
+    stop: Option<MovementPathStop>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let pending_move = &mut pending[candidate.pending_index];
+    record_movement_snapshot(
+        session,
+        command_id,
+        pending_move,
+        step_index,
+        candidate.from,
+        candidate.from,
+        0,
+        candidate.remaining_before,
+        outcome,
+        stop,
+    )?;
+    mark_pending_resolved(session, command_id, pending_move, changed_subjects)
+}
+
+fn mark_pending_resolved(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &mut PendingMovement,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    if pending_move.resolved {
+        return Ok(());
+    }
+    pending_move.champion = champions_artifacts::update_champion(pending_move.champion.clone())?;
+    update_champion_occupancy(
+        Id::<GameSession>::from_key(pending_move.intent.session_id),
+        command_id,
+        pending_move.start,
+        &pending_move.champion,
+    )?;
+    let visibility_rows = refresh_champion_visibility(session, command_id, pending_move)?;
+    if visibility_rows > 0 {
+        changed_subjects.push(command_response::changed(
+            "visibility",
+            &pending_move.participant.id().to_string(),
+            "update",
+        ));
+    }
+    pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
+    pending_move.resolved = true;
+    pending_move.participant.last_action_turn = pending_move.intent.turn_number;
+    pending_move.participant = sessions::update_participant(pending_move.participant.clone())?;
+    changed_subjects.push(command_response::changed(
+        "movement_intent",
+        &pending_move.intent.id().to_string(),
+        "resolve",
+    ));
+    Ok(())
+}
+
+fn park_partial_movements(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    consumed_steps: u16,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let consumed = usize::from(consumed_steps);
+    let mut parked = 0_u32;
+    for pending_move in pending
+        .iter_mut()
+        .filter(|pending_move| !pending_move.resolved)
+    {
+        if consumed == 0 || pending_move.path.len() <= consumed {
+            continue;
+        }
+        let partial_to = MoveCoord::new(pending_move.champion.x, pending_move.champion.y);
+        let movement_cost = pending_move
+            .path
+            .iter()
+            .take(consumed)
+            .map(|coord| movement_cost_at(session, *coord).map(u16::from))
+            .try_fold(0_u16, |sum, cost| cost.map(|cost| sum.saturating_add(cost)))?;
+        record_movement_snapshot(
+            session,
+            command_id,
+            pending_move,
+            consumed_steps.saturating_sub(1),
+            pending_move.start,
+            partial_to,
+            movement_cost,
+            pending_move.champion.movement_remaining,
+            "partial_sync",
+            None,
+        )?;
+
+        pending_move.champion =
+            champions_artifacts::update_champion(pending_move.champion.clone())?;
+        update_champion_occupancy(
+            session.id(),
+            command_id,
+            pending_move.start,
+            &pending_move.champion,
+        )?;
+        let visibility_rows = refresh_champion_visibility(session, command_id, pending_move)?;
+        if visibility_rows > 0 {
+            changed_subjects.push(command_response::changed(
+                "visibility",
+                &pending_move.participant.id().to_string(),
+                "update",
+            ));
+        }
+
+        let remaining_path = pending_move.path[consumed..].to_vec();
+        let remaining_text = path_text(&remaining_path);
+        pending_move.intent.path_json = remaining_text.clone();
+        pending_move.intent.path_hash = command_response::payload_hash(
+            "movement_remaining_path",
+            &pending_move.champion.id().to_string(),
+            &pending_move.intent.id().to_string(),
+            &remaining_text,
+        );
+        pending_move.intent = movement::update_movement_intent(pending_move.intent.clone())?;
+        pending_move.path = remaining_path;
+        pending_move.start = partial_to;
+        parked = parked.saturating_add(1);
+        changed_subjects.push(command_response::changed(
+            "movement_intent",
+            &pending_move.intent.id().to_string(),
+            "partial",
+        ));
+        changed_subjects.push(command_response::changed(
+            "champion",
+            &pending_move.champion.id().to_string(),
+            "partial_move",
+        ));
+    }
+
+    command_response::ensure_command_effect(
+        session.id(),
+        command_id,
+        format!(
+            "movement_cursor:{}:{}",
+            session.current_turn, consumed_steps
+        ),
+        "movement_cursor".to_string(),
+        "session".to_string(),
+        session.id().to_string(),
+        format!(r#"{{"consumed_steps":{consumed_steps},"parked_intents":{parked}}}"#),
+    )?;
+    let event = command_response::append_public_event(
+        session,
+        command_id,
+        format!(
+            "movement_sync_incomplete:{}:{}:{}",
+            session.id(),
+            session.current_turn,
+            consumed_steps
+        ),
+        "movement_sync_incomplete".to_string(),
+        Some("session".to_string()),
+        Some(session.id().to_string()),
+        format!(r#"{{"consumed_steps":{consumed_steps},"parked_intents":{parked}}}"#),
+    )?;
+    events.push(event);
+    Ok(())
+}
+
+fn refresh_champion_visibility(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &PendingMovement,
+) -> Result<u32, ApiError> {
+    let mut by_chunk: BTreeMap<(u16, u16), Vec<(u16, u16)>> = BTreeMap::new();
+    let radius = i32::from(pending_move.champion.vision_radius);
+    let center_x = i32::from(pending_move.champion.x);
+    let center_y = i32::from(pending_move.champion.y);
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx.abs() + dy.abs() > radius {
+                continue;
+            }
+            let x = center_x + dx;
+            let y = center_y + dy;
+            if x < 0
+                || y < 0
+                || x >= i32::from(session.map_width)
+                || y >= i32::from(session.map_height)
+            {
+                continue;
+            }
+            let x = u16::try_from(x).unwrap_or(0);
+            let y = u16::try_from(y).unwrap_or(0);
+            by_chunk
+                .entry((chunk_coord(session, x), chunk_coord(session, y)))
+                .or_default()
+                .push((x, y));
+        }
+    }
+
+    let mut updated_rows = 0_u32;
+    for ((chunk_x, chunk_y), tiles) in by_chunk {
+        let Some(mut visibility) = map_visibility_occupancy::find_visibility_chunk(
+            pending_move.participant.id(),
+            chunk_x,
+            chunk_y,
+        )?
+        else {
+            continue;
+        };
+        let width = chunk_width(session, chunk_x);
+        let chunk_size = u16::from(session.chunk_size);
+        let mut discovered = visibility.discovered_blob.to_vec();
+        let mut visible = visibility.visible_blob.to_vec();
+        for (x, y) in tiles {
+            let local_x = x % chunk_size;
+            let local_y = y % chunk_size;
+            let index = usize::from(local_y) * usize::from(width) + usize::from(local_x);
+            domm_game::set_visibility_bit(&mut discovered, index);
+            domm_game::set_visibility_bit(&mut visible, index);
+        }
+        visibility.discovered_blob = Blob::from(discovered);
+        visibility.visible_blob = Blob::from(visible);
+        visibility.visible_turn = session.current_turn;
+        map_visibility_occupancy::update_visibility_chunk(visibility)?;
+        updated_rows = updated_rows.saturating_add(1);
+    }
+
+    if updated_rows > 0 {
+        command_response::ensure_command_effect(
+            session.id(),
+            command_id,
+            format!(
+                "visibility:{}:{}",
+                pending_move.champion.id(),
+                session.current_turn
+            ),
+            "visibility_refresh".to_string(),
+            "participant".to_string(),
+            pending_move.participant.id().to_string(),
+            format!(r#"{{"visibility_rows":{updated_rows}}}"#),
+        )?;
+    }
+    Ok(updated_rows)
+}
+
+fn update_champion_occupancy(
+    session_id: Id<GameSession>,
+    command_id: Id<GameCommand>,
+    old: MoveCoord,
+    champion: &Champion,
+) -> Result<(), ApiError> {
+    let occupant_id = champion.id().to_string();
+    let old_occupancy =
+        map_visibility_occupancy::find_occupancy_cell(session_id, old.x, old.y, "champion")?;
+    let mut occupancy = old_occupancy
+        .clone()
+        .filter(|occupancy| occupancy.occupant_id_text == occupant_id);
+    if occupancy.is_none() {
+        occupancy = map_visibility_occupancy::find_occupancy_by_occupant(
+            session_id,
+            "champion",
+            &occupant_id,
+            0,
+        )?;
+    }
+    if occupancy.is_none() {
+        occupancy = old_occupancy.filter(|occupancy| occupancy.occupant_kind == "champion");
+    }
+    if let Some(mut occupancy) = occupancy {
+        occupancy.x = champion.x;
+        occupancy.y = champion.y;
+        occupancy.chunk_x = champion.chunk_x;
+        occupancy.chunk_y = champion.chunk_y;
+        occupancy.occupant_kind = "champion".to_string();
+        occupancy.occupant_id_text = occupant_id;
+        occupancy.occupant_cell_index = 0;
+        occupancy.last_command_id = Some(command_id.key());
+        map_visibility_occupancy::update_occupancy_cell(occupancy)?;
+        return Ok(());
+    }
+    map_visibility_occupancy::create_occupancy_cell(
+        session_id,
+        champion.x,
+        champion.y,
+        champion.chunk_x,
+        champion.chunk_y,
+        "champion".to_string(),
+        "champion".to_string(),
+        occupant_id,
+        0,
+        true,
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_movement_snapshot(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &PendingMovement,
+    step_index: u16,
+    from: MoveCoord,
+    to: MoveCoord,
+    movement_cost: u16,
+    remaining_after: u16,
+    outcome: &str,
+    stop: Option<MovementPathStop>,
+) -> Result<(), ApiError> {
+    let interaction_kind = stop.as_ref().map(|stop| stop.subject_kind.clone());
+    let interaction_id_text = stop.as_ref().map(|stop| stop.subject_id_text.clone());
+    if movement::find_movement_snapshot(command_id, pending_move.intent.id(), step_index)?.is_none()
+    {
+        movement::create_movement_snapshot(
+            session.id(),
+            command_id,
+            pending_move.intent.id(),
+            pending_move.champion.id(),
+            pending_move.participant.id(),
+            session.current_turn,
+            step_index,
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            movement_cost,
+            remaining_after,
+            outcome.to_string(),
+            interaction_kind.clone(),
+            interaction_id_text.clone(),
+        )?;
+    }
+
+    let interaction_json = stop
+        .map(|stop| {
+            format!(
+                r#","interaction_kind":"{}","interaction_id_text":"{}""#,
+                command_response::escape_json(&stop.subject_kind),
+                command_response::escape_json(&stop.subject_id_text)
+            )
+        })
+        .unwrap_or_default();
+    command_response::ensure_command_effect(
+        session.id(),
+        command_id,
+        format!(
+            "move_snap:{}:{step_index}:{}",
+            pending_move.intent.id(),
+            movement_outcome_key(outcome)
+        ),
+        "movement_snapshot".to_string(),
+        "champion".to_string(),
+        pending_move.champion.id().to_string(),
+        format!(
+            r#"{{"intent_id":"{}","turn_number":{},"step_index":{},"from_x":{},"from_y":{},"to_x":{},"to_y":{},"movement_cost":{},"remaining_after":{},"outcome":"{}"{} }}"#,
+            pending_move.intent.id(),
+            session.current_turn,
+            step_index,
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            movement_cost,
+            remaining_after,
+            command_response::escape_json(outcome),
+            interaction_json
+        ),
+    )
+}
+
+fn movement_outcome_key(outcome: &str) -> &str {
+    match outcome {
+        "stopped_object_interaction" => "object",
+        "started_neutral_battle" => "neutral",
+        "started_champion_battle" => "champion",
+        "started_crossing_battle" => "cross_battle",
+        "stopped_crossing_conflict" => "cross",
+        "stopped_tile_conflict" => "tile",
+        "stopped_champion_blocker" => "blocker",
+        "stopped_town_interaction" => "town",
+        "stopped_budget_exhausted" => "budget",
+        _ => outcome,
+    }
+}
+
+fn mark_champion_encounter_pending(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    attacker_index: usize,
+    defender_index: usize,
+    coord: MoveCoord,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    for index in [attacker_index, defender_index] {
+        pending[index].champion.status = "in_battle".to_string();
+        pending[index].champion.last_command_id = Some(command_id.key());
+        pending[index].champion =
+            champions_artifacts::update_champion(pending[index].champion.clone())?;
+    }
+    command_response::append_public_event(
+        session,
+        command_id,
+        format!(
+            "champion_contact:{}:{}:{}",
+            pending[attacker_index].champion.id(),
+            pending[defender_index].champion.id(),
+            session.current_turn
+        ),
+        "champion_encounter_pending".to_string(),
+        Some("champion".to_string()),
+        Some(pending[defender_index].champion.id().to_string()),
+        format!(
+            r#"{{"attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            pending[attacker_index].champion.id(),
+            pending[defender_index].champion.id(),
+            coord.x,
+            coord.y
+        ),
+    )
+}
+
+fn mark_stationary_champion_encounter_pending(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    attacker_index: usize,
+    defender: &mut Champion,
+    coord: MoveCoord,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    pending[attacker_index].champion.status = "in_battle".to_string();
+    pending[attacker_index].champion.last_command_id = Some(command_id.key());
+    defender.status = "in_battle".to_string();
+    defender.last_command_id = Some(command_id.key());
+    champions_artifacts::update_champion(defender.clone())?;
+    command_response::append_public_event(
+        session,
+        command_id,
+        format!(
+            "champion_contact:{}:{}:{}",
+            pending[attacker_index].champion.id(),
+            defender.id(),
+            session.current_turn
+        ),
+        "champion_encounter_pending".to_string(),
+        Some("champion".to_string()),
+        Some(defender.id().to_string()),
+        format!(
+            r#"{{"attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            pending[attacker_index].champion.id(),
+            defender.id(),
+            coord.x,
+            coord.y
+        ),
+    )
+}
+
+fn mark_neutral_encounter_pending(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    pending_index: usize,
+    neutral_id: Id<NeutralArmy>,
+    object_id: String,
+    coord: MoveCoord,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    let battle = start_neutral_battle(
+        session,
+        command_id,
+        &mut pending[pending_index],
+        neutral_id,
+        &object_id,
+        coord,
+    )?;
+    pending[pending_index].champion.status = "in_battle".to_string();
+    pending[pending_index].champion.in_battle_id = Some(battle.id().key());
+    pending[pending_index].champion.last_command_id = Some(command_id.key());
+    pending[pending_index].champion =
+        champions_artifacts::update_champion(pending[pending_index].champion.clone())?;
+    command_response::append_public_event(
+        session,
+        command_id,
+        format!(
+            "neutral_contact:{}:{}:{}",
+            pending[pending_index].champion.id(),
+            object_id,
+            session.current_turn
+        ),
+        "neutral_encounter_pending".to_string(),
+        Some("neutral_army".to_string()),
+        Some(neutral_id.to_string()),
+        format!(
+            r#"{{"battle_id":"{}","champion_id":"{}","neutral_army_id":"{}","object_id":"{}","x":{},"y":{}}}"#,
+            battle.id(),
+            pending[pending_index].champion.id(),
+            neutral_id,
+            object_id,
+            coord.x,
+            coord.y
+        ),
+    )
+}
+
+fn start_neutral_battle(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &mut PendingMovement,
+    neutral_id: Id<NeutralArmy>,
+    object_id: &str,
+    coord: MoveCoord,
+) -> Result<Battle, ApiError> {
+    if let Some(existing) = battles::find_battle_by_attacker(pending_move.champion.id())? {
+        if existing.state == "active" && existing.defender_neutral_army_id == Some(neutral_id.key())
+        {
+            command_response::ensure_command_effect(
+                session.id(),
+                command_id,
+                format!("battle:{}", existing.id()),
+                "battle_started".to_string(),
+                "battle".to_string(),
+                existing.id().to_string(),
+                format!(
+                    r#"{{"battle_id":"{}","battle_type":"neutral","neutral_army_id":"{}","object_id":"{}"}}"#,
+                    existing.id(),
+                    neutral_id,
+                    command_response::escape_json(object_id)
+                ),
+            )?;
+            return Ok(existing);
+        }
+    }
+
+    let mut neutral = neutrals::load_neutral_army(neutral_id)?
+        .ok_or_else(|| public_error("neutral_army_not_found", "neutral army not found", true))?;
+    let turn_seed = neutral_battle_seed(session, &pending_move.champion, neutral_id, coord);
+    let action_deadline_at =
+        Timestamp::from_millis(Timestamp::now().as_millis().saturating_add(
+            i64::try_from(domm_game::BATTLE_ACTION_DEADLINE_MS).unwrap_or(i64::MAX),
+        ));
+    let mut battle = battles::create_battle(
+        session.id(),
+        "active".to_string(),
+        "neutral".to_string(),
+        Some(pending_move.champion.id()),
+        None,
+        None,
+        Some(neutral_id),
+        "attacker".to_string(),
+        domm_game::BATTLE_GRID_WIDTH,
+        domm_game::BATTLE_GRID_HEIGHT,
+        domm_game::BATTLE_MAX_ROUNDS,
+        turn_seed,
+        session.current_turn,
+        Some(action_deadline_at),
+        command_id,
+    )?;
+    let mut stacks =
+        create_initial_neutral_battle_stacks(command_id, &battle, pending_move, neutral_id)?;
+    create_initial_battle_obstacles(command_id, &battle)?;
+    if let Some(active_stack) = select_initial_active_stack(session, &battle, &mut stacks) {
+        battle.active_stack_id = Some(active_stack.id().key());
+        battle.active_side = active_stack.side.clone();
+        battle = battles::update_battle(battle)?;
+    }
+
+    neutral.state = "in_battle".to_string();
+    neutral.last_command_id = Some(command_id.key());
+    neutrals::update_neutral_army(neutral)?;
+    command_response::ensure_command_effect(
+        session.id(),
+        command_id,
+        format!("battle:{}", battle.id()),
+        "battle_started".to_string(),
+        "battle".to_string(),
+        battle.id().to_string(),
+        format!(
+            r#"{{"battle_id":"{}","battle_type":"neutral","neutral_army_id":"{}","object_id":"{}"}}"#,
+            battle.id(),
+            neutral_id,
+            command_response::escape_json(object_id)
+        ),
+    )?;
+    Ok(battle)
+}
+
+fn create_initial_neutral_battle_stacks(
+    command_id: Id<GameCommand>,
+    battle: &Battle,
+    pending_move: &PendingMovement,
+    neutral_id: Id<NeutralArmy>,
+) -> Result<Vec<BattleStack>, ApiError> {
+    let mut stacks = Vec::new();
+    for stack in champions_artifacts::page_champion_army_stacks(
+        pending_move.champion.id(),
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    .into_iter()
+    .filter(|stack| stack.status == "active" && stack.quantity > 0)
+    {
+        let unit_id = Id::<UnitDefinition>::from_key(stack.unit_id);
+        let unit = content::load_unit(unit_id)?
+            .ok_or_else(|| public_error("unit_not_found", "battle unit not found", true))?;
+        let y = match stack.slot_index {
+            0 => 3,
+            1 => 6,
+            value => 2_u8
+                .saturating_add(value)
+                .min(domm_game::BATTLE_GRID_HEIGHT - 1),
+        };
+        let battle_stack = create_battle_stack_from_unit(
+            command_id,
+            battle.id(),
+            &unit,
+            Some(pending_move.participant.id()),
+            "attacker",
+            stack.slot_index,
+            "champion_army",
+            Some(stack.id().to_string()),
+            stack.slot_index,
+            stack.quantity,
+            stack.front_hp,
+            1,
+            y,
+        )?;
+        battles::create_battle_occupancy(
+            battle.id(),
+            battle_stack.id(),
+            battle_stack.battle_x,
+            battle_stack.battle_y,
+            command_id,
+        )?;
+        stacks.push(battle_stack);
+    }
+
+    for stack in neutrals::page_neutral_army_stacks(neutral_id, domm_game::MAX_LIST_LIMIT, None)?
+        .items
+        .into_iter()
+        .filter(|stack| stack.quantity > 0)
+    {
+        let unit_id = Id::<UnitDefinition>::from_key(stack.unit_id);
+        let unit = content::load_unit(unit_id)?
+            .ok_or_else(|| public_error("unit_not_found", "battle unit not found", true))?;
+        let y = 4_u8
+            .saturating_add(stack.slot_index)
+            .min(domm_game::BATTLE_GRID_HEIGHT - 1);
+        let battle_stack = create_battle_stack_from_unit(
+            command_id,
+            battle.id(),
+            &unit,
+            None,
+            "defender",
+            stack.slot_index,
+            "neutral_army",
+            Some(stack.id().to_string()),
+            stack.slot_index,
+            stack.quantity,
+            stack.front_hp,
+            domm_game::BATTLE_GRID_WIDTH - 2,
+            y,
+        )?;
+        battles::create_battle_occupancy(
+            battle.id(),
+            battle_stack.id(),
+            battle_stack.battle_x,
+            battle_stack.battle_y,
+            command_id,
+        )?;
+        stacks.push(battle_stack);
+    }
+    Ok(stacks)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_battle_stack_from_unit(
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    unit: &UnitDefinition,
+    owner_participant_id: Option<Id<GameParticipant>>,
+    side: &str,
+    slot_index: u8,
+    origin_kind: &str,
+    origin_stack_id_text: Option<String>,
+    origin_slot_index: u8,
+    quantity: u32,
+    front_hp: u16,
+    battle_x: u8,
+    battle_y: u8,
+) -> Result<BattleStack, ApiError> {
+    battles::create_battle_stack(
+        battle_id,
+        unit.id(),
+        owner_participant_id,
+        side.to_string(),
+        slot_index,
+        origin_kind.to_string(),
+        origin_stack_id_text,
+        origin_slot_index,
+        unit.attack,
+        unit.defense,
+        unit.damage_min,
+        unit.damage_max,
+        unit.max_hp,
+        unit.speed,
+        unit.initiative,
+        unit.ranged,
+        unit.flying,
+        quantity,
+        front_hp,
+        unit.shots,
+        battle_x,
+        battle_y,
+        command_id,
+    )
+    .map_err(Into::into)
+}
+
+fn create_initial_battle_obstacles(
+    command_id: Id<GameCommand>,
+    battle: &Battle,
+) -> Result<(), ApiError> {
+    battles::create_battle_obstacle(battle.id(), "rubble".to_string(), 5, 4, command_id)?;
+    battles::create_battle_obstacle(battle.id(), "broken-cart".to_string(), 6, 5, command_id)?;
+    Ok(())
+}
+
+fn select_initial_active_stack(
+    session: &GameSession,
+    battle: &Battle,
+    stacks: &mut [BattleStack],
+) -> Option<BattleStack> {
+    stacks.sort_by(|left, right| {
+        right
+            .initiative
+            .cmp(&left.initiative)
+            .then_with(|| right.speed.cmp(&left.speed))
+            .then_with(|| {
+                battle_stack_tie_break(session, battle, left)
+                    .cmp(&battle_stack_tie_break(session, battle, right))
+            })
+            .then_with(|| left.id().to_string().cmp(&right.id().to_string()))
+    });
+    stacks.first().cloned()
+}
+
+fn neutral_battle_seed(
+    session: &GameSession,
+    champion: &Champion,
+    neutral_id: Id<NeutralArmy>,
+    coord: MoveCoord,
+) -> u64 {
+    let hash = command_response::payload_hash(
+        "battle_turn_seed",
+        &session.seed.to_string(),
+        &session.current_turn.to_string(),
+        &format!(
+            "{}:{}:{}:{}:{}",
+            champion.id(),
+            neutral_id,
+            coord.x,
+            coord.y,
+            session.id()
+        ),
+    );
+    u64::from_str_radix(hash.get(..16).unwrap_or("0"), 16).unwrap_or(0)
+}
+
+fn battle_stack_tie_break(session: &GameSession, battle: &Battle, stack: &BattleStack) -> u64 {
+    let hash = command_response::payload_hash(
+        "battle_initiative_tie",
+        &session.seed.to_string(),
+        &battle.current_round.to_string(),
+        &format!("{}:{}:{}", battle.id(), stack.id(), stack.side),
+    );
+    u64::from_str_radix(hash.get(..16).unwrap_or("0"), 16).unwrap_or(0)
+}
+
+fn tile_conflict_winner(group: &[MoveCandidate]) -> MoveCandidate {
+    let mut sorted = group.to_vec();
+    sorted.sort_by(|left, right| {
+        right
+            .remaining_before
+            .cmp(&left.remaining_before)
+            .then_with(|| left.path_distance.cmp(&right.path_distance))
+            .then_with(|| right.tie_break.cmp(&left.tie_break))
+            .then_with(|| left.pending_index.cmp(&right.pending_index))
+    });
+    sorted
+        .into_iter()
+        .next()
+        .expect("tile conflict group must be non-empty")
+}
+
+fn movement_tie_break(seed: u64, turn_number: u32, champion_id: &str, coord: MoveCoord) -> u64 {
+    let hash = command_response::payload_hash(
+        "movement.tile_conflict",
+        &seed.to_string(),
+        &turn_number.to_string(),
+        &format!("{champion_id}:{}:{}", coord.x, coord.y),
+    );
+    u64::from_str_radix(hash.get(..16).unwrap_or("0"), 16).unwrap_or(0)
+}
+
+fn apply_world_object_at(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    participant: &mut GameParticipant,
+    champion: &Champion,
+    coord: MoveCoord,
+) -> Result<ObjectInteractionOutcome, ApiError> {
+    let Some(mut object) =
+        map_visibility_occupancy::find_world_object_by_session_xy(session.id(), coord.x, coord.y)?
+    else {
+        return Ok(ObjectInteractionOutcome {
+            event: None,
+            stop_path: false,
+            participant_resources_changed: false,
+            object_changed: false,
+        });
+    };
+    if object.guarded_neutral_army_id.is_some() {
+        return Ok(ObjectInteractionOutcome {
+            event: None,
+            stop_path: true,
+            participant_resources_changed: false,
+            object_changed: false,
+        });
+    }
+    if map_visibility_occupancy::find_participant_object_visit(
+        object.id(),
+        participant.id(),
+        "once",
+    )?
+    .is_some()
+    {
+        return Ok(ObjectInteractionOutcome {
+            event: None,
+            stop_path: true,
+            participant_resources_changed: false,
+            object_changed: false,
+        });
+    }
+
+    map_visibility_occupancy::create_participant_object_visit(
+        session.id(),
+        object.id(),
+        participant.id(),
+        "once".to_string(),
+        object.scoring_kind.clone(),
+        session.current_turn,
+    )?;
+    object.last_visited_turn = session.current_turn;
+    object.last_command_id = Some(command_id.key());
+
+    let event_type = if object.scoring_kind == "resource_pile" {
+        apply_reward_json(
+            session.id(),
+            participant,
+            command_id,
+            session.current_turn,
+            &object,
+        )?;
+        object.state = "collected".to_string();
+        "resource_picked_up"
+    } else if object.scoring_kind == "mine" {
+        object.owner_participant_id = Some(participant.id().key());
+        object.captured_turn = session.current_turn;
+        object.income_started_turn = session.current_turn.saturating_add(1);
+        "mine_captured"
+    } else {
+        "world_object_visited"
+    };
+
+    map_visibility_occupancy::update_world_object(object.clone())?;
+    let event = command_response::append_public_event(
+        session,
+        command_id,
+        format!("object_visit:{}:{}", participant.id(), object.id()),
+        event_type.to_string(),
+        Some("world_object".to_string()),
+        Some(object.id().to_string()),
+        format!(
+            r#"{{"champion_id":"{}","object_id":"{}"}}"#,
+            champion.id(),
+            object.id()
+        ),
+    )
+    .map(Some)?;
+    Ok(ObjectInteractionOutcome {
+        event,
+        stop_path: true,
+        participant_resources_changed: event_type == "resource_picked_up",
+        object_changed: true,
+    })
+}
+
+fn materialize_income(
+    session: &mut domm_degens_schema::schema::GameSession,
+    command_id: Id<domm_degens_schema::schema::GameCommand>,
+    participant: &mut GameParticipant,
+    turn_number: u32,
+) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
+    if participant.last_income_turn >= turn_number {
+        return Ok(Vec::new());
+    }
+    let mut gold_income = 0_u32;
+    for object in map_visibility_occupancy::page_world_objects_by_session(
+        session.id(),
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    {
+        if object.owner_participant_id == Some(participant.id().key())
+            && object.scoring_kind == "mine"
+            && object.income_started_turn <= turn_number
+        {
+            gold_income = gold_income.saturating_add(250);
+        }
+    }
+    participant.last_income_turn = turn_number;
+    if gold_income == 0 {
+        return Ok(Vec::new());
+    }
+    apply_resource_delta(
+        session.id(),
+        participant,
+        command_id,
+        format!("income:turn:{turn_number}:gold"),
+        turn_number,
+        "gold",
+        i64::from(gold_income),
+        "income",
+    )?;
+    economy::create_resource_turn_summary(
+        session.id(),
+        participant.id(),
+        turn_number,
+        format!(r#"{{"kind":"income","gold":{gold_income}}}"#),
+    )
+    .ok();
+    command_response::append_public_event(
+        session,
+        command_id,
+        format!("income:{}:{turn_number}", participant.id()),
+        "income_materialized".to_string(),
+        Some("participant".to_string()),
+        Some(participant.id().to_string()),
+        format!(r#"{{"gold":{gold_income}}}"#),
+    )
+    .map(|event| vec![event])
+}
+
+fn apply_reward_json(
+    session_id: Id<GameSession>,
+    participant: &mut GameParticipant,
+    command_id: Id<GameCommand>,
+    turn_number: u32,
+    object: &WorldObject,
+) -> Result<(), ApiError> {
+    let json = object.instance_json.as_deref().unwrap_or("{}");
+    for (resource_key, delta) in [
+        ("gold", json_u32_field(json, "gold")),
+        ("wood", json_u32_field(json, "wood")),
+        ("stone", json_u32_field(json, "stone")),
+        ("iron", json_u32_field(json, "iron")),
+        ("crystal", json_u32_field(json, "crystal")),
+        ("ember", json_u32_field(json, "ember")),
+        ("aether", json_u32_field(json, "aether")),
+    ] {
+        if delta == 0 {
+            continue;
+        }
+        apply_resource_delta(
+            session_id,
+            participant,
+            command_id,
+            format!("pickup:{}:{resource_key}", object.id()),
+            turn_number,
+            resource_key,
+            i64::from(delta),
+            "pickup",
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_resource_delta(
+    session_id: Id<domm_degens_schema::schema::GameSession>,
+    participant: &mut GameParticipant,
+    command_id: Id<domm_degens_schema::schema::GameCommand>,
+    ledger_key: String,
+    turn_number: u32,
+    resource_key: &str,
+    delta: i64,
+    reason: &str,
+) -> Result<(), ApiError> {
+    if economy::find_resource_ledger_entry(command_id, &ledger_key)?.is_some() {
+        return Ok(());
+    }
+    let balance_after = match resource_key {
+        "gold" => {
+            participant.gold = apply_u64_delta(participant.gold, delta)?;
+            participant.gold
+        }
+        "wood" => {
+            participant.wood = apply_u32_delta(participant.wood, delta)?;
+            u64::from(participant.wood)
+        }
+        "stone" => {
+            participant.stone = apply_u32_delta(participant.stone, delta)?;
+            u64::from(participant.stone)
+        }
+        "iron" => {
+            participant.iron = apply_u32_delta(participant.iron, delta)?;
+            u64::from(participant.iron)
+        }
+        "crystal" => {
+            participant.crystal = apply_u32_delta(participant.crystal, delta)?;
+            u64::from(participant.crystal)
+        }
+        "ember" => {
+            participant.ember = apply_u32_delta(participant.ember, delta)?;
+            u64::from(participant.ember)
+        }
+        "aether" => {
+            participant.aether = apply_u32_delta(participant.aether, delta)?;
+            u64::from(participant.aether)
+        }
+        _ => {
+            return Err(public_error(
+                "unknown_resource",
+                "unknown resource key",
+                false,
+            ));
+        }
+    };
+    economy::create_resource_ledger_entry(
+        session_id,
+        participant.id(),
+        command_id,
+        ledger_key,
+        turn_number,
+        resource_key.to_string(),
+        delta,
+        balance_after,
+        reason.to_string(),
+        "applied".to_string(),
+    )?;
+    participant.last_resource_command_id = Some(command_id.key());
+    Ok(())
+}
+
+fn resolve_owned_champion(
+    context: &session_context::SessionCallerContext,
+    champion_id: &str,
+) -> Result<Champion, ApiError> {
+    let champion = resolve_champion(&context.session, champion_id)?;
+    if champion.participant_id != context.participant.id().key() {
+        return Err(public_error(
+            "not_champion_owner",
+            "caller does not own this champion",
+            false,
+        ));
+    }
+    if champion.status != "active" {
+        return Err(public_error(
+            "champion_not_active",
+            "champion is not active for movement",
+            false,
+        ));
+    }
+    Ok(champion)
+}
+
+fn resolve_champion(
+    session: &domm_degens_schema::schema::GameSession,
+    champion_id: &str,
+) -> Result<Champion, ApiError> {
+    if let Ok(id) = Ulid::from_str(champion_id).map(Id::<Champion>::from_key) {
+        return champions_artifacts::load_champion(id)?
+            .ok_or_else(|| public_error("not_found", "champion not found", false));
+    }
+    let scenario = domm_game::first_playable_scenario();
+    let start = scenario
+        .starts
+        .iter()
+        .find(|start| start.champion_key == champion_id)
+        .ok_or_else(|| public_error("not_found", "champion not found", false))?;
+    champions_artifacts::find_champion_by_session_xy(
+        session.id(),
+        start.champion_x,
+        start.champion_y,
+    )?
+    .ok_or_else(|| public_error("not_found", "champion not found", false))
+}
+
+fn load_champion_by_text(champion_id: &str) -> Result<Option<Champion>, ApiError> {
+    let Ok(id) = Ulid::from_str(champion_id).map(Id::<Champion>::from_key) else {
+        return Ok(None);
+    };
+    champions_artifacts::load_champion(id)
+}
+
+fn validate_path_limit(path: &[MoveCoord]) -> Result<(), ApiError> {
+    if path.is_empty() {
+        return Err(public_error(
+            "movement_path_empty",
+            "movement path must include at least one step",
+            false,
+        ));
+    }
     if path.len() > domm_game::MAX_MOVE_PATH_STEPS_LIMIT {
         return Err(ApiError::new(
             "movement_path_too_long",
@@ -28,35 +2042,38 @@ pub(crate) fn preview_move_path(
             domm_game::MAX_MOVE_PATH_STEPS_LIMIT
         )));
     }
+    Ok(())
+}
 
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
-    let champion = render_projection::champion_view_by_id(&context, &champion_id)?;
-    if champion.redacted || champion.owner_participant_id != context.participant.id().to_string() {
+fn validate_path_cost(
+    session: &GameSession,
+    champion: &Champion,
+    path: &[MoveCoord],
+) -> Result<u16, ApiError> {
+    let mut total = 0_u16;
+    for coord in path {
+        let flags = flags_at(session, *coord)?;
+        if flags & domm_game::MAP_FLAG_BLOCKING_TERRAIN != 0 {
+            return Err(public_error(
+                "movement_path_impassable",
+                "movement path crosses impassable terrain",
+                false,
+            ));
+        }
+        total = total.saturating_add(u16::from(movement_cost_at(session, *coord)?));
+    }
+    let available = effective_movement(champion, session.current_turn);
+    if total > available {
         return Err(public_error(
-            "not_champion_owner",
-            "caller does not own this champion",
+            "movement_path_too_expensive",
+            "movement path exceeds available movement",
             false,
         ));
     }
-    validate_path_bounds(&context.session, &path)?;
-    let chunks_touched = chunks_touched(&context.session, &path);
-
-    Ok(MovementPreview {
-        champion_id: champion.champion_id,
-        participant_id: context.participant.id().to_string(),
-        turn_number: context.session.current_turn,
-        total_cost: u16::try_from(path.len()).unwrap_or(u16::MAX),
-        available_movement: champion.effective_movement,
-        chunks_touched,
-        path,
-        stop: None,
-    })
+    Ok(total)
 }
 
-fn validate_path_bounds(
-    session: &domm_degens_schema::schema::GameSession,
-    path: &[MoveCoord],
-) -> Result<(), ApiError> {
+fn validate_path_bounds(session: &GameSession, path: &[MoveCoord]) -> Result<(), ApiError> {
     for coord in path {
         if coord.x >= session.map_width || coord.y >= session.map_height {
             return Err(public_error(
@@ -65,6 +2082,21 @@ fn validate_path_bounds(
                 false,
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_path_adjacency(start_x: u16, start_y: u16, path: &[MoveCoord]) -> Result<(), ApiError> {
+    let mut previous = MoveCoord::new(start_x, start_y);
+    for coord in path {
+        if !coord.is_adjacent_to(previous) {
+            return Err(public_error(
+                "movement_path_not_adjacent",
+                "movement path contains a non-adjacent step",
+                false,
+            ));
+        }
+        previous = *coord;
     }
     Ok(())
 }
@@ -79,4 +2111,136 @@ fn chunks_touched(session: &domm_degens_schema::schema::GameSession, path: &[Mov
         .unwrap_or(u32::MAX)
 }
 
-pub(crate) use super::repository_not_implemented as unavailable;
+fn movement_cost_at(session: &GameSession, coord: MoveCoord) -> Result<u8, ApiError> {
+    chunk_cell_blob_value(session, coord, |chunk| chunk.movement_blob.as_slice())
+}
+
+fn flags_at(session: &GameSession, coord: MoveCoord) -> Result<u8, ApiError> {
+    chunk_cell_blob_value(session, coord, |chunk| chunk.flags_blob.as_slice())
+}
+
+fn chunk_cell_blob_value(
+    session: &GameSession,
+    coord: MoveCoord,
+    blob: impl Fn(&domm_degens_schema::schema::MapChunk) -> &[u8],
+) -> Result<u8, ApiError> {
+    validate_path_bounds(session, &[coord])?;
+    let chunk_size = u16::from(session.chunk_size);
+    let chunk_x = coord.x / chunk_size;
+    let chunk_y = coord.y / chunk_size;
+    let Some(chunk) = map_visibility_occupancy::find_map_chunk(session.id(), chunk_x, chunk_y)?
+    else {
+        return Err(public_error(
+            "movement_path_missing_chunk",
+            "movement path references an unloaded map chunk",
+            true,
+        ));
+    };
+    let local_x = coord.x % chunk_size;
+    let local_y = coord.y % chunk_size;
+    let index = usize::from(local_y) * usize::from(chunk.width) + usize::from(local_x);
+    blob(&chunk).get(index).copied().ok_or_else(|| {
+        public_error(
+            "movement_path_missing_chunk_cell",
+            "movement path references a missing map cell",
+            true,
+        )
+    })
+}
+
+fn effective_movement(champion: &Champion, turn_number: u32) -> u16 {
+    if champion.movement_turn == turn_number {
+        champion.movement_remaining
+    } else {
+        champion.movement_max
+    }
+}
+
+fn chunk_coord(session: &GameSession, value: u16) -> u16 {
+    value / u16::from(session.chunk_size)
+}
+
+fn chunk_width(session: &GameSession, chunk_x: u16) -> u16 {
+    let chunk_size = u16::from(session.chunk_size);
+    let origin_x = chunk_x.saturating_mul(chunk_size);
+    session.map_width.saturating_sub(origin_x).min(chunk_size)
+}
+
+fn path_text(path: &[MoveCoord]) -> String {
+    path.iter()
+        .map(|coord| format!("{},{}", coord.x, coord.y))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn parse_path_text(value: &str) -> Result<Vec<MoveCoord>, ApiError> {
+    if value.is_empty() {
+        return Ok(Vec::new());
+    }
+    value
+        .split(';')
+        .map(|part| {
+            let (x, y) = part.split_once(',').ok_or_else(|| {
+                public_error(
+                    "invalid_movement_path",
+                    "stored movement path is invalid",
+                    true,
+                )
+            })?;
+            Ok(MoveCoord::new(
+                x.parse().map_err(|_| {
+                    public_error(
+                        "invalid_movement_path",
+                        "stored movement path is invalid",
+                        true,
+                    )
+                })?,
+                y.parse().map_err(|_| {
+                    public_error(
+                        "invalid_movement_path",
+                        "stored movement path is invalid",
+                        true,
+                    )
+                })?,
+            ))
+        })
+        .collect()
+}
+
+fn json_u32_field(json: &str, field: &str) -> u32 {
+    let needle = format!(r#""{field}":"#);
+    let Some(start) = json.find(&needle).map(|index| index + needle.len()) else {
+        return 0;
+    };
+    let rest = &json[start..];
+    let end = rest
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest.get(..end)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+fn apply_u64_delta(value: u64, delta: i64) -> Result<u64, ApiError> {
+    if delta.is_negative() {
+        value
+            .checked_sub(delta.unsigned_abs())
+            .ok_or_else(|| public_error("insufficient_resources", "not enough resources", false))
+    } else {
+        Ok(value.saturating_add(delta as u64))
+    }
+}
+
+fn apply_u32_delta(value: u32, delta: i64) -> Result<u32, ApiError> {
+    let value = apply_u64_delta(u64::from(value), delta)?;
+    u32::try_from(value)
+        .map_err(|_| public_error("resource_cap_exceeded", "resource cap exceeded", false))
+}
+
+fn turn_deadline() -> Timestamp {
+    Timestamp::from_millis(
+        Timestamp::now()
+            .as_millis()
+            .saturating_add(i64::try_from(domm_game::TURN_DURATION_MS).unwrap_or(i64::MAX)),
+    )
+}

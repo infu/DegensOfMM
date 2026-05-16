@@ -427,7 +427,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("preview_move_path should decode")
     .expect("movement preview should be typed and read-only");
     assert_eq!(movement_preview.champion_id, champion_id);
-    assert_eq!(movement_preview.total_cost, 1);
+    assert_eq!(movement_preview.total_cost, 5);
 
     let build_preview = query_as::<BuildPreview>(
         &fixture,
@@ -581,43 +581,151 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect_err("oversized movement preview should fail typed limit validation");
     assert_eq!(oversized_path.code, "movement_path_too_long");
 
-    assert_query_unimplemented::<BattleView>(
+    let move_path = vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)];
+    let moved = update_as::<CommandResponse>(
         &fixture,
-        "get_battle_state",
-        (session_id.clone(), battle_id.clone(), 1_000_u64),
-    );
-    assert_update_unimplemented::<CommandResponse>(
-        &fixture,
+        player_one,
         "submit_move_intent",
         (
             session_id.clone(),
             champion_id.clone(),
-            vec![MoveCoord::new(1, 1)],
-            "nonce:presence:move".to_string(),
+            move_path.clone(),
+            "nonce:presence:move:wood".to_string(),
             1_000_u64,
         ),
-    );
-    assert_update_unimplemented::<CommandResponse>(
+    )
+    .expect("submit_move_intent should decode")
+    .expect("submit_move_intent should succeed");
+    assert_eq!(moved.status, CommandStatus::Applied);
+
+    let moved_replay = update_as::<CommandResponse>(
         &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            move_path,
+            "nonce:presence:move:wood".to_string(),
+            1_000_u64,
+        ),
+    )
+    .expect("submit_move_intent replay should decode")
+    .expect("submit_move_intent replay should succeed");
+    assert_eq!(moved_replay.command_id, moved.command_id);
+
+    let move_mismatch = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            vec![MoveCoord::new(9, 24)],
+            "nonce:presence:move:wood".to_string(),
+            1_000_u64,
+        ),
+    )
+    .expect("submit_move_intent mismatch should decode")
+    .expect("submit_move_intent mismatch should return command response");
+    assert_eq!(move_mismatch.status, CommandStatus::Failed);
+    assert_eq!(
+        move_mismatch
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("duplicate_nonce_payload_mismatch")
+    );
+
+    let move_status = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status",
+        (session_id.clone(), "nonce:presence:move:wood".to_string()),
+    )
+    .expect("move command status should decode")
+    .expect("move command should be readable by nonce");
+    assert_eq!(move_status.status, CommandStatus::Applied);
+
+    let synced = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
         "sync_session_turn",
         (
             session_id.clone(),
-            1_000_u64,
-            "nonce:presence:sync-turn".to_string(),
+            61_000_u64,
+            "nonce:presence:sync-turn:wood".to_string(),
         ),
+    )
+    .expect("sync_session_turn should decode")
+    .expect("sync_session_turn should succeed");
+    assert_eq!(synced.status, CommandStatus::Applied);
+    assert!(
+        synced
+            .events
+            .iter()
+            .any(|event| event.event_type == "resource_picked_up")
     );
-    assert_update_unimplemented::<CommandResponse>(
+
+    let champion_after_move = query_as::<ChampionView>(
         &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("moved champion query should decode")
+    .expect("moved champion should be visible");
+    assert_eq!((champion_after_move.x, champion_after_move.y), (9, 23));
+
+    let participant_after_pickup = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after pickup should decode")
+    .expect("participant after pickup should be readable");
+    assert!(participant_after_pickup.resources.wood > participant_one.resources.wood);
+
+    let built = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
         "submit_build_town_structure",
         (
             session_id.clone(),
             town_id.clone(),
-            "building:training-yard".to_string(),
-            "nonce:presence:build".to_string(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:presence:build:yard".to_string(),
         ),
-    );
-    assert_update_unimplemented::<CommandResponse>(
+    )
+    .expect("submit_build_town_structure should decode")
+    .expect("submit_build_town_structure should succeed");
+    assert_eq!(built.status, CommandStatus::Applied);
+
+    let town_after_build = query_as::<ApiTownView>(
         &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after build should decode")
+    .expect("town after build should be visible");
+    assert!(
+        town_after_build
+            .buildings
+            .iter()
+            .any(|building| building.building_slug == "freehold-training-yard")
+    );
+    assert!(
+        town_after_build
+            .recruit_pools
+            .iter()
+            .any(|pool| pool.unit_slug == "mudhook-levy" && pool.available > 0)
+    );
+
+    let recruited = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
         "submit_recruit_units",
         (
             session_id.clone(),
@@ -625,8 +733,116 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             "unit:mudhook-levy".to_string(),
             1_u32,
             RecruitTarget::TownGarrison { slot_index: None },
-            "nonce:presence:recruit".to_string(),
+            "nonce:presence:recruit:levy".to_string(),
         ),
+    )
+    .expect("submit_recruit_units should decode")
+    .expect("submit_recruit_units should succeed");
+    assert_eq!(recruited.status, CommandStatus::Applied);
+
+    let town_after_recruit = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after recruit should decode")
+    .expect("town after recruit should be visible");
+    assert!(
+        town_after_recruit
+            .garrison_stacks
+            .iter()
+            .any(|stack| stack.unit_slug == "mudhook-levy" && stack.quantity == 1)
+    );
+
+    let (crystal_mine_sync, crystal_saw_partial_sync) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(10, 23),
+            MoveCoord::new(11, 23),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(13, 23),
+            MoveCoord::new(14, 23),
+            MoveCoord::new(14, 24),
+            MoveCoord::new(14, 25),
+            MoveCoord::new(14, 26),
+            MoveCoord::new(14, 27),
+            MoveCoord::new(14, 28),
+            MoveCoord::new(14, 29),
+            MoveCoord::new(14, 30),
+        ],
+        "nonce:presence:move:crystal-mine",
+        "nonce:presence:sync-turn:crystal-mine:",
+        244_000_u64,
+        "mine_captured",
+    );
+    assert_eq!(crystal_mine_sync.status, CommandStatus::Applied);
+    assert!(crystal_saw_partial_sync);
+    assert!(
+        crystal_mine_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "mine_captured")
+    );
+
+    let income_sync = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_session_turn",
+        (
+            session_id.clone(),
+            305_000_u64,
+            "nonce:presence:sync-turn:income".to_string(),
+        ),
+    )
+    .expect("income sync should decode")
+    .expect("income sync should succeed");
+    assert!(
+        income_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "income_materialized")
+    );
+
+    let (guarded_mine_sync, guarded_saw_partial_sync) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(14, 29),
+            MoveCoord::new(14, 28),
+            MoveCoord::new(14, 27),
+            MoveCoord::new(14, 26),
+            MoveCoord::new(14, 25),
+            MoveCoord::new(14, 24),
+            MoveCoord::new(14, 23),
+            MoveCoord::new(13, 23),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:presence:move:guarded-mine",
+        "nonce:presence:sync-turn:guarded-mine:",
+        488_000_u64,
+        "neutral_encounter_pending",
+    );
+    assert_eq!(guarded_mine_sync.status, CommandStatus::Applied);
+    assert!(guarded_saw_partial_sync);
+    assert!(guarded_mine_sync.events.iter().any(|event| {
+        event.event_type == "neutral_encounter_pending"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("\"battle_id\""))
+    }));
+
+    assert_query_unimplemented::<BattleView>(
+        &fixture,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone(), 1_000_u64),
     );
     assert_update_unimplemented::<CommandResponse>(
         &fixture,
@@ -654,6 +870,404 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             1_000_u64,
         ),
     );
+}
+
+#[test]
+fn pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-conflict-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-conflict-two");
+    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "conflict");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let east_champion_id = owned_champion_id(&fixture, player_two, &session_id);
+
+    let west_preposition_path = (9_u16..=18)
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    let east_preposition_path = (29_u16..=38)
+        .rev()
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        west_preposition_path,
+        "nonce:conflict:move:west-preposition",
+        "nonce:conflict:sync:west-preposition:",
+        1_000_u64,
+        "session_turn_synced",
+    );
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_two,
+        &session_id,
+        &east_champion_id,
+        east_preposition_path,
+        "nonce:conflict:move:east-preposition",
+        "nonce:conflict:sync:east-preposition:",
+        61_000_u64,
+        "session_turn_synced",
+    );
+
+    let west_path = (19_u16..=24)
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    let east_path = (23_u16..=28)
+        .rev()
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+
+    submit_move_intent(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        west_path,
+        "nonce:conflict:move:west",
+        1_000_u64,
+    );
+    submit_move_intent(
+        &fixture,
+        player_two,
+        &session_id,
+        &east_champion_id,
+        east_path,
+        "nonce:conflict:move:east",
+        1_000_u64,
+    );
+
+    let (synced, saw_partial_sync) = sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        "nonce:conflict:sync:",
+        122_000_u64,
+        "champion_encounter_pending",
+        8,
+    );
+    assert_eq!(synced.status, CommandStatus::Applied);
+    assert!(saw_partial_sync);
+
+    let west_after = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), west_champion_id),
+    )
+    .expect("west champion after conflict should decode")
+    .expect("west champion after conflict should be visible");
+    let east_after = query_as::<ChampionView>(
+        &fixture,
+        player_two,
+        "get_champion_view",
+        (session_id, east_champion_id),
+    )
+    .expect("east champion after conflict should decode")
+    .expect("east champion after conflict should be visible");
+    assert_eq!(west_after.status, "in_battle");
+    assert_eq!(east_after.status, "in_battle");
+    assert_eq!((west_after.x, west_after.y), (23, 24));
+    assert_eq!((east_after.x, east_after.y), (24, 24));
+}
+
+#[test]
+fn pocket_ic_stationary_enemy_blocker_starts_champion_encounter() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-blocker-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-blocker-two");
+    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "blocker");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let east_champion_id = owned_champion_id(&fixture, player_two, &session_id);
+
+    for (leg, range, now_ms) in [
+        (0_u8, (29_u16..=38_u16), 1_000_u64),
+        (1_u8, (19_u16..=28_u16), 61_000_u64),
+        (2_u8, (9_u16..=18_u16), 122_000_u64),
+    ] {
+        let east_to_blocker = range
+            .rev()
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>();
+        let (_, saw_partial_sync) = submit_move_and_sync_until_event(
+            &fixture,
+            player_two,
+            &session_id,
+            &east_champion_id,
+            east_to_blocker,
+            &format!("nonce:blocker:move:east:{leg}"),
+            &format!("nonce:blocker:sync:east:{leg}:"),
+            now_ms,
+            "session_turn_synced",
+        );
+        assert!(saw_partial_sync);
+    }
+
+    submit_move_intent(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![MoveCoord::new(9, 24)],
+        "nonce:blocker:move:west",
+        183_000_u64,
+    );
+    let (blocked_sync, _) = sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        "nonce:blocker:sync:west:",
+        244_000_u64,
+        "champion_encounter_pending",
+        4,
+    );
+    assert!(
+        blocked_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "champion_encounter_pending")
+    );
+
+    let west_after = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), west_champion_id),
+    )
+    .expect("west blocker champion query should decode")
+    .expect("west blocker champion should be visible");
+    let east_after = query_as::<ChampionView>(
+        &fixture,
+        player_two,
+        "get_champion_view",
+        (session_id, east_champion_id),
+    )
+    .expect("east blocker champion query should decode")
+    .expect("east blocker champion should be visible");
+    assert_eq!(west_after.status, "in_battle");
+    assert_eq!(east_after.status, "in_battle");
+    assert_eq!((west_after.x, west_after.y), (8, 24));
+    assert_eq!((east_after.x, east_after.y), (9, 24));
+}
+
+fn start_active_two_player_session(
+    fixture: &StandaloneCanisterFixture,
+    player_one: candid::Principal,
+    player_two: candid::Principal,
+    nonce_stem: &str,
+) -> String {
+    update_as::<LobbyCommandResponse>(
+        fixture,
+        player_one,
+        "register_player",
+        (
+            Some(format!("{nonce_stem}-one")),
+            Some(format!("{nonce_stem} One")),
+            format!("nonce:{nonce_stem}:register:one"),
+        ),
+    )
+    .expect("player one registration should decode")
+    .expect("player one registration should succeed");
+    update_as::<LobbyCommandResponse>(
+        fixture,
+        player_two,
+        "register_player",
+        (
+            Some(format!("{nonce_stem}-two")),
+            Some(format!("{nonce_stem} Two")),
+            format!("nonce:{nonce_stem}:register:two"),
+        ),
+    )
+    .expect("player two registration should decode")
+    .expect("player two registration should succeed");
+
+    let created = update_as::<LobbyCommandResponse>(
+        fixture,
+        player_one,
+        "create_session",
+        (
+            format!("{nonce_stem} Match"),
+            FIRST_PLAYABLE_RULESET_ID.to_string(),
+            1_u64,
+            format!("nonce:{nonce_stem}:create"),
+        ),
+    )
+    .expect("create_session should decode")
+    .expect("create_session should succeed");
+    let session_id = match created.result {
+        LobbyCommandResult::Session(session) => session.session_id,
+        other => panic!("create_session returned unexpected result: {other:?}"),
+    };
+
+    update_as::<LobbyCommandResponse>(
+        fixture,
+        player_two,
+        "join_session",
+        (
+            session_id.clone(),
+            "faction:ashen-ledger".to_string(),
+            format!("nonce:{nonce_stem}:join"),
+        ),
+    )
+    .expect("join_session should decode")
+    .expect("join_session should succeed");
+    update_as::<LobbyCommandResponse>(
+        fixture,
+        player_one,
+        "mark_ready",
+        (session_id.clone(), format!("nonce:{nonce_stem}:ready:one")),
+    )
+    .expect("player one ready should decode")
+    .expect("player one ready should succeed");
+    update_as::<LobbyCommandResponse>(
+        fixture,
+        player_two,
+        "mark_ready",
+        (session_id.clone(), format!("nonce:{nonce_stem}:ready:two")),
+    )
+    .expect("player two ready should decode")
+    .expect("player two ready should succeed");
+
+    for step in 0..16 {
+        let started = update_as::<LobbyCommandResponse>(
+            fixture,
+            player_one,
+            "start_session",
+            (
+                session_id.clone(),
+                format!("nonce:{nonce_stem}:start:{step}"),
+            ),
+        )
+        .expect("start_session should decode")
+        .expect("start_session should succeed");
+        assert_eq!(started.status, CommandStatus::Applied);
+        if matches!(
+            started.result,
+            LobbyCommandResult::Session(ref session) if session.state == "active"
+        ) {
+            return session_id;
+        }
+    }
+
+    panic!("phased start_session should finish setup");
+}
+
+fn owned_champion_id(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+) -> String {
+    let champions = query_as::<Vec<ChampionView>>(
+        fixture,
+        player,
+        "get_my_champions",
+        (session_id.to_string(),),
+    )
+    .expect("get_my_champions should decode")
+    .expect("owned champions should load");
+    assert_eq!(champions.len(), 1);
+    champions[0].champion_id.clone()
+}
+
+fn submit_move_intent(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    champion_id: &str,
+    path: Vec<MoveCoord>,
+    client_nonce: &str,
+    now_ms: u64,
+) -> CommandResponse {
+    let response = update_as::<CommandResponse>(
+        fixture,
+        player,
+        "submit_move_intent",
+        (
+            session_id.to_string(),
+            champion_id.to_string(),
+            path,
+            client_nonce.to_string(),
+            now_ms,
+        ),
+    )
+    .expect("submit_move_intent should decode")
+    .expect("submit_move_intent should succeed");
+    assert_eq!(response.status, CommandStatus::Applied);
+    response
+}
+
+fn submit_move_and_sync_until_event(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    champion_id: &str,
+    path: Vec<MoveCoord>,
+    move_nonce: &str,
+    sync_nonce_prefix: &str,
+    now_ms: u64,
+    expected_event_type: &str,
+) -> (CommandResponse, bool) {
+    let max_sync_calls = path.len().saturating_add(2);
+    submit_move_intent(
+        fixture,
+        player,
+        session_id,
+        champion_id,
+        path,
+        move_nonce,
+        now_ms,
+    );
+    sync_until_event(
+        fixture,
+        player,
+        session_id,
+        sync_nonce_prefix,
+        now_ms,
+        expected_event_type,
+        max_sync_calls,
+    )
+}
+
+fn sync_until_event(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    sync_nonce_prefix: &str,
+    now_ms: u64,
+    expected_event_type: &str,
+    max_sync_calls: usize,
+) -> (CommandResponse, bool) {
+    let mut saw_partial_sync = false;
+    for attempt in 0..max_sync_calls {
+        let synced = update_as::<CommandResponse>(
+            fixture,
+            player,
+            "sync_session_turn",
+            (
+                session_id.to_string(),
+                now_ms.saturating_add((attempt as u64).saturating_mul(1_000)),
+                format!("{sync_nonce_prefix}{attempt}"),
+            ),
+        )
+        .expect("sync_session_turn should decode")
+        .expect("sync_session_turn should succeed");
+        assert_eq!(synced.status, CommandStatus::Applied);
+        saw_partial_sync |= synced
+            .events
+            .iter()
+            .any(|event| event.event_type == "movement_sync_incomplete");
+        if synced
+            .events
+            .iter()
+            .any(|event| event.event_type == expected_event_type)
+        {
+            return (synced, saw_partial_sync);
+        }
+    }
+
+    panic!("sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls");
 }
 
 fn assert_query_unimplemented<T>(

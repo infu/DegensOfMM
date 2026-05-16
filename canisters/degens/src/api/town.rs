@@ -43,22 +43,36 @@ fn preview_recruit_units(
 
 #[update]
 fn submit_build_town_structure(
-    _session_id: String,
-    _town_id: String,
-    _building_def_id: String,
-    _client_nonce: String,
+    session_id: String,
+    town_id: String,
+    building_def_id: String,
+    client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::town::unavailable("submit_build_town_structure")
+    crate::services::town::submit_build_town_structure(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        town_id,
+        building_def_id,
+        client_nonce,
+    )
 }
 
 #[update]
 fn submit_recruit_units(
-    _session_id: String,
-    _town_id: String,
-    _unit_id: String,
-    _quantity: u32,
-    _target: RecruitTarget,
-    _client_nonce: String,
+    session_id: String,
+    town_id: String,
+    unit_id: String,
+    quantity: u32,
+    target: RecruitTarget,
+    client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::town::unavailable("submit_recruit_units")
+    crate::services::town::submit_recruit_units(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        town_id,
+        unit_id,
+        quantity,
+        target,
+        client_nonce,
+    )
 }

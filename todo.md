@@ -262,11 +262,11 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 17. Cleanup, Compaction, And Storage Limits
 
-- [ ] Implement finished-session cleanup, event summaries, ledger summaries, battle cleanup, occupancy cleanup, and retained summaries.
-- [ ] Enforce raw log retention and active session caps.
-- [ ] Unit test cleanup ordering, weak relation cleanup, summary correctness, no deletion of active recovery data, and bounded cleanup budgets.
-- [ ] Audit: confirm cleanup cannot break replay/recovery for active sessions and does not leave orphaned occupancy or visibility rows.
-- [ ] Commit after this checkpoint.
+- [x] Implement finished-session cleanup, event summaries, ledger summaries, battle cleanup, occupancy cleanup, and retained summaries.
+- [x] Enforce raw log retention and active session caps.
+- [x] Unit test cleanup ordering, weak relation cleanup, summary correctness, no deletion of active recovery data, and bounded cleanup budgets.
+- [x] Audit: confirm cleanup cannot break replay/recovery for active sessions and does not leave orphaned occupancy or visibility rows.
+- [x] Commit after this checkpoint.
 
 ## 17A. Performance Budgets And Query Contracts
 

@@ -29,6 +29,7 @@ pub fn build_first_playable_aftermath_state() -> Result<AftermathState, Aftermat
         neutral: build_first_playable_neutral_state(),
         player_match_summaries: Vec::new(),
         match_history: Vec::new(),
+        event_turn_summaries: Vec::new(),
         aftermath_reports: Vec::new(),
         aftermath_events: Vec::new(),
         applied_commands: Vec::new(),

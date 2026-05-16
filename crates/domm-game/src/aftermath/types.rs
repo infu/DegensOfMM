@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::battle::{BattleError, BattleState};
 use crate::champion::{ChampionError, ChampionState};
+use crate::command::GameEventTurnSummaryRecord;
 use crate::economy::EconomyError;
 use crate::lifecycle::MatchHistoryEntry;
 use crate::map::{FirstPlayableMapState, MapError};
@@ -93,6 +94,7 @@ pub struct AftermathState {
     pub neutral: NeutralState,
     pub player_match_summaries: Vec<PlayerMatchSummaryRecord>,
     pub match_history: Vec<(String, MatchHistoryEntry)>,
+    pub event_turn_summaries: Vec<GameEventTurnSummaryRecord>,
     pub aftermath_reports: Vec<(String, BattleAftermathReport)>,
     pub aftermath_events: Vec<AftermathEventRecord>,
     pub applied_commands: Vec<String>,

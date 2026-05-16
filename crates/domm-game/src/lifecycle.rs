@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::cleanup::ACTIVE_SESSION_LIMIT;
 use crate::command::{
     CommandActor, CommandCoreError, EffectStatus, EventAudience, EventPage, GameCommandPayload,
     GameEventDraft, LobbyCommandJournal, LobbyCommandPayload, SessionCommandJournal,
@@ -545,6 +546,15 @@ impl LifecycleBackend {
             )?;
             return Err(LifecycleError::ActiveSessionLimit);
         }
+        if self.active_session_count() >= ACTIVE_SESSION_LIMIT as usize {
+            self.lobby_journal.mark_command_failed(
+                &command_id,
+                "canister_active_session_limit_reached",
+                "canister active session limit reached",
+                false,
+            )?;
+            return Err(LifecycleError::ActiveSessionLimit);
+        }
 
         let session_id = if self.sessions.is_empty() {
             self.fixture.ids.session_id.clone()
@@ -1023,6 +1033,13 @@ impl LifecycleBackend {
         })
     }
 
+    fn active_session_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| matches!(session.state.as_str(), "lobby" | "starting" | "active"))
+            .count()
+    }
+
     fn player_id_for_principal(&self, principal: Principal) -> String {
         if principal == self.fixture.principals.player_one {
             self.fixture.ids.player_one_id.clone()
@@ -1383,6 +1400,40 @@ mod tests {
     }
 
     #[test]
+    fn canister_active_session_limit_is_enforced() {
+        let fixture = first_playable_fixture();
+        let mut backend = LifecycleBackend::new(fixture.clone());
+
+        for index in 0..crate::cleanup::ACTIVE_SESSION_LIMIT {
+            let caller = synthetic_principal(index as u16);
+            backend
+                .register_player(
+                    caller,
+                    &format!("Player {index}"),
+                    &format!("nonce:r:{index}"),
+                )
+                .expect("registration should fit under active session test");
+            backend
+                .create_session(caller, &format!("nonce:c:{index}"), &fixture.scenario_seed)
+                .expect("session should fit under active session cap");
+        }
+
+        let extra = synthetic_principal(crate::cleanup::ACTIVE_SESSION_LIMIT as u16 + 1);
+        backend
+            .register_player(extra, "Extra", "nonce:r:extra")
+            .expect("extra player registration should still be allowed");
+        let error = backend
+            .create_session(extra, "nonce:c:extra", &fixture.scenario_seed)
+            .expect_err("101st active session should be rejected");
+
+        assert!(matches!(error, LifecycleError::ActiveSessionLimit));
+        assert_eq!(
+            backend.active_session_count(),
+            crate::cleanup::ACTIVE_SESSION_LIMIT as usize
+        );
+    }
+
+    #[test]
     fn setup_recovery_finishes_interrupted_setup_without_duplicate_effects() {
         let fixture = first_playable_fixture();
         let mut backend = LifecycleBackend::new(fixture.clone());
@@ -1498,5 +1549,12 @@ mod tests {
         assert_eq!(backend.get_session(&session.session_id).unwrap(), session);
         assert_eq!(participant.participant_id, fixture.ids.participant_one_id);
         assert!(history.is_empty());
+    }
+
+    fn synthetic_principal(index: u16) -> Principal {
+        let mut seed = [0x5A_u8; 32];
+        seed[0] = (index & 0x00FF) as u8;
+        seed[1] = (index >> 8) as u8;
+        Principal::self_authenticating(&seed)
     }
 }

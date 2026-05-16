@@ -530,6 +530,28 @@ Suggested follow-up:
 
 Checkpoint 17 should enforce hard request limits and payload-size caps on this API layer, then checkpoint 18 can consume the DTOs from the web client. When canister entrypoints are wired, this API fixture should be replaced with generated IcyDB repository reads/writes while preserving the same response contracts.
 
+## Checkpoint 17: Cleanup, Compaction, And Storage Limits
+
+Added a dedicated `domm_game::cleanup` module for finished-session compaction rather than growing aftermath/playable files. The cleanup saga writes retained `GameEventTurnSummaryRecord` and `ResourceLedgerTurnSummaryRecord` rows before deleting raw event and ledger rows, preserves `PlayerMatchSummary` and match-history rows, removes map occupancy through the generic occupant key path, removes visibility/known-object rows, and compacts resolved battle operational rows in dependency order.
+
+The cleanup path is explicitly bounded by `CleanupBudget` with v1 defaults of 100 rows and one finished session per update. Repeated bounded calls resume idempotently: summaries are written once, partial deletes continue from the next remaining rows, and each report exposes rows compacted plus operation ordering. Cleanup refuses active sessions and sessions with pending/applying battle commands or unapplied resource ledger rows so recovery data is not destroyed.
+
+Retention and cap behavior now has shared constants for the v1 limits: 7-day raw finished-log retention, 100 retained raw finished sessions, 100 active sessions, 100 cleanup rows per update, and one finished session cleaned per update. `LifecycleBackend::create_session` now refuses the 101st live lobby/starting/active session with the existing active-session limit error path.
+
+Audit notes:
+
+- Cleanup does not physically delete the session record or retained summaries; the test fixture verifies player summaries, match history, event summaries, and ledger summaries survive compaction.
+- Raw finished-session logs are compacted when older than the retention window or when the retained raw finished-session rank exceeds 100.
+- Battle stacks/occupancy/obstacles/battle rows are deleted after summaries and map occupancy cleanup. Battle commands/events are treated as raw logs and are deleted only when raw-log retention requires compaction.
+- Active sessions and active recovery rows fail closed with no writes, preserving replay/recovery safety.
+- The final cleanup state leaves no map occupancy, visibility chunks, known-object rows, or resolved battle operational rows for the compacted finished session.
+
+Focused tests cover summary correctness, cleanup order, bounded retry behavior, weak/generic occupancy cleanup, active recovery blocking, raw-log retention decisions, the active-session cap helper, lifecycle enforcement of the 100 active-session cap, and zero finished-session budget fail-closed behavior.
+
+Suggested follow-up:
+
+Checkpoint 17A should enforce the remaining hot-path payload and query limits against this cleanup/API surface, including command/event/ledger active-session retention caps and measured response sizes.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

@@ -432,6 +432,7 @@ fn storage_rows_for_aftermath(state: &AftermathState) -> u32 {
     let summary_rows = 1
         + state.player_match_summaries.len()
         + state.match_history.len()
+        + state.event_turn_summaries.len()
         + state.aftermath_reports.len()
         + state.aftermath_events.len();
     (battle_rows

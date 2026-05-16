@@ -278,11 +278,11 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 17B. Schema Evolution And Migration Safety
 
-- [ ] Add schema evolution tests for append-only fields, `db_default`, relation strength, index declarations, default-vs-db-default behavior, and unsupported drift fail-closed behavior.
-- [ ] Add deletion-order tests covering strong child rows, weak history rows, map occupancy cleanup by generic occupant key, battle cleanup, artifacts, known objects, visibility, commands, effects, events, and summaries.
-- [ ] Document the migration policy and any IcyDB ergonomics issues in `DoMM/notes.md`.
-- [ ] Audit: compare schema evolution, retention, and deletion behavior against `spec.md` section 19.
-- [ ] Commit after this checkpoint.
+- [x] Add schema evolution tests for append-only fields, `db_default`, relation strength, index declarations, default-vs-db-default behavior, and unsupported drift fail-closed behavior.
+- [x] Add deletion-order tests covering strong child rows, weak history rows, map occupancy cleanup by generic occupant key, battle cleanup, artifacts, known objects, visibility, commands, effects, events, and summaries.
+- [x] Document the migration policy and any IcyDB ergonomics issues in `DoMM/notes.md`.
+- [x] Audit: compare schema evolution, retention, and deletion behavior against `spec.md` section 19.
+- [x] Commit after this checkpoint.
 
 ## 18. Playable Web Client
 

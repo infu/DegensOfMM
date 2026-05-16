@@ -15,7 +15,7 @@ use domm_degens_schema::schema::{
 use icydb::{
     model::{
         EntityModel,
-        field::{FieldKind, RelationStrength},
+        field::{FieldDatabaseDefault, FieldInsertGeneration, FieldKind, RelationStrength},
     },
     traits::EntitySchema,
 };
@@ -123,6 +123,340 @@ fn relation_strengths_match_cleanup_assumptions() {
     );
 }
 
+#[test]
+fn weak_history_relations_remain_safe_for_retained_rows() {
+    for (model, field_name) in [
+        (GameSession::MODEL, "last_command_id"),
+        (GameParticipant::MODEL, "last_command_id"),
+        (GameParticipant::MODEL, "last_resource_command_id"),
+        (PlayerMatchSummary::MODEL, "session_id"),
+        (PlayerMatchSummary::MODEL, "player_id"),
+        (ResourceLedgerEntry::MODEL, "command_id"),
+        (ResourceLedgerTurnSummary::MODEL, "participant_id"),
+        (Battle::MODEL, "attacker_champion_id"),
+        (Battle::MODEL, "defender_champion_id"),
+        (Battle::MODEL, "defender_town_id"),
+        (Battle::MODEL, "defender_neutral_army_id"),
+        (Battle::MODEL, "winner_participant_id"),
+        (BattleStack::MODEL, "owner_participant_id"),
+        (GameCommand::MODEL, "actor_player_id"),
+        (GameCommand::MODEL, "actor_participant_id"),
+        (GameCommand::MODEL, "champion_id"),
+        (GameEvent::MODEL, "command_id"),
+        (GameEvent::MODEL, "actor_participant_id"),
+        (CommandEffect::MODEL, "command_id"),
+        (PendingEffect::MODEL, "source_command_id"),
+        (ArtifactInstance::MODEL, "owner_champion_id"),
+    ] {
+        assert_relation_strength(model, field_name, RelationStrength::Weak);
+    }
+}
+
+#[test]
+fn hot_entity_fields_are_append_only_prefixes() {
+    assert_field_prefix(
+        GameSession::MODEL,
+        &[
+            "id",
+            "ruleset_id",
+            "created_by_player_id",
+            "name",
+            "state",
+            "seed",
+            "map_width",
+            "map_height",
+            "chunk_size",
+            "simultaneous_turns",
+            "turn_duration_ms",
+            "max_turns",
+            "turn_catchup_cap",
+            "current_turn",
+            "next_event_seq",
+            "turn_started_at",
+            "turn_deadline_at",
+            "winner_participant_id",
+            "finish_reason",
+            "last_command_id",
+        ],
+    );
+    assert_field_prefix(
+        GameCommand::MODEL,
+        &[
+            "id",
+            "session_id",
+            "actor_kind",
+            "actor_id_text",
+            "actor_player_id",
+            "actor_participant_id",
+            "champion_id",
+            "turn_number",
+            "client_nonce",
+            "command_type",
+            "status",
+            "phase",
+            "payload_hash",
+            "payload_json",
+            "result_json",
+            "error_code",
+            "error_message",
+            "error_details_json",
+            "retryable",
+            "applied_at",
+            "failed_at",
+        ],
+    );
+    assert_field_prefix(
+        MovementIntent::MODEL,
+        &[
+            "id",
+            "session_id",
+            "turn_number",
+            "actor_participant_id",
+            "champion_id",
+            "command_id",
+            "status",
+            "path_json",
+            "path_hash",
+            "submitted_at",
+            "resolved_at",
+        ],
+    );
+    assert_field_prefix(
+        GameEvent::MODEL,
+        &[
+            "id",
+            "session_id",
+            "command_id",
+            "actor_participant_id",
+            "turn_number",
+            "event_seq",
+            "event_key",
+            "audience_key",
+            "event_type",
+            "subject_kind",
+            "subject_id_text",
+            "payload_json",
+        ],
+    );
+}
+
+#[test]
+fn database_defaults_and_generation_contracts_are_explicit() {
+    assert_generated_insert(PlayerAccount::MODEL, "id", FieldInsertGeneration::Ulid);
+    assert_generated_insert(GameSession::MODEL, "id", FieldInsertGeneration::Ulid);
+    assert_generated_insert(
+        GameSession::MODEL,
+        "turn_started_at",
+        FieldInsertGeneration::Timestamp,
+    );
+    assert_no_database_default(PlayerAccount::MODEL, "id");
+    assert_no_database_default(GameSession::MODEL, "turn_started_at");
+    assert_database_default(GameSession::MODEL, "next_event_seq");
+    assert_database_default(GameSession::MODEL, "state");
+    assert_database_default(GameParticipant::MODEL, "status");
+    assert_database_default(GameEvent::MODEL, "audience_key");
+}
+
+#[test]
+fn composite_indexes_keep_stable_declarations_and_ordinals() {
+    assert_index_ordinal(
+        GameCommand::MODEL,
+        &["session_id", "actor_kind", "actor_id_text", "client_nonce"],
+        0,
+    );
+    assert_index_ordinal(
+        GameCommand::MODEL,
+        &["session_id", "status", "created_at"],
+        1,
+    );
+    assert_index_ordinal(GameEvent::MODEL, &["session_id", "event_seq"], 0);
+    assert_index_ordinal(
+        GameEvent::MODEL,
+        &["session_id", "audience_key", "event_seq"],
+        6,
+    );
+    assert_index_ordinal(
+        MovementIntent::MODEL,
+        &["session_id", "champion_id", "turn_number"],
+        1,
+    );
+    assert_index_ordinal(
+        MapOccupancy::MODEL,
+        &[
+            "session_id",
+            "occupant_kind",
+            "occupant_id_text",
+            "occupant_cell_index",
+        ],
+        3,
+    );
+}
+
+#[test]
+fn deletion_policy_lists_strong_children_before_targets() {
+    let policy = deletion_policy_order();
+
+    for edge in [
+        DeleteEdge::new(AiActorState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(ResourceLedgerEntry::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            ResourceLedgerEntry::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(TownBuilding::MODEL, "town_id", Town::MODEL),
+        DeleteEdge::new(TownBuilding::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(TownRecruitPool::MODEL, "town_id", Town::MODEL),
+        DeleteEdge::new(TownRecruitPool::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(TownGarrisonStack::MODEL, "town_id", Town::MODEL),
+        DeleteEdge::new(TownGarrisonStack::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(Town::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(Town::MODEL, "owner_participant_id", GameParticipant::MODEL),
+        DeleteEdge::new(Champion::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(Champion::MODEL, "participant_id", GameParticipant::MODEL),
+        DeleteEdge::new(ChampionArmyStack::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(ChampionArmyStack::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(ChampionSpell::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(ChampionSpell::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(ArtifactInstance::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            ArtifactEquipment::MODEL,
+            "artifact_id",
+            ArtifactInstance::MODEL,
+        ),
+        DeleteEdge::new(ArtifactEquipment::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(ArtifactEquipment::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(NeutralArmy::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            NeutralArmyStack::MODEL,
+            "neutral_army_id",
+            NeutralArmy::MODEL,
+        ),
+        DeleteEdge::new(NeutralArmyStack::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(Battle::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(BattleObstacle::MODEL, "battle_id", Battle::MODEL),
+        DeleteEdge::new(BattleStack::MODEL, "battle_id", Battle::MODEL),
+        DeleteEdge::new(BattleOccupancy::MODEL, "battle_id", Battle::MODEL),
+        DeleteEdge::new(
+            BattleOccupancy::MODEL,
+            "battle_stack_id",
+            BattleStack::MODEL,
+        ),
+        DeleteEdge::new(MovementIntent::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            MovementIntent::MODEL,
+            "actor_participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(MovementIntent::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(PendingEffect::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(PendingEffect::MODEL, "target_champion_id", Champion::MODEL),
+        DeleteEdge::new(
+            PendingEffect::MODEL,
+            "target_participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(GameParticipant::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(MapChunk::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(VisibilityChunk::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            VisibilityChunk::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(MapOccupancy::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(WorldObject::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            WorldObject::MODEL,
+            "owner_participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(
+            ParticipantObjectVisit::MODEL,
+            "session_id",
+            GameSession::MODEL,
+        ),
+        DeleteEdge::new(
+            ParticipantObjectVisit::MODEL,
+            "object_id",
+            WorldObject::MODEL,
+        ),
+        DeleteEdge::new(
+            ParticipantObjectVisit::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(ChampionObjectVisit::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(ChampionObjectVisit::MODEL, "object_id", WorldObject::MODEL),
+        DeleteEdge::new(ChampionObjectVisit::MODEL, "champion_id", Champion::MODEL),
+        DeleteEdge::new(
+            ParticipantKnownObject::MODEL,
+            "session_id",
+            GameSession::MODEL,
+        ),
+        DeleteEdge::new(
+            ParticipantKnownObject::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(GameCommand::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(CommandEffect::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(GameEvent::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            GameEventTurnSummary::MODEL,
+            "session_id",
+            GameSession::MODEL,
+        ),
+        DeleteEdge::new(
+            ResourceLedgerTurnSummary::MODEL,
+            "session_id",
+            GameSession::MODEL,
+        ),
+    ] {
+        assert_relation_strength(edge.child, edge.field_name, RelationStrength::Strong);
+        assert_delete_order(policy, edge.child.name(), edge.target.name());
+    }
+
+    assert_delete_order(
+        policy,
+        ParticipantKnownObject::MODEL.name(),
+        WorldObject::MODEL.name(),
+    );
+    assert_delete_order(
+        policy,
+        ParticipantObjectVisit::MODEL.name(),
+        WorldObject::MODEL.name(),
+    );
+    assert_delete_order(
+        policy,
+        ChampionObjectVisit::MODEL.name(),
+        WorldObject::MODEL.name(),
+    );
+}
+
+#[test]
+fn schema_drift_policy_fails_closed_for_unsupported_changes() {
+    for drift in [
+        SchemaDrift::StableMemoryIdChanged,
+        SchemaDrift::FieldRenamed,
+        SchemaDrift::PrimitiveTypeChanged,
+        SchemaDrift::RelationStrengthChanged,
+        SchemaDrift::IndexRemoved,
+        SchemaDrift::RequiredFieldAddedWithoutDatabaseDefault,
+        SchemaDrift::ManyFieldDatabaseDefaultAdded,
+    ] {
+        assert_eq!(drift.reconciliation(), DriftReconciliation::Reject);
+    }
+
+    for drift in [
+        SchemaDrift::NullableFieldAppended,
+        SchemaDrift::RequiredLiteralDefaultFieldAppended,
+        SchemaDrift::CompositeIndexAppended,
+    ] {
+        assert_eq!(drift.reconciliation(), DriftReconciliation::Accept);
+    }
+}
+
 fn entity_models() -> Vec<&'static EntityModel> {
     vec![
         PlayerAccount::MODEL,
@@ -204,5 +538,183 @@ fn assert_relation_strength(model: &EntityModel, field_name: &str, expected: Rel
             "{}.{field_name} should be a relation, got {other:?}",
             model.name()
         ),
+    }
+}
+
+fn assert_field_prefix(model: &EntityModel, expected_prefix: &[&str]) {
+    let actual = model
+        .fields()
+        .iter()
+        .map(|field| field.name())
+        .collect::<Vec<_>>();
+    assert!(
+        actual.starts_with(expected_prefix),
+        "{} field order must remain append-only; expected prefix {expected_prefix:?}, got {actual:?}",
+        model.name()
+    );
+}
+
+fn assert_database_default(model: &EntityModel, field_name: &str) {
+    let field = field(model, field_name);
+    assert!(
+        matches!(
+            field.database_default(),
+            FieldDatabaseDefault::EncodedSlotPayload(bytes) if !bytes.is_empty()
+        ),
+        "{}.{field_name} should expose a persisted database default",
+        model.name()
+    );
+}
+
+fn assert_no_database_default(model: &EntityModel, field_name: &str) {
+    assert_eq!(
+        field(model, field_name).database_default(),
+        FieldDatabaseDefault::None,
+        "{}.{field_name} should keep construction defaults out of persisted defaults",
+        model.name()
+    );
+}
+
+fn assert_generated_insert(model: &EntityModel, field_name: &str, expected: FieldInsertGeneration) {
+    assert_eq!(
+        field(model, field_name).insert_generation(),
+        Some(expected),
+        "{}.{field_name} should expose the expected insert generation contract",
+        model.name()
+    );
+}
+
+fn assert_index_ordinal(model: &EntityModel, fields: &[&str], expected_ordinal: u16) {
+    let Some(index) = model
+        .indexes()
+        .iter()
+        .find(|index| index.fields() == fields)
+    else {
+        panic!("{} missing index over {fields:?}", model.name());
+    };
+    assert_eq!(
+        index.ordinal(),
+        expected_ordinal,
+        "{} index over {fields:?} should keep its stable ordinal",
+        model.name()
+    );
+}
+
+fn field<'a>(model: &'a EntityModel, field_name: &str) -> &'a icydb::model::field::FieldModel {
+    model
+        .fields()
+        .iter()
+        .find(|field| field.name() == field_name)
+        .unwrap_or_else(|| panic!("{} missing field {field_name}", model.name()))
+}
+
+#[derive(Clone, Copy)]
+struct DeleteEdge {
+    child: &'static EntityModel,
+    field_name: &'static str,
+    target: &'static EntityModel,
+}
+
+impl DeleteEdge {
+    const fn new(
+        child: &'static EntityModel,
+        field_name: &'static str,
+        target: &'static EntityModel,
+    ) -> Self {
+        Self {
+            child,
+            field_name,
+            target,
+        }
+    }
+}
+
+fn deletion_policy_order() -> &'static [&'static str] {
+    &[
+        "ArtifactEquipment",
+        "BattleOccupancy",
+        "BattleObstacle",
+        "BattleStack",
+        "TownBuilding",
+        "TownRecruitPool",
+        "TownGarrisonStack",
+        "ChampionArmyStack",
+        "ChampionSpell",
+        "NeutralArmyStack",
+        "ParticipantKnownObject",
+        "ParticipantObjectVisit",
+        "ChampionObjectVisit",
+        "PendingEffect",
+        "MovementIntent",
+        "CommandEffect",
+        "GameEvent",
+        "GameEventTurnSummary",
+        "ResourceLedgerEntry",
+        "ResourceLedgerTurnSummary",
+        "AiActorState",
+        "MapOccupancy",
+        "VisibilityChunk",
+        "MapChunk",
+        "WorldObject",
+        "ArtifactInstance",
+        "Battle",
+        "Town",
+        "Champion",
+        "NeutralArmy",
+        "GameCommand",
+        "GameParticipant",
+        "GameSession",
+    ]
+}
+
+fn assert_delete_order(policy: &[&str], child: &str, target: &str) {
+    let child_index = policy
+        .iter()
+        .position(|entity| *entity == child)
+        .unwrap_or_else(|| panic!("deletion policy missing child entity {child}"));
+    let target_index = policy
+        .iter()
+        .position(|entity| *entity == target)
+        .unwrap_or_else(|| panic!("deletion policy missing target entity {target}"));
+    assert!(
+        child_index < target_index,
+        "deletion policy must delete {child} before {target}: {policy:?}"
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SchemaDrift {
+    StableMemoryIdChanged,
+    FieldRenamed,
+    PrimitiveTypeChanged,
+    RelationStrengthChanged,
+    IndexRemoved,
+    RequiredFieldAddedWithoutDatabaseDefault,
+    ManyFieldDatabaseDefaultAdded,
+    NullableFieldAppended,
+    RequiredLiteralDefaultFieldAppended,
+    CompositeIndexAppended,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DriftReconciliation {
+    Accept,
+    Reject,
+}
+
+impl SchemaDrift {
+    const fn reconciliation(self) -> DriftReconciliation {
+        match self {
+            Self::NullableFieldAppended
+            | Self::RequiredLiteralDefaultFieldAppended
+            | Self::CompositeIndexAppended => DriftReconciliation::Accept,
+            Self::StableMemoryIdChanged
+            | Self::FieldRenamed
+            | Self::PrimitiveTypeChanged
+            | Self::RelationStrengthChanged
+            | Self::IndexRemoved
+            | Self::RequiredFieldAddedWithoutDatabaseDefault
+            | Self::ManyFieldDatabaseDefaultAdded => DriftReconciliation::Reject,
+        }
     }
 }

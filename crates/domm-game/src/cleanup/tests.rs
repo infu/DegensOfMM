@@ -4,13 +4,14 @@ use crate::aftermath::{
     check_and_finalize_victory, resolve_neutral_battle_for_fixture,
     seed_resolved_champion_defeat_battle, seed_resolved_town_capture_battle,
 };
-use crate::battle::BattleCommandRecord;
+use crate::battle::{BattleCommandRecord, BattleEventRecord};
 use crate::cleanup::{
     ACTIVE_SESSION_LIMIT, CleanupBudget, CleanupCanisterSnapshot, CleanupError, CleanupPolicy,
     CleanupTarget, RAW_FINISHED_LOG_RETENTION_MS, compact_finished_session,
     should_compact_raw_finished_logs,
 };
 use crate::fixtures::first_playable_fixture;
+use crate::map::MapOccupancyRecord;
 
 const FINISHED_AT_MS: u64 = 1_800_000_530_000;
 
@@ -97,6 +98,141 @@ fn cleanup_is_bounded_and_preserves_dependency_order_across_retries() {
     assert!(state.map.occupancy_rows.is_empty());
     assert!(state.map.visibility_chunks.is_empty());
     assert!(state.battle.battles.is_empty());
+}
+
+#[test]
+fn cleanup_operations_follow_schema_deletion_policy() {
+    let fixture = first_playable_fixture();
+    let mut state = finished_state();
+    let battle_id = state.battle.battles[0].battle_id.clone();
+    seed_cleanup_occupancy_marker(&mut state, "champion", "champion:cleanup-marker");
+    seed_cleanup_occupancy_marker(&mut state, "town", "town:cleanup-marker");
+    seed_cleanup_occupancy_marker(&mut state, "artifact", "artifact:cleanup-marker");
+    seed_cleanup_occupancy_marker(&mut state, "neutral_army", "neutral:cleanup-marker");
+    seed_cleanup_occupancy_marker(&mut state, "world_object", "object:cleanup-marker");
+    state.battle.events.push(BattleEventRecord {
+        event_seq: 99_001,
+        battle_id: battle_id.clone(),
+        event_key: "battle:cleanup:seeded-event".to_string(),
+        command_id: "command:cleanup:applied-battle".to_string(),
+        event_type: "cleanup_seeded_battle_event".to_string(),
+        subject_id_text: "battle:cleanup".to_string(),
+        payload: "{\"cleanup\":true}".to_string(),
+    });
+    state.battle.commands.push(BattleCommandRecord {
+        command_id: "command:cleanup:applied-battle".to_string(),
+        battle_id,
+        actor_participant_id: Some(fixture.ids.participant_one_id),
+        battle_stack_id: None,
+        client_nonce: "nonce:cleanup:applied-battle".to_string(),
+        payload_hash: "hash:cleanup:applied-battle".to_string(),
+        action: "attack".to_string(),
+        target_stack_id: None,
+        destination: None,
+        system: false,
+        status: "applied".to_string(),
+        created_at: FINISHED_AT_MS,
+        applied_at: Some(FINISHED_AT_MS + 1),
+        retryable_error: None,
+    });
+
+    let report = compact_finished_session(
+        &mut state,
+        expired_target(),
+        CleanupBudget {
+            max_rows: 500,
+            max_finished_sessions: 1,
+        },
+        expired_policy(),
+    )
+    .expect("cleanup should complete");
+
+    assert!(report.completed);
+    assert_before(
+        &report.operations,
+        "write_event_turn_summary",
+        "delete_battle_events",
+    );
+    assert_before(
+        &report.operations,
+        "write_event_turn_summary",
+        "delete_aftermath_events",
+    );
+    assert_before(
+        &report.operations,
+        "write_resource_ledger_turn_summary",
+        "delete_resource_ledger_entries",
+    );
+    for occupant_kind in [
+        "champion",
+        "town",
+        "artifact",
+        "neutral_army",
+        "world_object",
+    ] {
+        assert_before(
+            &report.operations,
+            &format!("delete_map_occupancy:{occupant_kind}"),
+            "delete_battle_occupancy",
+        );
+    }
+    assert_before(
+        &report.operations,
+        "delete_battle_occupancy",
+        "delete_battle_stacks",
+    );
+    assert_before(
+        &report.operations,
+        "delete_battle_obstacles",
+        "delete_battle_rows",
+    );
+    assert_before(
+        &report.operations,
+        "delete_battle_stacks",
+        "delete_battle_rows",
+    );
+    assert_before(
+        &report.operations,
+        "delete_known_object_rows",
+        "delete_visibility_chunks",
+    );
+    assert_before(
+        &report.operations,
+        "delete_battle_events",
+        "delete_battle_commands",
+    );
+    assert_before(
+        &report.operations,
+        "delete_aftermath_events",
+        "delete_battle_commands",
+    );
+    assert_before(
+        &report.operations,
+        "delete_resource_ledger_entries",
+        "delete_battle_commands",
+    );
+    assert_before(
+        &report.operations,
+        "delete_battle_commands",
+        "delete_applied_command_markers",
+    );
+
+    assert!(!state.player_match_summaries.is_empty());
+    assert!(!state.match_history.is_empty());
+    assert!(!state.event_turn_summaries.is_empty());
+    assert!(!state.economy.turn_summaries.is_empty());
+    assert!(state.map.occupancy_rows.is_empty());
+    assert!(state.map.known_objects.is_empty());
+    assert!(state.map.visibility_chunks.is_empty());
+    assert!(state.battle.occupancy.is_empty());
+    assert!(state.battle.obstacles.is_empty());
+    assert!(state.battle.stacks.is_empty());
+    assert!(state.battle.battles.is_empty());
+    assert!(state.battle.events.is_empty());
+    assert!(state.battle.commands.is_empty());
+    assert!(state.aftermath_events.is_empty());
+    assert!(state.economy.ledger_entries.is_empty());
+    assert!(state.applied_commands.is_empty());
 }
 
 #[test]
@@ -273,6 +409,27 @@ fn expired_target() -> CleanupTarget {
 
 fn expired_policy() -> CleanupPolicy {
     CleanupPolicy::at(FINISHED_AT_MS + RAW_FINISHED_LOG_RETENTION_MS + 1)
+}
+
+fn seed_cleanup_occupancy_marker(
+    state: &mut AftermathState,
+    occupant_kind: &str,
+    occupant_id_text: &str,
+) {
+    state.map.occupancy_rows.push(MapOccupancyRecord {
+        occupancy_id: format!("occ:cleanup:{occupant_kind}:{occupant_id_text}"),
+        session_id: state.session.session_id.clone(),
+        x: 47,
+        y: 47,
+        chunk_x: 2,
+        chunk_y: 2,
+        layer: occupant_kind.to_string(),
+        occupant_kind: occupant_kind.to_string(),
+        occupant_id_text: occupant_id_text.to_string(),
+        occupant_cell_index: 0,
+        blocking: true,
+        last_command_id: Some("command:cleanup:occupancy-marker".to_string()),
+    });
 }
 
 fn assert_before(operations: &[String], first: &str, second: &str) {

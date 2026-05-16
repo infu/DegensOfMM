@@ -582,9 +582,28 @@ Audit notes:
 
 Focused tests cover hard-limit constants, command payload/result/event caps, command retention, event per-turn caps, ledger retention, API viewport/event/list caps, API payload failure responses, first-playable measurement output, and limit validation before unauthorized object query work. The full workspace test suite passes after this checkpoint.
 
+## Checkpoint 17B: Schema Evolution And Migration Safety
+
+Added schema/macro regression coverage for the section 19 migration policy: stable memory IDs, append-only hot entity field prefixes, generated insert defaults versus persisted database defaults, composite index ordinals, weak retained-history relations, strong child deletion ordering, and fail-closed unsupported drift classifications.
+
+Cleanup regression coverage now exercises the operational deletion order against the same policy. The finished-session compactor writes event and ledger summaries first, deletes generic `MapOccupancy` rows by occupant kind/key before target cleanup, drains battle occupancy/obstacles/stacks before battle rows, removes known-object rows before visibility chunks, and deletes raw battle/aftermath events plus ledger rows before command markers. Player match summaries, match history, event summaries, ledger summaries, and the session row remain retained.
+
+Audit notes:
+
+- Section 19 remains append-only for the current schema surface. New required primitive fields need persisted defaults; literal defaults are encoded as database defaults by the macro, while generated/function defaults such as ULIDs and timestamps remain insert-time construction behavior only.
+- The schema tests keep history/replay references weak where finished cleanup may retain rows after targets are compacted: event command links, resource ledger command links, battle participant refs, `last_command_id` fields, match summaries, ledger summaries, command actor refs, and artifact ownership.
+- Strong child order is now pinned for towns, champions, artifacts, neutral armies, battles, map chunks, visibility, object visits/known objects, commands, effects, events, summaries, movement intents, resource ledger rows, pending effects, AI actor state, and session children.
+- Physical `GameSession` deletion is still deferred. The implemented cleanup path only compacts finished-session operational rows after summaries are written, which is consistent with the spec requirement that sessions are not physically removed until commands, effects, battles, occupancy, visibility, and child rows have been compacted or deleted.
+
+IcyDB ergonomics notes:
+
+- Macro metadata distinguishes persisted defaults from generated insert values, but the distinction is easy to miss when reading the entity declaration because literal `default = ...` can imply a database default while function defaults do not.
+- Generated model metadata can include macro-added bookkeeping fields after declared fields. Append-only tests use declared prefixes instead of exact field lists so future safe appends remain possible while renames/reorders still fail loudly.
+- `MapOccupancy` uses generic `occupant_kind + occupant_id_text` rather than typed relations, so deletion safety must be tested at the gameplay cleanup layer as well as the schema layer.
+
 ## IcyDB Ergonomics Notes
 
-None yet.
+Checkpoint 17B captured the current schema-evolution ergonomics: literal defaults can act as persisted defaults, generated/function defaults do not backfill existing rows, generated model metadata may include macro-added bookkeeping fields, and generic occupant keys require gameplay-layer cleanup tests.
 
 ## Performance And Storage Notes
 

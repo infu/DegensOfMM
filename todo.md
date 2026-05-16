@@ -24,6 +24,9 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - Build only what the first playable map needs unless `spec.md` marks the behavior as mandatory infrastructure.
 - Keep all game code, tests, client code, specs, todos, and implementation notes in the DoMM repo unless a separate IcyDB library change is explicitly required.
 - Keep pure rule modules separate from IcyDB persistence when practical, so deterministic gameplay can be tested cheaply.
+- `domm-game` may remain the deterministic rules/DTO engine, but it is not the final backend. The required production backend is `canisters/degens` with typed public canister endpoints backed by IcyDB rows in `schema/degens`.
+- Public gameplay must use typed IcyDB create/load/update paths through domain repository modules. Generic SQL/DDL may exist only for controller-gated diagnostics or test fixture loading, never as the normal game API.
+- Do not call any fixture, pure driver, or in-memory backend "complete e2e" unless it is explicitly labeled fixture e2e. The accepted end-to-end proof is Pocket-IC driving `domm-degens-canister` through public Candid endpoints and verifying IcyDB-backed persisted state.
 - Treat every audit as a work generator: record pass/missing/deferred findings, add missing tasks immediately, then implement them before advancing.
 - If a system exists only in Part 1, do not implement it blindly. First add or update a bounded Part 2 design covering schema, indexes, command path, recovery path, deterministic pseudo-random keys, caps, DTOs, tests, and cleanup.
 - Keep commit messages tied to checkpoint numbers, for example `DoMM checkpoint 6: map visibility`.
@@ -36,9 +39,17 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate B after checkpoint 6A: a minimal client/probe can render the first playable map from public DTOs.
 - [x] Gate C after checkpoint 11B: a headless strategic loop can move, pick up resources, earn income, build, recruit, interact with neutral armies, and trigger a battle.
 - [x] Gate D after checkpoint 14A: a backend-only match can proceed through battle, aftermath, town capture, and victory.
-- [x] Gate E after checkpoint 18: the web client can play the first playable match path end to end.
-- [ ] Gate F after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable scope.
-- [ ] Gate G after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
+- [x] Gate E after checkpoint 18: the web client can play the fixture-backed first playable match path end to end.
+- [ ] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
+- [ ] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
+- [ ] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
+- [ ] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
+- [ ] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
+- [ ] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
+- [ ] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
+- [ ] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
+- [ ] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
+- [ ] Gate O after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
 
 ## 0. Project Harness
 
@@ -294,23 +305,141 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Add UI-level tests for key flows where practical.
 - [x] Run backend regression tests after client integration changes.
 - [x] Audit: confirm no client flow requires an endpoint, DTO field, or event that the backend does not provide.
-- [x] Gate E: the first playable match path can be played end to end in the web client.
+- [x] Gate E: the fixture-backed first playable match path can be played end to end in the web client.
 - [x] Commit after this checkpoint.
 
-## 19. End-To-End First Playable
+## 19. Fixture End-To-End First Playable
 
 - [x] Create an automated 1v1 fixture that starts a match and plays through exploration, pickup, building, recruitment, movement conflict, battle, town capture, and victory.
 - [x] Add manual smoke instructions for running the game locally.
 - [x] Measure command costs, query sizes, event volume, and storage growth for the fixture.
 - [x] Unit/regression test the full fixture and all smaller modules touched by fixes.
-- [x] Audit: read `spec.md` from Part 2 start to end and mark every required first-playable behavior implemented, deferred, or missing.
-- [x] If anything is missing, add new todo entries above this checkpoint, implement them, retest, and commit before continuing.
+- [x] Audit: read `spec.md` from Part 2 start to end and mark every fixture-backed first-playable behavior implemented, deferred, or missing.
+- [x] Record that this is fixture e2e only, not canister/IcyDB e2e; add the mandatory canister, IcyDB, and Pocket-IC gates below before final first-playable audit.
 - [x] Commit after this checkpoint.
+
+## 19A. Canister Endpoint Inventory And Contract Gate
+
+- [ ] Create a canonical endpoint inventory for every public game method required by `spec.md`, `FixtureApiBackend`, and the web/client probe.
+- [ ] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
+- [ ] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
+- [ ] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
+- [ ] Decide and document whether `leave_session`, `cancel_session`, `surrender`, `retreat`, and `request_rematch` are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
+- [ ] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
+- [ ] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
+- [ ] Add a Pocket-IC endpoint-presence test that calls every required method at least once and proves missing methods fail the test as method-not-found/trap rather than being silently skipped.
+- [ ] Audit: compare the endpoint list against `spec.md` section 15 and the current `FixtureApiBackend`; every mismatch must become immediate todo work.
+- [ ] Gate F: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
+- [ ] Commit after this checkpoint.
+
+## 19B. Canister API, Service, And Repository Layout
+
+- [ ] Split `canisters/degens/src` into domain modules before adding large endpoint bodies: `api/`, `services/`, `repos/`, `dto/`, `auth/`, `errors/`, and `metrics/`.
+- [ ] Keep endpoint files grouped by domain: account/lobby/session, game view/map, movement, economy/town/recruitment, battle, events/command status, content, history, cleanup, diagnostics.
+- [ ] Keep repository files grouped by durable row ownership: players, sessions, commands/events/effects, content, map/visibility/occupancy, economy, towns, champions/artifacts, movement, neutrals, battles, aftermath/history, cleanup.
+- [ ] Implement public canister endpoint shells for the full 19A inventory with typed arguments and typed errors; no endpoint may call `FixtureApiBackend`.
+- [ ] Wire Candid export tests so CI catches endpoint renames, missing methods, or DTO drift.
+- [ ] Keep generated SQL/DDL disabled for public gameplay builds; diagnostics must be controller-gated and never used by game endpoints.
+- [ ] Run `cargo check -p domm-degens-canister` and the Candid endpoint inventory test.
+- [ ] Gate G: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
+- [ ] Commit after this checkpoint.
+
+## 19C. IcyDB Repository Foundation
+
+- [ ] Implement typed IcyDB repository helpers around `db().load`, `db().create`, `db().insert`, `db().update`, `insert_many_atomic`, and paged query flows.
+- [ ] Prohibit generic SQL from gameplay repositories. SQL may be used only in controller-gated diagnostics, fixture loading, or test-only tooling.
+- [ ] Add repository error mapping from IcyDB errors into stable gameplay/API errors without leaking storage internals to clients.
+- [ ] Implement indexed lookup helpers for principal/account, session/participant, command idempotency, event feed cursors, map chunk windows, occupancy, visibility, town/champion/battle ownership, and match history.
+- [ ] Add native repository tests for create/read/update/page/delete behavior against generated schema types where possible.
+- [ ] Add tests proving repository queries use bounded limits and indexed lookup fields for every hot path.
+- [ ] Audit: compare every repository helper against the schema indexes and Part 2 lookup paths.
+- [ ] Gate H: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
+- [ ] Commit after this checkpoint.
+
+## 19D. IcyDB-Backed Lobby, Session, Commands, And Setup
+
+- [ ] Implement `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, and `get_my_participant` against IcyDB rows.
+- [ ] Persist lobby commands, game commands, command effects, pending effects, setup events, participants, session rows, player rows, and match-history shell rows in IcyDB.
+- [ ] Implement setup recovery so interrupted `start_session` resumes from IcyDB command/effect rows and cannot mark a session active before required durable rows exist.
+- [ ] Enforce player caps, session caps, principal ownership, active-session limits, duplicate nonce replay, payload mismatch rejection, and typed authorization failures through canister endpoints.
+- [ ] Add Pocket-IC tests for account/lobby/session endpoints and duplicate/retry behavior through the real canister.
+- [ ] Audit: compare canister lobby/session behavior against Gate A and the pure lifecycle tests; fix drift immediately.
+- [ ] Commit after this checkpoint.
+
+## 19E. IcyDB-Backed Content, Map, Visibility, Town, Champion, And Opening Views
+
+- [ ] Seed first-playable ruleset/content definition rows into IcyDB during setup or a controller-gated fixture loader that the canister tests can call.
+- [ ] Persist map chunks, terrain/movement/flag blobs, visibility chunks, known objects, occupancy rows, towns, recruit pools, champions, champion stacks, artifacts, neutrals, and initial economy rows in IcyDB.
+- [ ] Implement `get_content_manifest`, `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, and `get_town_view` from IcyDB rows.
+- [ ] Preserve visibility redaction and hidden-object behavior exactly at the canister boundary.
+- [ ] Add Pocket-IC tests that render the opening viewport from canister calls only and verify the same public DTO facts as Gate B.
+- [ ] Audit: confirm queries are read-only and do not materialize movement, income, visibility writes, recovery, or events.
+- [ ] Commit after this checkpoint.
+
+## 19F. Pocket-IC Endpoint Completeness Gate
+
+- [ ] Build a Pocket-IC endpoint coverage harness that installs `domm-degens-canister` and calls every endpoint listed in 19A.
+- [ ] For each endpoint, assert one valid or deliberately invalid typed response; method-not-found, decode failure, unexpected trap, or untyped string error fails the test.
+- [ ] Verify Candid argument and response compatibility for all command responses, query DTOs, pages, previews, content manifests, battle views, event views, command status views, and match-history pages.
+- [ ] Verify anonymous/unauthorized calls fail with typed authorization errors without bypassing query limits.
+- [ ] Verify all list/query endpoints enforce cursor/limit contracts at the canister boundary.
+- [ ] Gate I: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
+- [ ] Commit after this checkpoint.
+
+## 19G. IcyDB-Backed Strategic Gameplay
+
+- [ ] Implement `submit_move_intent`, `sync_session_turn`, `preview_move_path`, object interactions, resource pickup, lazy income materialization, mine/object ownership changes, `submit_build_town_structure`, `preview_build_town_structure`, `submit_recruit_units`, and `preview_recruit_units` against IcyDB rows.
+- [ ] Persist movement intents, movement snapshots, movement system commands, object visits, object command effects, resource ledger entries, turn summaries, balances, income sources, town buildings, recruit pools, garrison stacks, and related events.
+- [ ] Preserve idempotent command replay, payload mismatch rejection, recovery from pending/applying commands, movement conflict determinism, blocker behavior, object stop behavior, and sync budget slicing.
+- [ ] Add canister tests for pickup, income, build, recruit, movement conflict, neutral contact, command retry, and recovery retry using Pocket-IC.
+- [ ] Audit: compare canister strategic behavior against Gate C and the pure movement/economy/town/world-object/neutral tests.
+- [ ] Commit after this checkpoint.
+
+## 19H. Pocket-IC Strategic First-Playable Gate
+
+- [ ] Create a Pocket-IC 1v1 strategic fixture that starts from canister player registration and reaches the first neutral battle trigger using only public canister endpoints.
+- [ ] Assert persisted IcyDB row state after each milestone: session active, opening viewport visible, pickup visited, resources updated, income summarized, building built, recruit pool decremented, garrison updated, movement snapshots written, neutral encounter pending.
+- [ ] Measure canister command count, event count, query count, response sizes, IcyDB row growth, stable-memory growth where available, and any slow update/query path.
+- [ ] Gate J: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
+- [ ] Commit after this checkpoint.
+
+## 19I. IcyDB-Backed Battle, Aftermath, Victory, And History
+
+- [ ] Implement `get_battle_state`, `submit_battle_action`, `sync_battle`, battle timeout recovery, battle event feeds, battle aftermath, neutral defeat, town capture, champion defeat, victory finalization, match summaries, and match history against IcyDB rows.
+- [ ] Persist battle rows, battle stacks, battle occupancy, obstacles, battle commands, battle events, aftermath command/effect rows, town/garrison/occupancy updates, champion/artifact updates, victory events, player summaries, and history rows.
+- [ ] Preserve battle action idempotency, timeout auto-defend determinism, battle sync budget slicing, no-elimination-while-battle-active, capture income cutover, artifact capture, and final winner scoring.
+- [ ] Add Pocket-IC tests for battle view, legal action submission, retry, timeout sync, neutral aftermath, town capture, champion defeat, victory, event feed, command status, and match history.
+- [ ] Audit: compare canister battle/aftermath behavior against Gate D and pure battle/aftermath tests.
+- [ ] Gate K: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
+- [ ] Commit after this checkpoint.
+
+## 19J. Pocket-IC Full First-Playable Canister E2E
+
+- [ ] Create the real first-playable e2e test: install `domm-degens-canister` in Pocket-IC and play the full 1v1 path from registration through victory using only public canister Candid endpoints.
+- [ ] Cover exploration, pickup, income, building, recruitment, movement conflict or blocker, neutral battle, battle action retry, battle sync, neutral aftermath, town capture, champion defeat, victory, event refresh, command status polling, and match-history read.
+- [ ] Verify no step calls `FixtureApiBackend`, pure in-memory backend helpers, test-only private state, or generic SQL gameplay paths.
+- [ ] Verify final IcyDB persisted rows: finished session, winner participant, defeated neutral, captured town owner, defeated enemy champion, summary rows, history rows, event feed, command rows, effects, movement snapshots, battle cleanup/retention state, and visibility/occupancy coherence.
+- [ ] Record real canister metrics and storage observations in `DoMM/notes.md`.
+- [ ] Gate L: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
+- [ ] Commit after this checkpoint.
+
+## 19K. Client Against Real Canister And Canister Performance Gate
+
+- [ ] Add a canister-backed client/probe adapter that implements the same web-client backend trait used by the fixture client.
+- [ ] Run the Gate E web client walkthrough against Pocket-IC canister endpoints, not `FixtureApiBackend`.
+- [ ] Verify client retry, sync-required, event refresh, battle panel, result panel, rematch affordance, and match-history behavior through the canister adapter.
+- [ ] Compare fixture DTOs and canister DTOs for representative states to catch drift between pure rules and persisted projections.
+- [ ] Measure real canister update/query response sizes, IcyDB row growth, stable-memory growth, command/event retention, and cleanup behavior for the first playable path.
+- [ ] Add manual smoke instructions for running canister-backed tests locally.
+- [ ] Gate M: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
+- [ ] Commit after this checkpoint.
 
 ## 20. First Playable Final Spec Audit
 
 - [ ] Perform a full implementation audit against `spec.md`.
-- [ ] Re-run all playability gates from Gate A through Gate E.
+- [ ] Re-run all playability gates from Gate A through Gate M.
+- [ ] Verify every 19A endpoint exists in canister Candid and has Pocket-IC coverage.
+- [ ] Verify every public gameplay endpoint uses typed IcyDB repositories and no generic SQL gameplay path.
 - [ ] Verify all command paths are idempotent and recoverable.
 - [ ] Verify all query paths are read-only and do not materialize gameplay state.
 - [ ] Verify deterministic pseudo-randomness is used everywhere gameplay needs randomness.
@@ -318,7 +447,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Verify the full regression suite passes from a clean checkout.
 - [ ] Verify `DoMM/notes.md` has useful implementation notes for IcyDB maintainers and no unresolved blocker that invalidates the playable game.
 - [ ] Fix every audit finding or explicitly update `spec.md` and this todo if the intended behavior changed.
-- [ ] Gate F: the implementation, tests, notes, and spec audit agree with the full required first playable scope.
+- [ ] Gate N: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
 - [ ] Commit the final audit fixes.
 
 ## 21. Full Spec Expansion Triage
@@ -375,5 +504,5 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Re-run the full regression suite, all playability gates, all schema/migration tests, and all client contract tests.
 - [ ] Verify `DoMM/notes.md` contains actionable IcyDB ergonomics, blocker, performance, and limitation notes discovered during the full implementation.
 - [ ] Fix every full-spec audit finding or update `spec.md` and this todo to make the intended scope explicit.
-- [ ] Gate G: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
+- [ ] Gate O: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
 - [ ] Commit the full-spec audit fixes.

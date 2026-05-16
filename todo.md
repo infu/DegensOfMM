@@ -358,13 +358,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19D. IcyDB-Backed Lobby, Session, Commands, And Setup
 
-- [ ] Implement `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, and `get_my_participant` against IcyDB rows.
-- [ ] Persist lobby commands, game commands, command effects, pending effects, setup events, participants, session rows, player rows, and match-history shell rows in IcyDB.
-- [ ] Implement setup recovery so interrupted `start_session` resumes from IcyDB command/effect rows and cannot mark a session active before required durable rows exist.
-- [ ] Enforce player caps, session caps, principal ownership, active-session limits, duplicate nonce replay, payload mismatch rejection, and typed authorization failures through canister endpoints.
-- [ ] Add Pocket-IC tests for account/lobby/session endpoints and duplicate/retry behavior through the real canister.
-- [ ] Audit: compare canister lobby/session behavior against Gate A and the pure lifecycle tests; fix drift immediately.
-- [ ] Commit after this checkpoint.
+- [x] Implement `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, and `get_my_participant` against IcyDB rows.
+- [x] Persist lobby commands, game commands, command effects, pending effects, setup events, participants, session rows, player rows, and match-history shell rows in IcyDB.
+- [x] Implement setup recovery so interrupted `start_session` resumes from IcyDB command/effect rows and cannot mark a session active before required durable rows exist.
+- [x] Enforce player caps, session caps, principal ownership, active-session limits, duplicate nonce replay, payload mismatch rejection, and typed authorization failures through canister endpoints.
+- [x] Add Pocket-IC tests for account/lobby/session endpoints and duplicate/retry behavior through the real canister.
+- [x] Audit: compare canister lobby/session behavior against Gate A and the pure lifecycle tests; fix drift immediately.
+- [x] Commit after this checkpoint.
 
 ## 19E. IcyDB-Backed Content, Map, Visibility, Town, Champion, And Opening Views
 

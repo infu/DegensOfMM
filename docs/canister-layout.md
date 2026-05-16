@@ -49,6 +49,12 @@ bounded pagination, sanitized repository error mapping, and common create,
 insert, update, load, and delete wrappers. Domain files keep their own lookup
 functions and query-plan metadata instead of growing one monolithic repository.
 
+Checkpoint 19D wires the account/lobby/session service domain to those
+repositories. The service persists lobby commands, setup game commands,
+effects, pending effects, setup events, player/session/participant rows, and
+match-history shells while keeping render/gameplay endpoint bodies deferred to
+later domain files.
+
 Gameplay endpoints must call typed repository helpers instead of generic SQL.
 Generated SQL/DDL remains outside public gameplay paths and must stay
 controller-gated if enabled for diagnostics or fixture loading.

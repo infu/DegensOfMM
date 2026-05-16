@@ -53,6 +53,10 @@ pub(crate) fn find_ruleset_by_slug_version(
     )
 }
 
+pub(crate) fn load_ruleset(id: Id<RulesetDefinition>) -> RepoResult<Option<RulesetDefinition>> {
+    foundation::load_by_id("content.load_ruleset", id)
+}
+
 pub(crate) fn create_faction_definition(
     ruleset_id: Id<RulesetDefinition>,
     slug: String,
@@ -88,6 +92,10 @@ pub(crate) fn find_faction_by_ruleset_slug(
             .limit(1)
             .try_entity(),
     )
+}
+
+pub(crate) fn load_faction(id: Id<FactionDefinition>) -> RepoResult<Option<FactionDefinition>> {
+    foundation::load_by_id("content.load_faction", id)
 }
 
 #[cfg(test)]

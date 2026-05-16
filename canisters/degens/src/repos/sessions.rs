@@ -32,6 +32,13 @@ pub(crate) const PARTICIPANT_SESSION_STATUS_LOOKUP: IndexedQueryPlan = IndexedQu
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const PARTICIPANT_PLAYER_STATUS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "sessions.participants_by_player_status",
+    entity: "GameParticipant",
+    indexed_fields: &["player_id", "status"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) fn create_game_session(
     ruleset_id: Id<RulesetDefinition>,
     created_by_player_id: Id<PlayerAccount>,
@@ -67,6 +74,10 @@ pub(crate) fn create_game_session(
 
 pub(crate) fn load_session(id: Id<GameSession>) -> RepoResult<Option<GameSession>> {
     foundation::load_by_id("sessions.load_session", id)
+}
+
+pub(crate) fn update_session(session: GameSession) -> RepoResult<GameSession> {
+    foundation::update("sessions.update_session", session)
 }
 
 pub(crate) fn page_sessions_by_state(
@@ -121,6 +132,14 @@ pub(crate) fn create_participant(
     foundation::create("sessions.create_participant", input)
 }
 
+pub(crate) fn load_participant(id: Id<GameParticipant>) -> RepoResult<Option<GameParticipant>> {
+    foundation::load_by_id("sessions.load_participant", id)
+}
+
+pub(crate) fn update_participant(participant: GameParticipant) -> RepoResult<GameParticipant> {
+    foundation::update("sessions.update_participant", participant)
+}
+
 pub(crate) fn find_participant_by_session_player(
     session_id: Id<GameSession>,
     player_id: Id<PlayerAccount>,
@@ -151,6 +170,26 @@ pub(crate) fn page_participants_by_session_status(
             .filter(FieldRef::new("session_id").eq(session_id.key()))
             .filter(FieldRef::new("status").eq(status))
             .order_asc("slot_index")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_participants_by_player_status(
+    player_id: Id<PlayerAccount>,
+    status: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<GameParticipant>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        PARTICIPANT_PLAYER_STATUS_LOOKUP.name,
+        crate::db()
+            .load::<GameParticipant>()
+            .filter(FieldRef::new("player_id").eq(player_id.key()))
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("session_id")
             .order_asc("id"),
         limit,
         cursor,

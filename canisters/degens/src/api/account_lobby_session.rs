@@ -6,59 +6,83 @@ use crate::dto::public::{
 
 #[update]
 fn register_player(
-    _username: Option<String>,
-    _display_name: Option<String>,
-    _client_nonce: String,
+    username: Option<String>,
+    display_name: Option<String>,
+    client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::unavailable("register_player")
+    crate::services::account_lobby_session::register_player(
+        canic_cdk::api::msg_caller(),
+        username,
+        display_name,
+        client_nonce,
+    )
 }
 
 #[query]
 fn get_my_player() -> Result<PlayerView, ApiError> {
-    crate::services::account_lobby_session::unavailable("get_my_player")
+    crate::services::account_lobby_session::get_my_player(canic_cdk::api::msg_caller())
 }
 
 #[update]
 fn create_session(
-    _name: String,
-    _ruleset_id: String,
-    _seed: u64,
-    _client_nonce: String,
+    name: String,
+    ruleset_id: String,
+    seed: u64,
+    client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::unavailable("create_session")
+    crate::services::account_lobby_session::create_session(
+        canic_cdk::api::msg_caller(),
+        name,
+        ruleset_id,
+        seed,
+        client_nonce,
+    )
 }
 
 #[update]
 fn join_session(
-    _session_id: String,
-    _faction_id: String,
-    _client_nonce: String,
+    session_id: String,
+    faction_id: String,
+    client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::unavailable("join_session")
+    crate::services::account_lobby_session::join_session(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        faction_id,
+        client_nonce,
+    )
 }
 
 #[update]
-fn mark_ready(
-    _session_id: String,
-    _client_nonce: String,
-) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::unavailable("mark_ready")
+fn mark_ready(session_id: String, client_nonce: String) -> Result<LobbyCommandResponse, ApiError> {
+    crate::services::account_lobby_session::mark_ready(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        client_nonce,
+    )
 }
 
 #[update]
 fn start_session(
-    _session_id: String,
-    _client_nonce: String,
+    session_id: String,
+    client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::unavailable("start_session")
+    crate::services::account_lobby_session::start_session(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        client_nonce,
+    )
 }
 
 #[query]
-fn get_session(_session_id: String) -> Result<SessionView, ApiError> {
-    crate::services::account_lobby_session::unavailable("get_session")
+fn get_session(session_id: String) -> Result<SessionView, ApiError> {
+    crate::services::account_lobby_session::get_session(session_id)
 }
 
 #[query]
-fn get_my_participant(_session_id: String) -> Result<ParticipantView, ApiError> {
-    crate::services::account_lobby_session::unavailable("get_my_participant")
+fn get_my_participant(session_id: String) -> Result<ParticipantView, ApiError> {
+    crate::services::account_lobby_session::get_my_participant(
+        canic_cdk::api::msg_caller(),
+        session_id,
+    )
 }

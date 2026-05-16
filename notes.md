@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19D IcyDB Lobby, Session, Commands, And Setup
+
+Area: canister account/lobby/session services
+Severity: medium
+Status: resolved for 19D; render/gameplay endpoints continue in 19E+
+
+Observation:
+
+Checkpoint 19D wired `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history` to typed IcyDB repositories. Lobby command rows now enforce nonce replay and payload mismatch rejection. `start_session` persists a setup game command, applied command effects, applied pending effects, a setup completion event, participant/session/player rows, and pending match-summary shells before moving the session to `active`.
+
+Impact:
+
+Pocket-IC now drives the real canister through account registration, lobby creation, join, ready, creator authorization, duplicate nonce replay, and start. Native service coverage simulates an interrupted setup after the session reaches `starting` and verifies a later `start_session` resumes from durable rows.
+
+Suggested follow-up:
+
+19E should replace the 19D setup shell rows with actual first-playable content, map, visibility, town, champion, neutral, occupancy, and economy rows. Keep later render/query endpoints read-only when they start reading those rows.
+
 ## 2026-05-16 - Checkpoint 19C IcyDB Repository Foundation
 
 Area: IcyDB repositories, canister backend

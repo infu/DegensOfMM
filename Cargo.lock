@@ -519,6 +519,7 @@ dependencies = [
  "icydb",
  "icydb-config-build",
  "serde",
+ "sha2",
 ]
 
 [[package]]

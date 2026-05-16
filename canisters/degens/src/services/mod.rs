@@ -10,6 +10,8 @@ pub(crate) mod game_view;
 pub(crate) mod history;
 pub(crate) mod movement;
 mod placeholder;
+#[cfg(test)]
+mod tests;
 pub(crate) mod town;
 
 pub(crate) use placeholder::repository_not_implemented;

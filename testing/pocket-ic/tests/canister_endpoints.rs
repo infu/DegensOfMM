@@ -7,16 +7,17 @@ use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister};
 use domm_degens_canister::{CanisterEndpointView, REQUIRED_GAME_ENDPOINTS};
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
-    CommandResponse, CommandStatusView, ContentManifestResponse, GameView, GameViewRequest,
-    LobbyCommandResponse, MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview,
-    ObjectViewPage, ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView,
-    opening_viewport_for_slot,
+    CommandResponse, CommandStatus, CommandStatusView, ContentManifestResponse,
+    FIRST_PLAYABLE_RULESET_ID, GameView, GameViewRequest, LobbyCommandResponse, LobbyCommandResult,
+    MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage, ParticipantView,
+    PlayerView, RecruitPreview, RecruitTarget, SessionView, opening_viewport_for_slot,
 };
 
 #[test]
 fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     let fixture = install_degens_canister_fixture();
-    let session_id = "session:presence".to_string();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-player-two");
     let champion_id = "champion:presence".to_string();
     let town_id = "town:presence".to_string();
     let battle_id = "battle:presence".to_string();
@@ -35,52 +36,200 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         );
     }
 
-    assert_update_unimplemented::<LobbyCommandResponse>(
+    let anonymous_player: Result<PlayerView, ApiError> = fixture
+        .pic()
+        .query_call(fixture.canister_id(), "get_my_player", ())
+        .expect("anonymous get_my_player should decode");
+    assert_eq!(
+        anonymous_player
+            .expect_err("anonymous player query should fail")
+            .code,
+        "anonymous_not_allowed"
+    );
+
+    let registered_one = update_as::<LobbyCommandResponse>(
         &fixture,
+        player_one,
         "register_player",
         (
-            None::<String>,
-            Some("Presence Tester".to_string()),
-            "nonce:presence:register".to_string(),
+            Some("presence-one".to_string()),
+            Some("Presence One".to_string()),
+            "nonce:presence:register:one".to_string(),
         ),
-    );
-    assert_query_unimplemented::<PlayerView>(&fixture, "get_my_player", ());
-    assert_update_unimplemented::<LobbyCommandResponse>(
+    )
+    .expect("player one registration call should decode")
+    .expect("player one registration should succeed");
+    assert_eq!(registered_one.status, CommandStatus::Applied);
+    let player_one_id = match registered_one.result.clone() {
+        LobbyCommandResult::Player(player) => {
+            assert_eq!(player.display_name, "Presence One");
+            assert_eq!(player.principal, player_one);
+            player.player_id
+        }
+        other => panic!("register_player returned unexpected result: {other:?}"),
+    };
+
+    let registered_one_replay = update_as::<LobbyCommandResponse>(
         &fixture,
+        player_one,
+        "register_player",
+        (
+            Some("presence-one".to_string()),
+            Some("Presence One".to_string()),
+            "nonce:presence:register:one".to_string(),
+        ),
+    )
+    .expect("register replay should decode")
+    .expect("register replay should succeed");
+    assert_eq!(registered_one_replay.command_id, registered_one.command_id);
+
+    let register_mismatch = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_one,
+        "register_player",
+        (
+            Some("presence-one-renamed".to_string()),
+            Some("Presence One".to_string()),
+            "nonce:presence:register:one".to_string(),
+        ),
+    )
+    .expect("register mismatch should decode")
+    .expect("register mismatch should return a command response");
+    assert_eq!(register_mismatch.status, CommandStatus::Failed);
+    assert_eq!(
+        register_mismatch
+            .error
+            .expect("mismatch should carry error")
+            .code,
+        "duplicate_nonce_payload_mismatch"
+    );
+
+    let registered_two = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_two,
+        "register_player",
+        (
+            Some("presence-two".to_string()),
+            Some("Presence Two".to_string()),
+            "nonce:presence:register:two".to_string(),
+        ),
+    )
+    .expect("player two registration call should decode")
+    .expect("player two registration should succeed");
+    assert_eq!(registered_two.status, CommandStatus::Applied);
+
+    let my_player = query_as::<PlayerView>(&fixture, player_one, "get_my_player", ())
+        .expect("get_my_player should decode")
+        .expect("player one should be readable");
+    assert_eq!(my_player.player_id, player_one_id);
+
+    let created = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_one,
         "create_session",
         (
             "Presence Match".to_string(),
-            "ruleset:first-playable".to_string(),
+            FIRST_PLAYABLE_RULESET_ID.to_string(),
             1_u64,
             "nonce:presence:create".to_string(),
         ),
-    );
-    assert_update_unimplemented::<LobbyCommandResponse>(
+    )
+    .expect("create_session should decode")
+    .expect("create_session should succeed");
+    let session_id = match created.result.clone() {
+        LobbyCommandResult::Session(session) => {
+            assert_eq!(session.state, "lobby");
+            assert_eq!(session.participant_ids.len(), 1);
+            session.session_id
+        }
+        other => panic!("create_session returned unexpected result: {other:?}"),
+    };
+
+    let fetched_session =
+        query_as::<SessionView>(&fixture, player_one, "get_session", (session_id.clone(),))
+            .expect("get_session should decode")
+            .expect("created session should be readable");
+    assert_eq!(fetched_session.session_id, session_id);
+
+    let joined = update_as::<LobbyCommandResponse>(
         &fixture,
+        player_two,
         "join_session",
         (
             session_id.clone(),
-            "faction:misery".to_string(),
+            "faction:ashen-ledger".to_string(),
             "nonce:presence:join".to_string(),
         ),
-    );
-    assert_update_unimplemented::<LobbyCommandResponse>(
+    )
+    .expect("join_session should decode")
+    .expect("join_session should succeed");
+    assert_eq!(joined.status, CommandStatus::Applied);
+
+    update_as::<LobbyCommandResponse>(
         &fixture,
+        player_one,
         "mark_ready",
-        (session_id.clone(), "nonce:presence:ready".to_string()),
-    );
-    assert_update_unimplemented::<LobbyCommandResponse>(
+        (session_id.clone(), "nonce:presence:ready:one".to_string()),
+    )
+    .expect("player one ready should decode")
+    .expect("player one ready should succeed");
+    update_as::<LobbyCommandResponse>(
         &fixture,
+        player_two,
+        "mark_ready",
+        (session_id.clone(), "nonce:presence:ready:two".to_string()),
+    )
+    .expect("player two ready should decode")
+    .expect("player two ready should succeed");
+
+    let unauthorized_start = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_two,
+        "start_session",
+        (session_id.clone(), "nonce:presence:start:wrong".to_string()),
+    )
+    .expect("unauthorized start should decode")
+    .expect("unauthorized start should return a command response");
+    assert_eq!(unauthorized_start.status, CommandStatus::Failed);
+    assert_eq!(
+        unauthorized_start
+            .error
+            .expect("unauthorized start should carry error")
+            .code,
+        "not_session_creator"
+    );
+
+    let started = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_one,
         "start_session",
         (session_id.clone(), "nonce:presence:start".to_string()),
-    );
-    assert_query_unimplemented::<SessionView>(&fixture, "get_session", (session_id.clone(),));
-    assert_query_unimplemented::<ParticipantView>(
+    )
+    .expect("start_session should decode")
+    .expect("start_session should succeed");
+    assert_eq!(started.status, CommandStatus::Applied);
+    match started.result {
+        LobbyCommandResult::Session(session) => assert_eq!(session.state, "active"),
+        other => panic!("start_session returned unexpected result: {other:?}"),
+    }
+
+    let participant_two = query_as::<ParticipantView>(
         &fixture,
+        player_two,
         "get_my_participant",
         (session_id.clone(),),
-    );
-    assert_query_unimplemented::<MatchHistoryPage>(&fixture, "get_match_history", (0_u32, 10_u32));
+    )
+    .expect("get_my_participant should decode")
+    .expect("participant two should be readable");
+    assert_eq!(participant_two.slot_index, 1);
+    assert!(participant_two.ready);
+
+    let history =
+        query_as::<MatchHistoryPage>(&fixture, player_one, "get_match_history", (0_u32, 10_u32))
+            .expect("get_match_history should decode")
+            .expect("pending match shells should not appear in history yet");
+    assert!(history.entries.is_empty());
+
     assert_query_unimplemented::<GameView>(
         &fixture,
         "get_game_view",
@@ -283,6 +432,36 @@ fn assert_repository_unimplemented<T>(method: &str, response: Result<T, ApiError
         "{method}: {}",
         error.message
     );
+}
+
+fn query_as<T>(
+    fixture: &StandaloneCanisterFixture,
+    caller: candid::Principal,
+    method: &str,
+    args: impl candid::utils::ArgumentEncoder,
+) -> Result<Result<T, ApiError>, String>
+where
+    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
+{
+    fixture
+        .pic()
+        .query_call_as(fixture.canister_id(), caller, method, args)
+        .map_err(|error| format!("{error:?}"))
+}
+
+fn update_as<T>(
+    fixture: &StandaloneCanisterFixture,
+    caller: candid::Principal,
+    method: &str,
+    args: impl candid::utils::ArgumentEncoder,
+) -> Result<Result<T, ApiError>, String>
+where
+    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
+{
+    fixture
+        .pic()
+        .update_call_as(fixture.canister_id(), caller, method, args)
+        .map_err(|error| format!("{error:?}"))
 }
 
 fn install_degens_canister_fixture() -> StandaloneCanisterFixture {

@@ -1,7 +1,14 @@
 //! Repository boundary for commands, pending effects, idempotency keys, and event logs.
 
-use domm_degens_schema::schema::{GameCommand, GameEvent, GameSession, PendingEffect};
-use icydb::{db::query::FieldRef, types::Id};
+use domm_degens_schema::schema::{
+    Champion, CommandEffect, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
+    PendingEffect, PlayerAccount,
+};
+use icydb::{
+    Create,
+    db::query::FieldRef,
+    types::{Id, Principal, Timestamp},
+};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -57,6 +64,103 @@ pub(crate) fn load_game_command(id: Id<GameCommand>) -> RepoResult<Option<GameCo
     foundation::load_by_id("commands.load_game_command", id)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_game_command(
+    session_id: Id<GameSession>,
+    actor_kind: String,
+    actor_id_text: String,
+    actor_player_id: Option<Id<PlayerAccount>>,
+    actor_participant_id: Option<Id<GameParticipant>>,
+    champion_id: Option<Id<Champion>>,
+    turn_number: u32,
+    client_nonce: u64,
+    command_type: String,
+    payload_hash: String,
+    payload_json: String,
+) -> RepoResult<GameCommand> {
+    let input: Create<GameCommand> = Create::<GameCommand> {
+        session_id: Some(session_id.key()),
+        actor_kind: Some(actor_kind),
+        actor_id_text: Some(actor_id_text),
+        actor_player_id: Some(actor_player_id.map(|id| id.key())),
+        actor_participant_id: Some(actor_participant_id.map(|id| id.key())),
+        champion_id: Some(champion_id.map(|id| id.key())),
+        turn_number: Some(turn_number),
+        client_nonce: Some(client_nonce),
+        command_type: Some(command_type),
+        status: Some("pending".to_string()),
+        phase: Some("created".to_string()),
+        payload_hash: Some(payload_hash),
+        payload_json: Some(payload_json),
+        result_json: Some(None),
+        error_code: Some(None),
+        error_message: Some(None),
+        error_details_json: Some(None),
+        retryable: Some(false),
+        applied_at: Some(None),
+        failed_at: Some(None),
+    };
+
+    foundation::create("commands.create_game_command", input)
+}
+
+pub(crate) fn update_game_command(command: GameCommand) -> RepoResult<GameCommand> {
+    foundation::update("commands.update_game_command", command)
+}
+
+pub(crate) fn find_lobby_command_by_idempotency(
+    actor_principal: Principal,
+    client_nonce: u64,
+) -> RepoResult<Option<LobbyCommand>> {
+    foundation::storage_result(
+        LOBBY_COMMAND_IDEMPOTENCY_LOOKUP.name,
+        crate::db()
+            .load::<LobbyCommand>()
+            .filter(FieldRef::new("actor_principal").eq(actor_principal))
+            .filter(FieldRef::new("client_nonce").eq(client_nonce))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn load_lobby_command(id: Id<LobbyCommand>) -> RepoResult<Option<LobbyCommand>> {
+    foundation::load_by_id("commands.load_lobby_command", id)
+}
+
+pub(crate) fn create_lobby_command(
+    actor_principal: Principal,
+    actor_player_id: Option<Id<PlayerAccount>>,
+    client_nonce: u64,
+    payload_hash: String,
+    command_type: String,
+    payload_json: String,
+) -> RepoResult<LobbyCommand> {
+    let input: Create<LobbyCommand> = Create::<LobbyCommand> {
+        actor_principal: Some(actor_principal),
+        actor_player_id: Some(actor_player_id.map(|id| id.key())),
+        client_nonce: Some(client_nonce),
+        payload_hash: Some(payload_hash),
+        command_type: Some(command_type),
+        status: Some("pending".to_string()),
+        phase: Some("created".to_string()),
+        payload_json: Some(payload_json),
+        result_json: Some(None),
+        error_code: Some(None),
+        error_message: Some(None),
+        error_details_json: Some(None),
+        retryable: Some(false),
+        applied_at: Some(None),
+        failed_at: Some(None),
+    };
+
+    foundation::create("commands.create_lobby_command", input)
+}
+
+pub(crate) fn update_lobby_command(command: LobbyCommand) -> RepoResult<LobbyCommand> {
+    foundation::update("commands.update_lobby_command", command)
+}
+
 pub(crate) fn events_after(
     session_id: Id<GameSession>,
     audience_key: &str,
@@ -76,6 +180,138 @@ pub(crate) fn events_after(
             .limit(limit)
             .entities(),
     )
+}
+
+pub(crate) fn find_event_by_key(
+    session_id: Id<GameSession>,
+    event_key: &str,
+) -> RepoResult<Option<GameEvent>> {
+    foundation::storage_result(
+        "events.by_session_event_key",
+        crate::db()
+            .load::<GameEvent>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("event_key").eq(event_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_game_event(
+    session_id: Id<GameSession>,
+    command_id: Option<Id<GameCommand>>,
+    actor_participant_id: Option<Id<GameParticipant>>,
+    turn_number: u32,
+    event_seq: u64,
+    event_key: String,
+    audience_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> RepoResult<GameEvent> {
+    let input: Create<GameEvent> = Create::<GameEvent> {
+        session_id: Some(session_id.key()),
+        command_id: Some(command_id.map(|id| id.key())),
+        actor_participant_id: Some(actor_participant_id.map(|id| id.key())),
+        turn_number: Some(turn_number),
+        event_seq: Some(event_seq),
+        event_key: Some(event_key),
+        audience_key: Some(audience_key),
+        event_type: Some(event_type),
+        subject_kind: Some(subject_kind),
+        subject_id_text: Some(subject_id_text),
+        payload_json: Some(payload_json),
+    };
+
+    foundation::create("events.create_game_event", input)
+}
+
+pub(crate) fn find_command_effect(
+    command_id: Id<GameCommand>,
+    effect_key: &str,
+) -> RepoResult<Option<CommandEffect>> {
+    foundation::storage_result(
+        "effects.command_effect_by_command_key",
+        crate::db()
+            .load::<CommandEffect>()
+            .filter(FieldRef::new("command_id").eq(command_id.key()))
+            .filter(FieldRef::new("effect_key").eq(effect_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn create_applied_command_effect(
+    session_id: Id<GameSession>,
+    command_id: Id<GameCommand>,
+    effect_key: String,
+    effect_type: String,
+    target_kind: String,
+    target_id_text: String,
+    payload_json: String,
+    applied_at: Timestamp,
+) -> RepoResult<CommandEffect> {
+    let input: Create<CommandEffect> = Create::<CommandEffect> {
+        session_id: Some(session_id.key()),
+        command_id: Some(command_id.key()),
+        effect_key: Some(effect_key),
+        effect_type: Some(effect_type),
+        target_kind: Some(target_kind),
+        target_id_text: Some(target_id_text),
+        status: Some("applied".to_string()),
+        payload_json: Some(payload_json),
+        applied_at: Some(Some(applied_at)),
+    };
+
+    foundation::create("effects.create_applied_command_effect", input)
+}
+
+pub(crate) fn find_pending_effect(
+    session_id: Id<GameSession>,
+    effect_key: &str,
+) -> RepoResult<Option<PendingEffect>> {
+    foundation::storage_result(
+        "effects.pending_by_session_key",
+        crate::db()
+            .load::<PendingEffect>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("effect_key").eq(effect_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_applied_pending_effect(
+    session_id: Id<GameSession>,
+    source_command_id: Option<Id<GameCommand>>,
+    target_participant_id: Option<Id<GameParticipant>>,
+    target_champion_id: Option<Id<Champion>>,
+    effect_key: String,
+    due_turn: u32,
+    effect_type: String,
+    payload_json: String,
+    applied_at: Timestamp,
+) -> RepoResult<PendingEffect> {
+    let input: Create<PendingEffect> = Create::<PendingEffect> {
+        session_id: Some(session_id.key()),
+        source_command_id: Some(source_command_id.map(|id| id.key())),
+        target_participant_id: Some(target_participant_id.map(|id| id.key())),
+        target_champion_id: Some(target_champion_id.map(|id| id.key())),
+        effect_key: Some(effect_key),
+        due_turn: Some(due_turn),
+        effect_type: Some(effect_type),
+        status: Some("applied".to_string()),
+        payload_json: Some(payload_json),
+        applied_at: Some(Some(applied_at)),
+    };
+
+    foundation::create("effects.create_applied_pending_effect", input)
 }
 
 pub(crate) fn page_pending_effects_due(

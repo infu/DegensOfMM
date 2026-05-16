@@ -46,7 +46,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
 - [x] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
 - [x] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
-- [ ] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
+- [x] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
 - [ ] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
 - [ ] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
 - [ ] Gate O after checkpoint 27: the full spec expansion backlog is either implemented or explicitly promoted/deferred with bounded Part 2 specs.
@@ -426,13 +426,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19J. Pocket-IC Full First-Playable Canister E2E
 
-- [ ] Create the real first-playable e2e test: install `domm-degens-canister` in Pocket-IC and play the full 1v1 path from registration through victory using only public canister Candid endpoints.
-- [ ] Cover exploration, pickup, income, building, recruitment, movement conflict or blocker, neutral battle, battle action retry, battle sync, neutral aftermath, town capture, champion defeat, victory, event refresh, command status polling, and match-history read.
-- [ ] Verify no step calls `FixtureApiBackend`, pure in-memory backend helpers, test-only private state, or generic SQL gameplay paths.
-- [ ] Verify final IcyDB persisted rows: finished session, winner participant, defeated neutral, captured town owner, defeated enemy champion, summary rows, history rows, event feed, command rows, effects, movement snapshots, battle cleanup/retention state, and visibility/occupancy coherence.
-- [ ] Record real canister metrics and storage observations in `DoMM/notes.md`.
-- [ ] Gate L: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
-- [ ] Commit after this checkpoint.
+- [x] Create the real first-playable e2e test: install `domm-degens-canister` in Pocket-IC and play the full 1v1 path from registration through victory using only public canister Candid endpoints.
+- [x] Cover exploration, pickup, income, building, recruitment, movement conflict or blocker, neutral battle, battle action retry, battle sync, neutral aftermath, town capture, champion defeat, victory, event refresh, command status polling, and match-history read.
+- [x] Verify no step calls `FixtureApiBackend`, pure in-memory backend helpers, test-only private state, or generic SQL gameplay paths.
+- [x] Verify final IcyDB persisted rows: finished session, winner participant, defeated neutral, captured town owner, defeated enemy champion, summary rows, history rows, event feed, command rows, effects, movement snapshots, battle cleanup/retention state, and visibility/occupancy coherence.
+- [x] Record real canister metrics and storage observations in `DoMM/notes.md`.
+- [x] Gate L: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
+- [x] Commit after this checkpoint.
 
 ## 19K. Client Against Real Canister And Canister Performance Gate
 

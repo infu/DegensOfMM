@@ -20,7 +20,7 @@ pub(crate) fn get_town_view(
     session_id: String,
     town_id: String,
 ) -> Result<ApiTownView, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     if town.owner_participant_id == Some(context.participant.id().key()) {
         own_town_view(&town)

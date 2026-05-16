@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19J Full Canister E2E Gate
+
+Area: Pocket-IC full first-playable canister route
+Severity: medium
+Status: resolved for Gate L
+
+Observation:
+
+Checkpoint 19J adds a Gate L Pocket-IC route that installs `domm-degens-canister` and plays the first-playable 1v1 path from registration through victory using public Candid endpoints only. The route covers opening exploration, resource pickup, command-status polling, building, recruitment, movement slicing, mine capture, income materialization, guarded neutral battle, battle action retry, `sync_battle`, neutral aftermath, stationary enemy champion blocker, champion defeat, town battle handoff, town capture, victory finalization, event refresh, match-history reads, and controller-gated IcyDB diagnostics.
+
+Impact:
+
+The focused Gate L run passed in 187.81s and the full Pocket-IC endpoint file passed 6 tests in 181.86s. Gate L reported 82 update calls, 102 query calls, 155 observed event DTOs, 92 command rows, 70 `GameEvent` rows, 444 selected persisted rows, stable memory growth from 897 to 199553 pages, 205550 measured Candid response bytes, and a max measured response of 14465 bytes from `get_events_after`. Final checks verify a finished session, win/loss match history, defeated east champion, captured east town owner, public battle/victory event feed, `PlayerMatchSummary` rows, command/effect/event rows, movement snapshots/intents, resource ledgers, object visits, retained battle rows, and coherent final `MapOccupancy` count.
+
+Suggested follow-up:
+
+Read-only projection endpoints now use participant session access instead of active-session access so result/history screens can inspect final `get_champion_view`, `get_town_view`, map/object, and game-view state after victory. Keep mutation and preview endpoints active-session-only. Command-status lookup remains sensitive to nonce naming because it hashes the client nonce with candidate command types; use established nonce discriminators such as `battle-action`, `sync-battle`, `move`, `build`, and `recruit` in client code to avoid unnecessary lookup fan-out on large sessions.
+
 ## 2026-05-16 - Checkpoint 19I IcyDB Battle And Aftermath Gate
 
 Area: Pocket-IC canister battle gameplay and IcyDB persistence

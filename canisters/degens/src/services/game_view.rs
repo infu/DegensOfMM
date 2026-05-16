@@ -15,7 +15,7 @@ pub(crate) fn get_game_view(
     request: GameViewRequest,
 ) -> Result<GameView, ApiError> {
     validate_game_view_request(&request)?;
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     let chunks = render_projection::visible_map_chunks(
         &context,
         &request.viewport,
@@ -67,7 +67,7 @@ pub(crate) fn get_visible_map_chunks(
     limit: u32,
 ) -> Result<MapChunkPage, ApiError> {
     validate_viewport(&viewport)?;
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     render_projection::visible_map_chunks(&context, &viewport, cursor, limit)
 }
 
@@ -79,7 +79,7 @@ pub(crate) fn get_visible_objects(
     limit: u32,
 ) -> Result<ObjectViewPage, ApiError> {
     validate_viewport(&viewport)?;
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     render_projection::visible_objects(&context, &viewport, cursor, limit)
 }
 
@@ -87,7 +87,7 @@ pub(crate) fn get_my_champions(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<Vec<ChampionView>, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     render_projection::my_champions(&context)
 }
 
@@ -96,7 +96,7 @@ pub(crate) fn get_champion_view(
     session_id: String,
     champion_id: String,
 ) -> Result<ChampionView, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller(caller, &session_id)?;
     render_projection::champion_view_by_id(&context, &champion_id)
 }
 

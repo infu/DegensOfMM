@@ -891,3 +891,23 @@ None yet.
 ## Decisions And Tradeoffs
 
 None yet.
+
+## Checkpoint 21: Full Spec Expansion Triage
+
+Added `docs/full-spec-expansion-triage.md` and `spec.md` section 24 to classify
+all deferred Part 1 systems before expanding beyond the first playable scope.
+No system is approved as implement-now. The expansion backlog is split into
+bounded Part 2-first buckets for champion progression/magic, expanded economy,
+quests/objectives/victory, siege/naval/procedural/skirmish, and product meta.
+
+Audit notes:
+
+- Runtime work for each bucket remains blocked until the relevant checkpoint
+  defines IcyDB schema, indexes, commands/endpoints, recovery/idempotency,
+  deterministic pseudo-random keys, numeric caps, DTO/frontend behavior, tests,
+  cleanup, and retention.
+- Sequential player turns, hotseat-only backend rules, a monolithic `GameState`
+  row, and generic SQL gameplay access are treated as removed implementation
+  scope, not pending features.
+- Future expansion checkpoints now explicitly require Candid inventory and
+  Pocket-IC e2e coverage for every new canister endpoint.

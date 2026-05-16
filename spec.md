@@ -5751,3 +5751,113 @@ Client submits command
 ```
 
 That gives us a clean foundation for timed simultaneous turns and keeps the logic safe inside IcyDB’s single-entity atomicity model.
+
+---
+
+# 24. Full Spec Expansion Triage
+
+Checkpoint 21 keeps the first playable implementation closed and classifies the
+remaining Part 1 systems before any runtime code expands scope.
+
+No deferred Part 1 system is `implement-now`. Gate N completed the first
+playable canister/IcyDB surface, so every remaining system is either
+`promote-to-Part-2-first` or `still-deferred/removed`.
+
+Authoritative triage artifact: `docs/full-spec-expansion-triage.md`.
+
+## 24.1 Classification
+
+| Part 1 system | Classification | Destination |
+| --- | --- | --- |
+| Champion skill trees, level-up choices, skill ranks, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, advanced statuses, dispel/stacking, artifact-set-style effect expansion | promote-to-Part-2-first | Checkpoint 22 |
+| Tavern hiring, defeated champion reappearance, marketplace trading, external dwellings, direct map recruitment, advanced economy buildings, additional resource sources | promote-to-Part-2-first | Checkpoint 23 |
+| Quest huts, quest chains, objective tracking, weekly/monthly world events, artifact victory, king-of-the-hill, survival, quest victory, scenario-specific defeat, richer scenario rules | promote-to-Part-2-first | Checkpoint 24 |
+| Complex siege engines, walls/gates/towers, naval maps, boats, water movement layers, seeded procedural generation, skirmish settings, larger map variants | promote-to-Part-2-first | Checkpoint 25 |
+| Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
+| Full bot opponents and general strategic planners | still-deferred | Requires a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
+| Sequential player turns and hotseat-only backend rules | removed from implementation scope | Superseded by simultaneous timed turns. Multiple local players can use normal account/session flows. |
+| Single serialized `GameState` row | removed from implementation scope | Superseded by durable IcyDB entities, command/effect rows, and event rows. |
+| Generic SQL gameplay access | removed from implementation scope | SQL remains controller/test/diagnostic only and must not power public gameplay endpoints. |
+| Unbounded content expansions | still-deferred | Needs a content-pack spec with caps, migration policy, content hashes, and canister budget tests. |
+
+## 24.2 Promotion Gates
+
+Before any promoted bucket can start runtime implementation, the corresponding
+checkpoint must update this section with the following bounded Part 2 details:
+
+```text
+IcyDB schema:
+  entities, fields, relation strength, defaults, append-only migration behavior
+Indexes:
+  every hot lookup, unique/idempotency key, pagination order, cleanup lookup, and visibility/recovery lookup
+Commands and endpoints:
+  public update/query method names, typed Candid DTOs, preview endpoints, disabled responses, and ownership checks
+Recovery and idempotency:
+  GameCommand, CommandEffect, PendingEffect, event keys, retry behavior, partial-application resume order, and budget exhaustion behavior
+Deterministic pseudo-random keys:
+  explicit domain keys and input fields; no IC raw randomness, wall-clock elapsed time, row order, or mutable RNG cursors
+Numeric caps:
+  per-session, per-turn, per-participant, per-object, per-query, and per-update caps with fail-closed errors
+DTOs and frontend:
+  render-ready public views, legal action affordances, disabled reasons, pagination/cursor contracts, redaction rules, and retry/sync expectations
+Tests:
+  pure unit tests, schema/macro tests, generated-session or repository tests, endpoint inventory tests, and Pocket-IC e2e coverage for every public endpoint in the bucket
+Cleanup and retention:
+  strong/weak relation cleanup order, summary rows, raw log retention, active-session protection, and bounded retry behavior
+```
+
+Any implementation that does not satisfy these gates is out of scope, even if a
+similar Part 1 rule exists.
+
+## 24.3 Bucket Minimums
+
+Checkpoint 22, champion progression and magic, must define skill/spell/status
+entities or prove existing `ChampionSpell`, `SpellDefinition`,
+`BattleStack.status_keys`, artifact rows, and effect keys are sufficient. It
+must add indexes by session, champion, participant, battle, skill key, spell
+key, and status key; commands for level-up choice, spell learning, battle cast,
+adventure cast, and previews; recovery through command/effect/pending-effect
+rows; deterministic keys for offers, casts, effect rolls, and status ticks; caps
+for skill options, spellbook size, casts per turn/round, status instances, and
+effect targets; champion/battle DTO affordances; cleanup; and Pocket-IC endpoint
+coverage.
+
+Checkpoint 23, expanded economy, must define tavern offers, hire records,
+market/trade rows, dwelling pools, and any new income/growth rows. It must add
+indexes by session, week/turn, participant, town/object, offer key, and ledger
+key; hire, trade, dwelling recruitment, and preview endpoints; deterministic
+tavern/market/growth keys; caps for offers, market operations, trade amounts,
+pool growth, and visible candidates; no-double-spend recovery; frontend
+affordances; cleanup; and Pocket-IC endpoint coverage.
+
+Checkpoint 24, quests/objectives/victory, must define quest/objective/event and
+victory state rows plus reward effects. It must add indexes by session,
+participant, objective, quest key, event window, and victory state; quest
+accept/claim, objective sync, event sync, and advanced victory query/update
+surfaces; deterministic event/reward keys; caps for active quests, objective
+rows, event rows, reward rows, and victory checks per update; redacted
+progress/reward DTOs; cleanup; and Pocket-IC endpoint coverage.
+
+Checkpoint 25, siege/naval/procedural/skirmish, must define map-generation jobs,
+generated content manifests, water/boat occupancy, siege objects, fortification
+state, and skirmish settings. It must add indexes by session, generation step,
+chunk, object, occupant, battle, and scenario hash; generation, boat movement,
+siege action, and skirmish creation endpoints; deterministic generation,
+movement, and siege keys; caps for map dimensions, generated chunks per update,
+path length, water crossings, siege objects, battle obstacles, and visibility
+fan-out; map/battle DTOs; cleanup; and Pocket-IC endpoint coverage.
+
+Checkpoint 26, meta and long-term systems, must define rematch, campaign,
+leaderboard, guild, diplomacy, and expanded history rows. It must add indexes by
+player, principal, session, season, guild, campaign, rank bucket, and history
+cursor; privacy-preserving endpoints for rematch, campaign, ranking, guild,
+diplomacy, and history flows; deterministic keys only where gameplay rewards are
+created; caps for rows per player/guild/season, page sizes, retention windows,
+and hot gameplay writes; frontend history/social DTOs; cleanup; and Pocket-IC
+endpoint coverage.
+
+## 24.4 Audit Rule
+
+No Part 1 system may be silently implemented as partial canister behavior. Until
+its bounded Part 2 subsection exists, the runtime representation must remain a
+content omission, a typed disabled response, or an explicit deferred checkpoint.

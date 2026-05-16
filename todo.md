@@ -463,17 +463,18 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 21. Full Spec Expansion Triage
 
-- [ ] Review every Part 1 system deferred by Part 2 and classify it as implement-now, promote-to-Part-2-first, or still-deferred.
-- [ ] For each promote-to-Part-2-first item, update `spec.md` with bounded schema, indexes, command paths, recovery paths, deterministic pseudo-random keys, caps, DTOs, tests, cleanup, and frontend requirements before implementation starts.
-- [ ] Add concrete implementation checkpoints below for any newly promoted system.
-- [ ] Audit: confirm no Part 1 system is silently implemented without a bounded Part 2 design.
-- [ ] Commit after this checkpoint.
+- [x] Review every Part 1 system deferred by Part 2 and classify it as implement-now, promote-to-Part-2-first, or still-deferred.
+- [x] For each promote-to-Part-2-first item, update `spec.md` with bounded schema, indexes, command paths, recovery paths, deterministic pseudo-random keys, caps, DTOs, tests, cleanup, and frontend requirements before implementation starts.
+- [x] Add concrete implementation checkpoints below for any newly promoted system.
+- [x] Audit: confirm no Part 1 system is silently implemented without a bounded Part 2 design.
+- [x] Commit after this checkpoint.
 
 ## 22. Champion Progression, Skills, Magic, And Spellbook Expansion
 
 - [ ] Promote and implement champion skill trees, level-up choices, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, and advanced status effects only after Part 2 is expanded for them.
 - [ ] Add or update entities if `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, and effect keys are insufficient.
 - [ ] Unit test XP rewards, level-up choices, skill prerequisites, spell targeting, mana costs, status duration, dispel/stacking rules, deterministic rolls, and DTO/legal-action behavior.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [ ] Audit: confirm progression and magic do not break v1 battle determinism, command recovery, or frontend action affordances.
 - [ ] Commit after this checkpoint.
 
@@ -482,6 +483,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Promote and implement tavern champion hiring, champion reappearance, marketplace trading, external dwellings, advanced town economy buildings, and additional resource sources only after Part 2 is expanded for them.
 - [ ] Add command/API/DTO support for trade, hire, dwelling recruitment, and any new lazy growth or income rules.
 - [ ] Unit test affordability, market rates, tavern candidate determinism, external dwelling ownership, direct recruitment, growth routing, resource ledger recovery, and frontend affordances.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [ ] Audit: confirm these systems cannot double-spend, double-reward, bypass visibility, or create unbounded scans.
 - [ ] Commit after this checkpoint.
 
@@ -490,6 +492,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Promote and implement quest huts, objective tracking, weekly/monthly world events, artifact victory, king-of-the-hill, survival, quest victory, scenario-specific defeat, and richer scenario rules only after Part 2 is expanded for them.
 - [ ] Add bounded entities or effect rows for quest state, objective ownership, rewards, progress visibility, and victory checks.
 - [ ] Unit test objective progress, reward idempotency, visibility/redaction, bounded victory scoring, max-turn interactions, and event history.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [ ] Audit: confirm every advanced victory path is indexed, bounded, recoverable, and visible to the client.
 - [ ] Commit after this checkpoint.
 
@@ -498,6 +501,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Promote and implement complex siege engines, naval movement, seeded procedural map generation, skirmish settings, and larger map variants only after Part 2 is expanded for them.
 - [ ] Add deterministic generation fixtures and cap checks before allowing larger maps or extra movement layers.
 - [ ] Unit test seeded map stability, water/boat movement, siege obstacles, gates/walls/towers, pathfinding limits, visibility, and battle setup.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [ ] Audit: confirm generated or larger content still satisfies canister performance budgets and query contracts.
 - [ ] Commit after this checkpoint.
 
@@ -506,6 +510,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [ ] Promote and implement diplomacy, ranked leaderboard, guilds, campaign persistence, broader match history, rematch flows, and any social/meta systems only after Part 2 is expanded for them.
 - [ ] Add privacy, retention, cleanup, pagination, and abuse-resistance rules for each system.
 - [ ] Unit test ranking updates, history pagination, campaign carryover, guild membership, cleanup, and authorization.
+- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
 - [ ] Audit: confirm meta systems stay outside hot gameplay command paths unless explicitly required.
 - [ ] Commit after this checkpoint.
 

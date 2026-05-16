@@ -42,7 +42,8 @@ The following Part 1 systems remain deferred until checkpoints 21-27 promote
 them into bounded Part 2 specs: champion skill-tree choices, large spellbooks,
 advanced quests, naval movement, complex siege, procedural maps, taverns,
 marketplaces, external dwellings, ranked, guilds, diplomacy, campaign
-persistence, and durable rematch creation.
+persistence, and durable rematch creation. Checkpoint 21 records the
+authoritative classification in `docs/full-spec-expansion-triage.md`.
 
 ## Known Follow-Up
 

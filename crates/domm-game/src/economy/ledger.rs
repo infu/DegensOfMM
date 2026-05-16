@@ -2,6 +2,7 @@ use super::types::{
     EconomyError, EconomyParticipantRecord, EconomyState, ResourceDelta, ResourceLedgerEntryRecord,
     resource_cap,
 };
+use crate::limits::MAX_RESOURCE_LEDGER_ROWS_RETAINED_PER_ACTIVE_SESSION;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceCapMode {
@@ -99,6 +100,11 @@ impl EconomyState {
                 project_balance(&delta.resource_key, current, delta.delta, cap_mode)?;
             if actual_delta == 0 {
                 return Ok(());
+            }
+            if self.ledger_entries.len() >= MAX_RESOURCE_LEDGER_ROWS_RETAINED_PER_ACTIVE_SESSION {
+                return Err(EconomyError::ResourceLedgerRetentionLimitExceeded {
+                    max_rows: MAX_RESOURCE_LEDGER_ROWS_RETAINED_PER_ACTIVE_SESSION,
+                });
             }
             let entry = ResourceLedgerEntryRecord {
                 id: format!("ledger:{command_id}:{ledger_key}"),

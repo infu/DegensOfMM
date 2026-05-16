@@ -5,9 +5,12 @@ use thiserror::Error;
 use crate::playable::PlayableBattleView;
 use crate::strategic::StrategicGameView;
 
-pub const AI_MAX_ACTORS_PER_UPDATE: u16 = 2;
-pub const AI_MAX_CANDIDATES_PER_ACTOR: u16 = 16;
-pub const AI_MAX_EMITTED_COMMANDS_PER_UPDATE: u16 = 2;
+pub const AI_MAX_ACTORS_PER_UPDATE: u16 = crate::limits::MAX_AI_ACTORS_PER_UPDATE;
+pub const AI_MAX_CANDIDATES_PER_ACTOR: u16 = crate::limits::MAX_AI_CANDIDATES_PER_ACTOR;
+pub const AI_MAX_PATH_NODES_PER_ACTOR: u16 = crate::limits::MAX_AI_PATH_NODES_PER_ACTOR;
+pub const AI_MAX_CHUNKS_LOADED_PER_ACTOR: u16 = crate::limits::MAX_AI_CHUNKS_LOADED_PER_ACTOR;
+pub const AI_MAX_EMITTED_COMMANDS_PER_UPDATE: u16 =
+    crate::limits::MAX_AI_EMITTED_COMMANDS_PER_UPDATE;
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct AiActorStateRecord {

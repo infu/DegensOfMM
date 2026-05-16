@@ -4,6 +4,10 @@ use crate::battle::BattleView;
 use crate::command::EventView;
 use crate::content::first_playable_content_manifest;
 use crate::fixtures::TURN_DURATION_MS;
+use crate::limits::{
+    DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, MAX_MAP_HEIGHT, MAX_MAP_WIDTH,
+    MAX_RECENT_EVENTS_IN_GAME_VIEW, MAX_VIEWPORT_CHUNKS_PER_REQUEST,
+};
 use crate::map::{
     OPENING_VIEWPORT_EAST_X, OPENING_VIEWPORT_EAST_Y, OPENING_VIEWPORT_HEIGHT,
     OPENING_VIEWPORT_WEST_X, OPENING_VIEWPORT_WEST_Y, OPENING_VIEWPORT_WIDTH, ObjectView, Viewport,
@@ -15,13 +19,13 @@ use super::types::{
     GameViewRequest, PageInfo, ParticipantSummary, RenderTimeMeta, SessionSummary,
 };
 
-pub const DEFAULT_CHUNK_LIMIT: u32 = 8;
-pub const DEFAULT_OBJECT_LIMIT: u32 = 32;
-pub const DEFAULT_EVENT_LIMIT: u32 = 32;
-pub const MAX_VIEWPORT_TILES: u32 = 48 * 48;
-pub const MAX_CHUNK_LIMIT: u32 = 32;
-pub const MAX_OBJECT_LIMIT: u32 = 128;
-pub const MAX_EVENT_LIMIT: u32 = 128;
+pub const DEFAULT_CHUNK_LIMIT: u32 = MAX_VIEWPORT_CHUNKS_PER_REQUEST;
+pub const DEFAULT_OBJECT_LIMIT: u32 = DEFAULT_LIST_LIMIT;
+pub const DEFAULT_EVENT_LIMIT: u32 = MAX_RECENT_EVENTS_IN_GAME_VIEW;
+pub const MAX_VIEWPORT_TILES: u32 = (MAX_MAP_WIDTH as u32) * (MAX_MAP_HEIGHT as u32);
+pub const MAX_CHUNK_LIMIT: u32 = MAX_VIEWPORT_CHUNKS_PER_REQUEST;
+pub const MAX_OBJECT_LIMIT: u32 = MAX_LIST_LIMIT;
+pub const MAX_EVENT_LIMIT: u32 = MAX_RECENT_EVENTS_IN_GAME_VIEW;
 
 impl GameViewRequest {
     #[must_use]
@@ -80,7 +84,7 @@ pub fn build_game_view(
             session_id,
             &request.viewport,
             request.chunk_cursor,
-            request.chunk_limit.min(MAX_CHUNK_LIMIT),
+            request.chunk_limit,
         )
         .map_err(|error| map_api_error("visible_chunks_failed", error))?;
     let objects = strategic
@@ -89,13 +93,13 @@ pub fn build_game_view(
             session_id,
             &request.viewport,
             request.object_cursor,
-            request.object_limit.min(MAX_OBJECT_LIMIT),
+            request.object_limit,
         )
         .map_err(|error| map_api_error("visible_objects_failed", error))?;
     let champions = strategic
         .my_champions_public(caller, session_id)
         .map_err(|error| map_api_error("champions_failed", error))?;
-    let event_limit = request.event_limit.min(MAX_EVENT_LIMIT);
+    let event_limit = request.event_limit;
     let lifecycle_events = strategic
         .get_events_public(
             caller,
@@ -111,6 +115,7 @@ pub fn build_game_view(
             .map(api_event_from_command_event)
             .collect(),
         api_events,
+        session_id,
         &participant_id,
         request.events_after_seq,
         event_limit,
@@ -145,13 +150,13 @@ pub fn build_game_view(
         map_page_info: PageInfo {
             next_cursor: chunks.next_cursor,
             has_more: chunks.has_more,
-            limit: request.chunk_limit.min(MAX_CHUNK_LIMIT),
+            limit: request.chunk_limit,
         },
         objects: objects.objects,
         object_page_info: PageInfo {
             next_cursor: objects.next_cursor,
             has_more: objects.has_more,
-            limit: request.object_limit.min(MAX_OBJECT_LIMIT),
+            limit: request.object_limit,
         },
         champions,
         towns,
@@ -206,17 +211,21 @@ struct EventMerge {
 fn merged_events(
     lifecycle_events: Vec<ApiEventView>,
     api_events: &[ApiEventView],
+    session_id: &str,
     participant_id: &str,
     after_seq: u64,
     limit: u32,
 ) -> EventMerge {
     let audience_key = participant_audience_key(participant_id);
+    let api_start_index = api_events.partition_point(|event| event.event_seq <= after_seq);
     let mut events = lifecycle_events
         .into_iter()
         .chain(
-            api_events
+            api_events[api_start_index..]
                 .iter()
+                .filter(|event| event.session_id == session_id)
                 .filter(|event| event.event_seq > after_seq)
+                .take(limit.saturating_add(1) as usize)
                 .map(|event| deliver_event_to_audience(event, &audience_key)),
         )
         .collect::<Vec<_>>();
@@ -340,5 +349,45 @@ fn validate_request(request: &GameViewRequest) -> Result<(), ApiError> {
         )
         .with_details(format!(r#"{{"tiles":{tiles}}}"#)));
     }
+    validate_limit(
+        "chunk_limit",
+        request.chunk_limit,
+        MAX_CHUNK_LIMIT,
+        "viewport_chunk_limit_exceeded",
+    )?;
+    validate_limit(
+        "object_limit",
+        request.object_limit,
+        MAX_OBJECT_LIMIT,
+        "list_limit_exceeded",
+    )?;
+    validate_limit(
+        "event_limit",
+        request.event_limit,
+        MAX_EVENT_LIMIT,
+        "event_limit_exceeded",
+    )?;
+    Ok(())
+}
+
+fn validate_limit(name: &str, limit: u32, max: u32, code: &str) -> Result<(), ApiError> {
+    if limit == 0 {
+        return Err(ApiError::new(
+            "limit_must_be_positive",
+            format!("{name} must be at least 1"),
+            false,
+        )
+        .with_details(format!(r#"{{"limit":{limit},"max":{max}}}"#)));
+    }
+
+    if limit > max {
+        return Err(ApiError::new(
+            code,
+            format!("{name} exceeds the v1 public query limit"),
+            false,
+        )
+        .with_details(format!(r#"{{"limit":{limit},"max":{max}}}"#)));
+    }
+
     Ok(())
 }

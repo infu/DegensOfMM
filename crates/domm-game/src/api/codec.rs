@@ -28,6 +28,12 @@ pub(super) fn map_update_error(code: &str, error: impl ToString) -> ApiError {
     let message = error.to_string();
     let mapped = if message.contains("duplicate") && message.contains("payload") {
         "duplicate_nonce_payload_mismatch"
+    } else if message.contains("payload too large") {
+        "payload_too_large"
+    } else if message.contains("retention limit") {
+        "retention_limit_exceeded"
+    } else if message.contains("events per turn limit") {
+        "events_per_turn_limit_exceeded"
     } else if message.contains("not visible") || message.contains("hidden") {
         "not_visible"
     } else if message.contains("session is not active") {

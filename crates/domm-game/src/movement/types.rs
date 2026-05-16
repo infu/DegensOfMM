@@ -7,15 +7,21 @@ use thiserror::Error;
 
 use crate::champion::ChampionError;
 use crate::fixtures::{TURN_DURATION_MS, first_playable_fixture};
+use crate::limits::{
+    MAX_MOVE_CHUNKS_TOUCHED_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_MOVEMENT_MICROSTEPS_PER_SYNC,
+    RECOVERY_COMMAND_EFFECTS_PER_UPDATE, RECOVERY_COMMANDS_ADVANCED_PER_UPDATE,
+    RECOVERY_COMMANDS_INSPECTED_PER_UPDATE, RECOVERY_GAME_EVENTS_PER_UPDATE,
+    RECOVERY_GAMEPLAY_ROWS_PER_UPDATE,
+};
 use crate::map::MapError;
 
-pub const MAX_MOVE_PATH_STEPS: usize = 64;
-pub const MAX_MOVE_CHUNKS_TOUCHED: usize = 8;
-pub const DEFAULT_RECOVERY_COMMANDS_INSPECTED: u32 = 25;
-pub const DEFAULT_RECOVERY_COMMANDS_ADVANCED: u32 = 8;
-pub const DEFAULT_RECOVERY_EFFECTS: u32 = 32;
-pub const DEFAULT_RECOVERY_EVENTS: u32 = 32;
-pub const DEFAULT_GAMEPLAY_ROWS: u32 = 160;
+pub const MAX_MOVE_PATH_STEPS: usize = MAX_MOVE_PATH_STEPS_LIMIT;
+pub const MAX_MOVE_CHUNKS_TOUCHED: usize = MAX_MOVE_CHUNKS_TOUCHED_LIMIT;
+pub const DEFAULT_RECOVERY_COMMANDS_INSPECTED: u32 = RECOVERY_COMMANDS_INSPECTED_PER_UPDATE;
+pub const DEFAULT_RECOVERY_COMMANDS_ADVANCED: u32 = RECOVERY_COMMANDS_ADVANCED_PER_UPDATE;
+pub const DEFAULT_RECOVERY_EFFECTS: u32 = RECOVERY_COMMAND_EFFECTS_PER_UPDATE;
+pub const DEFAULT_RECOVERY_EVENTS: u32 = RECOVERY_GAME_EVENTS_PER_UPDATE;
+pub const DEFAULT_GAMEPLAY_ROWS: u32 = RECOVERY_GAMEPLAY_ROWS_PER_UPDATE;
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, CandidType, Serialize, Deserialize,
@@ -258,7 +264,7 @@ impl Default for MovementSyncBudget {
             max_effects: DEFAULT_RECOVERY_EFFECTS,
             max_events: DEFAULT_RECOVERY_EVENTS,
             max_gameplay_rows: DEFAULT_GAMEPLAY_ROWS,
-            max_microsteps: MAX_MOVE_PATH_STEPS as u32,
+            max_microsteps: MAX_MOVEMENT_MICROSTEPS_PER_SYNC,
         }
     }
 }
@@ -370,6 +376,8 @@ pub enum MovementError {
         champion_id: String,
         client_nonce: u64,
     },
+    #[error("unresolved movement intent limit exceeded for turn {turn_number}: {max_intents}")]
+    UnresolvedIntentLimitExceeded { turn_number: u32, max_intents: u32 },
     #[error("movement sync budget is exhausted before another microstep can be applied")]
     BudgetExhausted,
     #[error("simulated movement trap after command {command_id} at next step {next_step_index}")]

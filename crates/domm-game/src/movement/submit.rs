@@ -1,4 +1,5 @@
 use crate::champion::ChampionState;
+use crate::limits::MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN;
 use crate::map::FirstPlayableMapState;
 
 use super::preview::validate_move_path;
@@ -57,6 +58,25 @@ pub fn submit_move_intent(
             preview,
             replaced_intent_ids: Vec::new(),
             command_id,
+        });
+    }
+
+    let unresolved_intents = movement
+        .intents
+        .iter()
+        .filter(|intent| intent.turn_number == movement.current_turn && intent.status == "pending")
+        .count();
+    let replaces_pending_intent = movement.intents.iter().any(|intent| {
+        intent.turn_number == movement.current_turn
+            && intent.champion_id == champion_id
+            && intent.status == "pending"
+    });
+    if unresolved_intents >= MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN as usize
+        && !replaces_pending_intent
+    {
+        return Err(MovementError::UnresolvedIntentLimitExceeded {
+            turn_number: movement.current_turn,
+            max_intents: MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN,
         });
     }
 

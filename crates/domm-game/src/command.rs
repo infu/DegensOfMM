@@ -5,13 +5,22 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-pub const RECOVERY_INSPECT_LIMIT: usize = 25;
-pub const RECOVERY_ADVANCE_LIMIT: usize = 8;
-pub const RECOVERY_COMMAND_EFFECT_LIMIT: usize = 32;
-pub const RECOVERY_GAME_EVENT_LIMIT: usize = 32;
-pub const RECOVERY_GAMEPLAY_ROW_LIMIT: usize = 160;
-pub const COMMAND_EFFECT_LIMIT: usize = 16;
-pub const COMMAND_EVENT_LIMIT: usize = 8;
+use crate::limits::{
+    GAME_COMMAND_EFFECT_CAP, GAME_COMMAND_EVENT_CAP, MAX_COMMAND_PAYLOAD_JSON_BYTES,
+    MAX_COMMAND_RESULT_JSON_BYTES, MAX_COMMANDS_RETAINED_PER_ACTIVE_SESSION,
+    MAX_EVENT_PAYLOAD_JSON_BYTES, MAX_EVENTS_PER_TURN, MAX_EVENTS_RETAINED_PER_ACTIVE_SESSION,
+    RECOVERY_COMMAND_EFFECTS_PER_UPDATE, RECOVERY_COMMANDS_ADVANCED_PER_UPDATE,
+    RECOVERY_COMMANDS_INSPECTED_PER_UPDATE, RECOVERY_GAME_EVENTS_PER_UPDATE,
+    RECOVERY_GAMEPLAY_ROWS_PER_UPDATE,
+};
+
+pub const RECOVERY_INSPECT_LIMIT: usize = RECOVERY_COMMANDS_INSPECTED_PER_UPDATE as usize;
+pub const RECOVERY_ADVANCE_LIMIT: usize = RECOVERY_COMMANDS_ADVANCED_PER_UPDATE as usize;
+pub const RECOVERY_COMMAND_EFFECT_LIMIT: usize = RECOVERY_COMMAND_EFFECTS_PER_UPDATE as usize;
+pub const RECOVERY_GAME_EVENT_LIMIT: usize = RECOVERY_GAME_EVENTS_PER_UPDATE as usize;
+pub const RECOVERY_GAMEPLAY_ROW_LIMIT: usize = RECOVERY_GAMEPLAY_ROWS_PER_UPDATE as usize;
+pub const COMMAND_EFFECT_LIMIT: usize = GAME_COMMAND_EFFECT_CAP;
+pub const COMMAND_EVENT_LIMIT: usize = GAME_COMMAND_EVENT_CAP;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub enum ActorKind {
@@ -649,6 +658,18 @@ pub enum CommandCoreError {
     CommandEffectLimitExceeded { command_id: String },
     #[error("command {command_id} event limit exceeded")]
     CommandEventLimitExceeded { command_id: String },
+    #[error("{field} payload too large: {actual_bytes}/{max_bytes} bytes")]
+    PayloadTooLarge {
+        field: String,
+        max_bytes: usize,
+        actual_bytes: usize,
+    },
+    #[error("command retention limit exceeded: {max_commands}")]
+    CommandRetentionLimitExceeded { max_commands: usize },
+    #[error("event retention limit exceeded: {max_events}")]
+    EventRetentionLimitExceeded { max_events: usize },
+    #[error("events per turn limit exceeded for turn {turn_number}: {max_events}")]
+    EventsPerTurnLimitExceeded { turn_number: u32, max_events: usize },
     #[error("command effect mismatch for {command_id}/{effect_key}")]
     CommandEffectMismatch {
         command_id: String,
@@ -738,6 +759,11 @@ impl SessionCommandJournal {
         payload: GameCommandPayload,
     ) -> Result<CommandSubmitOutcome, CommandCoreError> {
         self.ensure_session(&payload.session_id)?;
+        ensure_json_byte_limit(
+            "command.payload_json",
+            &payload.payload_json,
+            MAX_COMMAND_PAYLOAD_JSON_BYTES,
+        )?;
         let submitted_payload_hash = payload.payload_hash();
 
         if let Some(existing) = self.commands.iter().find(|command| {
@@ -757,6 +783,12 @@ impl SessionCommandJournal {
             return Ok(CommandSubmitOutcome {
                 command: existing.clone(),
                 duplicate: true,
+            });
+        }
+
+        if self.commands.len() >= MAX_COMMANDS_RETAINED_PER_ACTIVE_SESSION {
+            return Err(CommandCoreError::CommandRetentionLimitExceeded {
+                max_commands: MAX_COMMANDS_RETAINED_PER_ACTIVE_SESSION,
             });
         }
 
@@ -802,6 +834,13 @@ impl SessionCommandJournal {
         command_id: &str,
         result_json: Option<String>,
     ) -> Result<CommandStatusView, CommandCoreError> {
+        if let Some(result_json) = result_json.as_deref() {
+            ensure_json_byte_limit(
+                "command.result_json",
+                result_json,
+                MAX_COMMAND_RESULT_JSON_BYTES,
+            )?;
+        }
         let applied_at_ms = self.synthetic_time_ms();
         let command = self.command_mut(command_id)?;
         command.status = CommandStatus::Applied;
@@ -871,6 +910,11 @@ impl SessionCommandJournal {
         let target_kind = target_kind.into();
         let target_id_text = target_id_text.into();
         let payload_json = payload_json.into();
+        ensure_json_byte_limit(
+            "command_effect.payload_json",
+            &payload_json,
+            MAX_COMMAND_PAYLOAD_JSON_BYTES,
+        )?;
 
         if let Some(existing) = self
             .effects
@@ -943,6 +987,11 @@ impl SessionCommandJournal {
         draft: PendingEffectDraft,
     ) -> Result<PendingEffectRecord, CommandCoreError> {
         self.ensure_session(&draft.session_id)?;
+        ensure_json_byte_limit(
+            "pending_effect.payload_json",
+            &draft.payload_json,
+            MAX_COMMAND_PAYLOAD_JSON_BYTES,
+        )?;
 
         if let Some(existing) = self.pending_effects.iter().find(|effect| {
             effect.session_id == draft.session_id && effect.effect_key == draft.effect_key
@@ -985,6 +1034,11 @@ impl SessionCommandJournal {
         draft: GameEventDraft,
     ) -> Result<EventAppendOutcome, CommandCoreError> {
         self.ensure_session(&draft.session_id)?;
+        ensure_json_byte_limit(
+            "event.payload_json",
+            &draft.payload_json,
+            MAX_EVENT_PAYLOAD_JSON_BYTES,
+        )?;
 
         if let Some(existing) = self
             .events
@@ -999,6 +1053,27 @@ impl SessionCommandJournal {
                 event: existing,
                 duplicate: true,
                 appended: false,
+            });
+        }
+
+        if self.events.len() >= MAX_EVENTS_RETAINED_PER_ACTIVE_SESSION {
+            return Err(CommandCoreError::EventRetentionLimitExceeded {
+                max_events: MAX_EVENTS_RETAINED_PER_ACTIVE_SESSION,
+            });
+        }
+
+        if self
+            .events
+            .iter()
+            .filter(|event| {
+                event.session_id == draft.session_id && event.turn_number == draft.turn_number
+            })
+            .count()
+            >= MAX_EVENTS_PER_TURN
+        {
+            return Err(CommandCoreError::EventsPerTurnLimitExceeded {
+                turn_number: draft.turn_number,
+                max_events: MAX_EVENTS_PER_TURN,
             });
         }
 
@@ -1063,19 +1138,16 @@ impl SessionCommandJournal {
         limit: usize,
     ) -> EventPage {
         let limit = limit.max(1);
-        let mut events = self
+        let start_index = self
             .events
+            .partition_point(|event| event.event_seq <= events_after_seq);
+        let mut events = self.events[start_index..]
             .iter()
-            .filter(|event| event.event_seq > events_after_seq)
-            .collect::<Vec<_>>();
-        events.sort_by_key(|event| event.event_seq);
-        let has_more = events.len() > limit;
-
-        let events = events
-            .into_iter()
-            .take(limit)
+            .take(limit.saturating_add(1))
             .map(|event| event.view_for(audience))
             .collect::<Vec<_>>();
+        let has_more = events.len() > limit;
+        events.truncate(limit);
         let next_event_seq = has_more
             .then(|| events.last().map(|event| event.event_seq))
             .flatten();
@@ -1380,6 +1452,11 @@ impl LobbyCommandJournal {
         &mut self,
         payload: LobbyCommandPayload,
     ) -> Result<LobbyCommandSubmitOutcome, CommandCoreError> {
+        ensure_json_byte_limit(
+            "lobby_command.payload_json",
+            &payload.payload_json,
+            MAX_COMMAND_PAYLOAD_JSON_BYTES,
+        )?;
         let submitted_payload_hash = payload.payload_hash();
         if let Some(existing) = self.commands.iter().find(|command| {
             command.actor_principal == payload.actor_principal
@@ -1396,6 +1473,12 @@ impl LobbyCommandJournal {
             return Ok(LobbyCommandSubmitOutcome {
                 command: existing.clone(),
                 duplicate: true,
+            });
+        }
+
+        if self.commands.len() >= MAX_COMMANDS_RETAINED_PER_ACTIVE_SESSION {
+            return Err(CommandCoreError::CommandRetentionLimitExceeded {
+                max_commands: MAX_COMMANDS_RETAINED_PER_ACTIVE_SESSION,
             });
         }
 
@@ -1430,6 +1513,13 @@ impl LobbyCommandJournal {
         command_id: &str,
         result_json: Option<String>,
     ) -> Result<CommandStatusView, CommandCoreError> {
+        if let Some(result_json) = result_json.as_deref() {
+            ensure_json_byte_limit(
+                "lobby_command.result_json",
+                result_json,
+                MAX_COMMAND_RESULT_JSON_BYTES,
+            )?;
+        }
         let applied_at_ms = self.synthetic_time_ms();
         let command = self.command_mut(command_id)?;
         command.status = CommandStatus::Applied;
@@ -1512,6 +1602,23 @@ fn hash_optional_text(hasher: &mut Sha256, label: &str, value: Option<&str>) {
     match value {
         Some(value) => hash_text(hasher, label, value),
         None => hash_text(hasher, label, "<none>"),
+    }
+}
+
+fn ensure_json_byte_limit(
+    field: &str,
+    value: &str,
+    max_bytes: usize,
+) -> Result<(), CommandCoreError> {
+    let actual_bytes = value.len();
+    if actual_bytes > max_bytes {
+        Err(CommandCoreError::PayloadTooLarge {
+            field: field.to_string(),
+            max_bytes,
+            actual_bytes,
+        })
+    } else {
+        Ok(())
     }
 }
 

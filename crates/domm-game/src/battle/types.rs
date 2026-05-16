@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::effects::EffectError;
+use crate::limits::{MAX_BATTLE_ROUNDS, MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE};
 use crate::rng::{RngError, RollAudit};
 
 pub const BATTLE_GRID_WIDTH: u8 = 12;
 pub const BATTLE_GRID_HEIGHT: u8 = 10;
-pub const BATTLE_MAX_ROUNDS: u16 = 20;
+pub const BATTLE_MAX_ROUNDS: u16 = MAX_BATTLE_ROUNDS;
 pub const BATTLE_ACTION_DEADLINE_MS: u64 = 30_000;
 
 pub const BATTLE_SIDE_ATTACKER: &str = "attacker";
@@ -189,7 +190,7 @@ impl Default for BattleCommandBudget {
     fn default() -> Self {
         Self {
             max_recoveries: 8,
-            max_timeout_actions: 8,
+            max_timeout_actions: MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
         }
     }
 }

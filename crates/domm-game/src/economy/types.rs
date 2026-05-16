@@ -250,6 +250,8 @@ pub enum EconomyError {
     ResourceLedgerBalanceMismatch { ledger_key: String },
     #[error("resource ledger deterministic payload mismatch for {ledger_key}")]
     ResourceLedgerPayloadMismatch { ledger_key: String },
+    #[error("resource ledger retention limit exceeded: {max_rows}")]
+    ResourceLedgerRetentionLimitExceeded { max_rows: usize },
     #[error("income source not found: {source_id}")]
     IncomeSourceNotFound { source_id: String },
     #[error("resource pile not found: {pile_id}")]

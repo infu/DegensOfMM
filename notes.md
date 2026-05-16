@@ -552,6 +552,36 @@ Suggested follow-up:
 
 Checkpoint 17A should enforce the remaining hot-path payload and query limits against this cleanup/API surface, including command/event/ledger active-session retention caps and measured response sizes.
 
+## Checkpoint 17A: Performance Budgets And Query Contracts
+
+Added a split `domm_game::limits` module for v1 hard-limit constants and the first-playable measurement helper, keeping budget definitions out of the gameplay domains. Battle, cleanup, movement, AI, command journals, economy ledger writes, API view pagination, and public query defaults now reference the shared limits rather than local numeric caps.
+
+Enforcement added in this checkpoint:
+
+- Command journals reject oversized command payload JSON, result JSON, event payload JSON, command/effect payload JSON, command retention overflow, event retention overflow, and more than 100 events in one turn.
+- Resource ledger writes reject the 3001st retained active-session ledger row while preserving idempotent retries of already-applied rows.
+- API game-view and direct viewport/object queries fail closed on zero or over-limit page sizes. Game-view recent events cap at 50, generic event feeds clamp to the 200-row list cap, and command payloads over 4096 bytes return `payload_too_large`.
+- Movement submit enforces the unresolved movement-intent cap while still allowing a champion to replace its own pending intent.
+- AI actor/candidate/path/chunk/command caps are exposed through shared limit constants, with the existing AI decision code still bounded by actor and candidate caps.
+
+Measurement output from the checkpoint test:
+
+- commands: 32
+- events: 42
+- queries: 19
+- estimated storage rows: 190
+- max query bytes: 5072
+- estimated response bytes: 5072
+
+Audit notes:
+
+- Hot public query payloads are bounded by request limits before backend reads. Opening map chunks are capped at 9, visible objects at the generic 200 list cap, recent game-view events at 50, and event feeds at 200.
+- Event pagination now uses the monotonic event sequence cursor and takes only `limit + 1` rows after the cursor before sorting merged lifecycle/API event slices.
+- Map chunks are physically capped at 9 for the v1 scenario, dynamic map/object surfaces are capped at 200, active sessions are capped at 100, and command/event/ledger vectors are capped before append. The current pure fixture backend still uses in-memory vectors, but no user-facing update or query path is left with unbounded growth beyond the v1 active-session limits.
+- The eventual generated IcyDB repository layer should preserve these contracts with indexes on session/cursor/owner fields rather than depending on vector scans.
+
+Focused tests cover hard-limit constants, command payload/result/event caps, command retention, event per-turn caps, ledger retention, API viewport/event/list caps, API payload failure responses, first-playable measurement output, and limit validation before unauthorized object query work. The full workspace test suite passes after this checkpoint.
+
 ## IcyDB Ergonomics Notes
 
 None yet.

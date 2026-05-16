@@ -270,11 +270,11 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 17A. Performance Budgets And Query Contracts
 
-- [ ] Enforce every v1 hard limit in `spec.md`: active sessions, participants, champions, towns, map chunks, dynamic objects, active battles, battle rounds, AI caps, command/event retention, movement sync caps, battle timeout caps, cleanup caps, and payload size caps.
-- [ ] Add regression tests for viewport limits, pagination, path caps, payload caps, active-session caps, recovery budgets, movement slicing, battle-timeout slicing, and cleanup slicing.
-- [ ] Add lightweight measurement output for the headless first playable fixture: command counts, row counts, event counts, response sizes, and slow-path notes.
-- [ ] Audit: confirm no update or query scans all commands, events, champions, towns, chunks, or dynamic objects for a session.
-- [ ] Commit after this checkpoint.
+- [x] Enforce every v1 hard limit in `spec.md`: active sessions, participants, champions, towns, map chunks, dynamic objects, active battles, battle rounds, AI caps, command/event retention, movement sync caps, battle timeout caps, cleanup caps, and payload size caps.
+- [x] Add regression tests for viewport limits, pagination, path caps, payload caps, active-session caps, recovery budgets, movement slicing, battle-timeout slicing, and cleanup slicing.
+- [x] Add lightweight measurement output for the headless first playable fixture: command counts, row counts, event counts, response sizes, and slow-path notes.
+- [x] Audit: confirm no update or query scans all commands, events, champions, towns, chunks, or dynamic objects for a session.
+- [x] Commit after this checkpoint.
 
 ## 17B. Schema Evolution And Migration Safety
 

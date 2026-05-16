@@ -2,11 +2,12 @@ use candid::CandidType;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const CLEANUP_MAX_ROWS_PER_UPDATE: u32 = 100;
-pub const CLEANUP_MAX_FINISHED_SESSIONS_PER_UPDATE: u32 = 1;
+pub const CLEANUP_MAX_ROWS_PER_UPDATE: u32 = crate::limits::MAX_CLEANUP_ROWS_PER_UPDATE;
+pub const CLEANUP_MAX_FINISHED_SESSIONS_PER_UPDATE: u32 =
+    crate::limits::MAX_FINISHED_SESSIONS_CLEANED_PER_UPDATE;
 pub const RAW_FINISHED_LOG_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 pub const RAW_FINISHED_SESSION_LIMIT: u32 = 100;
-pub const ACTIVE_SESSION_LIMIT: u32 = 100;
+pub const ACTIVE_SESSION_LIMIT: u32 = crate::limits::MAX_ACTIVE_SESSIONS_PER_CANISTER;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct CleanupBudget {

@@ -11,6 +11,7 @@ use crate::content::get_content_manifest;
 use crate::driver::{HeadlessBackend, PlayerView, SessionView};
 use crate::fixtures::{ScenarioFixture, first_playable_fixture};
 use crate::lifecycle::ParticipantView;
+use crate::limits::{MAX_COMMAND_PAYLOAD_JSON_BYTES, MAX_LIST_LIMIT};
 use crate::map::{MapChunkPage, ObjectViewPage, Viewport};
 use crate::movement::{MoveCoord, MovementPreview};
 use crate::strategic::{StrategicBackend, StrategicFixtureBackend};
@@ -27,8 +28,8 @@ use super::types::{
     PageInfo,
 };
 use super::view::{
-    api_event_from_command_event, build_game_view, deliver_event_to_audience, map_api_error,
-    opening_viewport_for_slot, participant_audience_key,
+    MAX_CHUNK_LIMIT, MAX_OBJECT_LIMIT, api_event_from_command_event, build_game_view,
+    deliver_event_to_audience, map_api_error, opening_viewport_for_slot, participant_audience_key,
 };
 
 const API_EVENT_SEQ_START: u64 = 10_000;
@@ -121,6 +122,15 @@ impl FixtureApiBackend {
         {
             return response;
         }
+        if let Some(error) = payload_limit_error("lobby_command.payload_json", &payload) {
+            return self.failed_lobby_response(
+                caller,
+                command_type,
+                client_nonce,
+                payload_hash,
+                error,
+            );
+        }
 
         let result = self
             .strategic
@@ -169,6 +179,15 @@ impl FixtureApiBackend {
             self.replayed_or_mismatched_lobby(caller, command_type, client_nonce, &payload_hash)
         {
             return response;
+        }
+        if let Some(error) = payload_limit_error("lobby_command.payload_json", &payload) {
+            return self.failed_lobby_response(
+                caller,
+                command_type,
+                client_nonce,
+                payload_hash,
+                error,
+            );
         }
 
         match self
@@ -551,6 +570,12 @@ impl FixtureApiBackend {
         cursor: Option<u32>,
         limit: u32,
     ) -> Result<MapChunkPage, ApiError> {
+        validate_public_limit(
+            "chunk_limit",
+            limit,
+            MAX_CHUNK_LIMIT,
+            "viewport_chunk_limit_exceeded",
+        )?;
         self.strategic
             .visible_map_chunks_public(caller, session_id, viewport, cursor, limit)
             .map_err(|error| map_api_error("visible_chunks_failed", error))
@@ -564,6 +589,12 @@ impl FixtureApiBackend {
         cursor: Option<u32>,
         limit: u32,
     ) -> Result<ObjectViewPage, ApiError> {
+        validate_public_limit(
+            "object_limit",
+            limit,
+            MAX_OBJECT_LIMIT,
+            "list_limit_exceeded",
+        )?;
         self.strategic
             .visible_objects_public(caller, session_id, viewport, cursor, limit)
             .map_err(|error| map_api_error("visible_objects_failed", error))
@@ -709,18 +740,22 @@ impl FixtureApiBackend {
         after_seq: u64,
         limit: u32,
     ) -> ApiEventPage {
+        let limit = limit.clamp(1, MAX_LIST_LIMIT);
+        let api_start_index = self
+            .api_events
+            .partition_point(|event| event.event_seq <= after_seq);
         let mut events = self
             .lifecycle_events_for_audience(session_id, audience_key, after_seq, limit)
             .into_iter()
             .chain(
-                self.api_events
+                self.api_events[api_start_index..]
                     .iter()
                     .filter(|event| event.session_id == session_id && event.event_seq > after_seq)
+                    .take(limit.saturating_add(1) as usize)
                     .map(|event| deliver_event_to_audience(event, audience_key)),
             )
             .collect::<Vec<_>>();
         events.sort_by_key(|event| event.event_seq);
-        let limit = limit.max(1);
         let has_more = events.len() > limit as usize;
         events.truncate(limit as usize);
         ApiEventPage {
@@ -740,6 +775,7 @@ impl FixtureApiBackend {
         cursor: u32,
         limit: u32,
     ) -> Result<MatchHistoryPage, ApiError> {
+        validate_public_limit("limit", limit, MAX_LIST_LIMIT, "list_limit_exceeded")?;
         let entries = self
             .strategic
             .get_match_history_public(caller, cursor as usize, limit as usize)
@@ -830,6 +866,15 @@ impl FixtureApiBackend {
         {
             return response;
         }
+        if let Some(error) = payload_limit_error("lobby_command.payload_json", &payload) {
+            return self.failed_lobby_response(
+                caller,
+                command_type,
+                client_nonce,
+                payload_hash,
+                error,
+            );
+        }
 
         match apply(self) {
             Ok(session) => {
@@ -888,6 +933,16 @@ impl FixtureApiBackend {
             self.replayed_or_mismatched_command(caller, command_type, client_nonce, &payload_hash)
         {
             return response;
+        }
+        if let Some(error) = payload_limit_error("command.payload_json", &payload) {
+            return self.failed_command_response(
+                caller,
+                command_type,
+                client_nonce,
+                payload_hash,
+                fallback_command_id(session_id, command_type, client_nonce),
+                error,
+            );
         }
 
         match apply(self) {
@@ -1247,4 +1302,40 @@ impl FixtureApiBackend {
     fn set_now(&mut self, now_ms: u64) {
         self.server_now_ms = now_ms;
     }
+}
+
+fn payload_limit_error(field: &str, payload: &str) -> Option<ApiError> {
+    let actual_bytes = payload.len();
+    (actual_bytes > MAX_COMMAND_PAYLOAD_JSON_BYTES).then(|| {
+        ApiError::new(
+            "payload_too_large",
+            format!("{field} exceeds the v1 public command payload limit"),
+            false,
+        )
+        .with_details(format!(
+            r#"{{"actual_bytes":{actual_bytes},"max_bytes":{MAX_COMMAND_PAYLOAD_JSON_BYTES}}}"#
+        ))
+    })
+}
+
+fn validate_public_limit(name: &str, limit: u32, max: u32, code: &str) -> Result<(), ApiError> {
+    if limit == 0 {
+        return Err(ApiError::new(
+            "limit_must_be_positive",
+            format!("{name} must be at least 1"),
+            false,
+        )
+        .with_details(format!(r#"{{"limit":{limit},"max":{max}}}"#)));
+    }
+
+    if limit > max {
+        return Err(ApiError::new(
+            code,
+            format!("{name} exceeds the v1 public query limit"),
+            false,
+        )
+        .with_details(format!(r#"{{"limit":{limit},"max":{max}}}"#)));
+    }
+
+    Ok(())
 }

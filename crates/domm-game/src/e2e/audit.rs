@@ -92,7 +92,7 @@ pub fn part_two_spec_audit() -> Vec<SpecAuditRow> {
         ),
         deferred(
             "Part 1 expansion systems",
-            "Campaign, large procedural maps, naval movement, complex siege, skill-tree choices, full spellbook, quests, markets, taverns, external dwellings, ranked, guild, diplomacy, and broader meta systems remain in checkpoints 21-27 until Part 2 adds bounded specs.",
+            "Campaign, large procedural maps, naval movement, complex siege, quests, advanced economy variants, ranked, guild, diplomacy, and broader meta systems remain in checkpoints 24-27 or future bounded specs.",
         ),
     ]
 }

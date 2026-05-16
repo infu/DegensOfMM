@@ -13,7 +13,9 @@ use icydb::{
 
 use crate::repos::{champions_artifacts, content, foundation, map_visibility_occupancy, towns};
 
-use super::session_context::{SessionCallerContext, participants_for_session, public_error};
+use super::session_context::{SessionCallerContext, public_error};
+
+const MAX_OWNED_CHAMPIONS_VIEW: u32 = 16;
 
 pub(crate) fn visible_map_chunks(
     context: &SessionCallerContext,
@@ -88,10 +90,10 @@ pub(crate) fn visible_objects(
         domm_game::MAX_OBJECT_LIMIT,
         "list_limit_exceeded",
     )?;
-    let participants_by_slot = participants_for_session(context.session.id())?
-        .into_iter()
-        .map(|participant| (participant.slot_index, participant.id().to_string()))
-        .collect::<BTreeMap<_, _>>();
+    let participants_by_slot = BTreeMap::from([(
+        context.participant.slot_index,
+        context.participant.id().to_string(),
+    )]);
     let mut objects = Vec::new();
     let page = map_visibility_occupancy::page_known_objects_for_participant(
         context.session.id(),
@@ -134,7 +136,7 @@ pub(crate) fn my_champions(context: &SessionCallerContext) -> Result<Vec<Champio
     let page = champions_artifacts::page_champions_by_owner_status(
         context.participant.id(),
         "active",
-        domm_game::MAX_LIST_LIMIT,
+        MAX_OWNED_CHAMPIONS_VIEW,
         None,
     )?;
     page.items
@@ -219,7 +221,7 @@ fn champion_view(
     champion: Champion,
     own: bool,
 ) -> Result<ChampionView, ApiError> {
-    let stacks = champion_stacks(champion.id())?;
+    let stacks = champion_stacks(&champion)?;
     let artifacts = if own {
         equipped_artifacts(champion.id())?
     } else {
@@ -253,23 +255,35 @@ fn champion_view(
     })
 }
 
-fn champion_stacks(champion_id: Id<Champion>) -> Result<Vec<ChampionArmyStackRecord>, ApiError> {
+fn champion_stacks(champion: &Champion) -> Result<Vec<ChampionArmyStackRecord>, ApiError> {
+    let champion_id = champion.id();
     let page = champions_artifacts::page_champion_army_stacks(
         champion_id,
-        domm_game::MAX_LIST_LIMIT,
+        u32::from(domm_game::MAX_ARMY_SLOTS),
         None,
     )?;
     page.items
         .into_iter()
         .map(|stack| {
-            let unit = content::load_unit(Id::from_key(stack.unit_id))?.ok_or_else(|| {
-                public_error("unit_not_found", "champion stack unit was not found", false)
-            })?;
+            let unit_slug = known_champion_unit_slug(champion, stack.slot_index).map_or_else(
+                || {
+                    content::load_unit(Id::from_key(stack.unit_id))?
+                        .map(|unit| unit.slug)
+                        .ok_or_else(|| {
+                            public_error(
+                                "unit_not_found",
+                                "champion stack unit was not found",
+                                false,
+                            )
+                        })
+                },
+                Ok,
+            )?;
             Ok(ChampionArmyStackRecord {
                 stack_id: stack.id().to_string(),
                 session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
                 champion_id: champion_id.to_string(),
-                unit_slug: unit.slug,
+                unit_slug,
                 slot_index: stack.slot_index,
                 quantity: stack.quantity,
                 front_hp: stack.front_hp,
@@ -280,6 +294,19 @@ fn champion_stacks(champion_id: Id<Champion>) -> Result<Vec<ChampionArmyStackRec
             })
         })
         .collect()
+}
+
+fn known_champion_unit_slug(champion: &Champion, slot_index: u8) -> Option<String> {
+    domm_game::first_playable_scenario()
+        .starts
+        .into_iter()
+        .find(|start| {
+            start.champion_name == champion.name && start.champion_class_slug == champion.class_key
+        })?
+        .starting_army_stacks
+        .into_iter()
+        .find(|stack| stack.slot_index == slot_index)
+        .map(|stack| stack.unit_slug)
 }
 
 fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, ApiError> {
@@ -523,6 +550,7 @@ fn scenario_subject_details(
     let object = scenario
         .mines
         .iter()
+        .chain(scenario.external_dwellings.iter())
         .chain(scenario.central_objectives.iter())
         .find(|object| object.key == subject_id_text)
         .map(|object| (object.object_slug.clone(), None))

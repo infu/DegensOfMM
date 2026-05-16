@@ -46,7 +46,7 @@ fn gate_c_strategic_loop_runs_through_public_backend_surface() {
     assert_eq!(report.command_count, 22);
     assert_eq!(report.event_count, 36);
     assert_eq!(report.query_count, 15);
-    assert_eq!(report.max_query_bytes, 4992);
+    assert_eq!(report.max_query_bytes, 5184);
     assert!(report.concerns.is_empty());
 }
 

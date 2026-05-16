@@ -10,12 +10,13 @@ use domm_degens_canister::{
 };
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
-    ChampionProgressionView, ChampionView, CommandResponse, CommandResult, CommandStatus,
-    CommandStatusView, ContentManifestResponse, FIRST_PLAYABLE_RULESET_ID,
-    FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest, LobbyCommandResponse,
-    LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT,
-    MAX_OBJECT_LIMIT, MapChunkPage, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
-    ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView,
+    ChampionHirePreview, ChampionProgressionView, ChampionView, CommandResponse, CommandResult,
+    CommandStatus, CommandStatusView, ContentManifestResponse, DwellingPoolView,
+    DwellingRecruitPreview, FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView,
+    GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT,
+    MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage,
+    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
+    ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView, TavernOffersView,
     opening_viewport_for_slot,
 };
 
@@ -211,8 +212,8 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             "start_session",
             (session_id.clone(), nonce.clone()),
         )
-        .expect("start_session should decode")
-        .expect("start_session should succeed");
+        .unwrap_or_else(|error| panic!("start_session step {step} should decode: {error:?}"))
+        .unwrap_or_else(|error| panic!("start_session step {step} should succeed: {error:?}"));
         assert_eq!(started.status, CommandStatus::Applied);
         let state = match &started.result {
             LobbyCommandResult::Session(session) => session.state.as_str(),
@@ -301,6 +302,12 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .objects
             .iter()
             .any(|object| object.subject_id_text == "neutral:west-mine")
+    );
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "dwelling:west-mudhook")
     );
     assert!(
         object_page
@@ -790,6 +797,259 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("moved champion query should decode")
     .expect("moved champion should be visible");
     assert_eq!((champion_after_move.x, champion_after_move.y), (9, 23));
+
+    let tavern_offers = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("get_tavern_offers should decode")
+    .expect("tavern offers should load from IcyDB rows");
+    assert_eq!(tavern_offers.week_number, 1);
+    assert_eq!(tavern_offers.offers.len(), 2);
+    let tavern_offer = tavern_offers.offers[0].clone();
+    assert_eq!(tavern_offer.status, "available");
+
+    let hire_preview = query_as::<ChampionHirePreview>(
+        &fixture,
+        player_one,
+        "preview_hire_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer.offer_key.clone(),
+        ),
+    )
+    .expect("preview_hire_champion should decode")
+    .expect("hire preview should be typed and read-only");
+    assert!(hire_preview.allowed);
+    assert_eq!(hire_preview.cost.gold, u64::from(tavern_offer.cost_gold));
+
+    let hired = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "hire_tavern_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer.offer_key.clone(),
+            "nonce:presence:hire:tavern".to_string(),
+        ),
+    )
+    .expect("hire_tavern_champion should decode")
+    .expect("hire_tavern_champion should succeed");
+    assert_eq!(hired.status, CommandStatus::Applied);
+    let hired_champion_id = match &hired.result {
+        CommandResult::ExpandedEconomy(receipt) => {
+            assert_eq!(receipt.action, "hire_tavern_champion");
+            assert_eq!(
+                receipt.offer_key.as_deref(),
+                Some(tavern_offer.offer_key.as_str())
+            );
+            receipt
+                .champion_id
+                .clone()
+                .expect("hire receipt should include champion id")
+        }
+        other => panic!("hire_tavern_champion returned unexpected result: {other:?}"),
+    };
+    assert!(!hired_champion_id.is_empty());
+    let hired_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "hire_tavern_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer.offer_key.clone(),
+            "nonce:presence:hire:tavern".to_string(),
+        ),
+    )
+    .expect("hire_tavern_champion replay should decode")
+    .expect("hire_tavern_champion replay should succeed");
+    assert_eq!(hired_replay.command_id, hired.command_id);
+
+    let tavern_after_hire = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("get_tavern_offers after hire should decode")
+    .expect("tavern offers after hire should load");
+    assert!(
+        tavern_after_hire
+            .offers
+            .iter()
+            .any(|offer| offer.offer_key == tavern_offer.offer_key
+                && offer.status == "hired"
+                && offer.hired_champion_id.as_deref() == Some(hired_champion_id.as_str()))
+    );
+
+    let market_preview = query_as::<MarketTradePreview>(
+        &fixture,
+        player_one,
+        "preview_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            2_500_u64,
+        ),
+    )
+    .expect("preview_market_trade should decode")
+    .expect("market preview should be typed and read-only");
+    assert!(market_preview.allowed);
+    assert_eq!(market_preview.amount_out, 1);
+    assert_eq!(market_preview.rate_key, "gold_to_rare_2500_1");
+
+    let oversized_market = query_as::<MarketTradePreview>(
+        &fixture,
+        player_one,
+        "preview_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            MARKET_TRADE_MAX_INPUT + 1,
+        ),
+    )
+    .expect("oversized market preview should decode")
+    .expect_err("oversized market preview should fail typed limit validation");
+    assert_eq!(oversized_market.code, "invalid_market_trade");
+
+    let traded = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            2_500_u64,
+            "nonce:presence:market:gold-crystal".to_string(),
+        ),
+    )
+    .expect("submit_market_trade should decode")
+    .expect("submit_market_trade should succeed");
+    assert_eq!(traded.status, CommandStatus::Applied);
+    match &traded.result {
+        CommandResult::ExpandedEconomy(receipt) => {
+            assert_eq!(receipt.action, "submit_market_trade");
+            assert_eq!(receipt.from_resource.as_deref(), Some("gold"));
+            assert_eq!(receipt.to_resource.as_deref(), Some("crystal"));
+            assert_eq!(receipt.amount_out, 1);
+        }
+        other => panic!("submit_market_trade returned unexpected result: {other:?}"),
+    }
+    let traded_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            2_500_u64,
+            "nonce:presence:market:gold-crystal".to_string(),
+        ),
+    )
+    .expect("submit_market_trade replay should decode")
+    .expect("submit_market_trade replay should succeed");
+    assert_eq!(traded_replay.command_id, traded.command_id);
+
+    let dwelling_id = "dwelling:west-mudhook".to_string();
+    let dwelling_pool = query_as::<DwellingPoolView>(
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id.clone()),
+    )
+    .expect("get_dwelling_pool should decode")
+    .expect("dwelling pool should load from IcyDB rows");
+    assert_eq!(dwelling_pool.unit_slug, "mudhook-levy");
+    assert!(dwelling_pool.direct_recruit);
+    assert!(dwelling_pool.available >= 4);
+    let dwelling_object_id = dwelling_pool.object_id.clone();
+
+    let dwelling_preview = query_as::<DwellingRecruitPreview>(
+        &fixture,
+        player_one,
+        "preview_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+        ),
+    )
+    .expect("preview_dwelling_recruit should decode")
+    .expect("dwelling recruit preview should be typed and read-only");
+    assert!(dwelling_preview.allowed);
+    assert_eq!(dwelling_preview.available, dwelling_pool.available);
+
+    let dwelling_recruit = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            "nonce:presence:dwelling:recruit".to_string(),
+        ),
+    )
+    .expect("submit_dwelling_recruit should decode")
+    .expect("submit_dwelling_recruit should succeed");
+    assert_eq!(dwelling_recruit.status, CommandStatus::Applied);
+    match &dwelling_recruit.result {
+        CommandResult::ExpandedEconomy(receipt) => {
+            assert_eq!(receipt.action, "submit_dwelling_recruit");
+            assert_eq!(
+                receipt.object_id.as_deref(),
+                Some(dwelling_object_id.as_str())
+            );
+            assert_eq!(receipt.unit_slug.as_deref(), Some("mudhook-levy"));
+            assert_eq!(receipt.quantity, 1);
+        }
+        other => panic!("submit_dwelling_recruit returned unexpected result: {other:?}"),
+    }
+    let dwelling_recruit_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            "nonce:presence:dwelling:recruit".to_string(),
+        ),
+    )
+    .expect("submit_dwelling_recruit replay should decode")
+    .expect("submit_dwelling_recruit replay should succeed");
+    assert_eq!(
+        dwelling_recruit_replay.command_id,
+        dwelling_recruit.command_id
+    );
+
+    let dwelling_after_recruit = query_as::<DwellingPoolView>(
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id),
+    )
+    .expect("get_dwelling_pool after recruit should decode")
+    .expect("dwelling pool after recruit should load");
+    assert_eq!(
+        dwelling_after_recruit.available,
+        dwelling_pool.available.saturating_sub(1)
+    );
 
     let participant_after_pickup = query_as::<ParticipantView>(
         &fixture,

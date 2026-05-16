@@ -15,7 +15,7 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 | Classification | Systems |
 | --- | --- |
 | implement-now | None. The first playable is complete at Gate N, and adding Part 1 behavior without new Part 2 gates would invalidate the canister/IcyDB contract. |
-| promote-to-Part-2-first | Champion skills, level-up choices, spell learning, spellcasting, mana, advanced statuses, taverns, marketplaces, external dwellings, advanced economy, quests, scenario objectives, world events, advanced victories, siege, naval movement, seeded procedural maps, skirmish settings, diplomacy, rematch, ranked, guilds, campaign persistence, and broader history/social systems. |
+| promote-to-Part-2-first | Champion skills, level-up choices, spell learning, spellcasting, mana, advanced statuses, taverns, marketplaces, external dwellings, advanced economy, quests, scenario objectives, world events, advanced victories, siege, naval movement, seeded procedural maps, skirmish settings, diplomacy, rematch, ranked, guilds, campaign persistence, and broader history/social systems. Checkpoints 22-23 have implemented the first bounded progression/magic and expanded-economy slices; remaining variants still need their own bounded specs. |
 | still-deferred or removed | Sequential player turns, hotseat-only backend flow, monolithic `GameState` persistence, unrestricted generic SQL gameplay paths, unbounded full bot opponents, unbounded content packs, and any system without numeric caps and indexed lookup paths. |
 
 ## Triage Table
@@ -23,7 +23,8 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 | Part 1 system | Classification | Destination |
 | --- | --- | --- |
 | Champion skill trees, level-up choices, skill ranks, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, advanced statuses, dispel/stacking, artifact-set-style effect expansion | promote-to-Part-2-first | Checkpoint 22 |
-| Tavern hiring, defeated champion reappearance, marketplace trading, external dwellings, direct map recruitment, advanced economy buildings, additional resource sources | promote-to-Part-2-first | Checkpoint 23 |
+| Tavern hiring, marketplace trading, external dwellings, and direct map recruitment | promoted and implemented | Checkpoint 23 |
+| Defeated champion reappearance, advanced economy buildings, and broader resource-source variety | promote-to-Part-2-first | Future economy expansion |
 | Quest huts, quest chains, objective tracking, weekly/monthly world events, artifact victory, king-of-the-hill, survival, quest victory, scenario-specific defeat, richer scenario rules | promote-to-Part-2-first | Checkpoint 24 |
 | Complex siege engines, walls/gates/towers, naval maps, boats, water movement layers, seeded procedural generation, skirmish settings, larger map variants | promote-to-Part-2-first | Checkpoint 25 |
 | Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
@@ -55,7 +56,7 @@ checkpoint must update `spec.md` with all of the following:
 | Checkpoint | Required Part 2 additions before code |
 | --- | --- |
 | 22 | Define skill/spell/status entities or prove existing `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, artifact rows, and effect keys are sufficient. Add indexes by session, champion, participant, battle, skill key, spell key, and status key. Add commands such as level-up choice, spell learning, battle cast, adventure cast, and previews. Cap skill options, spellbook size, casts per turn/round, status instances, and effect targets. |
-| 23 | Define tavern offers, hire records, market/trade rows, dwelling pools, and any new income/growth rows. Add indexes by session, week/turn, participant, town/object, offer key, and ledger key. Add hire, trade, dwelling recruitment, and preview endpoints. Cap offers, market operations, trade amounts, pool growth, and visible candidates. |
+| 23 | Implemented tavern offers, hire records, market/trade rows, dwelling pools, indexes by session/week/participant/town/object/offer/command, hire/trade/dwelling preview and update endpoints, and caps for offers, trade amounts, pool growth, and visible candidates. |
 | 24 | Define quest/objective/event/victory state rows and reward effects. Add indexes by session, participant, objective, quest key, event window, and victory state. Add quest accept/claim, objective sync, event sync, and advanced victory query/update surfaces. Cap active quests, objective rows, event rows, reward rows, and victory checks per update. |
 | 25 | Define map-generation jobs, generated content manifests, water/boat occupancy, siege objects, fortification state, and skirmish settings. Add indexes by session, generation step, chunk, object, occupant, battle, and scenario hash. Add generation, boat movement, siege action, and skirmish creation endpoints. Cap map dimensions, generated chunks per update, path length, water crossings, siege objects, battle obstacles, and visibility fan-out. |
 | 26 | Define rematch, campaign, leaderboard, guild, diplomacy, and expanded history rows. Add indexes by player, principal, session, season, guild, campaign, rank bucket, and history cursor. Add privacy-preserving endpoints for rematch, campaign, ranking, guild, diplomacy, and history flows. Cap rows per player/guild/season, page sizes, retention windows, and hot gameplay writes. |

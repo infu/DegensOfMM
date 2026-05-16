@@ -11,6 +11,7 @@ pub(crate) mod clock;
 pub(crate) mod command_response;
 pub(crate) mod content;
 pub(crate) mod diagnostics;
+pub(crate) mod economy_expansion;
 pub(crate) mod events;
 pub(crate) mod first_playable_setup;
 pub(crate) mod game_view;

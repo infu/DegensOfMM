@@ -346,6 +346,9 @@ fn seed_world_objects(
     for object in &scenario.mines {
         seed_object_record(state, object, map_objects, "mine")?;
     }
+    for object in &scenario.external_dwellings {
+        seed_object_record(state, object, map_objects, "external_dwelling")?;
+    }
     for object in &scenario.central_objectives {
         seed_object_record(state, object, map_objects, "central_objective")?;
     }

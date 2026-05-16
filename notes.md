@@ -868,7 +868,7 @@ Spec audit notes:
 
 - The Part 2 first-playable surface is marked implemented across schema, command/event/recovery, deterministic RNG, content, lifecycle, map/visibility, client DTOs, economy, towns, champions, effects, movement, objects, neutrals, battles, aftermath/victory, AI, cleanup, limits, migration safety, and the web-client route.
 - No missing required first-playable behavior was found in checkpoint 19.
-- Campaign, large procedural maps, naval movement, complex siege, full spellbooks, skill-tree choices, quests, markets, taverns, external dwellings, ranked, guild, diplomacy, and broader meta systems remain deferred to checkpoints 21-27 until bounded Part 2 specs are added.
+- Campaign, large procedural maps, naval movement, complex siege, quests, advanced economy variants, ranked, guild, diplomacy, and broader meta systems remain deferred to checkpoints 24-27 or future bounded specs.
 
 Manual smoke command added:
 
@@ -937,3 +937,33 @@ Implementation notes:
   joins while keeping strong definition relations for command validation.
 - The first promoted content is small and capped: three skill choices,
   `hex-spark`, and `spite-march`.
+
+## Checkpoint 23: Expanded Economy, Taverns, Marketplace, And External Dwellings
+
+Promoted the first bounded expanded-economy slice into Part 2 and runtime:
+weekly tavern offers, tavern champion hiring, fixed-rate marketplace trades,
+one external dwelling, direct dwelling recruitment, and bounded weekly dwelling
+growth.
+
+Implementation notes:
+
+- New IcyDB entities are `TavernOffer`, `ChampionHire`, `MarketTrade`,
+  `DwellingPool`, and `DwellingRecruitment`, with command/offer/object lookup
+  indexes for recovery and bounded public reads.
+- New canister endpoints are `get_tavern_offers`, `preview_hire_champion`,
+  `hire_tavern_champion`, `preview_market_trade`, `submit_market_trade`,
+  `get_dwelling_pool`, `preview_dwelling_recruit`, and
+  `submit_dwelling_recruit`.
+- Setup now splits world objects, resource piles, external dwellings, dwelling
+  pools, economy summaries, and tavern offers into separate setup effects. The
+  combined world-object phase exceeded the Pocket-IC 40B update limit after the
+  new object/schema rows landed.
+- `get_content_manifest` now validates only the seeded ruleset content hash on
+  the hot query path. Full row-count validation belongs in setup/repository
+  tests; recounting all content rows exceeded the Pocket-IC 5B query limit.
+- `get_my_champions` avoids per-stack unit-definition loads for known
+  first-playable stacks, and command-status nonce routing now includes magic and
+  economy command discriminators. Both changes keep public query paths under
+  the Pocket-IC single-query budget as the schema grows.
+- Defeated champion reappearance, advanced economy buildings, and broader
+  resource-source variety remain deferred for a later bounded economy spec.

@@ -7,6 +7,7 @@ use crate::champion::ChampionView;
 use crate::command::{CommandPhase, CommandStatus, CommandStatusView};
 use crate::content::ContentManifest;
 use crate::driver::{PlayerView, SessionView};
+use crate::economy::ExpandedEconomyReceipt;
 use crate::economy::ResourceBalances;
 use crate::lifecycle::{MatchHistoryEntry, ParticipantView};
 use crate::map::{MapChunkView, ObjectView, Viewport};
@@ -226,6 +227,7 @@ pub enum CommandResult {
     BattleAction(BattleActionReceipt),
     BattleSync(BattleSyncOutcome),
     ChampionMagic(ChampionMagicReceipt),
+    ExpandedEconomy(ExpandedEconomyReceipt),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]

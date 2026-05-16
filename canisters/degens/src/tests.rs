@@ -14,20 +14,20 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
         assert!(!endpoint.fixture_mapping.is_empty());
     }
 
-    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 32);
+    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 40);
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Update)
             .count(),
-        14
+        17
     );
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Query)
             .count(),
-        18
+        23
     );
     assert!(names.contains("register_player"));
     assert!(names.contains("get_game_view"));
@@ -37,6 +37,10 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
     assert!(names.contains("select_champion_level_up"));
     assert!(names.contains("learn_champion_spell"));
     assert!(names.contains("cast_adventure_spell"));
+    assert!(names.contains("get_tavern_offers"));
+    assert!(names.contains("hire_tavern_champion"));
+    assert!(names.contains("submit_market_trade"));
+    assert!(names.contains("submit_dwelling_recruit"));
 }
 
 #[test]
@@ -101,6 +105,7 @@ fn final_gameplay_services_do_not_call_fixture_or_placeholder_backends() {
         include_str!("services/champion_magic.rs"),
         include_str!("services/command_response.rs"),
         include_str!("services/content.rs"),
+        include_str!("services/economy_expansion.rs"),
         include_str!("services/events.rs"),
         include_str!("services/first_playable_setup.rs"),
         include_str!("services/game_view.rs"),
@@ -141,6 +146,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/api/content.rs",
         "src/api/history.rs",
         "src/api/cleanup.rs",
+        "src/api/economy_expansion.rs",
         "src/api/diagnostics.rs",
         "src/services/account_lobby_session.rs",
         "src/services/game_view.rs",
@@ -152,6 +158,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/content.rs",
         "src/services/history.rs",
         "src/services/cleanup.rs",
+        "src/services/economy_expansion.rs",
         "src/services/diagnostics.rs",
         "src/repos/players.rs",
         "src/repos/sessions.rs",
@@ -159,6 +166,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/repos/content.rs",
         "src/repos/map_visibility_occupancy.rs",
         "src/repos/economy.rs",
+        "src/repos/economy_expansion.rs",
         "src/repos/towns.rs",
         "src/repos/champions_artifacts.rs",
         "src/repos/movement.rs",

@@ -250,7 +250,7 @@ fn opening_viewport_snapshot_is_stable_and_candid_roundtrips() {
     assert_eq!(snapshot.snapshot_hash, snapshot.computed_snapshot_hash());
     assert_eq!(
         snapshot.snapshot_hash,
-        "836e88ae73bf643a9e773d861ab243b8d1f0c7c1fd5d4e36b6bb64475c45215f"
+        "41df63f9bdd248984764b5c8e7bc8bcf65391f317fc0521096e2acfe118044ad"
     );
 
     let encoded = Encode!(&snapshot).expect("opening viewport should encode as candid");
@@ -301,6 +301,6 @@ fn map_state_public_counts_match_setup_requirements() {
         state.participant_ids.len() * state.chunks.len()
     );
     assert_eq!(u16::from(FIRST_PLAYABLE_CHUNK_SIZE), 16);
-    assert_eq!(state.world_objects.len(), 18);
+    assert_eq!(state.world_objects.len(), 19);
     assert!(state.known_objects.len() >= 8);
 }

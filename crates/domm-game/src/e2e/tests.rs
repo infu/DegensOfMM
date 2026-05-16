@@ -22,8 +22,8 @@ fn checkpoint_19_e2e_fixture_covers_first_playable_scope() {
     assert_eq!(report.measurements.command_count, 32);
     assert_eq!(report.measurements.event_count, 42);
     assert_eq!(report.measurements.query_count, 19);
-    assert_eq!(report.measurements.storage_row_count, 190);
-    assert_eq!(report.measurements.max_query_bytes, 5072);
+    assert_eq!(report.measurements.storage_row_count, 193);
+    assert_eq!(report.measurements.max_query_bytes, 5144);
     assert!(report.measurements.recovery_retry_count >= 1);
 
     assert_eq!(report.movement_conflict.snapshot_count, 2);
@@ -78,6 +78,6 @@ fn part_two_spec_audit_has_no_missing_required_first_playable_scope() {
         audit
             .iter()
             .filter(|row| row.status == SpecAuditStatus::Deferred)
-            .all(|row| row.note.contains("checkpoints 21-27"))
+            .all(|row| row.note.contains("future bounded specs"))
     );
 }

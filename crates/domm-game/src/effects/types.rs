@@ -88,6 +88,9 @@ pub fn dispatch_effect(request: EffectRequest) -> EffectResolution {
             "capture_crystal_income" => supported(request, "object:capture_crystal_income", &[]),
             "grant_resource_reward" => supported(request, "object:grant_resource_reward", &[]),
             "score_central_objective" => supported(request, "object:score_central_objective", &[]),
+            "external_dwelling_direct_recruit" => {
+                supported(request, "object:external_dwelling_direct_recruit", &[])
+            }
             _ => disabled(request, "unsupported_object_effect"),
         },
         EffectDomain::Spell => match request.effect_key.as_str() {

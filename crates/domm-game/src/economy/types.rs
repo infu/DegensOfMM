@@ -258,6 +258,15 @@ pub enum EconomyError {
     ResourcePileNotFound { pile_id: String },
     #[error("resource pile {pile_id} was already collected")]
     ResourcePileAlreadyCollected { pile_id: String },
+    #[error("invalid trade pair: {from_resource} to {to_resource}")]
+    InvalidTradePair {
+        from_resource: String,
+        to_resource: String,
+    },
+    #[error("invalid trade amount: {amount}")]
+    InvalidTradeAmount { amount: u64 },
+    #[error("trade amount {amount} exceeds cap {max}")]
+    TradeAmountTooLarge { amount: u64, max: u64 },
 }
 
 #[must_use]

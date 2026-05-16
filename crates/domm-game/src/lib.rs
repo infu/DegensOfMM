@@ -109,11 +109,16 @@ pub use e2e::{
     run_e2e_movement_conflict_probe, run_first_playable_e2e_fixture,
 };
 pub use economy::{
-    BASE_TOWN_GOLD_INCOME, EconomyError, EconomyParticipantRecord, EconomySmokeView, EconomyState,
-    IncomeSourceRecord, ResourceApplyBudget, ResourceApplyOutcome, ResourceBalances,
-    ResourceCapMode, ResourceDelta, ResourceLedgerEntryRecord, ResourceLedgerTurnSummaryRecord,
-    ResourcePileEconomyRecord, build_first_playable_economy_state,
-    run_first_playable_economy_smoke,
+    BASE_TOWN_GOLD_INCOME, ChampionHirePreview, DWELLING_GROWTH_PER_WEEK, DWELLING_POOL_CAP,
+    DWELLING_RECRUIT_MAX_QUANTITY, DwellingPoolView, DwellingRecruitPreview, EconomyError,
+    EconomyParticipantRecord, EconomySmokeView, EconomyState, ExpandedEconomyReceipt,
+    IncomeSourceRecord, MARKET_TRADE_MAX_INPUT, MarketTradePreview, ResourceApplyBudget,
+    ResourceApplyOutcome, ResourceBalances, ResourceCapMode, ResourceDelta,
+    ResourceLedgerEntryRecord, ResourceLedgerTurnSummaryRecord, ResourcePileEconomyRecord,
+    TAVERN_HIRE_COST_GOLD, TAVERN_OFFERS_PER_WEEK, TavernOfferView, TavernOffersView,
+    build_first_playable_economy_state, deterministic_tavern_offer, dwelling_effective_available,
+    dwelling_recruit_cost, market_trade_quote, run_first_playable_economy_smoke, tavern_offer_key,
+    week_for_turn,
 };
 pub use effects::{
     EffectDomain, EffectError, EffectRequest, EffectResolution, LegalEffectAction, dispatch_effect,

@@ -3,7 +3,7 @@ use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession};
 use domm_game::{
     ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome, ChampionMagicReceipt,
     ChangedSubject, CommandPhase, CommandResponse, CommandResult, CommandStatus,
-    StrategicCommandReceipt,
+    ExpandedEconomyReceipt, ResourceBalances, StrategicCommandReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -110,6 +110,9 @@ fn is_recoverable_movement_command(command_type: &str) -> bool {
             | "select_champion_level_up"
             | "learn_champion_spell"
             | "cast_adventure_spell"
+            | "hire_tavern_champion"
+            | "submit_market_trade"
+            | "submit_dwelling_recruit"
     )
 }
 
@@ -373,6 +376,9 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
         "select_champion_level_up" | "learn_champion_spell" | "cast_adventure_spell" => {
             CommandResult::ChampionMagic(champion_magic_from_json(command))
         }
+        "hire_tavern_champion" | "submit_market_trade" | "submit_dwelling_recruit" => {
+            CommandResult::ExpandedEconomy(expanded_economy_from_json(command))
+        }
         _ => CommandResult::StrategicReceipt(receipt_from_json(
             &command.command_type,
             &command.id().to_string(),
@@ -380,6 +386,33 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
             0,
             command.result_json.as_deref(),
         )),
+    }
+}
+
+fn expanded_economy_from_json(command: &GameCommand) -> ExpandedEconomyReceipt {
+    let json = command.result_json.as_deref();
+    ExpandedEconomyReceipt {
+        command_id: command.id().to_string(),
+        action: json_string_field(json, "action").unwrap_or_else(|| command.command_type.clone()),
+        town_id: json_string_field(json, "town_id"),
+        object_id: json_string_field(json, "object_id"),
+        champion_id: json_string_field(json, "champion_id"),
+        offer_key: json_string_field(json, "offer_key"),
+        from_resource: json_string_field(json, "from_resource"),
+        to_resource: json_string_field(json, "to_resource"),
+        amount_in: json_u64_field(json, "amount_in").unwrap_or(0),
+        amount_out: json_u64_field(json, "amount_out").unwrap_or(0),
+        unit_slug: json_string_field(json, "unit_slug"),
+        quantity: json_u32_field(json, "quantity").unwrap_or(0),
+        resources_after: ResourceBalances {
+            gold: json_u64_field(json, "gold_after").unwrap_or(0),
+            wood: json_u32_field(json, "wood_after").unwrap_or(0),
+            stone: json_u32_field(json, "stone_after").unwrap_or(0),
+            iron: json_u32_field(json, "iron_after").unwrap_or(0),
+            crystal: json_u32_field(json, "crystal_after").unwrap_or(0),
+            ember: json_u32_field(json, "ember_after").unwrap_or(0),
+            aether: json_u32_field(json, "aether_after").unwrap_or(0),
+        },
     }
 }
 

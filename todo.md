@@ -480,12 +480,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 23. Expanded Economy, Taverns, Marketplace, And External Dwellings
 
-- [ ] Promote and implement tavern champion hiring, champion reappearance, marketplace trading, external dwellings, advanced town economy buildings, and additional resource sources only after Part 2 is expanded for them.
-- [ ] Add command/API/DTO support for trade, hire, dwelling recruitment, and any new lazy growth or income rules.
-- [ ] Unit test affordability, market rates, tavern candidate determinism, external dwelling ownership, direct recruitment, growth routing, resource ledger recovery, and frontend affordances.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
-- [ ] Audit: confirm these systems cannot double-spend, double-reward, bypass visibility, or create unbounded scans.
-- [ ] Commit after this checkpoint.
+- [x] Promote and implement the bounded checkpoint 23 slice: tavern champion hiring, marketplace trading, one external dwelling, direct recruitment, and dwelling growth; keep defeated champion reappearance, advanced economy buildings, and broader resource-source variety deferred until a later bounded spec.
+- [x] Add command/API/DTO support for trade, hire, dwelling recruitment, and any new lazy growth or income rules.
+- [x] Unit test affordability, market rates, tavern candidate determinism, external dwelling ownership, direct recruitment, growth routing, resource ledger recovery, and frontend affordances.
+- [x] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
+- [x] Audit: confirm these systems cannot double-spend, double-reward, bypass visibility, or create unbounded scans.
+- [x] Commit after this checkpoint.
 
 ## 24. Quests, Objectives, Advanced Victory, And Scenario Rules
 

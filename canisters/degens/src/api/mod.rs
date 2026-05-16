@@ -6,6 +6,7 @@ mod champion_magic;
 mod cleanup;
 mod content;
 mod diagnostics;
+mod economy_expansion;
 mod events;
 mod game_view;
 mod history;

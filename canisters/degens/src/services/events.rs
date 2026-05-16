@@ -26,6 +26,12 @@ const GAME_COMMAND_TYPES: &[&str] = &[
     "sync_session_turn",
     "submit_build_town_structure",
     "submit_recruit_units",
+    "select_champion_level_up",
+    "learn_champion_spell",
+    "cast_adventure_spell",
+    "hire_tavern_champion",
+    "submit_market_trade",
+    "submit_dwelling_recruit",
     "sync_battle",
     "submit_battle_action",
 ];
@@ -90,13 +96,37 @@ pub(crate) fn get_command_status(
     {
         return Ok(status);
     }
-    if let Some(command) =
-        find_lobby_command_by_nonce(actor_principal, &context, &command_id_or_client_nonce)?
-    {
-        return Ok(lobby_status_view(command));
-    }
-    if let Some(command) = find_game_command_by_nonce(&context, &command_id_or_client_nonce)? {
-        return Ok(game_status_view(command));
+    let lobby_candidates = lobby_command_type_candidates(&command_id_or_client_nonce);
+    let game_candidates = game_command_type_candidates(&command_id_or_client_nonce);
+    if lobby_candidates.is_empty() {
+        if let Some(command) =
+            find_game_command_by_nonce(&context, &command_id_or_client_nonce, game_candidates)?
+        {
+            return Ok(game_status_view(command));
+        }
+    } else if game_candidates.is_empty() {
+        if let Some(command) = find_lobby_command_by_nonce(
+            actor_principal,
+            &context,
+            &command_id_or_client_nonce,
+            lobby_candidates,
+        )? {
+            return Ok(lobby_status_view(command));
+        }
+    } else {
+        if let Some(command) = find_lobby_command_by_nonce(
+            actor_principal,
+            &context,
+            &command_id_or_client_nonce,
+            lobby_candidates,
+        )? {
+            return Ok(lobby_status_view(command));
+        }
+        if let Some(command) =
+            find_game_command_by_nonce(&context, &command_id_or_client_nonce, game_candidates)?
+        {
+            return Ok(game_status_view(command));
+        }
     }
 
     Err(public_error(
@@ -109,8 +139,9 @@ pub(crate) fn get_command_status(
 fn find_game_command_by_nonce(
     context: &session_context::SessionCallerContext,
     client_nonce: &str,
+    command_types: &[&str],
 ) -> Result<Option<GameCommand>, ApiError> {
-    for command_type in game_command_type_candidates(client_nonce) {
+    for command_type in command_types {
         let nonce = nonce_u64(command_type, client_nonce);
         let Some(command) = commands_events_effects::find_game_command_by_idempotency(
             context.session.id(),
@@ -133,14 +164,78 @@ fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
         &["sync_session_turn"]
     } else if client_nonce.contains("build") {
         &["submit_build_town_structure"]
+    } else if client_nonce.contains("dwelling") {
+        &["submit_dwelling_recruit"]
     } else if client_nonce.contains("recruit") {
         &["submit_recruit_units"]
+    } else if client_nonce.contains("skill") {
+        &["select_champion_level_up"]
+    } else if client_nonce.contains("learn") {
+        &["learn_champion_spell"]
+    } else if client_nonce.contains("cast") {
+        &["cast_adventure_spell"]
+    } else if client_nonce.contains("hire") {
+        &["hire_tavern_champion"]
+    } else if client_nonce.contains("market") {
+        &["submit_market_trade"]
+    } else if client_nonce.contains("battle-action") {
+        &["submit_battle_action"]
+    } else if client_nonce.contains("sync-battle") {
+        &["sync_battle"]
+    } else if lobby_command_type_candidates(client_nonce).is_empty() {
+        GAME_COMMAND_TYPES
+    } else {
+        &[]
+    }
+}
+
+fn lobby_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
+    if client_nonce.contains("register") {
+        &["register_player"]
+    } else if client_nonce.contains("create") {
+        &["create_session"]
+    } else if client_nonce.contains("join") {
+        &["join_session"]
+    } else if client_nonce.contains("ready") {
+        &["mark_ready"]
+    } else if client_nonce.contains("start") {
+        &["start_session"]
+    } else if game_command_type_candidates_without_lobby_fallback(client_nonce).is_empty() {
+        LOBBY_COMMAND_TYPES
+    } else {
+        &[]
+    }
+}
+
+fn game_command_type_candidates_without_lobby_fallback(
+    client_nonce: &str,
+) -> &'static [&'static str] {
+    if client_nonce.contains("move") {
+        &["submit_move_intent"]
+    } else if client_nonce.contains("sync-turn") || client_nonce.contains("income") {
+        &["sync_session_turn"]
+    } else if client_nonce.contains("build") {
+        &["submit_build_town_structure"]
+    } else if client_nonce.contains("dwelling") {
+        &["submit_dwelling_recruit"]
+    } else if client_nonce.contains("recruit") {
+        &["submit_recruit_units"]
+    } else if client_nonce.contains("skill") {
+        &["select_champion_level_up"]
+    } else if client_nonce.contains("learn") {
+        &["learn_champion_spell"]
+    } else if client_nonce.contains("cast") {
+        &["cast_adventure_spell"]
+    } else if client_nonce.contains("hire") {
+        &["hire_tavern_champion"]
+    } else if client_nonce.contains("market") {
+        &["submit_market_trade"]
     } else if client_nonce.contains("battle-action") {
         &["submit_battle_action"]
     } else if client_nonce.contains("sync-battle") {
         &["sync_battle"]
     } else {
-        GAME_COMMAND_TYPES
+        &[]
     }
 }
 
@@ -192,8 +287,9 @@ fn find_lobby_command_by_nonce(
     actor_principal: Principal,
     context: &session_context::SessionCallerContext,
     client_nonce: &str,
+    command_types: &[&str],
 ) -> Result<Option<LobbyCommand>, ApiError> {
-    for command_type in LOBBY_COMMAND_TYPES {
+    for command_type in command_types {
         let nonce = nonce_u64(command_type, client_nonce);
         let Some(command) =
             commands_events_effects::find_lobby_command_by_idempotency(actor_principal, nonce)?

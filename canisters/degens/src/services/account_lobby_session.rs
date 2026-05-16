@@ -72,9 +72,29 @@ const SETUP_EFFECTS: &[SetupEffectSpec] = &[
         target_kind: "world_object",
     },
     SetupEffectSpec {
+        key: "seed_resource_piles",
+        effect_type: "resource_piles",
+        target_kind: "world_object",
+    },
+    SetupEffectSpec {
+        key: "seed_external_dwellings",
+        effect_type: "external_dwellings",
+        target_kind: "world_object",
+    },
+    SetupEffectSpec {
+        key: "seed_dwelling_pools",
+        effect_type: "dwelling_pools",
+        target_kind: "dwelling_pool",
+    },
+    SetupEffectSpec {
         key: "seed_economy",
         effect_type: "economy",
         target_kind: "resource_summary",
+    },
+    SetupEffectSpec {
+        key: "seed_tavern_offers",
+        effect_type: "tavern_offers",
+        target_kind: "tavern_offer",
     },
 ];
 
@@ -1002,8 +1022,18 @@ fn apply_setup_effect(
         "seed_world_objects" => {
             first_playable_setup::seed_first_playable_world_objects(session, participants)
         }
+        "seed_resource_piles" => first_playable_setup::seed_first_playable_resource_piles(session),
+        "seed_external_dwellings" => {
+            first_playable_setup::seed_first_playable_external_dwellings(session, participants)
+        }
+        "seed_dwelling_pools" => {
+            first_playable_setup::seed_first_playable_dwelling_pools(session, participants)
+        }
         "seed_neutrals" => first_playable_setup::seed_first_playable_neutrals(session),
         "seed_economy" => first_playable_setup::seed_first_playable_economy(session, participants),
+        "seed_tavern_offers" => {
+            first_playable_setup::seed_first_playable_tavern_offers(session, participants)
+        }
         _ => Ok(()),
     }
 }

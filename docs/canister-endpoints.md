@@ -30,6 +30,14 @@ fixture loading, not for normal gameplay.
 | `select_champion_level_up` | update | `FixtureApiBackend::select_champion_level_up` |
 | `learn_champion_spell` | update | `FixtureApiBackend::learn_champion_spell` |
 | `cast_adventure_spell` | update | `FixtureApiBackend::cast_adventure_spell` |
+| `get_tavern_offers` | query | `FixtureApiBackend::get_tavern_offers` |
+| `preview_hire_champion` | query | `FixtureApiBackend::preview_hire_champion` |
+| `hire_tavern_champion` | update | `FixtureApiBackend::hire_tavern_champion` |
+| `preview_market_trade` | query | `FixtureApiBackend::preview_market_trade` |
+| `submit_market_trade` | update | `FixtureApiBackend::submit_market_trade` |
+| `get_dwelling_pool` | query | `FixtureApiBackend::get_dwelling_pool` |
+| `preview_dwelling_recruit` | query | `FixtureApiBackend::preview_dwelling_recruit` |
+| `submit_dwelling_recruit` | update | `FixtureApiBackend::submit_dwelling_recruit` |
 | `get_town_view` | query | `FixtureApiBackend::get_town_view` |
 | `get_battle_state` | query | `FixtureApiBackend::get_battle_state` |
 | `get_content_manifest` | query | `FixtureApiBackend::get_content_manifest` |
@@ -65,6 +73,11 @@ original command instead of failing due to a later clock value.
 Checkpoint 22 battle spellcasting uses `submit_battle_action` with
 `action = CastAbility` and `ability_key = spell:<slug>`, so it remains under the
 same canister-time and command-idempotency contract.
+
+Checkpoint 23 expanded-economy updates use standard `GameCommand`
+idempotency. Exact retries for tavern hiring, market trading, and external
+dwelling recruitment replay the original `CommandResponse`; previews and pool
+reads are query-only projections.
 
 ## Deferred Endpoint Decisions
 

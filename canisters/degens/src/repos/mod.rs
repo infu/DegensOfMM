@@ -8,6 +8,7 @@ pub(crate) mod cleanup;
 pub(crate) mod commands_events_effects;
 pub(crate) mod content;
 pub(crate) mod economy;
+pub(crate) mod economy_expansion;
 pub(crate) mod foundation;
 pub(crate) mod map_visibility_occupancy;
 pub(crate) mod movement;

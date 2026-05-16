@@ -6,7 +6,7 @@ use icydb::{
 
 use super::{
     aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects, content,
-    foundation, map_visibility_occupancy, movement, players, sessions, towns,
+    economy_expansion, foundation, map_visibility_occupancy, movement, players, sessions, towns,
 };
 
 fn bootstrap_repo_memory() {
@@ -332,6 +332,11 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::OCCUPANCY_CELL_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
+        economy_expansion::TAVERN_OFFERS_LOOKUP,
+        economy_expansion::TAVERN_OFFER_KEY_LOOKUP,
+        economy_expansion::MARKET_TRADE_COMMAND_LOOKUP,
+        economy_expansion::DWELLING_POOL_OBJECT_LOOKUP,
+        economy_expansion::DWELLING_RECRUIT_COMMAND_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPION_SPELLS_LOOKUP,
         movement::MOVEMENT_INTENT_UNIQUE_LOOKUP,
@@ -371,6 +376,7 @@ fn gameplay_repositories_do_not_use_generic_sql_or_core_db() {
         include_str!("commands_events_effects.rs"),
         include_str!("content.rs"),
         include_str!("economy.rs"),
+        include_str!("economy_expansion.rs"),
         include_str!("foundation.rs"),
         include_str!("map_visibility_occupancy.rs"),
         include_str!("movement.rs"),

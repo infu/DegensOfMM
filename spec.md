@@ -6012,3 +6012,138 @@ Champion.skill_keys and mana fields are compacted with Champion.
 CommandEffect/GameEvent cleanup follows the existing finished-session command/event retention policy.
 BattleStack.status_keys are compacted with battle operational rows.
 ```
+
+## 24.6 Checkpoint 23 Expanded Economy, Taverns, Marketplace, And External Dwellings
+
+Checkpoint 23 promotes a bounded first slice of expanded economy systems:
+tavern champion hiring, deterministic weekly offers, fixed-rate marketplace
+trades, one external dwelling, direct map recruitment, and weekly dwelling pool
+growth. Defeated champion reappearance, advanced economy buildings, and broader
+resource-source variety remain future expansion work unless added by a later
+bounded subsection.
+
+IcyDB schema:
+
+```text
+TavernOffer:
+  session_id, town_id, participant_id, champion_class_id
+  week_number, offer_slot, offer_key, champion_class_slug, candidate_name
+  cost_gold, status, hired_champion_id, hired_command_id
+
+ChampionHire:
+  session_id, participant_id, town_id, offer_id, command_id
+  champion_id, cost_gold, hired_turn, status
+
+MarketTrade:
+  session_id, participant_id, command_id, turn_number
+  from_resource, to_resource, amount_in, amount_out, rate_key, status
+
+DwellingPool:
+  session_id, object_id, participant_id, unit_id, unit_slug
+  available, last_growth_week, growth_per_week, direct_recruit, last_command_id
+
+DwellingRecruitment:
+  session_id, participant_id, object_id, pool_id, champion_id, unit_id
+  unit_slug, command_id, quantity, recruited_turn, status
+```
+
+Indexes and lookup paths:
+
+```text
+TavernOffer:
+  session_id + town_id + week_number
+  town_id + week_number + offer_slot unique
+  session_id + participant_id + status
+  offer_key unique
+
+ChampionHire:
+  command_id unique
+  session_id + participant_id
+  session_id + town_id
+  offer_id
+
+MarketTrade:
+  command_id unique
+  session_id + participant_id + turn_number
+  session_id + from_resource + to_resource
+
+DwellingPool:
+  object_id + unit_id unique
+  session_id + participant_id
+  session_id + object_id
+
+DwellingRecruitment:
+  command_id unique
+  session_id + participant_id
+  object_id
+```
+
+Public endpoints and command paths:
+
+```text
+get_tavern_offers(session_id, town_id) -> TavernOffersView
+preview_hire_champion(session_id, town_id, offer_key) -> ChampionHirePreview
+hire_tavern_champion(session_id, town_id, offer_key, client_nonce) -> CommandResponse
+preview_market_trade(session_id, from_resource, to_resource, amount_in) -> MarketTradePreview
+submit_market_trade(session_id, from_resource, to_resource, amount_in, client_nonce) -> CommandResponse
+get_dwelling_pool(session_id, object_id) -> DwellingPoolView
+preview_dwelling_recruit(session_id, object_id, unit_slug, quantity, champion_id) -> DwellingRecruitPreview
+submit_dwelling_recruit(session_id, object_id, unit_slug, quantity, champion_id, client_nonce) -> CommandResponse
+```
+
+Recovery and idempotency:
+
+```text
+All update endpoints use GameCommand actor/session/client_nonce idempotency.
+Exact retries replay the same CommandResponse.
+Same nonce with different payload returns duplicate_nonce_payload_mismatch.
+Resource spends/gains write ResourceLedgerEntry rows keyed by command and effect.
+ChampionHire, MarketTrade, and DwellingRecruitment have command_id unique indexes.
+TavernOffer.hired_command_id and DwellingPool.last_command_id mark applied state.
+GameEvent and CommandEffect use stable per-command subject keys.
+```
+
+Deterministic keys and rates:
+
+```text
+Tavern offers:
+  offer_key = tavern:<town_id>:week:<week_number>:slot:<offer_slot>
+  class/name roll inputs = session seed, town id, week number, offer slot, domain
+
+Marketplace rates:
+  wood -> crystal: 10 to 1
+  stone -> crystal: 10 to 1
+  crystal|ember|aether -> gold: 5 to 1000
+  gold -> crystal|ember|aether: 2500 to 1
+```
+
+Caps:
+
+```text
+tavern offers per town per week: 2
+tavern hire base cost: 2500 gold, +500 gold by offer slot
+market trade max input: 25000
+dwelling pool cap: 99
+dwelling weekly growth: 4
+dwelling recruit max quantity: 25
+first promoted external dwelling: Mudhook Den
+```
+
+Tests:
+
+```text
+Pure Rust tests cover tavern determinism, market rates/caps, and dwelling growth/cost caps.
+Schema/macro tests cover the new entity surface and unique/indexed paths.
+Canister unit tests cover Candid endpoint export, repository inventory, layout, and hot-path plans.
+Pocket-IC tests call every new query/update endpoint, verify exact update retries, and assert persisted tavern, market, and dwelling effects through public Candid methods.
+```
+
+Cleanup:
+
+```text
+TavernOffer, ChampionHire, MarketTrade, DwellingPool, and DwellingRecruitment are GameSession children.
+ChampionHire keeps weak command/champion links for retained command history.
+MarketTrade and DwellingRecruitment use command_id as the recovery/audit key.
+DwellingPool is compacted with the owning WorldObject/session.
+ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
+```

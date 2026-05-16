@@ -17,7 +17,7 @@ layer.
 | Area | Audit result |
 | --- | --- |
 | IcyDB schema and repositories | Implemented with typed domain repositories, indexed hot-path plan tests, relation/deletion tests, and generic SQL scans limited to diagnostics. |
-| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoint 22 expands the live inventory to 32 with champion progression and magic endpoints. |
+| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoints 22-23 expand the live inventory to 40 with champion progression, magic, tavern, market, and external dwelling endpoints. |
 | Lobby/session/setup | IcyDB-backed registration, create/join/ready/start, setup phases, setup recovery, participant rows, and match-history shells are implemented. |
 | Content/opening views | First-playable content, map, visibility, objects, champions, towns, neutrals, economy, and opening viewport projections are persisted and queryable. |
 | Strategic gameplay | Movement intents, sync slicing, resource pickup, mine capture/income, building, recruitment, object visits, visibility, and battle handoff persist IcyDB rows. |
@@ -38,11 +38,10 @@ layer.
 
 ## Deferred Scope
 
-The following Part 1 systems remain deferred until checkpoints 21-27 promote
-them into bounded Part 2 specs: champion skill-tree choices, large spellbooks,
-advanced quests, naval movement, complex siege, procedural maps, taverns,
-marketplaces, external dwellings, ranked, guilds, diplomacy, campaign
-persistence, and durable rematch creation. Checkpoint 21 records the
+The following Part 1 systems remain deferred until checkpoints 24-27 promote
+them into bounded Part 2 specs: advanced quests, naval movement, complex siege,
+procedural maps, ranked, guilds, diplomacy, campaign persistence, durable
+rematch creation, and broader product meta systems. Checkpoint 21 records the
 authoritative classification in `docs/full-spec-expansion-triage.md`.
 
 ## Known Follow-Up

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use domm_degens_schema::schema::{
     ArtifactDefinition, BuildingDefinition, Champion, ChampionClassDefinition, FactionDefinition,
     GameParticipant, GameSession, MapChunk, MapObjectDefinition, MapOccupancy, NeutralArmy,
-    ParticipantKnownObject, ResourceLedgerTurnSummary, SpellDefinition, TerrainDefinition,
-    UnitDefinition, VisibilityChunk,
+    ParticipantKnownObject, ResourceLedgerTurnSummary, RulesetDefinition, SpellDefinition,
+    TerrainDefinition, UnitDefinition, VisibilityChunk,
 };
 use domm_game::{
     FIRST_PLAYABLE_RULESET_SLUG, FIRST_PLAYABLE_RULESET_VERSION, FixtureIds, ResourceCost,
@@ -16,7 +16,8 @@ use icydb::{
 };
 
 use crate::repos::{
-    champions_artifacts, content, economy, foundation, map_visibility_occupancy, neutrals, towns,
+    champions_artifacts, content, economy, economy_expansion, foundation, map_visibility_occupancy,
+    neutrals, towns,
 };
 
 #[derive(Clone)]
@@ -347,6 +348,29 @@ pub(crate) fn seed_first_playable_world_objects(
     seed_world_objects(session, &participants_by_slot, &content_rows, &neutral_keys)
 }
 
+pub(crate) fn seed_first_playable_resource_piles(
+    session: &GameSession,
+) -> foundation::RepoResult<()> {
+    let content_rows = ensure_first_playable_content_rows()?;
+    seed_resource_pile_objects(session, &content_rows)
+}
+
+pub(crate) fn seed_first_playable_external_dwellings(
+    session: &GameSession,
+    participants: &[GameParticipant],
+) -> foundation::RepoResult<()> {
+    let content_rows = ensure_first_playable_content_rows()?;
+    let participants_by_slot = participants_by_slot(participants);
+    seed_external_dwelling_objects(session, &participants_by_slot, &content_rows)
+}
+
+pub(crate) fn seed_first_playable_dwelling_pools(
+    session: &GameSession,
+    participants: &[GameParticipant],
+) -> foundation::RepoResult<()> {
+    seed_dwelling_pools(session, &participants_by_slot(participants))
+}
+
 pub(crate) fn seed_first_playable_map_chunks(
     session: &GameSession,
     participants: &[GameParticipant],
@@ -374,6 +398,13 @@ pub(crate) fn seed_first_playable_economy(
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
     seed_economy_summaries(session, participants)
+}
+
+pub(crate) fn seed_first_playable_tavern_offers(
+    session: &GameSession,
+    participants: &[GameParticipant],
+) -> foundation::RepoResult<()> {
+    seed_tavern_offers(session, participants)
 }
 
 fn participants_by_slot(participants: &[GameParticipant]) -> BTreeMap<u8, GameParticipant> {
@@ -629,7 +660,14 @@ fn seed_world_objects(
             )?;
         }
     }
-    for pile in &scenario.resource_piles {
+    Ok(())
+}
+
+fn seed_resource_pile_objects(
+    session: &GameSession,
+    content_rows: &FirstPlayableContentRows,
+) -> foundation::RepoResult<()> {
+    for pile in &first_playable_scenario().resource_piles {
         let def = require_map_object(content_rows, &pile.object_slug)?;
         if map_visibility_occupancy::find_world_object_by_session_xy(session.id(), pile.x, pile.y)?
             .is_none()
@@ -655,6 +693,46 @@ fn seed_world_objects(
                 )),
             )?;
         }
+    }
+    Ok(())
+}
+
+fn seed_external_dwelling_objects(
+    session: &GameSession,
+    participants_by_slot: &BTreeMap<u8, GameParticipant>,
+    content_rows: &FirstPlayableContentRows,
+) -> foundation::RepoResult<()> {
+    for object in &first_playable_scenario().external_dwellings {
+        let def = require_map_object(content_rows, &object.object_slug)?;
+        if map_visibility_occupancy::find_world_object_by_session_xy(
+            session.id(),
+            object.x,
+            object.y,
+        )?
+        .is_some()
+        {
+            continue;
+        }
+        let owner = object
+            .owner_slot_index
+            .and_then(|slot| participants_by_slot.get(&slot))
+            .map(EntityValue::id);
+        map_visibility_occupancy::create_world_object(
+            session.id(),
+            def.id(),
+            owner,
+            None,
+            object.x,
+            object.y,
+            chunk_coord(object.x),
+            chunk_coord(object.y),
+            "available".to_string(),
+            object_scoring_kind(&object.object_slug).to_string(),
+            0,
+            0,
+            1,
+            Some(world_object_json(&object.key, &object.object_slug, None)),
+        )?;
     }
     Ok(())
 }
@@ -842,6 +920,110 @@ fn seed_economy_summaries(
         .collect::<Vec<_>>();
     foundation::insert_many_atomic("economy.seed_opening_summaries", rows)?;
     Ok(())
+}
+
+fn seed_dwelling_pools(
+    session: &GameSession,
+    participants_by_slot: &BTreeMap<u8, GameParticipant>,
+) -> foundation::RepoResult<()> {
+    let ruleset_id = first_playable_ruleset_id()?;
+    let unit = content::find_unit_by_ruleset_slug(ruleset_id, "mudhook-levy")?
+        .ok_or_else(|| missing_content("unit", "mudhook-levy"))?;
+    for object in &first_playable_scenario().external_dwellings {
+        let Some(world_object) = map_visibility_occupancy::find_world_object_by_session_xy(
+            session.id(),
+            object.x,
+            object.y,
+        )?
+        else {
+            continue;
+        };
+        if economy_expansion::find_dwelling_pool_by_object(session.id(), world_object.id())?
+            .is_some()
+        {
+            continue;
+        }
+        let owner = object
+            .owner_slot_index
+            .and_then(|slot| participants_by_slot.get(&slot))
+            .map(EntityValue::id);
+        economy_expansion::create_dwelling_pool(
+            session.id(),
+            world_object.id(),
+            owner,
+            unit.id(),
+            unit.slug.clone(),
+            u32::from(domm_game::DWELLING_GROWTH_PER_WEEK),
+            1,
+            domm_game::DWELLING_GROWTH_PER_WEEK,
+            true,
+        )?;
+    }
+    Ok(())
+}
+
+fn seed_tavern_offers(
+    session: &GameSession,
+    participants: &[GameParticipant],
+) -> foundation::RepoResult<()> {
+    let scenario = first_playable_scenario();
+    let participants_by_slot = participants_by_slot(participants);
+    let class_rows = content::page_champion_classes_by_ruleset(first_playable_ruleset_id()?)?;
+    let class_slugs = class_rows
+        .iter()
+        .map(|class| class.slug.clone())
+        .collect::<Vec<_>>();
+    let class_rows = class_rows
+        .into_iter()
+        .map(|class| (class.slug.clone(), class))
+        .collect::<BTreeMap<_, _>>();
+    let week_number = 1;
+    for start in &scenario.starts {
+        let Some(participant) = participants_by_slot.get(&start.slot_index) else {
+            continue;
+        };
+        let Some(town) = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+        else {
+            continue;
+        };
+        for slot in 0..domm_game::TAVERN_OFFERS_PER_WEEK {
+            let offer = domm_game::deterministic_tavern_offer(
+                &session.seed.to_string(),
+                &town.id().to_string(),
+                week_number,
+                u8::try_from(slot).unwrap_or(u8::MAX),
+                &class_slugs,
+            );
+            if economy_expansion::find_tavern_offer_by_key(&offer.offer_key)?.is_some() {
+                continue;
+            }
+            let class = class_rows
+                .get(&offer.champion_class_slug)
+                .ok_or_else(|| missing_content("champion_class", &offer.champion_class_slug))?;
+            economy_expansion::create_tavern_offer(
+                session.id(),
+                town.id(),
+                participant.id(),
+                week_number,
+                offer.offer_slot,
+                offer.offer_key,
+                class.id(),
+                offer.champion_class_slug,
+                offer.candidate_name,
+                offer.cost_gold,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn first_playable_ruleset_id() -> foundation::RepoResult<Id<RulesetDefinition>> {
+    content::find_ruleset_by_slug_version(
+        FIRST_PLAYABLE_RULESET_SLUG,
+        FIRST_PLAYABLE_RULESET_VERSION,
+    )?
+    .map(|ruleset| ruleset.id())
+    .ok_or_else(|| missing_content("ruleset", FIRST_PLAYABLE_RULESET_SLUG))
 }
 
 fn fixture_ids_for_rows(session: &GameSession, participants: &[GameParticipant]) -> FixtureIds {

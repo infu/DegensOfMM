@@ -34,8 +34,8 @@ fn gate_d_backend_fixture_reaches_victory_from_public_calls() {
     assert_eq!(report.command_count, 32);
     assert_eq!(report.event_count, 42);
     assert_eq!(report.query_count, 19);
-    assert_eq!(report.storage_row_count, 190);
-    assert_eq!(report.max_query_bytes, 5072);
+    assert_eq!(report.storage_row_count, 193);
+    assert_eq!(report.max_query_bytes, 5144);
     assert!(report.concerns.is_empty());
 }
 

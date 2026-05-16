@@ -2,7 +2,9 @@ use candid::{Decode, Encode};
 
 use super::{
     BASE_TOWN_GOLD_INCOME, EconomyError, ResourceApplyBudget, ResourceBalances, ResourceCapMode,
-    ResourceDelta, build_first_playable_economy_state, run_first_playable_economy_smoke,
+    ResourceDelta, build_first_playable_economy_state, deterministic_tavern_offer,
+    dwelling_effective_available, dwelling_recruit_cost, market_trade_quote,
+    run_first_playable_economy_smoke, week_for_turn,
 };
 use crate::fixtures::first_playable_fixture;
 
@@ -240,4 +242,49 @@ fn resource_balances_support_candid_roundtrip_shape() {
     let decoded = candid::Decode!(&encoded, ResourceBalances).expect("balances should decode");
 
     assert_eq!(decoded, balances);
+}
+
+#[test]
+fn tavern_offer_generation_is_deterministic_and_weekly() {
+    let classes = vec!["ash-auditor".to_string(), "toll-broken-captain".to_string()];
+    let first = deterministic_tavern_offer("seed", "town:west", 1, 0, &classes);
+    let retry = deterministic_tavern_offer("seed", "town:west", 1, 0, &classes);
+    let next_week = deterministic_tavern_offer("seed", "town:west", 2, 0, &classes);
+
+    assert_eq!(first, retry);
+    assert_eq!(first.offer_key, "tavern:town:west:week:1:slot:0");
+    assert_eq!(next_week.offer_key, "tavern:town:west:week:2:slot:0");
+    assert!(classes.contains(&first.champion_class_slug));
+    assert!(classes.contains(&next_week.champion_class_slug));
+    assert_eq!(week_for_turn(1), 1);
+    assert_eq!(week_for_turn(8), 2);
+}
+
+#[test]
+fn market_trade_rates_are_capped_and_exact() {
+    let quote = market_trade_quote("wood", "crystal", 20).expect("wood trade should quote");
+    assert_eq!(quote.amount_out, 2);
+    assert_eq!(quote.rate_key, "wood_to_crystal_10_1");
+
+    let gold_quote = market_trade_quote("crystal", "gold", 5).expect("rare trade should quote");
+    assert_eq!(gold_quote.amount_out, 1_000);
+
+    assert!(matches!(
+        market_trade_quote("wood", "crystal", 11),
+        Err(EconomyError::InvalidTradeAmount { amount: 11 })
+    ));
+    assert!(matches!(
+        market_trade_quote("wood", "aether", 10),
+        Err(EconomyError::InvalidTradePair { .. })
+    ));
+}
+
+#[test]
+fn dwelling_growth_and_recruit_cost_are_bounded() {
+    let available = dwelling_effective_available(96, 1, 4, 4);
+    let cost = dwelling_recruit_cost(50, 3);
+
+    assert_eq!(available, 99);
+    assert_eq!(cost.gold, 150);
+    assert_eq!(cost.wood, 0);
 }

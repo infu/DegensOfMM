@@ -1200,6 +1200,244 @@ pub struct ChampionSpell {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
+    index(fields = "session_id, town_id, week_number"),
+    index(fields = "town_id, week_number, offer_slot", unique),
+    index(fields = "session_id, participant_id, status"),
+    index(fields = "offer_key", unique),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "week_number", value(item(prim = "Nat32"))),
+        field(ident = "offer_slot", value(item(prim = "Nat8"))),
+        field(ident = "offer_key", value(item(prim = "Text", max_len = 96))),
+        field(
+            ident = "champion_class_id",
+            value(item(rel = "ChampionClassDefinition", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "champion_class_slug",
+            value(item(prim = "Text", max_len = 64))
+        ),
+        field(ident = "candidate_name", value(item(prim = "Text", max_len = 64))),
+        field(ident = "cost_gold", value(item(prim = "Nat32"))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "available"
+        ),
+        field(
+            ident = "hired_champion_id",
+            value(opt, item(rel = "Champion", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "hired_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct TavernOffer {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "command_id", unique),
+    index(fields = "session_id, participant_id"),
+    index(fields = "session_id, town_id"),
+    index(fields = "offer_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "town_id", value(item(rel = "Town", prim = "Ulid", strong))),
+        field(
+            ident = "offer_id",
+            value(item(rel = "TavernOffer", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "command_id",
+            value(item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "champion_id",
+            value(opt, item(rel = "Champion", prim = "Ulid", weak))
+        ),
+        field(ident = "cost_gold", value(item(prim = "Nat32"))),
+        field(ident = "hired_turn", value(item(prim = "Nat32"))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "applied"
+        )
+    )
+)]
+pub struct ChampionHire {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "command_id", unique),
+    index(fields = "session_id, participant_id, turn_number"),
+    index(fields = "session_id, from_resource, to_resource"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "command_id",
+            value(item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "from_resource", value(item(prim = "Text", max_len = 16))),
+        field(ident = "to_resource", value(item(prim = "Text", max_len = 16))),
+        field(ident = "amount_in", value(item(prim = "Nat64"))),
+        field(ident = "amount_out", value(item(prim = "Nat64"))),
+        field(ident = "rate_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "applied"
+        )
+    )
+)]
+pub struct MarketTrade {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "object_id, unit_id", unique),
+    index(fields = "session_id, participant_id"),
+    index(fields = "session_id, object_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "object_id",
+            value(item(rel = "WorldObject", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(opt, item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "unit_id",
+            value(item(rel = "UnitDefinition", prim = "Ulid", strong))
+        ),
+        field(ident = "unit_slug", value(item(prim = "Text", max_len = 64))),
+        field(ident = "available", value(item(prim = "Nat32")), default = 0u32),
+        field(
+            ident = "last_growth_week",
+            value(item(prim = "Nat32")),
+            default = 0u32
+        ),
+        field(ident = "growth_per_week", value(item(prim = "Nat16")), default = 4u16),
+        field(ident = "direct_recruit", value(item(prim = "Bool")), default = true),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct DwellingPool {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "command_id", unique),
+    index(fields = "session_id, participant_id"),
+    index(fields = "object_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "object_id",
+            value(item(rel = "WorldObject", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "pool_id",
+            value(item(rel = "DwellingPool", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "champion_id",
+            value(item(rel = "Champion", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "unit_id",
+            value(item(rel = "UnitDefinition", prim = "Ulid", strong))
+        ),
+        field(ident = "unit_slug", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "command_id",
+            value(item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(ident = "quantity", value(item(prim = "Nat32"))),
+        field(ident = "recruited_turn", value(item(prim = "Nat32"))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "applied"
+        )
+    )
+)]
+pub struct DwellingRecruitment {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
     index(fields = "session_id, x, y"),
     index(fields = "session_id, chunk_x, chunk_y, state"),
     index(fields = "owner_champion_id, slot"),

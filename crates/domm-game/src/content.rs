@@ -272,6 +272,7 @@ pub struct FirstPlayableScenario {
     pub starting_state: StartingState,
     pub starts: Vec<PlayerStart>,
     pub mines: Vec<ObjectSeed>,
+    pub external_dwellings: Vec<ObjectSeed>,
     pub resource_piles: Vec<ResourcePileSeed>,
     pub central_objectives: Vec<ObjectSeed>,
     pub neutral_armies: Vec<NeutralArmySeed>,
@@ -532,6 +533,14 @@ pub fn first_playable_scenario() -> FirstPlayableScenario {
                 guard_neutral_army_key: None,
             },
         ],
+        external_dwellings: vec![ObjectSeed {
+            key: "dwelling:west-mudhook".to_string(),
+            object_slug: "mudhook-den".to_string(),
+            x: 10,
+            y: 25,
+            owner_slot_index: Some(0),
+            guard_neutral_army_key: None,
+        }],
         resource_piles: first_playable_resource_piles(),
         central_objectives: vec![
             ObjectSeed {
@@ -1086,6 +1095,15 @@ fn first_playable_map_objects(ruleset_id: &str) -> Vec<MapObjectContent> {
         ),
         map_object(
             ruleset_id,
+            "mudhook-den",
+            "Mudhook Den",
+            "external_dwelling",
+            false,
+            "external_dwelling_direct_recruit",
+            "weekly_growth",
+        ),
+        map_object(
+            ruleset_id,
             "misery-beacon",
             "Misery Beacon",
             "central_objective",
@@ -1340,6 +1358,7 @@ fn first_playable_asset_keys() -> Vec<String> {
         "icon:object:crystal-mine",
         "icon:object:gold-mine",
         "icon:object:misery-beacon",
+        "icon:object:mudhook-den",
         "icon:object:resource-pile",
         "icon:spell:hex-spark",
         "icon:spell:spite-march",
@@ -1348,6 +1367,7 @@ fn first_playable_asset_keys() -> Vec<String> {
         "sprite:object:crystal-mine",
         "sprite:object:gold-mine",
         "sprite:object:misery-beacon",
+        "sprite:object:mudhook-den",
         "sprite:object:resource-pile",
         "sprite:terrain:forest",
         "sprite:terrain:grass",
@@ -1766,6 +1786,9 @@ fn compute_scenario_hash(scenario: &FirstPlayableScenario) -> String {
     for object in &scenario.mines {
         hash_object_seed(&mut hasher, "mine", object);
     }
+    for object in &scenario.external_dwellings {
+        hash_object_seed(&mut hasher, "external_dwelling", object);
+    }
     for pile in &scenario.resource_piles {
         hash_text(&mut hasher, "pile.key", &pile.key);
         hash_text(&mut hasher, "pile.slug", &pile.object_slug);
@@ -1999,7 +2022,7 @@ mod tests {
         );
         assert_eq!(
             manifest.ruleset.content_manifest_hash,
-            "9d892785a14dd2c4ba3fba2dfd7d4d14d256a32ba8e8e468f441fd0fb55a0979"
+            "1e7fc4f2b594eb32a08a0059f84a9b07c1a5b89956aae1239182019addd5f0db"
         );
         assert_eq!(manifest.ruleset.content_manifest_hash.len(), 64);
         assert!(get_content_manifest("missing", FIRST_PLAYABLE_RULESET_VERSION).is_none());
@@ -2016,7 +2039,7 @@ mod tests {
         assert_eq!(manifest.buildings.len(), 8);
         assert_eq!(manifest.spells.len(), 2);
         assert_eq!(manifest.artifacts.len(), 1);
-        assert_eq!(manifest.map_objects.len(), 4);
+        assert_eq!(manifest.map_objects.len(), 5);
         assert!(!manifest.asset_keys.is_empty());
         assert_sorted_unique(&manifest.asset_keys);
     }
@@ -2081,6 +2104,7 @@ mod tests {
         assert_eq!(manifest.ruleset.player_count, FIRST_PLAYABLE_PLAYER_COUNT);
         assert_eq!(scenario.starts.len(), 2);
         assert_eq!(scenario.mines.len(), 4);
+        assert_eq!(scenario.external_dwellings.len(), 1);
         assert_eq!(scenario.resource_piles.len(), 12);
         assert_eq!(scenario.neutral_armies.len(), 6);
         assert_eq!(scenario.central_objectives.len(), 2);
@@ -2128,6 +2152,10 @@ mod tests {
         for mine in &scenario.mines {
             assert!(manifest.map_object(&mine.object_slug).is_some());
             assert_in_bounds(mine.x, mine.y, &scenario);
+        }
+        for dwelling in &scenario.external_dwellings {
+            assert!(manifest.map_object(&dwelling.object_slug).is_some());
+            assert_in_bounds(dwelling.x, dwelling.y, &scenario);
         }
         for pile in &scenario.resource_piles {
             assert!(manifest.map_object(&pile.object_slug).is_some());
@@ -2178,7 +2206,7 @@ mod tests {
         assert_eq!(scenario.scenario_hash, scenario.computed_scenario_hash());
         assert_eq!(
             scenario.scenario_hash,
-            "f510b2f7196a53644efc9a4aa092512cbb845a822756dfb943420cda899b6979"
+            "19d89fa112243855a14b5ff9cb0ef21ba3f871c279cc98b5afb53ed962b54b09"
         );
     }
 
@@ -2287,6 +2315,12 @@ mod tests {
             )
         }));
         keys.extend(scenario.mines.iter().map(|object| object.key.clone()));
+        keys.extend(
+            scenario
+                .external_dwellings
+                .iter()
+                .map(|object| object.key.clone()),
+        );
         keys.extend(
             scenario
                 .resource_piles

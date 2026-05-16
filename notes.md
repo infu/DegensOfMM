@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19H Pocket-IC Strategic Gate
+
+Area: Pocket-IC canister strategic gameplay and IcyDB diagnostics
+Severity: medium
+Status: resolved for Gate J
+
+Observation:
+
+Checkpoint 19H adds a Gate J Pocket-IC fixture that installs `domm-degens-canister`, registers two players, creates/joins/readies/starts a 1v1 session, reads the opening viewport, picks up the west wood pile, builds the training yard, recruits a mudhook levy into town garrison, captures the unguarded crystal mine, materializes income, and reaches the guarded west mine neutral battle trigger using only public canister endpoints. The test asserts public state plus controller-gated IcyDB row counts at each milestone: active session/setup rows, visible map rows, participant object visits, resource ledger rows, resource turn summaries, town building rows, garrison rows, movement snapshot rows, and battle handoff rows.
+
+Impact:
+
+Gate J is now a canister/IcyDB proof rather than a fixture-driver proof. The focused run reported 35 update calls, 143 query calls, 48 observed event DTOs, 36 command rows, 21 `GameEvent` rows, 72 selected persisted gameplay rows, stable memory growth from 897 to 99329 pages, 72395 total measured Candid response bytes, and a max measured response of 4600 bytes from `get_events_after`.
+
+Suggested follow-up:
+
+The first diagnostics implementation attempted to count every schema entity in one query and exceeded the Pocket-IC 5B instruction limit. The resolved endpoint is controller-gated, requires an explicit bounded entity-name list, and counts rows through capped primary-key samples instead of scalar aggregate `count()`. The Gate J test splits requested row counts into one entity per diagnostic query. Keep broader all-entity storage audits out of hot gameplay and out of single canister messages unless IcyDB exposes a cheaper metadata count.
+
 ## 2026-05-16 - Checkpoint 19G Partial Strategic Canister Slice
 
 Area: canister strategic gameplay and IcyDB persistence

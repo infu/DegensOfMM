@@ -23,6 +23,19 @@ pub struct CanisterEndpointView {
     pub fixture_mapping: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticRowCount {
+    pub entity: String,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticStorageSnapshot {
+    pub row_counts: Vec<DiagnosticRowCount>,
+    pub total_rows: u32,
+    pub stable_memory_pages: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeferredEndpointDecision {
     pub name: &'static str,

@@ -44,7 +44,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
 - [x] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
 - [x] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
-- [ ] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
+- [x] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
 - [ ] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
 - [ ] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
 - [ ] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
@@ -408,11 +408,11 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19H. Pocket-IC Strategic First-Playable Gate
 
-- [ ] Create a Pocket-IC 1v1 strategic fixture that starts from canister player registration and reaches the first neutral battle trigger using only public canister endpoints.
-- [ ] Assert persisted IcyDB row state after each milestone: session active, opening viewport visible, pickup visited, resources updated, income summarized, building built, recruit pool decremented, garrison updated, movement snapshots written, neutral encounter pending.
-- [ ] Measure canister command count, event count, query count, response sizes, IcyDB row growth, stable-memory growth where available, and any slow update/query path.
-- [ ] Gate J: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
-- [ ] Commit after this checkpoint.
+- [x] Create a Pocket-IC 1v1 strategic fixture that starts from canister player registration and reaches the first neutral battle trigger using only public canister endpoints.
+- [x] Assert persisted IcyDB row state after each milestone: session active, opening viewport visible, pickup visited, resources updated, income summarized, building built, recruit pool decremented, garrison updated, movement snapshots written, neutral encounter pending.
+- [x] Measure canister command count, event count, query count, response sizes, IcyDB row growth, stable-memory growth where available, and any slow update/query path.
+- [x] Gate J: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
+- [x] Commit after this checkpoint.
 
 ## 19I. IcyDB-Backed Battle, Aftermath, Victory, And History
 

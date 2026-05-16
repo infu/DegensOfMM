@@ -23,8 +23,9 @@ use crate::dto::public::{
 };
 
 pub use contract::{
-    CanisterEndpointView, DeferredEndpointDecision, EndpointKind, EndpointSpec,
-    REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions, required_endpoint_views,
+    CanisterEndpointView, DeferredEndpointDecision, DiagnosticRowCount, DiagnosticStorageSnapshot,
+    EndpointKind, EndpointSpec, REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions,
+    required_endpoint_views,
 };
 
 icydb::start!();

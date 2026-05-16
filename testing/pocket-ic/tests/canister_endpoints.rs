@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
-use domm_degens_canister::{CanisterEndpointView, REQUIRED_GAME_ENDPOINTS};
+use domm_degens_canister::{
+    CanisterEndpointView, DiagnosticStorageSnapshot, REQUIRED_GAME_ENDPOINTS,
+};
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
     CommandResponse, CommandStatus, CommandStatusView, ContentManifestResponse,
@@ -873,6 +875,380 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
 }
 
 #[test]
+fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-gate-j-two");
+    let viewport = opening_viewport_for_slot(0);
+    let mut metrics = GateJMetrics::default();
+
+    let non_controller_diagnostic = gate_query_as::<DiagnosticStorageSnapshot>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_diagnostic_storage_snapshot",
+        (entity_names(&["GameSession"]),),
+    )
+    .expect_err("diagnostics must be controller-gated");
+    assert_eq!(non_controller_diagnostic.code, "controller_required");
+
+    let initial_storage =
+        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert_eq!(initial_storage.total_rows, 0);
+
+    let session_id = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_one,
+        player_two,
+        "gate-j",
+    );
+    let active_session = gate_query_as::<SessionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_session",
+        (session_id.clone(),),
+    )
+    .expect("active session should be readable");
+    assert_eq!(active_session.state, "active");
+
+    let active_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert_eq!(row_count(&active_storage, "GameSession"), 1);
+    assert_eq!(row_count(&active_storage, "GameParticipant"), 2);
+    assert_eq!(row_count(&active_storage, "Champion"), 2);
+    assert_eq!(row_count(&active_storage, "Town"), 2);
+    assert!(row_count(&active_storage, "MapChunk") > 0);
+    assert!(row_count(&active_storage, "VisibilityChunk") > 0);
+
+    let chunk_page = gate_query_as::<MapChunkPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 8_u32),
+    )
+    .expect("opening map chunks should be visible");
+    assert_eq!(chunk_page.chunks.len(), 4);
+    let object_page = gate_query_as::<ObjectViewPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 128_u32),
+    )
+    .expect("opening objects should be visible");
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "pile:west-wood-1")
+    );
+    assert!(
+        object_page
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "neutral:west-mine")
+    );
+
+    let participant_before_pickup = gate_query_as::<ParticipantView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant before pickup should be readable");
+    let champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_one, &session_id);
+    let champion_before_pickup = gate_query_as::<ChampionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("owned champion should be readable");
+    assert_eq!(
+        (champion_before_pickup.x, champion_before_pickup.y),
+        (8, 24)
+    );
+
+    let moved_to_wood = gate_submit_move_intent(
+        &mut metrics,
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)],
+        "nonce:gate-j:move:wood",
+        1_000_u64,
+    );
+    assert_eq!(moved_to_wood.status, CommandStatus::Applied);
+    let synced_wood = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_session_turn",
+        (
+            session_id.clone(),
+            61_000_u64,
+            "nonce:gate-j:sync:wood".to_string(),
+        ),
+    )
+    .expect("wood sync should succeed");
+    metrics.observe_command_response(&synced_wood);
+    assert!(
+        synced_wood
+            .events
+            .iter()
+            .any(|event| event.event_type == "resource_picked_up")
+    );
+    let participant_after_pickup = gate_query_as::<ParticipantView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after pickup should be readable");
+    assert!(participant_after_pickup.resources.wood > participant_before_pickup.resources.wood);
+    let pickup_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(
+        row_count(&pickup_storage, "ParticipantObjectVisit")
+            > row_count(&active_storage, "ParticipantObjectVisit")
+    );
+    assert!(
+        row_count(&pickup_storage, "ResourceLedgerEntry")
+            > row_count(&active_storage, "ResourceLedgerEntry")
+    );
+    assert!(
+        row_count(&pickup_storage, "MovementSnapshot")
+            > row_count(&active_storage, "MovementSnapshot")
+    );
+
+    let built = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            "town:west".to_string(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:gate-j:build:yard".to_string(),
+        ),
+    )
+    .expect("training yard build should succeed");
+    metrics.observe_command_response(&built);
+    assert_eq!(built.status, CommandStatus::Applied);
+    let town_after_build = gate_query_as::<ApiTownView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), "town:west".to_string()),
+    )
+    .expect("town after build should be readable");
+    assert!(
+        town_after_build
+            .buildings
+            .iter()
+            .any(|building| building.building_slug == "freehold-training-yard")
+    );
+    let pool_after_build = town_after_build
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("training yard should create mudhook levy pool")
+        .available;
+    assert!(pool_after_build > 0);
+    let build_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(row_count(&build_storage, "TownBuilding") > row_count(&pickup_storage, "TownBuilding"));
+
+    let recruited = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_recruit_units",
+        (
+            session_id.clone(),
+            "town:west".to_string(),
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+            "nonce:gate-j:recruit:levy".to_string(),
+        ),
+    )
+    .expect("mudhook levy recruit should succeed");
+    metrics.observe_command_response(&recruited);
+    assert_eq!(recruited.status, CommandStatus::Applied);
+    let town_after_recruit = gate_query_as::<ApiTownView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), "town:west".to_string()),
+    )
+    .expect("town after recruit should be readable");
+    let pool_after_recruit = town_after_recruit
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("mudhook levy pool should remain visible")
+        .available;
+    assert_eq!(pool_after_recruit, pool_after_build - 1);
+    assert!(
+        town_after_recruit
+            .garrison_stacks
+            .iter()
+            .any(|stack| stack.unit_slug == "mudhook-levy" && stack.quantity == 1)
+    );
+    let recruit_storage =
+        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(
+        row_count(&recruit_storage, "TownGarrisonStack")
+            > row_count(&build_storage, "TownGarrisonStack")
+    );
+
+    let (crystal_mine_sync, crystal_saw_partial_sync) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(10, 23),
+            MoveCoord::new(11, 23),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(13, 23),
+            MoveCoord::new(14, 23),
+            MoveCoord::new(14, 24),
+            MoveCoord::new(14, 25),
+            MoveCoord::new(14, 26),
+            MoveCoord::new(14, 27),
+            MoveCoord::new(14, 28),
+            MoveCoord::new(14, 29),
+            MoveCoord::new(14, 30),
+        ],
+        "nonce:gate-j:move:crystal-mine",
+        "nonce:gate-j:sync:crystal-mine:",
+        244_000_u64,
+        "mine_captured",
+    );
+    assert_eq!(crystal_mine_sync.status, CommandStatus::Applied);
+    assert!(crystal_saw_partial_sync);
+    let crystal_storage =
+        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(
+        row_count(&crystal_storage, "MovementSnapshot")
+            > row_count(&recruit_storage, "MovementSnapshot")
+    );
+    assert!(
+        row_count(&crystal_storage, "ParticipantObjectVisit")
+            > row_count(&recruit_storage, "ParticipantObjectVisit")
+    );
+
+    let income_sync = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_session_turn",
+        (
+            session_id.clone(),
+            305_000_u64,
+            "nonce:gate-j:sync:income".to_string(),
+        ),
+    )
+    .expect("income sync should succeed");
+    metrics.observe_command_response(&income_sync);
+    assert!(
+        income_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "income_materialized")
+    );
+    let income_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(
+        row_count(&income_storage, "ResourceLedgerTurnSummary")
+            > row_count(&crystal_storage, "ResourceLedgerTurnSummary")
+    );
+
+    let (guarded_mine_sync, guarded_saw_partial_sync) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(14, 29),
+            MoveCoord::new(14, 28),
+            MoveCoord::new(14, 27),
+            MoveCoord::new(14, 26),
+            MoveCoord::new(14, 25),
+            MoveCoord::new(14, 24),
+            MoveCoord::new(14, 23),
+            MoveCoord::new(13, 23),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:gate-j:move:guarded-mine",
+        "nonce:gate-j:sync:guarded-mine:",
+        488_000_u64,
+        "neutral_encounter_pending",
+    );
+    assert_eq!(guarded_mine_sync.status, CommandStatus::Applied);
+    assert!(guarded_saw_partial_sync);
+    assert!(guarded_mine_sync.events.iter().any(|event| {
+        event.event_type == "neutral_encounter_pending"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("\"battle_id\""))
+    }));
+
+    let champion_after_guard = gate_query_as::<ChampionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id),
+    )
+    .expect("champion after guarded contact should be readable");
+    assert_eq!(champion_after_guard.status, "in_battle");
+    let final_events = gate_query_as::<ApiEventPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("final public events should be readable");
+    metrics.observe_event_page(&final_events);
+    assert!(
+        final_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "neutral_encounter_pending")
+    );
+
+    let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
+    assert!(row_count(&final_storage, "Battle") > row_count(&income_storage, "Battle"));
+    assert!(row_count(&final_storage, "BattleStack") > 0);
+    assert!(row_count(&final_storage, "BattleOccupancy") > 0);
+    assert!(row_count(&final_storage, "BattleObstacle") > 0);
+    assert!(
+        row_count(&final_storage, "MovementSnapshot")
+            > row_count(&income_storage, "MovementSnapshot")
+    );
+    assert!(final_storage.total_rows > initial_storage.total_rows);
+    assert!(final_storage.stable_memory_pages >= initial_storage.stable_memory_pages);
+
+    let command_storage =
+        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_COMMAND_EVENT_ENTITIES);
+    metrics.print_report(&initial_storage, &final_storage, &command_storage);
+}
+
+#[test]
 fn pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-conflict-one");
@@ -1154,6 +1530,402 @@ fn start_active_two_player_session(
     panic!("phased start_session should finish setup");
 }
 
+#[derive(Default)]
+struct GateJMetrics {
+    update_calls: u32,
+    query_calls: u32,
+    observed_event_count: u32,
+    total_response_bytes: usize,
+    max_response_bytes: usize,
+    max_response_method: String,
+}
+
+const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
+    "GameSession",
+    "GameParticipant",
+    "Champion",
+    "Town",
+    "MapChunk",
+    "VisibilityChunk",
+    "ParticipantObjectVisit",
+    "ResourceLedgerEntry",
+    "ResourceLedgerTurnSummary",
+    "TownBuilding",
+    "TownGarrisonStack",
+    "MovementSnapshot",
+    "Battle",
+    "BattleStack",
+    "BattleOccupancy",
+    "BattleObstacle",
+];
+
+const GATE_J_COMMAND_EVENT_ENTITIES: &[&str] = &["GameCommand", "LobbyCommand", "GameEvent"];
+
+impl GateJMetrics {
+    fn record_query<T: candid::CandidType>(
+        &mut self,
+        method: &str,
+        response: &Result<T, ApiError>,
+    ) {
+        self.query_calls = self.query_calls.saturating_add(1);
+        self.record_response(method, response);
+    }
+
+    fn record_update<T: candid::CandidType>(
+        &mut self,
+        method: &str,
+        response: &Result<T, ApiError>,
+    ) {
+        self.update_calls = self.update_calls.saturating_add(1);
+        self.record_response(method, response);
+    }
+
+    fn observe_lobby_response(&mut self, response: &LobbyCommandResponse) {
+        self.observed_event_count = self
+            .observed_event_count
+            .saturating_add(response.events.len() as u32);
+    }
+
+    fn observe_command_response(&mut self, response: &CommandResponse) {
+        self.observed_event_count = self
+            .observed_event_count
+            .saturating_add(response.events.len() as u32);
+    }
+
+    fn observe_event_page(&mut self, page: &ApiEventPage) {
+        self.observed_event_count = self
+            .observed_event_count
+            .saturating_add(page.events.len() as u32);
+    }
+
+    fn print_report(
+        &self,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+        command_storage: &DiagnosticStorageSnapshot,
+    ) {
+        let row_command_count = row_count(command_storage, "GameCommand")
+            .saturating_add(row_count(command_storage, "LobbyCommand"));
+        let row_growth = final_storage
+            .total_rows
+            .saturating_sub(initial_storage.total_rows);
+        eprintln!(
+            "Gate J Pocket-IC metrics: updates={} queries={} observed_events={} row_commands={} row_events={} total_rows={} row_growth={} stable_pages_start={} stable_pages_final={} response_bytes_total={} max_response_bytes={} max_response_method={}",
+            self.update_calls,
+            self.query_calls,
+            self.observed_event_count,
+            row_command_count,
+            row_count(command_storage, "GameEvent"),
+            final_storage.total_rows,
+            row_growth,
+            initial_storage.stable_memory_pages,
+            final_storage.stable_memory_pages,
+            self.total_response_bytes,
+            self.max_response_bytes,
+            self.max_response_method
+        );
+    }
+
+    fn record_response<T: candid::CandidType>(
+        &mut self,
+        method: &str,
+        response: &Result<T, ApiError>,
+    ) {
+        let byte_len = candid::encode_one(response)
+            .unwrap_or_else(|error| panic!("{method} response should Candid encode: {error}"))
+            .len();
+        self.total_response_bytes = self.total_response_bytes.saturating_add(byte_len);
+        if byte_len > self.max_response_bytes {
+            self.max_response_bytes = byte_len;
+            self.max_response_method = method.to_string();
+        }
+    }
+}
+
+fn gate_start_active_two_player_session(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player_one: candid::Principal,
+    player_two: candid::Principal,
+    nonce_stem: &str,
+) -> String {
+    let registered_one = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_one,
+        "register_player",
+        (
+            Some(format!("{nonce_stem}-one")),
+            Some(format!("{nonce_stem} One")),
+            format!("nonce:{nonce_stem}:register:one"),
+        ),
+    )
+    .expect("player one registration should succeed");
+    metrics.observe_lobby_response(&registered_one);
+
+    let registered_two = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_two,
+        "register_player",
+        (
+            Some(format!("{nonce_stem}-two")),
+            Some(format!("{nonce_stem} Two")),
+            format!("nonce:{nonce_stem}:register:two"),
+        ),
+    )
+    .expect("player two registration should succeed");
+    metrics.observe_lobby_response(&registered_two);
+
+    let created = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_one,
+        "create_session",
+        (
+            format!("{nonce_stem} Match"),
+            FIRST_PLAYABLE_RULESET_ID.to_string(),
+            1_u64,
+            format!("nonce:{nonce_stem}:create"),
+        ),
+    )
+    .expect("create_session should succeed");
+    metrics.observe_lobby_response(&created);
+    let session_id = match created.result {
+        LobbyCommandResult::Session(session) => session.session_id,
+        other => panic!("create_session returned unexpected result: {other:?}"),
+    };
+
+    let joined = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_two,
+        "join_session",
+        (
+            session_id.clone(),
+            "faction:ashen-ledger".to_string(),
+            format!("nonce:{nonce_stem}:join"),
+        ),
+    )
+    .expect("join_session should succeed");
+    metrics.observe_lobby_response(&joined);
+
+    let ready_one = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_one,
+        "mark_ready",
+        (session_id.clone(), format!("nonce:{nonce_stem}:ready:one")),
+    )
+    .expect("player one ready should succeed");
+    metrics.observe_lobby_response(&ready_one);
+
+    let ready_two = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player_two,
+        "mark_ready",
+        (session_id.clone(), format!("nonce:{nonce_stem}:ready:two")),
+    )
+    .expect("player two ready should succeed");
+    metrics.observe_lobby_response(&ready_two);
+
+    for step in 0..16 {
+        let started = gate_update_as::<LobbyCommandResponse>(
+            metrics,
+            fixture,
+            player_one,
+            "start_session",
+            (
+                session_id.clone(),
+                format!("nonce:{nonce_stem}:start:{step}"),
+            ),
+        )
+        .expect("start_session should succeed");
+        metrics.observe_lobby_response(&started);
+        assert_eq!(started.status, CommandStatus::Applied);
+        if matches!(
+            started.result,
+            LobbyCommandResult::Session(ref session) if session.state == "active"
+        ) {
+            return session_id;
+        }
+    }
+
+    panic!("phased start_session should finish setup");
+}
+
+fn gate_owned_champion_id(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+) -> String {
+    let champions = gate_query_as::<Vec<ChampionView>>(
+        metrics,
+        fixture,
+        player,
+        "get_my_champions",
+        (session_id.to_string(),),
+    )
+    .expect("owned champions should load");
+    assert_eq!(champions.len(), 1);
+    champions[0].champion_id.clone()
+}
+
+fn gate_submit_move_intent(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    champion_id: &str,
+    path: Vec<MoveCoord>,
+    client_nonce: &str,
+    now_ms: u64,
+) -> CommandResponse {
+    let response = gate_update_as::<CommandResponse>(
+        metrics,
+        fixture,
+        player,
+        "submit_move_intent",
+        (
+            session_id.to_string(),
+            champion_id.to_string(),
+            path,
+            client_nonce.to_string(),
+            now_ms,
+        ),
+    )
+    .expect("submit_move_intent should succeed");
+    metrics.observe_command_response(&response);
+    assert_eq!(response.status, CommandStatus::Applied);
+    response
+}
+
+fn gate_submit_move_and_sync_until_event(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    champion_id: &str,
+    path: Vec<MoveCoord>,
+    move_nonce: &str,
+    sync_nonce_prefix: &str,
+    now_ms: u64,
+    expected_event_type: &str,
+) -> (CommandResponse, bool) {
+    let max_sync_calls = path.len().saturating_add(2);
+    gate_submit_move_intent(
+        metrics,
+        fixture,
+        player,
+        session_id,
+        champion_id,
+        path,
+        move_nonce,
+        now_ms,
+    );
+    gate_sync_until_event(
+        metrics,
+        fixture,
+        player,
+        session_id,
+        sync_nonce_prefix,
+        now_ms,
+        expected_event_type,
+        max_sync_calls,
+    )
+}
+
+fn gate_sync_until_event(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    sync_nonce_prefix: &str,
+    now_ms: u64,
+    expected_event_type: &str,
+    max_sync_calls: usize,
+) -> (CommandResponse, bool) {
+    let mut saw_partial_sync = false;
+    for attempt in 0..max_sync_calls {
+        let synced = gate_update_as::<CommandResponse>(
+            metrics,
+            fixture,
+            player,
+            "sync_session_turn",
+            (
+                session_id.to_string(),
+                now_ms.saturating_add((attempt as u64).saturating_mul(1_000)),
+                format!("{sync_nonce_prefix}{attempt}"),
+            ),
+        )
+        .expect("sync_session_turn should succeed");
+        metrics.observe_command_response(&synced);
+        assert_eq!(synced.status, CommandStatus::Applied);
+        saw_partial_sync |= synced
+            .events
+            .iter()
+            .any(|event| event.event_type == "movement_sync_incomplete");
+        if synced
+            .events
+            .iter()
+            .any(|event| event.event_type == expected_event_type)
+        {
+            return (synced, saw_partial_sync);
+        }
+    }
+
+    panic!("sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls");
+}
+
+fn gate_diagnostic_snapshot(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    entities: &[&str],
+) -> DiagnosticStorageSnapshot {
+    let mut combined = DiagnosticStorageSnapshot {
+        row_counts: Vec::new(),
+        total_rows: 0,
+        stable_memory_pages: 0,
+    };
+
+    for entity in entities {
+        let snapshot = gate_query_as::<DiagnosticStorageSnapshot>(
+            metrics,
+            fixture,
+            candid::Principal::anonymous(),
+            "get_diagnostic_storage_snapshot",
+            (entity_names(&[*entity]),),
+        )
+        .expect("controller diagnostic storage snapshot should load");
+        assert_eq!(snapshot.row_counts.len(), 1);
+        combined.total_rows = combined.total_rows.saturating_add(snapshot.total_rows);
+        combined.stable_memory_pages = combined
+            .stable_memory_pages
+            .max(snapshot.stable_memory_pages);
+        combined.row_counts.extend(snapshot.row_counts);
+    }
+
+    combined
+}
+
+fn entity_names(entities: &[&str]) -> Vec<String> {
+    entities
+        .iter()
+        .map(|entity| (*entity).to_string())
+        .collect()
+}
+
+fn row_count(snapshot: &DiagnosticStorageSnapshot, entity: &str) -> u32 {
+    snapshot
+        .row_counts
+        .iter()
+        .find(|row| row.entity == entity)
+        .unwrap_or_else(|| panic!("diagnostic row count missing {entity}"))
+        .count
+}
+
 fn owned_champion_id(
     fixture: &StandaloneCanisterFixture,
     player: candid::Principal,
@@ -1327,6 +2099,22 @@ where
         .map_err(|error| format!("{error:?}"))
 }
 
+fn gate_query_as<T>(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    caller: candid::Principal,
+    method: &str,
+    args: impl candid::utils::ArgumentEncoder,
+) -> Result<T, ApiError>
+where
+    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
+{
+    let response = query_as::<T>(fixture, caller, method, args)
+        .unwrap_or_else(|error| panic!("{method} should decode from query call: {error}"));
+    metrics.record_query(method, &response);
+    response
+}
+
 fn update_as<T>(
     fixture: &StandaloneCanisterFixture,
     caller: candid::Principal,
@@ -1340,6 +2128,22 @@ where
         .pic()
         .update_call_as(fixture.canister_id(), caller, method, args)
         .map_err(|error| format!("{error:?}"))
+}
+
+fn gate_update_as<T>(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    caller: candid::Principal,
+    method: &str,
+    args: impl candid::utils::ArgumentEncoder,
+) -> Result<T, ApiError>
+where
+    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
+{
+    let response = update_as::<T>(fixture, caller, method, args)
+        .unwrap_or_else(|error| panic!("{method} should decode from update call: {error}"));
+    metrics.record_update(method, &response);
+    response
 }
 
 fn install_degens_canister_fixture() -> StandaloneCanisterFixture {

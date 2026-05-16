@@ -605,6 +605,23 @@ IcyDB ergonomics notes:
 
 Checkpoint 17B captured the current schema-evolution ergonomics: literal defaults can act as persisted defaults, generated/function defaults do not backfill existing rows, generated model metadata may include macro-added bookkeeping fields, and generic occupant keys require gameplay-layer cleanup tests.
 
+## Checkpoint 18: Playable Web Client
+
+Added a split `domm_client_probe::web` layer that models the first playable web client against the public API DTO/update contract. The client is separated into a backend service adapter, durable client state, browser-facing view model, and walkthrough controller rather than extending the original viewport probe into a single large file.
+
+The Gate E walkthrough now drives the first playable path from the client side: lobby creation/join/ready/start, map load, first resource pickup movement, exact command retry, sync retry, build preview/build, turn syncs, recruit preview/recruit, neutral battle trigger, battle panel load, battle defend retry, battle sync, match result, rematch affordance, and basic history/win-loss panel. The UI-level test asserts map rows, town/champion/battle panels, resources, events, command status, checklist completion, replayed idempotent commands, match result, rematch availability, and history rows.
+
+Backend/client contract fix:
+
+- `FixtureApiBackend::sync_session_turn` now also applies movement object interactions, neutral encounters, and lazy income materialization after movement sync. This matches the section 15 client contract that sync can materialize bounded lazy state before the client refreshes visible state.
+- Exact retry semantics include every payload field used by the backend hash. The web client preserves the original timestamp as well as nonce and typed payload when retrying idempotent commands.
+
+Audit notes:
+
+- The web client uses only public DTO/update methods for lobby, map, resources, movement, sync, build, recruit, battle state, battle action, command status, events, match history, previews, and content manifest.
+- The match-result panel reuses the existing first-playable backend gate report to represent the finished aftermath/victory state in this fixture layer. The canister-facing API still needs the real checkpoint 19 end-to-end fixture to unify the live web route and final aftermath route.
+- No additional IcyDB dependency was introduced into `domm-client-probe`; it remains a public contract/client test layer over `domm-game`.
+
 ## Performance And Storage Notes
 
 None yet.

@@ -325,14 +325,34 @@ impl FixtureApiBackend {
             payload,
             |this| {
                 this.set_now(now_ms);
+                let participant_id = this.participant_id_for_caller(caller)?.to_string();
                 let receipt = this
                     .strategic
                     .sync_session_turn_public(caller, session_id, now_ms)
                     .map_err(|error| map_update_error("sync_session_turn_failed", error))?;
+                this.strategic
+                    .apply_movement_object_interactions_public(caller, session_id, now_ms)
+                    .map_err(|error| {
+                        map_update_error("movement_object_interactions_failed", error)
+                    })?;
+                this.strategic
+                    .apply_neutral_encounters_public(caller, session_id)
+                    .map_err(|error| map_update_error("neutral_encounters_failed", error))?;
+                this.strategic
+                    .materialize_income_public(
+                        caller,
+                        session_id,
+                        receipt.current_turn,
+                        nonce_u64("sync_session_income", client_nonce),
+                    )
+                    .map_err(|error| map_update_error("sync_income_failed", error))?;
                 Ok((
                     receipt.command_id.clone(),
                     CommandResult::StrategicReceipt(receipt),
-                    vec![changed("session", session_id, "update")],
+                    vec![
+                        changed("session", session_id, "update"),
+                        changed("participant", &participant_id, "resources"),
+                    ],
                 ))
             },
         )

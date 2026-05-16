@@ -286,16 +286,16 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 18. Playable Web Client
 
-- [ ] Expand the thin client/probe into the first playable web client against the public API contract.
-- [ ] Render map, towns, champions, resources, events, movement intents, battle state, legal battle actions, command status, and sync-required states.
-- [ ] Implement retry behavior for idempotent commands and sync flows.
-- [ ] Run the first playable walkthrough manually through the web client.
-- [ ] Include first-match checklist, match result, rematch entry point, and basic match history/win-loss display from the spec's frontend scope.
-- [ ] Add UI-level tests for key flows where practical.
-- [ ] Run backend regression tests after client integration changes.
-- [ ] Audit: confirm no client flow requires an endpoint, DTO field, or event that the backend does not provide.
-- [ ] Gate E: the first playable match path can be played end to end in the web client.
-- [ ] Commit after this checkpoint.
+- [x] Expand the thin client/probe into the first playable web client against the public API contract.
+- [x] Render map, towns, champions, resources, events, movement intents, battle state, legal battle actions, command status, and sync-required states.
+- [x] Implement retry behavior for idempotent commands and sync flows.
+- [x] Run the first playable walkthrough manually through the web client.
+- [x] Include first-match checklist, match result, rematch entry point, and basic match history/win-loss display from the spec's frontend scope.
+- [x] Add UI-level tests for key flows where practical.
+- [x] Run backend regression tests after client integration changes.
+- [x] Audit: confirm no client flow requires an endpoint, DTO field, or event that the backend does not provide.
+- [x] Gate E: the first playable match path can be played end to end in the web client.
+- [x] Commit after this checkpoint.
 
 ## 19. End-To-End First Playable
 

@@ -1,5 +1,7 @@
 use candid::CandidType;
-use domm_game::{ApiError, ApiEventPage, GameView, MapChunkView, ObjectView, Viewport};
+use domm_game::{
+    ApiError, ApiEventPage, GameView, MapChunkView, ObjectView, PlayableError, Viewport,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -38,10 +40,28 @@ pub enum ProbeError {
     MissingChunkCell { cell_index: usize },
     #[error("rendered row is not valid UTF-8")]
     InvalidRenderedRow,
+    #[error("session has not been created")]
+    MissingSession,
+    #[error("game view has not been loaded")]
+    MissingGameView,
+    #[error("battle panel has no active stack")]
+    MissingActiveBattleStack,
+    #[error("command {command_type} failed with {code}")]
+    CommandFailed { command_type: String, code: String },
+    #[error("retry for {command_type} did not replay the original command")]
+    RetryDidNotReplay { command_type: String },
+    #[error("playable gate error: {0}")]
+    Playable(PlayableError),
 }
 
 impl From<ApiError> for ProbeError {
     fn from(error: ApiError) -> Self {
         Self::Api(error)
+    }
+}
+
+impl From<PlayableError> for ProbeError {
+    fn from(error: PlayableError) -> Self {
+        Self::Playable(error)
     }
 }

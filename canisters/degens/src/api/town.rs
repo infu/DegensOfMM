@@ -11,22 +11,34 @@ fn get_town_view(session_id: String, town_id: String) -> Result<ApiTownView, Api
 
 #[query]
 fn preview_build_town_structure(
-    _session_id: String,
-    _town_id: String,
-    _building_def_id: String,
+    session_id: String,
+    town_id: String,
+    building_def_id: String,
 ) -> Result<BuildPreview, ApiError> {
-    crate::services::town::unavailable("preview_build_town_structure")
+    crate::services::town::preview_build_town_structure(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        town_id,
+        building_def_id,
+    )
 }
 
 #[query]
 fn preview_recruit_units(
-    _session_id: String,
-    _town_id: String,
-    _unit_id: String,
-    _quantity: u32,
-    _target: RecruitTarget,
+    session_id: String,
+    town_id: String,
+    unit_id: String,
+    quantity: u32,
+    target: RecruitTarget,
 ) -> Result<RecruitPreview, ApiError> {
-    crate::services::town::unavailable("preview_recruit_units")
+    crate::services::town::preview_recruit_units(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        town_id,
+        unit_id,
+        quantity,
+        target,
+    )
 }
 
 #[update]

@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19F Pocket-IC Endpoint Completeness
+
+Area: Pocket-IC canister endpoint coverage
+Severity: medium
+Status: resolved for Gate I; strategic mutations continue in 19G+
+
+Observation:
+
+Checkpoint 19F expanded the Pocket-IC endpoint test from method presence into typed behavior coverage for every 19A endpoint. The real canister now serves `get_events_after`, `get_command_status`, `preview_move_path`, `preview_build_town_structure`, and `preview_recruit_units` with read-only IcyDB-backed data or typed validation results. The same Pocket-IC scenario verifies account/lobby/setup/content/map/visibility/champion/town/event/status/preview reads, anonymous rejection, private event-audience rejection, list limits, viewport limits, and movement path limits.
+
+Impact:
+
+Gate I is now a real canister proof, not a fixture test. Later mutation and battle endpoints still deliberately return `icydb_repository_not_implemented`, but the harness decodes their typed `Result<_, ApiError>` responses so missing methods, Candid drift, traps, or untyped errors fail the test. `preview_build_town_structure` had to avoid full town rendering because that query exceeded the Pocket-IC 5B instruction limit; the preview now reads only the minimal town/content rows it needs.
+
+Suggested follow-up:
+
+19G should replace the remaining strategic mutation placeholders with command/effect/event-backed IcyDB implementations and keep previews aligned with the mutation validation rules as those commands become real.
+
 ## 2026-05-16 - Checkpoint 19E IcyDB Opening Views
 
 Area: canister content/map/visibility/town/champion queries

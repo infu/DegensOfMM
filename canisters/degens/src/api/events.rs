@@ -4,18 +4,28 @@ use crate::dto::public::{ApiError, ApiEventPage, CommandStatusView};
 
 #[query]
 fn get_events_after(
-    _session_id: String,
-    _audience_key: String,
-    _events_after_seq: u64,
-    _limit: u32,
+    session_id: String,
+    audience_key: String,
+    events_after_seq: u64,
+    limit: u32,
 ) -> Result<ApiEventPage, ApiError> {
-    crate::services::events::unavailable("get_events_after")
+    crate::services::events::get_events_after(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        audience_key,
+        events_after_seq,
+        limit,
+    )
 }
 
 #[query]
 fn get_command_status(
-    _session_id: String,
-    _command_id_or_client_nonce: String,
+    session_id: String,
+    command_id_or_client_nonce: String,
 ) -> Result<CommandStatusView, ApiError> {
-    crate::services::events::unavailable("get_command_status")
+    crate::services::events::get_command_status(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        command_id_or_client_nonce,
+    )
 }

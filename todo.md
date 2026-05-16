@@ -43,7 +43,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate F after checkpoint 19A: every required game endpoint is inventoried, named, typed, and mapped to a canister method plus existing fixture behavior.
 - [x] Gate G after checkpoint 19B: canister code is split by API/service/repository domains and `domm-degens-canister` exposes every endpoint in Candid.
 - [x] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
-- [ ] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
+- [x] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
 - [ ] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
 - [ ] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
 - [ ] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
@@ -378,13 +378,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19F. Pocket-IC Endpoint Completeness Gate
 
-- [ ] Build a Pocket-IC endpoint coverage harness that installs `domm-degens-canister` and calls every endpoint listed in 19A.
-- [ ] For each endpoint, assert one valid or deliberately invalid typed response; method-not-found, decode failure, unexpected trap, or untyped string error fails the test.
-- [ ] Verify Candid argument and response compatibility for all command responses, query DTOs, pages, previews, content manifests, battle views, event views, command status views, and match-history pages.
-- [ ] Verify anonymous/unauthorized calls fail with typed authorization errors without bypassing query limits.
-- [ ] Verify all list/query endpoints enforce cursor/limit contracts at the canister boundary.
-- [ ] Gate I: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
-- [ ] Commit after this checkpoint.
+- [x] Build a Pocket-IC endpoint coverage harness that installs `domm-degens-canister` and calls every endpoint listed in 19A.
+- [x] For each endpoint, assert one valid or deliberately invalid typed response; method-not-found, decode failure, unexpected trap, or untyped string error fails the test.
+- [x] Verify Candid argument and response compatibility for all command responses, query DTOs, pages, previews, content manifests, battle views, event views, command status views, and match-history pages.
+- [x] Verify anonymous/unauthorized calls fail with typed authorization errors without bypassing query limits.
+- [x] Verify all list/query endpoints enforce cursor/limit contracts at the canister boundary.
+- [x] Gate I: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
+- [x] Commit after this checkpoint.
 
 ## 19G. IcyDB-Backed Strategic Gameplay
 

@@ -4,12 +4,18 @@ use crate::dto::public::{ApiError, CommandResponse, MoveCoord, MovementPreview};
 
 #[query]
 fn preview_move_path(
-    _session_id: String,
-    _champion_id: String,
-    _path: Vec<MoveCoord>,
-    _now_ms: u64,
+    session_id: String,
+    champion_id: String,
+    path: Vec<MoveCoord>,
+    now_ms: u64,
 ) -> Result<MovementPreview, ApiError> {
-    crate::services::movement::unavailable("preview_move_path")
+    crate::services::movement::preview_move_path(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        champion_id,
+        path,
+        now_ms,
+    )
 }
 
 #[update]

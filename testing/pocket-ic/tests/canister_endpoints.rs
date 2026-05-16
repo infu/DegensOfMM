@@ -9,7 +9,8 @@ use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
     CommandResponse, CommandStatus, CommandStatusView, ContentManifestResponse,
     FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest,
-    LobbyCommandResponse, LobbyCommandResult, MapChunkPage, MatchHistoryPage, MoveCoord,
+    LobbyCommandResponse, LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_LIST_LIMIT,
+    MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage, MatchHistoryPage, MoveCoord,
     MovementPreview, ObjectViewPage, ParticipantView, PlayerView, RecruitPreview, RecruitTarget,
     SessionView, opening_viewport_for_slot,
 };
@@ -200,11 +201,12 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
 
     let mut active_start = None;
     for step in 0..16 {
+        let nonce = format!("nonce:presence:start:{step}");
         let started = update_as::<LobbyCommandResponse>(
             &fixture,
             player_one,
             "start_session",
-            (session_id.clone(), format!("nonce:presence:start:{step}")),
+            (session_id.clone(), nonce.clone()),
         )
         .expect("start_session should decode")
         .expect("start_session should succeed");
@@ -214,11 +216,22 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             other => panic!("start_session returned unexpected result: {other:?}"),
         };
         if state == "active" {
-            active_start = Some(started);
+            active_start = Some((started, nonce));
             break;
         }
     }
-    active_start.expect("phased start_session should finish setup");
+    let (active_start, active_start_nonce) =
+        active_start.expect("phased start_session should finish setup");
+
+    let participant_one = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("get_my_participant should decode")
+    .expect("participant one should be readable");
+    assert_eq!(participant_one.slot_index, 0);
 
     let participant_two = query_as::<ParticipantView>(
         &fixture,
@@ -363,42 +376,77 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .any(|building| building.building_slug == "crumbling-hall")
     );
 
-    assert_query_unimplemented::<BattleView>(
+    let event_page = query_as::<ApiEventPage>(
         &fixture,
-        "get_battle_state",
-        (session_id.clone(), battle_id.clone(), 1_000_u64),
-    );
-    assert_query_unimplemented::<ApiEventPage>(
-        &fixture,
+        player_one,
         "get_events_after",
         (session_id.clone(), "public".to_string(), 0_u64, 10_u32),
+    )
+    .expect("get_events_after should decode")
+    .expect("public event feed should load from IcyDB rows");
+    assert_eq!(event_page.page_info.limit, 10);
+    assert!(
+        event_page
+            .events
+            .iter()
+            .any(|event| event.event_type == "session_started")
     );
-    assert_query_unimplemented::<CommandStatusView>(
+
+    let status_by_id = query_as::<CommandStatusView>(
         &fixture,
+        player_one,
         "get_command_status",
-        (session_id.clone(), "nonce:presence:status".to_string()),
-    );
-    assert_query_unimplemented::<MovementPreview>(
+        (session_id.clone(), active_start.command_id.clone()),
+    )
+    .expect("get_command_status by id should decode")
+    .expect("start command status should be readable by id");
+    assert_eq!(status_by_id.status, CommandStatus::Applied);
+    assert_eq!(status_by_id.command_id, active_start.command_id);
+
+    let status_by_nonce = query_as::<CommandStatusView>(
         &fixture,
+        player_one,
+        "get_command_status",
+        (session_id.clone(), active_start_nonce),
+    )
+    .expect("get_command_status by nonce should decode")
+    .expect("start command status should be readable by nonce");
+    assert_eq!(status_by_nonce.status, CommandStatus::Applied);
+
+    let movement_preview = query_as::<MovementPreview>(
+        &fixture,
+        player_one,
         "preview_move_path",
         (
             session_id.clone(),
             champion_id.clone(),
-            vec![MoveCoord::new(1, 1)],
+            vec![MoveCoord::new(champion.x.saturating_add(1), champion.y)],
             1_000_u64,
         ),
-    );
-    assert_query_unimplemented::<BuildPreview>(
+    )
+    .expect("preview_move_path should decode")
+    .expect("movement preview should be typed and read-only");
+    assert_eq!(movement_preview.champion_id, champion_id);
+    assert_eq!(movement_preview.total_cost, 1);
+
+    let build_preview = query_as::<BuildPreview>(
         &fixture,
+        player_one,
         "preview_build_town_structure",
         (
             session_id.clone(),
             town_id.clone(),
-            "building:training-yard".to_string(),
+            "building:freehold-training-yard".to_string(),
         ),
-    );
-    assert_query_unimplemented::<RecruitPreview>(
+    )
+    .expect("preview_build_town_structure should decode")
+    .expect("build preview should be typed and read-only");
+    assert!(build_preview.allowed);
+    assert_eq!(build_preview.building_slug, "freehold-training-yard");
+
+    let recruit_preview = query_as::<RecruitPreview>(
         &fixture,
+        player_one,
         "preview_recruit_units",
         (
             session_id.clone(),
@@ -407,6 +455,136 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             1_u32,
             RecruitTarget::TownGarrison { slot_index: None },
         ),
+    )
+    .expect("preview_recruit_units should decode")
+    .expect("recruit preview should be typed and read-only");
+    assert!(!recruit_preview.allowed);
+    assert_eq!(
+        recruit_preview.disabled_reason.as_deref(),
+        Some("recruit_pool_empty")
+    );
+
+    let forbidden_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_two,
+        "get_events_after",
+        (
+            session_id.clone(),
+            format!("participant:{}", participant_one.participant_id),
+            0_u64,
+            10_u32,
+        ),
+    )
+    .expect("forbidden audience event query should decode")
+    .expect_err("participant event audience should be private");
+    assert_eq!(forbidden_events.code, "audience_not_allowed");
+
+    let anonymous_map = query_as::<MapChunkPage>(
+        &fixture,
+        candid::Principal::anonymous(),
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 1_u32),
+    )
+    .expect("anonymous map query should decode")
+    .expect_err("anonymous map query should fail with typed auth");
+    assert_eq!(anonymous_map.code, "anonymous_not_allowed");
+
+    let oversized_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (
+            session_id.clone(),
+            "public".to_string(),
+            0_u64,
+            MAX_LIST_LIMIT + 1,
+        ),
+    )
+    .expect("oversized event query should decode")
+    .expect_err("oversized event query should fail typed limit validation");
+    assert_eq!(oversized_events.code, "list_limit_exceeded");
+
+    let oversized_chunks = query_as::<MapChunkPage>(
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (
+            session_id.clone(),
+            viewport.clone(),
+            None::<u32>,
+            MAX_CHUNK_LIMIT + 1,
+        ),
+    )
+    .expect("oversized chunk query should decode")
+    .expect_err("oversized chunk query should fail typed limit validation");
+    assert_eq!(oversized_chunks.code, "viewport_chunk_limit_exceeded");
+
+    let oversized_objects = query_as::<ObjectViewPage>(
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (
+            session_id.clone(),
+            viewport.clone(),
+            None::<u32>,
+            MAX_OBJECT_LIMIT + 1,
+        ),
+    )
+    .expect("oversized object query should decode")
+    .expect_err("oversized object query should fail typed limit validation");
+    assert_eq!(oversized_objects.code, "list_limit_exceeded");
+
+    let oversized_history = query_as::<MatchHistoryPage>(
+        &fixture,
+        player_one,
+        "get_match_history",
+        (0_u32, MAX_LIST_LIMIT + 1),
+    )
+    .expect("oversized history query should decode")
+    .expect_err("oversized history query should fail typed limit validation");
+    assert_eq!(oversized_history.code, "list_limit_exceeded");
+
+    let oversized_game_view = query_as::<GameView>(
+        &fixture,
+        player_one,
+        "get_game_view",
+        (
+            session_id.clone(),
+            GameViewRequest {
+                viewport: viewport.clone(),
+                chunk_cursor: None,
+                chunk_limit: MAX_CHUNK_LIMIT + 1,
+                object_cursor: None,
+                object_limit: 4,
+                events_after_seq: 0,
+                event_limit: 10,
+                include_battle: false,
+            },
+        ),
+    )
+    .expect("oversized game view query should decode")
+    .expect_err("oversized game view query should fail typed limit validation");
+    assert_eq!(oversized_game_view.code, "viewport_chunk_limit_exceeded");
+
+    let oversized_path = query_as::<MovementPreview>(
+        &fixture,
+        player_one,
+        "preview_move_path",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            vec![MoveCoord::new(champion.x, champion.y); MAX_MOVE_PATH_STEPS_LIMIT + 1],
+            1_000_u64,
+        ),
+    )
+    .expect("oversized movement preview should decode")
+    .expect_err("oversized movement preview should fail typed limit validation");
+    assert_eq!(oversized_path.code, "movement_path_too_long");
+
+    assert_query_unimplemented::<BattleView>(
+        &fixture,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone(), 1_000_u64),
     );
     assert_update_unimplemented::<CommandResponse>(
         &fixture,

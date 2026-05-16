@@ -9,7 +9,7 @@ use domm_degens_canister::{
 };
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview, ChampionView,
-    CommandResponse, CommandStatus, CommandStatusView, ContentManifestResponse,
+    CommandResponse, CommandResult, CommandStatus, CommandStatusView, ContentManifestResponse,
     FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest,
     LobbyCommandResponse, LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_LIST_LIMIT,
     MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage, MatchHistoryPage, MoveCoord,
@@ -22,7 +22,6 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-player-one");
     let player_two = candid::Principal::self_authenticating(b"domm-pocket-player-two");
-    let battle_id = "battle:presence".to_string();
     let viewport = opening_viewport_for_slot(0);
 
     let inventory: Vec<CanisterEndpointView> = fixture
@@ -840,37 +839,145 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
                 .as_deref()
                 .is_some_and(|payload| payload.contains("\"battle_id\""))
     }));
+    let battle_id = guarded_mine_sync
+        .events
+        .iter()
+        .find(|event| event.event_type == "neutral_encounter_pending")
+        .and_then(|event| event.payload.as_deref())
+        .and_then(|payload| json_string_field(payload, "battle_id"))
+        .expect("neutral encounter event should include battle_id");
 
-    assert_query_unimplemented::<BattleView>(
+    let mut battle = query_as::<BattleView>(
         &fixture,
+        player_one,
         "get_battle_state",
-        (session_id.clone(), battle_id.clone(), 1_000_u64),
-    );
-    assert_update_unimplemented::<CommandResponse>(
+        (session_id.clone(), battle_id.clone(), 489_000_u64),
+    )
+    .expect("get_battle_state should decode")
+    .expect("battle state should be readable");
+    assert_eq!(battle.state, "active");
+    assert_eq!(battle.battle_type, "neutral");
+    assert!(!battle.stacks.is_empty());
+    if battle.legal_actions_for_caller.is_empty() {
+        let sync = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "sync_battle",
+            (
+                session_id.clone(),
+                battle_id.clone(),
+                900_000_u64,
+                "nonce:presence:sync-battle:initial".to_string(),
+            ),
+        )
+        .expect("sync_battle should decode")
+        .expect("sync_battle should succeed");
+        assert_eq!(sync.status, CommandStatus::Applied);
+        battle = query_as::<BattleView>(
+            &fixture,
+            player_one,
+            "get_battle_state",
+            (session_id.clone(), battle_id.clone(), 901_000_u64),
+        )
+        .expect("get_battle_state after sync should decode")
+        .expect("battle state after sync should be readable");
+    }
+    let active_stack_id = battle
+        .active_stack_id
+        .clone()
+        .expect("battle should have an active stack");
+    let action = battle
+        .legal_actions_for_caller
+        .iter()
+        .find(|action| action.enabled && !action.targets.is_empty())
+        .or_else(|| {
+            battle
+                .legal_actions_for_caller
+                .iter()
+                .find(|action| action.enabled && !action.path.is_empty())
+        })
+        .or_else(|| {
+            battle
+                .legal_actions_for_caller
+                .iter()
+                .find(|action| action.enabled)
+        })
+        .expect("caller should eventually control an active battle stack")
+        .clone();
+    let submitted_battle = update_as::<CommandResponse>(
         &fixture,
-        "sync_battle",
-        (
-            session_id.clone(),
-            battle_id.clone(),
-            1_000_u64,
-            "nonce:presence:sync-battle".to_string(),
-        ),
-    );
-    assert_update_unimplemented::<CommandResponse>(
-        &fixture,
+        player_one,
         "submit_battle_action",
         (
-            session_id,
+            session_id.clone(),
             BattleActionInput {
-                battle_id,
-                battle_stack_id: "battle-stack:presence".to_string(),
-                action: "Defend".to_string(),
-                target_stack_id: None,
-                destination: None,
+                battle_id: battle_id.clone(),
+                battle_stack_id: active_stack_id,
+                action: action.action.clone(),
+                target_stack_id: action.targets.first().cloned(),
+                destination: action.path.first().copied(),
             },
             "nonce:presence:battle-action".to_string(),
-            1_000_u64,
+            902_000_u64,
         ),
+    )
+    .expect("submit_battle_action should decode")
+    .expect("submit_battle_action should succeed");
+    assert_eq!(submitted_battle.status, CommandStatus::Applied);
+    assert!(matches!(
+        submitted_battle.result,
+        CommandResult::BattleAction(_)
+    ));
+    let battle_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_battle_action",
+        (
+            session_id.clone(),
+            BattleActionInput {
+                battle_id: battle_id.clone(),
+                battle_stack_id: battle
+                    .active_stack_id
+                    .clone()
+                    .unwrap_or_else(|| "missing".to_string()),
+                action: action.action,
+                target_stack_id: action.targets.first().cloned(),
+                destination: action.path.first().copied(),
+            },
+            "nonce:presence:battle-action".to_string(),
+            902_000_u64,
+        ),
+    )
+    .expect("submit_battle_action replay should decode")
+    .expect("submit_battle_action replay should succeed");
+    assert_eq!(battle_replay.command_id, submitted_battle.command_id);
+
+    let battle_status = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status",
+        (
+            session_id.clone(),
+            "nonce:presence:battle-action".to_string(),
+        ),
+    )
+    .expect("battle command status should decode")
+    .expect("battle command should be readable by nonce");
+    assert_eq!(battle_status.status, CommandStatus::Applied);
+
+    let battle_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("battle event feed should decode")
+    .expect("battle events should be readable");
+    assert!(
+        battle_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "battle_action_applied")
     );
 }
 
@@ -1249,6 +1356,228 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
 }
 
 #[test]
+fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-k-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-gate-k-two");
+    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "gate-k");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let east_champion_id = owned_champion_id(&fixture, player_two, &session_id);
+
+    let initial_storage = diagnostic_snapshot(&fixture, GATE_K_ENTITIES);
+    assert_eq!(row_count(&initial_storage, "PlayerMatchSummary"), 2);
+
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:gate-k:move:neutral",
+        "nonce:gate-k:sync:neutral:",
+        1_000_u64,
+        "neutral_encounter_pending",
+    );
+    let neutral_battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let neutral_view = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), neutral_battle_id.clone(), 1_000_u64),
+    )
+    .expect("neutral battle view should decode")
+    .expect("neutral battle view should load");
+    assert_eq!(neutral_view.battle_type, "neutral");
+    assert!(!neutral_view.legal_actions_for_caller.is_empty());
+
+    resolve_battle_to_end(
+        &fixture,
+        player_one,
+        &session_id,
+        &neutral_battle_id,
+        "nonce:gate-k:neutral-battle",
+    );
+    let west_after_neutral = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), west_champion_id.clone()),
+    )
+    .expect("west champion after neutral should decode")
+    .expect("west champion after neutral should load");
+    assert_eq!(west_after_neutral.status, "active");
+    assert_eq!((west_after_neutral.x, west_after_neutral.y), (12, 22));
+
+    let first_east_stage = ((west_after_neutral.x + 1)..=22)
+        .map(|x| MoveCoord::new(x, west_after_neutral.y))
+        .collect::<Vec<_>>();
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        first_east_stage,
+        "nonce:gate-k:move:east-stage-1",
+        "nonce:gate-k:sync:east-stage-1:",
+        122_000_u64,
+        "session_turn_synced",
+    );
+    let second_east_stage = (23..=32)
+        .map(|x| MoveCoord::new(x, west_after_neutral.y))
+        .collect::<Vec<_>>();
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        second_east_stage,
+        "nonce:gate-k:move:east-stage-2",
+        "nonce:gate-k:sync:east-stage-2:",
+        183_000_u64,
+        "session_turn_synced",
+    );
+    let mut east_path = (33..=39)
+        .map(|x| MoveCoord::new(x, west_after_neutral.y))
+        .collect::<Vec<_>>();
+    east_path.push(MoveCoord::new(39, 23));
+    east_path.push(MoveCoord::new(39, 24));
+    let (champion_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        east_path,
+        "nonce:gate-k:move:champion",
+        "nonce:gate-k:sync:champion:",
+        244_000_u64,
+        "champion_encounter_pending",
+    );
+    let champion_battle_id = battle_id_from_events(&champion_sync, "champion_encounter_pending");
+    resolve_battle_to_end(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_battle_id,
+        "nonce:gate-k:champion-battle",
+    );
+    let east_after_defeat = query_as::<ChampionView>(
+        &fixture,
+        player_two,
+        "get_champion_view",
+        (session_id.clone(), east_champion_id),
+    )
+    .expect("east champion after defeat should decode")
+    .expect("east champion after defeat should load");
+    assert_eq!(east_after_defeat.status, "defeated");
+
+    let (town_contact_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![MoveCoord::new(40, 24), MoveCoord::new(41, 24)],
+        "nonce:gate-k:move:town",
+        "nonce:gate-k:sync:town:",
+        305_000_u64,
+        "town_encounter_pending",
+    );
+    let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending");
+    let town_sync = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            town_battle_id,
+            366_000_u64,
+            "nonce:gate-k:town-battle:sync".to_string(),
+        ),
+    )
+    .expect("town sync_battle should decode")
+    .expect("town sync_battle should succeed");
+    assert_eq!(
+        town_sync.status,
+        CommandStatus::Applied,
+        "town sync response: {town_sync:?}"
+    );
+    assert!(
+        town_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "town_captured")
+    );
+    assert!(
+        town_sync
+            .events
+            .iter()
+            .any(|event| event.event_type == "victory_finalized")
+    );
+
+    let finished =
+        query_as::<SessionView>(&fixture, player_one, "get_session", (session_id.clone(),))
+            .expect("finished session should decode")
+            .expect("finished session should load");
+    assert_eq!(finished.state, "finished");
+
+    let west_history =
+        query_as::<MatchHistoryPage>(&fixture, player_one, "get_match_history", (0_u32, 10_u32))
+            .expect("winner history should decode")
+            .expect("winner history should load");
+    assert!(
+        west_history
+            .entries
+            .iter()
+            .any(|entry| entry.session_id == session_id && entry.result == "win")
+    );
+    let east_history =
+        query_as::<MatchHistoryPage>(&fixture, player_two, "get_match_history", (0_u32, 10_u32))
+            .expect("loser history should decode")
+            .expect("loser history should load");
+    assert!(
+        east_history
+            .entries
+            .iter()
+            .any(|entry| entry.session_id == session_id && entry.result == "loss")
+    );
+
+    let final_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("Gate K event feed should decode")
+    .expect("Gate K event feed should load");
+    for expected in [
+        "battle_action_applied",
+        "neutral_defeated",
+        "champion_defeated",
+        "town_captured",
+        "victory_finalized",
+    ] {
+        assert!(
+            final_events
+                .events
+                .iter()
+                .any(|event| event.event_type == expected),
+            "missing event {expected}"
+        );
+    }
+
+    let final_storage = diagnostic_snapshot(&fixture, GATE_K_ENTITIES);
+    assert!(row_count(&final_storage, "Battle") >= 3);
+    assert!(row_count(&final_storage, "GameCommand") > row_count(&initial_storage, "GameCommand"));
+    assert_eq!(row_count(&final_storage, "PlayerMatchSummary"), 2);
+}
+
+#[test]
 fn pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-conflict-one");
@@ -1560,6 +1889,23 @@ const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
 ];
 
 const GATE_J_COMMAND_EVENT_ENTITIES: &[&str] = &["GameCommand", "LobbyCommand", "GameEvent"];
+
+const GATE_K_ENTITIES: &[&str] = &[
+    "Battle",
+    "BattleStack",
+    "BattleOccupancy",
+    "BattleObstacle",
+    "GameCommand",
+    "GameEvent",
+    "CommandEffect",
+    "Champion",
+    "ChampionArmyStack",
+    "Town",
+    "TownGarrisonStack",
+    "WorldObject",
+    "NeutralArmy",
+    "PlayerMatchSummary",
+];
 
 impl GateJMetrics {
     fn record_query<T: candid::CandidType>(
@@ -1910,6 +2256,36 @@ fn gate_diagnostic_snapshot(
     combined
 }
 
+fn diagnostic_snapshot(
+    fixture: &StandaloneCanisterFixture,
+    entities: &[&str],
+) -> DiagnosticStorageSnapshot {
+    let mut combined = DiagnosticStorageSnapshot {
+        row_counts: Vec::new(),
+        total_rows: 0,
+        stable_memory_pages: 0,
+    };
+
+    for entity in entities {
+        let snapshot = query_as::<DiagnosticStorageSnapshot>(
+            fixture,
+            candid::Principal::anonymous(),
+            "get_diagnostic_storage_snapshot",
+            (entity_names(&[*entity]),),
+        )
+        .expect("diagnostic storage snapshot should decode")
+        .expect("diagnostic storage snapshot should load");
+        assert_eq!(snapshot.row_counts.len(), 1);
+        combined.total_rows = combined.total_rows.saturating_add(snapshot.total_rows);
+        combined.stable_memory_pages = combined
+            .stable_memory_pages
+            .max(snapshot.stable_memory_pages);
+        combined.row_counts.extend(snapshot.row_counts);
+    }
+
+    combined
+}
+
 fn entity_names(entities: &[&str]) -> Vec<String> {
     entities
         .iter()
@@ -1924,6 +2300,14 @@ fn row_count(snapshot: &DiagnosticStorageSnapshot, entity: &str) -> u32 {
         .find(|row| row.entity == entity)
         .unwrap_or_else(|| panic!("diagnostic row count missing {entity}"))
         .count
+}
+
+fn json_string_field(json: &str, field: &str) -> Option<String> {
+    let needle = format!(r#""{field}":"#);
+    let start = json.find(&needle)? + needle.len();
+    let rest = json.get(start..)?.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest.get(..end)?.to_string())
 }
 
 fn owned_champion_id(
@@ -2042,46 +2426,154 @@ fn sync_until_event(
     panic!("sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls");
 }
 
-fn assert_query_unimplemented<T>(
+fn resolve_battle_to_end(
     fixture: &StandaloneCanisterFixture,
-    method: &str,
-    args: impl candid::utils::ArgumentEncoder,
-) where
-    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
-{
-    let response: Result<T, ApiError> = fixture
-        .pic()
-        .query_call(fixture.canister_id(), method, args)
-        .unwrap_or_else(|error| panic!("{method} should decode from query call: {error:?}"));
-    assert_repository_unimplemented(method, response);
+    player: candid::Principal,
+    session_id: &str,
+    battle_id: &str,
+    nonce_prefix: &str,
+) -> BattleView {
+    for step in 0..96 {
+        let view = query_as::<BattleView>(
+            fixture,
+            player,
+            "get_battle_state",
+            (session_id.to_string(), battle_id.to_string(), 1_000_u64),
+        )
+        .expect("battle view should decode")
+        .expect("battle view should load");
+        if view.state == "resolved" {
+            return view;
+        }
+        if view.legal_actions_for_caller.is_empty() {
+            let now_ms = view
+                .action_deadline_at
+                .unwrap_or(1_000_u64)
+                .saturating_add(1);
+            let synced = update_as::<CommandResponse>(
+                fixture,
+                player,
+                "sync_battle",
+                (
+                    session_id.to_string(),
+                    battle_id.to_string(),
+                    now_ms,
+                    format!("{nonce_prefix}:sync:{step}"),
+                ),
+            )
+            .expect("sync_battle should decode")
+            .expect("sync_battle should succeed");
+            assert_eq!(synced.status, CommandStatus::Applied);
+            continue;
+        }
+
+        let input = choose_battle_action(&view);
+        let now_ms = view
+            .action_deadline_at
+            .unwrap_or(2_000_u64)
+            .saturating_sub(1);
+        let submitted = update_as::<CommandResponse>(
+            fixture,
+            player,
+            "submit_battle_action",
+            (
+                session_id.to_string(),
+                input,
+                format!("{nonce_prefix}:action:{step}"),
+                now_ms,
+            ),
+        )
+        .expect("submit_battle_action should decode")
+        .expect("submit_battle_action should succeed");
+        assert_eq!(
+            submitted.status,
+            CommandStatus::Applied,
+            "battle action response: {submitted:?}"
+        );
+    }
+
+    panic!("battle {battle_id} did not resolve within the test budget");
 }
 
-fn assert_update_unimplemented<T>(
-    fixture: &StandaloneCanisterFixture,
-    method: &str,
-    args: impl candid::utils::ArgumentEncoder,
-) where
-    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
-{
-    let response: Result<T, ApiError> = fixture
-        .pic()
-        .update_call(fixture.canister_id(), method, args)
-        .unwrap_or_else(|error| panic!("{method} should decode from update call: {error:?}"));
-    assert_repository_unimplemented(method, response);
+fn choose_battle_action(view: &BattleView) -> BattleActionInput {
+    let active_stack_id = view
+        .active_stack_id
+        .clone()
+        .expect("active battle should have an active stack");
+    for preferred in ["RangedAttack", "MeleeAttack", "Attack"] {
+        if let Some(action) = view.legal_actions_for_caller.iter().find(|action| {
+            action.enabled && action.action == preferred && !action.targets.is_empty()
+        }) {
+            return BattleActionInput {
+                battle_id: view.battle_id.clone(),
+                battle_stack_id: active_stack_id,
+                action: action.action.clone(),
+                target_stack_id: action.targets.first().cloned(),
+                destination: None,
+            };
+        }
+    }
+    if let Some(action) = view
+        .legal_actions_for_caller
+        .iter()
+        .find(|action| action.enabled && action.action == "Move" && !action.path.is_empty())
+    {
+        return BattleActionInput {
+            battle_id: view.battle_id.clone(),
+            battle_stack_id: active_stack_id,
+            action: "Move".to_string(),
+            target_stack_id: None,
+            destination: best_move_destination(view, action),
+        };
+    }
+    let action = view
+        .legal_actions_for_caller
+        .iter()
+        .find(|action| action.enabled)
+        .expect("caller should have at least one enabled battle action");
+    BattleActionInput {
+        battle_id: view.battle_id.clone(),
+        battle_stack_id: active_stack_id,
+        action: action.action.clone(),
+        target_stack_id: action.targets.first().cloned(),
+        destination: action.path.first().copied(),
+    }
 }
 
-fn assert_repository_unimplemented<T>(method: &str, response: Result<T, ApiError>) {
-    let error = match response {
-        Ok(_) => panic!("{method} should return repository-not-implemented error"),
-        Err(error) => error,
-    };
-    assert_eq!(error.code, "icydb_repository_not_implemented", "{method}");
-    assert!(error.retryable, "{method}");
-    assert!(
-        error.message.contains(method),
-        "{method}: {}",
-        error.message
-    );
+fn best_move_destination(
+    view: &BattleView,
+    action: &domm_game::LegalBattleAction,
+) -> Option<domm_game::BattleCoord> {
+    let active_stack_id = view.active_stack_id.as_deref()?;
+    let active_side = view
+        .stacks
+        .iter()
+        .find(|stack| stack.battle_stack_id == active_stack_id)?
+        .side
+        .clone();
+    action.path.iter().copied().min_by_key(|coord| {
+        view.stacks
+            .iter()
+            .filter(|stack| {
+                stack.side != active_side && stack.status == "active" && stack.quantity > 0
+            })
+            .map(|enemy| {
+                u16::from(coord.x.abs_diff(enemy.battle_x))
+                    + u16::from(coord.y.abs_diff(enemy.battle_y))
+            })
+            .min()
+            .unwrap_or(u16::MAX)
+    })
+}
+
+fn battle_id_from_events(response: &CommandResponse, event_type: &str) -> String {
+    response
+        .events
+        .iter()
+        .find(|event| event.event_type == event_type)
+        .and_then(|event| event.payload.as_deref())
+        .and_then(|payload| json_string_field(payload, "battle_id"))
+        .unwrap_or_else(|| panic!("{event_type} event should include battle_id"))
 }
 
 fn query_as<T>(

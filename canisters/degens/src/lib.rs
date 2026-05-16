@@ -6,7 +6,6 @@ mod api;
 mod auth;
 mod contract;
 mod dto;
-mod errors;
 mod metrics;
 mod repos;
 mod services;

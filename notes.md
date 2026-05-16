@@ -36,6 +36,24 @@ None yet.
 
 None yet.
 
+## 2026-05-16 - Checkpoint 19I IcyDB Battle And Aftermath Gate
+
+Area: Pocket-IC canister battle gameplay and IcyDB persistence
+Severity: medium
+Status: resolved for Gate K
+
+Observation:
+
+Checkpoint 19I replaces the canister battle placeholders with real IcyDB-backed `get_battle_state`, `submit_battle_action`, and `sync_battle` services. Movement now hands off neutral, champion, and town encounters into durable `Battle`, `BattleStack`, `BattleOccupancy`, and `BattleObstacle` rows. Battle actions and timeout auto-defends recover through `GameCommand` rows, persist tactical row state, emit public battle events, and apply neutral defeat, champion defeat, town capture, victory finalization, and match-summary/history updates through split aftermath services.
+
+Impact:
+
+Gate K now passes in Pocket-IC using only public Candid endpoints and controller-gated diagnostics. The focused run completed in 152.48s, and the full endpoint file passed 5 tests in 157.61s. The scenario resolves the guarded neutral battle, defeats the east champion, captures the east town through `sync_battle`, verifies the finished session, reads winner/loser match history, checks the public event feed for `battle_action_applied`, `neutral_defeated`, `champion_defeated`, `town_captured`, and `victory_finalized`, and asserts durable IcyDB row growth for battle and command/history surfaces.
+
+Suggested follow-up:
+
+Two canister performance boundaries shaped the implementation. Loading battle-local events directly inside `get_battle_state` exceeded the Pocket-IC single-query instruction cap, so battle views now stay row-focused and clients should read the public battle event feed through `get_events_after`. Applying an already-resolved empty-town battle directly inside `sync_session_turn` exceeded the 40B update instruction cap once victory/history writes were included, so movement emits the town battle handoff and `sync_battle` applies the resolved aftermath. Also keep seeded scenario-key champion occupancy in mind: untouched opening occupancy may use keys like `champion:east`, so resolver and aftermath code must normalize or clear those rows before writing ULID-backed champion occupancy.
+
 ## 2026-05-16 - Checkpoint 19H Pocket-IC Strategic Gate
 
 Area: Pocket-IC canister strategic gameplay and IcyDB diagnostics

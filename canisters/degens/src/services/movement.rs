@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
-    NeutralArmy, UnitDefinition, WorldObject,
+    NeutralArmy, Town, UnitDefinition, WorldObject,
 };
 use domm_game::{ApiError, CommandResponse, MoveCoord, MovementPathStop, MovementPreview};
 use icydb::{
@@ -13,10 +13,11 @@ use icydb::{
 
 use crate::repos::{
     battles, champions_artifacts, content, economy, map_visibility_occupancy, movement, neutrals,
-    sessions,
+    sessions, towns,
 };
 
 use super::{
+    battle_start,
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
 };
@@ -674,7 +675,7 @@ fn resolve_blockers_and_guarded_objects(
                     pending_move.champion.id().to_string() == blocker.occupant_id_text
                 });
                 let stationary_blocker = if blocker_index.is_none() {
-                    load_champion_by_text(&blocker.occupant_id_text)?
+                    load_champion_by_text(session, &blocker.occupant_id_text)?
                 } else {
                     None
                 };
@@ -764,15 +765,72 @@ fn resolve_blockers_and_guarded_objects(
         )? {
             if town.blocking {
                 active.remove(&key);
+                let town_row = load_town_by_text(session, &town.occupant_id_text)?;
+                let enemy_town = town_row.owner_participant_id.is_some_and(|owner| {
+                    owner != pending[candidate.pending_index].participant.id().key()
+                });
+                let outcome = if enemy_town {
+                    let battle = battle_start::start_town_battle(
+                        session,
+                        command_id,
+                        &pending[candidate.pending_index].champion,
+                        pending[candidate.pending_index].participant.id(),
+                        &town_row,
+                        candidate.to,
+                    )?;
+                    pending[candidate.pending_index].champion.status = "in_battle".to_string();
+                    pending[candidate.pending_index].champion.in_battle_id =
+                        Some(battle.id().key());
+                    pending[candidate.pending_index].champion.last_command_id =
+                        Some(command_id.key());
+                    pending[candidate.pending_index].champion =
+                        champions_artifacts::update_champion(
+                            pending[candidate.pending_index].champion.clone(),
+                        )?;
+                    let event = command_response::append_public_event(
+                        session,
+                        command_id,
+                        format!(
+                            "town_contact:{}:{}:{}",
+                            pending[candidate.pending_index].champion.id(),
+                            town_row.id(),
+                            session.current_turn
+                        ),
+                        "town_encounter_pending".to_string(),
+                        Some("town".to_string()),
+                        Some(town_row.id().to_string()),
+                        format!(
+                            r#"{{"battle_id":"{}","champion_id":"{}","town_id":"{}","x":{},"y":{}}}"#,
+                            battle.id(),
+                            pending[candidate.pending_index].champion.id(),
+                            town_row.id(),
+                            candidate.to.x,
+                            candidate.to.y
+                        ),
+                    )?;
+                    events.push(event);
+                    changed_subjects.push(command_response::changed(
+                        "champion",
+                        &pending[candidate.pending_index].champion.id().to_string(),
+                        "status",
+                    ));
+                    "started_town_battle"
+                } else {
+                    "stopped_town_interaction"
+                };
                 stop_candidate(
                     session,
                     command_id,
                     pending,
                     &candidate,
                     step_index,
-                    "stopped_town_interaction",
+                    outcome,
                     Some(MovementPathStop {
-                        reason: "town_interaction".to_string(),
+                        reason: if enemy_town {
+                            "enemy_town".to_string()
+                        } else {
+                            "town_interaction".to_string()
+                        },
                         subject_kind: "town".to_string(),
                         subject_id_text: town.occupant_id_text,
                         x: candidate.to.x,
@@ -1293,6 +1351,7 @@ fn movement_outcome_key(outcome: &str) -> &str {
         "started_neutral_battle" => "neutral",
         "started_champion_battle" => "champion",
         "started_crossing_battle" => "cross_battle",
+        "started_town_battle" => "town_battle",
         "stopped_crossing_conflict" => "cross",
         "stopped_tile_conflict" => "tile",
         "stopped_champion_blocker" => "blocker",
@@ -1310,8 +1369,17 @@ fn mark_champion_encounter_pending(
     defender_index: usize,
     coord: MoveCoord,
 ) -> Result<domm_game::ApiEventView, ApiError> {
+    let battle = battle_start::start_champion_battle(
+        session,
+        command_id,
+        &pending[attacker_index].champion,
+        pending[attacker_index].participant.id(),
+        &pending[defender_index].champion,
+        coord,
+    )?;
     for index in [attacker_index, defender_index] {
         pending[index].champion.status = "in_battle".to_string();
+        pending[index].champion.in_battle_id = Some(battle.id().key());
         pending[index].champion.last_command_id = Some(command_id.key());
         pending[index].champion =
             champions_artifacts::update_champion(pending[index].champion.clone())?;
@@ -1329,7 +1397,8 @@ fn mark_champion_encounter_pending(
         Some("champion".to_string()),
         Some(pending[defender_index].champion.id().to_string()),
         format!(
-            r#"{{"attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            r#"{{"battle_id":"{}","attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            battle.id(),
             pending[attacker_index].champion.id(),
             pending[defender_index].champion.id(),
             coord.x,
@@ -1346,9 +1415,19 @@ fn mark_stationary_champion_encounter_pending(
     defender: &mut Champion,
     coord: MoveCoord,
 ) -> Result<domm_game::ApiEventView, ApiError> {
+    let battle = battle_start::start_champion_battle(
+        session,
+        command_id,
+        &pending[attacker_index].champion,
+        pending[attacker_index].participant.id(),
+        defender,
+        coord,
+    )?;
     pending[attacker_index].champion.status = "in_battle".to_string();
+    pending[attacker_index].champion.in_battle_id = Some(battle.id().key());
     pending[attacker_index].champion.last_command_id = Some(command_id.key());
     defender.status = "in_battle".to_string();
+    defender.in_battle_id = Some(battle.id().key());
     defender.last_command_id = Some(command_id.key());
     champions_artifacts::update_champion(defender.clone())?;
     command_response::append_public_event(
@@ -1364,7 +1443,8 @@ fn mark_stationary_champion_encounter_pending(
         Some("champion".to_string()),
         Some(defender.id().to_string()),
         format!(
-            r#"{{"attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            r#"{{"battle_id":"{}","attacker_champion_id":"{}","defender_champion_id":"{}","x":{},"y":{}}}"#,
+            battle.id(),
             pending[attacker_index].champion.id(),
             defender.id(),
             coord.x,
@@ -2015,11 +2095,41 @@ fn resolve_champion(
     .ok_or_else(|| public_error("not_found", "champion not found", false))
 }
 
-fn load_champion_by_text(champion_id: &str) -> Result<Option<Champion>, ApiError> {
-    let Ok(id) = Ulid::from_str(champion_id).map(Id::<Champion>::from_key) else {
+fn load_champion_by_text(
+    session: &GameSession,
+    champion_id: &str,
+) -> Result<Option<Champion>, ApiError> {
+    if let Ok(id) = Ulid::from_str(champion_id).map(Id::<Champion>::from_key) {
+        return champions_artifacts::load_champion(id);
+    }
+    let scenario = domm_game::first_playable_scenario();
+    let Some(start) = scenario
+        .starts
+        .iter()
+        .find(|start| start.champion_key == champion_id)
+    else {
         return Ok(None);
     };
-    champions_artifacts::load_champion(id)
+    champions_artifacts::find_champion_by_session_xy(
+        session.id(),
+        start.champion_x,
+        start.champion_y,
+    )
+}
+
+fn load_town_by_text(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
+    if let Ok(id) = Ulid::from_str(town_id).map(Id::<Town>::from_key) {
+        return towns::load_town(id)?
+            .ok_or_else(|| public_error("town_not_found", "town not found", false));
+    }
+    let scenario = domm_game::first_playable_scenario();
+    let start = scenario
+        .starts
+        .iter()
+        .find(|start| start.town_key == town_id)
+        .ok_or_else(|| public_error("town_not_found", "town not found", false))?;
+    towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+        .ok_or_else(|| public_error("town_not_found", "town not found", false))
 }
 
 fn validate_path_limit(path: &[MoveCoord]) -> Result<(), ApiError> {

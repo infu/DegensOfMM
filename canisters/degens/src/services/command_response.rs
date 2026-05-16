@@ -1,8 +1,8 @@
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession};
 use domm_game::{
-    ApiError, ApiEventView, ChangedSubject, CommandPhase, CommandResponse, CommandResult,
-    CommandStatus, StrategicCommandReceipt,
+    ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome, ChangedSubject, CommandPhase,
+    CommandResponse, CommandResult, CommandStatus, StrategicCommandReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -100,7 +100,10 @@ pub(crate) fn begin_participant_command(
 }
 
 fn is_recoverable_movement_command(command_type: &str) -> bool {
-    matches!(command_type, "submit_move_intent" | "sync_session_turn")
+    matches!(
+        command_type,
+        "submit_move_intent" | "sync_session_turn" | "submit_battle_action" | "sync_battle"
+    )
 }
 
 pub(crate) fn apply_command(
@@ -129,6 +132,41 @@ pub(crate) fn apply_command(
         events.len() as u32,
         Some(&result_json),
     ));
+    Ok(response_from_parts(
+        caller,
+        context,
+        command,
+        client_nonce_text,
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        events,
+        changed_subjects,
+        result,
+        None,
+    ))
+}
+
+pub(crate) fn apply_command_with_result(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    mut command: GameCommand,
+    client_nonce_text: &str,
+    result_json: String,
+    events: Vec<ApiEventView>,
+    changed_subjects: Vec<ChangedSubject>,
+    result: CommandResult,
+) -> Result<CommandResponse, ApiError> {
+    command.status = "applied".to_string();
+    command.phase = "complete".to_string();
+    command.result_json = Some(result_json.clone());
+    command.error_code = None;
+    command.error_message = None;
+    command.error_details_json = None;
+    command.retryable = false;
+    command.applied_at = Some(Timestamp::now());
+    command.failed_at = None;
+    let command = commands_events_effects::update_game_command(command)?;
     Ok(response_from_parts(
         caller,
         context,
@@ -302,13 +340,7 @@ fn response_from_command(
         )
     });
     let result = if status == CommandStatus::Applied {
-        CommandResult::StrategicReceipt(receipt_from_json(
-            &command.command_type,
-            &command.id().to_string(),
-            command.turn_number,
-            0,
-            command.result_json.as_deref(),
-        ))
+        result_from_json(&command)
     } else {
         CommandResult::None
     };
@@ -325,6 +357,44 @@ fn response_from_command(
         result,
         error,
     ))
+}
+
+fn result_from_json(command: &GameCommand) -> CommandResult {
+    match command.command_type.as_str() {
+        "submit_battle_action" => CommandResult::BattleAction(battle_action_from_json(command)),
+        "sync_battle" => CommandResult::BattleSync(battle_sync_from_json(command)),
+        _ => CommandResult::StrategicReceipt(receipt_from_json(
+            &command.command_type,
+            &command.id().to_string(),
+            command.turn_number,
+            0,
+            command.result_json.as_deref(),
+        )),
+    }
+}
+
+fn battle_action_from_json(command: &GameCommand) -> BattleActionReceipt {
+    let json = command.result_json.as_deref();
+    BattleActionReceipt {
+        command_id: command.id().to_string(),
+        status: "applied".to_string(),
+        current_round: json_u32_field(json, "current_round")
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(0),
+        active_stack_id: json_string_field(json, "active_stack_id"),
+        event_seq: json_u64_field(json, "event_seq"),
+    }
+}
+
+fn battle_sync_from_json(command: &GameCommand) -> BattleSyncOutcome {
+    let json = command.result_json.as_deref();
+    BattleSyncOutcome {
+        battle_id: json_string_field(json, "battle_id").unwrap_or_default(),
+        timeout_actions_applied: json_u32_field(json, "timeout_actions_applied").unwrap_or(0),
+        recovered_commands: json_u32_field(json, "recovered_commands").unwrap_or(0),
+        battle_sync_incomplete: json_bool_field(json, "battle_sync_incomplete").unwrap_or(false),
+        active_stack_id: json_string_field(json, "active_stack_id"),
+    }
 }
 
 fn response_from_parts(
@@ -464,6 +534,31 @@ fn json_u32_field(json: Option<&str>, field: &str) -> Option<u32> {
         .find(|character: char| !character.is_ascii_digit())
         .unwrap_or(rest.len());
     rest.get(..end)?.parse().ok()
+}
+
+fn json_u64_field(json: Option<&str>, field: &str) -> Option<u64> {
+    let json = json?;
+    let needle = format!(r#""{field}":"#);
+    let start = json.find(&needle)? + needle.len();
+    let rest = &json[start..];
+    let end = rest
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(rest.len());
+    rest.get(..end)?.parse().ok()
+}
+
+fn json_bool_field(json: Option<&str>, field: &str) -> Option<bool> {
+    let json = json?;
+    let needle = format!(r#""{field}":"#);
+    let start = json.find(&needle)? + needle.len();
+    let rest = &json[start..];
+    if rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn short_hash(text: &str) -> String {

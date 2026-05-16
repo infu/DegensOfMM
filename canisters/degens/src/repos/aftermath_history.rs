@@ -98,6 +98,10 @@ pub(crate) fn create_match_summary_shell(
     foundation::create("history.create_match_summary_shell", input)
 }
 
+pub(crate) fn update_match_summary(summary: PlayerMatchSummary) -> RepoResult<PlayerMatchSummary> {
+    foundation::update("history.update_match_summary", summary)
+}
+
 #[cfg(test)]
 pub(crate) fn match_history_plan_text(
     player_id: Id<PlayerAccount>,

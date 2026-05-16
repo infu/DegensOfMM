@@ -45,7 +45,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Gate H after checkpoint 19C: IcyDB repository modules can create, read, update, page, and clean up the first-playable durable row surface without generic SQL gameplay paths.
 - [x] Gate I after checkpoint 19F: Pocket-IC can drive lobby, setup, content, map, visibility, account, event, command-status, and preview endpoints against the real canister.
 - [x] Gate J after checkpoint 19H: Pocket-IC can drive the strategic loop against IcyDB-backed canister endpoints through pickup, income, build, recruit, movement, object interaction, and neutral encounter.
-- [ ] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
+- [x] Gate K after checkpoint 19I: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
 - [ ] Gate L after checkpoint 19J: Pocket-IC can play the complete first-playable 1v1 route from registration through victory using only public canister endpoints and IcyDB state.
 - [ ] Gate M after checkpoint 19K: the web/client probe can run against a real canister adapter, not only `FixtureApiBackend`.
 - [ ] Gate N after checkpoint 20: the implementation, tests, notes, and spec audit agree with the full required first playable canister/IcyDB scope.
@@ -416,13 +416,13 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 19I. IcyDB-Backed Battle, Aftermath, Victory, And History
 
-- [ ] Implement `get_battle_state`, `submit_battle_action`, `sync_battle`, battle timeout recovery, battle event feeds, battle aftermath, neutral defeat, town capture, champion defeat, victory finalization, match summaries, and match history against IcyDB rows.
-- [ ] Persist battle rows, battle stacks, battle occupancy, obstacles, battle commands, battle events, aftermath command/effect rows, town/garrison/occupancy updates, champion/artifact updates, victory events, player summaries, and history rows.
-- [ ] Preserve battle action idempotency, timeout auto-defend determinism, battle sync budget slicing, no-elimination-while-battle-active, capture income cutover, artifact capture, and final winner scoring.
-- [ ] Add Pocket-IC tests for battle view, legal action submission, retry, timeout sync, neutral aftermath, town capture, champion defeat, victory, event feed, command status, and match history.
-- [ ] Audit: compare canister battle/aftermath behavior against Gate D and pure battle/aftermath tests.
-- [ ] Gate K: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
-- [ ] Commit after this checkpoint.
+- [x] Implement `get_battle_state`, `submit_battle_action`, `sync_battle`, battle timeout recovery, battle event feeds, battle aftermath, neutral defeat, town capture, champion defeat, victory finalization, match summaries, and match history against IcyDB rows.
+- [x] Persist battle rows, battle stacks, battle occupancy, obstacles, battle commands, battle events, aftermath command/effect rows, town/garrison/occupancy updates, champion/artifact updates, victory events, player summaries, and history rows.
+- [x] Preserve battle action idempotency, timeout auto-defend determinism, battle sync budget slicing, no-elimination-while-battle-active, capture income cutover, artifact capture, and final winner scoring.
+- [x] Add Pocket-IC tests for battle view, legal action submission, retry, timeout sync, neutral aftermath, town capture, champion defeat, victory, event feed, command status, and match history.
+- [x] Audit: compare canister battle/aftermath behavior against Gate D and pure battle/aftermath tests.
+- [x] Gate K: Pocket-IC can drive battle, aftermath, town capture, champion defeat, victory, match summary, and match history against IcyDB-backed canister endpoints.
+- [x] Commit after this checkpoint.
 
 ## 19J. Pocket-IC Full First-Playable Canister E2E
 

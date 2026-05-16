@@ -4,29 +4,46 @@ use crate::dto::public::{ApiError, BattleActionInput, BattleView, CommandRespons
 
 #[query]
 fn get_battle_state(
-    _session_id: String,
-    _battle_id: String,
-    _now_ms: u64,
+    session_id: String,
+    battle_id: String,
+    now_ms: u64,
 ) -> Result<BattleView, ApiError> {
-    crate::services::battle::unavailable("get_battle_state")
+    crate::services::battle::get_battle_state(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        battle_id,
+        now_ms,
+    )
 }
 
 #[update]
 fn sync_battle(
-    _session_id: String,
-    _battle_id: String,
-    _now_ms: u64,
-    _client_nonce: String,
+    session_id: String,
+    battle_id: String,
+    now_ms: u64,
+    client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::battle::unavailable("sync_battle")
+    crate::services::battle::sync_battle(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        battle_id,
+        now_ms,
+        client_nonce,
+    )
 }
 
 #[update]
 fn submit_battle_action(
-    _session_id: String,
-    _input: BattleActionInput,
-    _client_nonce: String,
-    _now_ms: u64,
+    session_id: String,
+    input: BattleActionInput,
+    client_nonce: String,
+    now_ms: u64,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::battle::unavailable("submit_battle_action")
+    crate::services::battle::submit_battle_action(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        input,
+        client_nonce,
+        now_ms,
+    )
 }

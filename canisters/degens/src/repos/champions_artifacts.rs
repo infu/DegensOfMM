@@ -161,6 +161,12 @@ pub(crate) fn page_champion_army_stacks(
     )
 }
 
+pub(crate) fn load_champion_army_stack(
+    id: Id<ChampionArmyStack>,
+) -> RepoResult<Option<ChampionArmyStack>> {
+    foundation::load_by_id("champions.load_army_stack", id)
+}
+
 pub(crate) fn find_champion_army_stack(
     champion_id: Id<Champion>,
     slot_index: u8,
@@ -275,6 +281,10 @@ pub(crate) fn load_artifact_instance(
     foundation::load_by_id("artifacts.load_artifact_instance", id)
 }
 
+pub(crate) fn update_artifact_instance(artifact: ArtifactInstance) -> RepoResult<ArtifactInstance> {
+    foundation::update("artifacts.update_artifact_instance", artifact)
+}
+
 pub(crate) fn create_artifact_equipment(
     session_id: Id<GameSession>,
     champion_id: Id<Champion>,
@@ -292,6 +302,30 @@ pub(crate) fn create_artifact_equipment(
     };
 
     foundation::create("artifacts.create_artifact_equipment", input)
+}
+
+pub(crate) fn update_artifact_equipment(
+    equipment: ArtifactEquipment,
+) -> RepoResult<ArtifactEquipment> {
+    foundation::update("artifacts.update_artifact_equipment", equipment)
+}
+
+pub(crate) fn page_artifact_equipment_by_champion(
+    champion_id: Id<Champion>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<ArtifactEquipment>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        "artifacts.equipment_by_champion",
+        crate::db()
+            .load::<ArtifactEquipment>()
+            .filter(FieldRef::new("champion_id").eq(champion_id.key()))
+            .order_asc("slot")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
 }
 
 pub(crate) fn page_champions_in_battle(

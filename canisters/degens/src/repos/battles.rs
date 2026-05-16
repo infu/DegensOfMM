@@ -26,6 +26,27 @@ pub(crate) const BATTLE_STACKS_BY_SIDE_LOOKUP: IndexedQueryPlan = IndexedQueryPl
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const BATTLE_STACKS_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "battles.stacks_by_battle",
+    entity: "BattleStack",
+    indexed_fields: &["battle_id"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
+pub(crate) const BATTLE_OBSTACLES_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "battles.obstacles_by_battle",
+    entity: "BattleObstacle",
+    indexed_fields: &["battle_id"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
+pub(crate) const BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "battles.occupancy_by_battle",
+    entity: "BattleOccupancy",
+    indexed_fields: &["battle_id"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const BATTLE_OCCUPANCY_CELL_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "battles.occupancy_by_cell",
     entity: "BattleOccupancy",
@@ -81,6 +102,10 @@ pub(crate) fn update_battle(battle: Battle) -> RepoResult<Battle> {
     foundation::update("battles.update_battle", battle)
 }
 
+pub(crate) fn load_battle(id: Id<Battle>) -> RepoResult<Option<Battle>> {
+    foundation::load_by_id("battles.load_battle", id)
+}
+
 pub(crate) fn page_battles_by_session_state(
     session_id: Id<GameSession>,
     state: &str,
@@ -116,6 +141,29 @@ pub(crate) fn find_battle_by_attacker(champion_id: Id<Champion>) -> RepoResult<O
             .limit(1)
             .try_entity(),
     )
+}
+
+pub(crate) fn page_battle_stacks(
+    battle_id: Id<Battle>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<BattleStack>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        BATTLE_STACKS_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleStack>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("side")
+            .order_asc("slot_index")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn update_battle_stack(stack: BattleStack) -> RepoResult<BattleStack> {
+    foundation::update("battles.update_battle_stack", stack)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -199,6 +247,14 @@ pub(crate) fn create_battle_occupancy(
     foundation::create("battles.create_battle_occupancy", input)
 }
 
+pub(crate) fn update_battle_occupancy(occupancy: BattleOccupancy) -> RepoResult<BattleOccupancy> {
+    foundation::update("battles.update_battle_occupancy", occupancy)
+}
+
+pub(crate) fn delete_battle_occupancy(occupancy_id: Id<BattleOccupancy>) -> RepoResult<u32> {
+    foundation::delete_by_id("battles.delete_battle_occupancy", occupancy_id)
+}
+
 pub(crate) fn create_battle_obstacle(
     battle_id: Id<Battle>,
     obstacle_type: String,
@@ -219,6 +275,44 @@ pub(crate) fn create_battle_obstacle(
     };
 
     foundation::create("battles.create_battle_obstacle", input)
+}
+
+pub(crate) fn page_battle_obstacles(
+    battle_id: Id<Battle>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<BattleObstacle>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleObstacle>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_y")
+            .order_asc("battle_x")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_battle_occupancy(
+    battle_id: Id<Battle>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<BattleOccupancy>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleOccupancy>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_y")
+            .order_asc("battle_x")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
 }
 
 pub(crate) fn page_battle_stacks_by_side(

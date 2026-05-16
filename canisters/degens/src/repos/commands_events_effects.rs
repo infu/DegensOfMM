@@ -33,6 +33,20 @@ pub(crate) const EVENT_FEED_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const GAME_COMMAND_STATUS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "commands.game_command_by_session_status",
+    entity: "GameCommand",
+    indexed_fields: &["session_id", "status", "created_at"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
+pub(crate) const EVENTS_BY_TYPE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "events.by_session_event_type",
+    entity: "GameEvent",
+    indexed_fields: &["session_id", "event_type"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const PENDING_EFFECT_DUE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "effects.pending_by_status_due_turn",
     entity: "PendingEffect",
@@ -108,6 +122,26 @@ pub(crate) fn update_game_command(command: GameCommand) -> RepoResult<GameComman
     foundation::update("commands.update_game_command", command)
 }
 
+pub(crate) fn page_game_commands_by_session_status(
+    session_id: Id<GameSession>,
+    status: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<GameCommand>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        GAME_COMMAND_STATUS_LOOKUP.name,
+        crate::db()
+            .load::<GameCommand>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("created_at")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
 pub(crate) fn find_lobby_command_by_idempotency(
     actor_principal: Principal,
     client_nonce: u64,
@@ -179,6 +213,26 @@ pub(crate) fn events_after(
             .order_asc("id")
             .limit(limit)
             .entities(),
+    )
+}
+
+pub(crate) fn events_by_type(
+    session_id: Id<GameSession>,
+    event_type: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<GameEvent>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        EVENTS_BY_TYPE_LOOKUP.name,
+        crate::db()
+            .load::<GameEvent>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("event_type").eq(event_type))
+            .order_asc("event_seq")
+            .order_asc("id"),
+        limit,
+        cursor,
     )
 }
 

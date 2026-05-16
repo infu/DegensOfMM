@@ -296,6 +296,10 @@ pub(crate) fn update_town_garrison_stack(
     foundation::update("towns.update_garrison_stack", stack)
 }
 
+pub(crate) fn delete_town_garrison_stack(id: Id<TownGarrisonStack>) -> RepoResult<u32> {
+    foundation::delete_by_id("towns.delete_garrison_stack", id)
+}
+
 #[cfg(test)]
 pub(crate) fn towns_by_owner_plan_text(
     session_id: Id<GameSession>,

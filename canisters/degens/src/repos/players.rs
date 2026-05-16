@@ -1,7 +1,11 @@
 //! Repository boundary for player accounts and caller-principal lookups.
 
 use domm_degens_schema::schema::PlayerAccount;
-use icydb::{Create, db::query::FieldRef, types::Principal};
+use icydb::{
+    Create,
+    db::query::FieldRef,
+    types::{Id, Principal},
+};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult};
 
@@ -24,6 +28,10 @@ pub(crate) fn create_player_account(
     };
 
     foundation::create("players.create_player_account", input)
+}
+
+pub(crate) fn load_player_account(id: Id<PlayerAccount>) -> RepoResult<Option<PlayerAccount>> {
+    foundation::load_by_id("players.load_player_account", id)
 }
 
 pub(crate) fn find_by_principal(account_principal: Principal) -> RepoResult<Option<PlayerAccount>> {

@@ -12,6 +12,7 @@ Public Candid endpoints live under `canisters/degens/src/api/`:
 - `movement.rs`: movement preview, movement intent, and turn sync endpoints.
 - `town.rs`: town reads, build previews/commands, and recruitment previews/commands.
 - `economy_expansion.rs`: tavern offers/hiring, market trades, and external dwelling recruitment.
+- `scenario_progress.rs`: objective progress, scenario rules, world events, and quest endpoints.
 - `battle.rs`: battle read, battle sync, and battle action endpoints.
 - `events.rs`: event paging and command-status reads.
 - `content.rs`: content manifest reads.
@@ -38,6 +39,7 @@ durable row ownership:
 - map/visibility/occupancy
 - economy
 - economy expansion
+- scenario progress
 - towns
 - champions/artifacts
 - movement

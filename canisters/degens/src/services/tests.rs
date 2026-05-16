@@ -174,6 +174,22 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     .expect("turn sync should write movement snapshots");
     assert_eq!(synced.status, CommandStatus::Applied, "{synced:?}");
     assert_eq!(synced.command_id, seeded_sync_command.id().to_string());
+    assert!(
+        synced
+            .events
+            .iter()
+            .any(|event| event.event_type == "movement_sync_incomplete"),
+        "one canister sync slice should park the remaining movement work"
+    );
+
+    let synced = movement_service::sync_session_turn(
+        player_one,
+        started_session_id.clone(),
+        u64::MAX,
+        "nonce:service:sync:wood:finish".to_string(),
+    )
+    .expect("second turn sync should finish the two-step movement");
+    assert_eq!(synced.status, CommandStatus::Applied, "{synced:?}");
 
     let session_key = Ulid::from_str(&started_session_id).expect("service session ids are Ulids");
     let session_id = Id::from_key(session_key);
@@ -212,26 +228,36 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
     .expect("guarded movement intent should submit");
     assert_eq!(guarded.status, CommandStatus::Applied);
 
-    let partial_guarded_sync = movement_service::sync_session_turn(
-        player_one,
-        started_session_id.clone(),
-        u64::MAX,
-        "nonce:service:sync:guarded:0".to_string(),
-    )
-    .expect("guarded movement first sync should park partial progress");
-    assert!(
-        partial_guarded_sync
+    let mut guarded_sync = None;
+    let mut saw_partial_guarded_sync = false;
+    for step in 0..6 {
+        let synced = movement_service::sync_session_turn(
+            player_one,
+            started_session_id.clone(),
+            u64::MAX,
+            format!("nonce:service:sync:guarded:{step}"),
+        )
+        .expect("guarded movement sync should progress");
+        saw_partial_guarded_sync |= synced
             .events
             .iter()
-            .any(|event| event.event_type == "movement_sync_incomplete")
+            .any(|event| event.event_type == "movement_sync_incomplete");
+        if synced.events.iter().any(|event| {
+            event.event_type == "neutral_encounter_pending"
+                && event
+                    .payload
+                    .as_deref()
+                    .is_some_and(|payload| payload.contains("\"battle_id\""))
+        }) {
+            guarded_sync = Some(synced);
+            break;
+        }
+    }
+    assert!(
+        saw_partial_guarded_sync,
+        "guarded movement should park at least one partial sync slice"
     );
-    let guarded_sync = movement_service::sync_session_turn(
-        player_one,
-        started_session_id,
-        u64::MAX,
-        "nonce:service:sync:guarded:1".to_string(),
-    )
-    .expect("guarded movement second sync should start neutral battle");
+    let guarded_sync = guarded_sync.expect("guarded movement should start neutral battle");
     assert!(guarded_sync.events.iter().any(|event| {
         event.event_type == "neutral_encounter_pending"
             && event

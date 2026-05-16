@@ -133,16 +133,40 @@ pub(crate) fn visible_objects(
 }
 
 pub(crate) fn my_champions(context: &SessionCallerContext) -> Result<Vec<ChampionView>, ApiError> {
-    let page = champions_artifacts::page_champions_by_owner_status(
+    if !context.participant.champion_ids.is_empty() {
+        let mut views = Vec::new();
+        for champion_id in context
+            .participant
+            .champion_ids
+            .iter()
+            .take(MAX_OWNED_CHAMPIONS_VIEW as usize)
+        {
+            let Some(champion) =
+                champions_artifacts::load_champion(Id::<Champion>::from_key(*champion_id))?
+            else {
+                continue;
+            };
+            if champion.session_id != context.session.id().key()
+                || champion.participant_id != context.participant.id().key()
+                || champion.status != "active"
+            {
+                continue;
+            }
+            views.push(champion_summary_view(champion, true));
+        }
+        return Ok(views);
+    }
+
+    let champions = champions_artifacts::list_champions_by_session_owner_status(
+        context.session.id(),
         context.participant.id(),
         "active",
         MAX_OWNED_CHAMPIONS_VIEW,
-        None,
     )?;
-    page.items
+    Ok(champions
         .into_iter()
-        .map(|champion| champion_view(context, champion, true))
-        .collect()
+        .map(|champion| champion_summary_view(champion, true))
+        .collect())
 }
 
 pub(crate) fn champion_view_by_id(
@@ -255,45 +279,64 @@ fn champion_view(
     })
 }
 
+fn champion_summary_view(champion: Champion, own: bool) -> ChampionView {
+    ChampionView {
+        champion_id: champion.id().to_string(),
+        owner_participant_id: Id::<GameParticipant>::from_key(champion.participant_id).to_string(),
+        name: Some(champion.name),
+        class_def_id: format!("class:{}", champion.class_key),
+        class_key: champion.class_key,
+        status: champion.status,
+        x: champion.x,
+        y: champion.y,
+        effective_movement: champion.movement_remaining,
+        movement_max: champion.movement_max,
+        mana: champion.mana,
+        mana_max: champion.mana_max,
+        skill_points: champion.skill_points,
+        skill_keys: if own { champion.skill_keys } else { Vec::new() },
+        spell_slugs: Vec::new(),
+        vision_radius: champion.vision_radius,
+        strength_label: "details_required".to_string(),
+        army_stacks: Vec::new(),
+        artifacts: Vec::new(),
+        redacted: !own,
+    }
+}
+
 fn champion_stacks(champion: &Champion) -> Result<Vec<ChampionArmyStackRecord>, ApiError> {
     let champion_id = champion.id();
-    let page = champions_artifacts::page_champion_army_stacks(
+    champions_artifacts::list_champion_army_stacks(
         champion_id,
         u32::from(domm_game::MAX_ARMY_SLOTS),
-        None,
-    )?;
-    page.items
-        .into_iter()
-        .map(|stack| {
-            let unit_slug = known_champion_unit_slug(champion, stack.slot_index).map_or_else(
-                || {
-                    content::load_unit(Id::from_key(stack.unit_id))?
-                        .map(|unit| unit.slug)
-                        .ok_or_else(|| {
-                            public_error(
-                                "unit_not_found",
-                                "champion stack unit was not found",
-                                false,
-                            )
-                        })
-                },
-                Ok,
-            )?;
-            Ok(ChampionArmyStackRecord {
-                stack_id: stack.id().to_string(),
-                session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
-                champion_id: champion_id.to_string(),
-                unit_slug,
-                slot_index: stack.slot_index,
-                quantity: stack.quantity,
-                front_hp: stack.front_hp,
-                status: stack.status,
-                last_command_id: stack.last_command_id.map(|id| {
-                    Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
-                }),
-            })
+    )?
+    .into_iter()
+    .map(|stack| {
+        let unit_slug = known_champion_unit_slug(champion, stack.slot_index).map_or_else(
+            || {
+                content::load_unit(Id::from_key(stack.unit_id))?
+                    .map(|unit| unit.slug)
+                    .ok_or_else(|| {
+                        public_error("unit_not_found", "champion stack unit was not found", false)
+                    })
+            },
+            Ok,
+        )?;
+        Ok(ChampionArmyStackRecord {
+            stack_id: stack.id().to_string(),
+            session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
+            champion_id: champion_id.to_string(),
+            unit_slug,
+            slot_index: stack.slot_index,
+            quantity: stack.quantity,
+            front_hp: stack.front_hp,
+            status: stack.status,
+            last_command_id: stack
+                .last_command_id
+                .map(|id| Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()),
         })
-        .collect()
+    })
+    .collect()
 }
 
 fn known_champion_unit_slug(champion: &Champion, slot_index: u8) -> Option<String> {

@@ -38,6 +38,15 @@ fixture loading, not for normal gameplay.
 | `get_dwelling_pool` | query | `FixtureApiBackend::get_dwelling_pool` |
 | `preview_dwelling_recruit` | query | `FixtureApiBackend::preview_dwelling_recruit` |
 | `submit_dwelling_recruit` | update | `FixtureApiBackend::submit_dwelling_recruit` |
+| `get_objective_progress` | query | `FixtureApiBackend::get_objective_progress` |
+| `get_scenario_rules` | query | `FixtureApiBackend::get_scenario_rules` |
+| `get_world_events` | query | `FixtureApiBackend::get_world_events` |
+| `preview_quest` | query | `FixtureApiBackend::preview_quest` |
+| `accept_quest` | update | `FixtureApiBackend::accept_quest` |
+| `claim_quest_reward` | update | `FixtureApiBackend::claim_quest_reward` |
+| `sync_objectives` | update | `FixtureApiBackend::sync_objectives` |
+| `sync_world_events` | update | `FixtureApiBackend::sync_world_events` |
+| `sync_advanced_victory` | update | `FixtureApiBackend::sync_advanced_victory` |
 | `get_town_view` | query | `FixtureApiBackend::get_town_view` |
 | `get_battle_state` | query | `FixtureApiBackend::get_battle_state` |
 | `get_content_manifest` | query | `FixtureApiBackend::get_content_manifest` |
@@ -60,6 +69,12 @@ Endpoint methods are implemented under `canisters/degens/src/api/` by domain,
 with matching service boundaries under `services/` and durable row ownership
 boundaries under `repos/`. See `docs/canister-layout.md`.
 
+`get_my_champions` is intentionally a bounded roster/list query. It returns
+owned champion render metadata from the participant's persisted IcyDB
+`champion_ids` roster without expanding army stacks or equipped artifacts.
+Clients that need stack/artifact detail must call `get_champion_view` for the
+specific champion.
+
 ## Time Contract
 
 Movement and battle endpoint decisions derive time at the canister boundary.
@@ -78,6 +93,11 @@ Checkpoint 23 expanded-economy updates use standard `GameCommand`
 idempotency. Exact retries for tavern hiring, market trading, and external
 dwelling recruitment replay the original `CommandResponse`; previews and pool
 reads are query-only projections.
+
+Checkpoint 24 scenario-progress updates use the same `GameCommand`
+idempotency. Quest accept/claim, objective sync, world-event sync, and
+advanced-victory sync exact retries replay the original `CommandResponse`;
+objective/rule/event/quest reads are query-only projections over IcyDB rows.
 
 ## Deferred Endpoint Decisions
 

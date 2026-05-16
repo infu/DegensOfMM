@@ -1,9 +1,9 @@
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession};
 use domm_game::{
-    ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome, ChampionMagicReceipt,
-    ChangedSubject, CommandPhase, CommandResponse, CommandResult, CommandStatus,
-    ExpandedEconomyReceipt, ResourceBalances, StrategicCommandReceipt,
+    AdvancedScenarioReceipt, ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome,
+    ChampionMagicReceipt, ChangedSubject, CommandPhase, CommandResponse, CommandResult,
+    CommandStatus, ExpandedEconomyReceipt, ResourceBalances, StrategicCommandReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -113,6 +113,11 @@ fn is_recoverable_movement_command(command_type: &str) -> bool {
             | "hire_tavern_champion"
             | "submit_market_trade"
             | "submit_dwelling_recruit"
+            | "accept_quest"
+            | "claim_quest_reward"
+            | "sync_objectives"
+            | "sync_world_events"
+            | "sync_advanced_victory"
     )
 }
 
@@ -379,6 +384,13 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
         "hire_tavern_champion" | "submit_market_trade" | "submit_dwelling_recruit" => {
             CommandResult::ExpandedEconomy(expanded_economy_from_json(command))
         }
+        "accept_quest"
+        | "claim_quest_reward"
+        | "sync_objectives"
+        | "sync_world_events"
+        | "sync_advanced_victory" => {
+            CommandResult::AdvancedScenario(advanced_scenario_from_json(command))
+        }
         _ => CommandResult::StrategicReceipt(receipt_from_json(
             &command.command_type,
             &command.id().to_string(),
@@ -386,6 +398,22 @@ fn result_from_json(command: &GameCommand) -> CommandResult {
             0,
             command.result_json.as_deref(),
         )),
+    }
+}
+
+fn advanced_scenario_from_json(command: &GameCommand) -> AdvancedScenarioReceipt {
+    let json = command.result_json.as_deref();
+    AdvancedScenarioReceipt {
+        command_id: command.id().to_string(),
+        action: json_string_field(json, "action").unwrap_or_else(|| command.command_type.clone()),
+        quest_key: json_string_field(json, "quest_key"),
+        objective_key: json_string_field(json, "objective_key"),
+        event_key: json_string_field(json, "event_key"),
+        rule_key: json_string_field(json, "rule_key"),
+        current_turn: json_u32_field(json, "current_turn").unwrap_or(command.turn_number),
+        reward_gold: json_u32_field(json, "reward_gold").unwrap_or(0),
+        state: json_string_field(json, "state").unwrap_or_else(|| "applied".to_string()),
+        resources_after: None,
     }
 }
 

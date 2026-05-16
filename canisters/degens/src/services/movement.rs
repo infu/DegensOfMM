@@ -22,7 +22,7 @@ use super::{
     session_context::{self, public_error},
 };
 
-const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 2;
+const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 1;
 
 pub(crate) fn preview_move_path(
     caller: CandidPrincipal,

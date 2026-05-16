@@ -14,6 +14,7 @@ pub(crate) mod map_visibility_occupancy;
 pub(crate) mod movement;
 pub(crate) mod neutrals;
 pub(crate) mod players;
+pub(crate) mod scenario_progress;
 pub(crate) mod sessions;
 pub(crate) mod towns;
 

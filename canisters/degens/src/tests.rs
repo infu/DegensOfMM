@@ -14,20 +14,20 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
         assert!(!endpoint.fixture_mapping.is_empty());
     }
 
-    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 40);
+    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 49);
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Update)
             .count(),
-        17
+        22
     );
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Query)
             .count(),
-        23
+        27
     );
     assert!(names.contains("register_player"));
     assert!(names.contains("get_game_view"));
@@ -41,6 +41,15 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
     assert!(names.contains("hire_tavern_champion"));
     assert!(names.contains("submit_market_trade"));
     assert!(names.contains("submit_dwelling_recruit"));
+    assert!(names.contains("get_objective_progress"));
+    assert!(names.contains("get_scenario_rules"));
+    assert!(names.contains("get_world_events"));
+    assert!(names.contains("preview_quest"));
+    assert!(names.contains("accept_quest"));
+    assert!(names.contains("claim_quest_reward"));
+    assert!(names.contains("sync_objectives"));
+    assert!(names.contains("sync_world_events"));
+    assert!(names.contains("sync_advanced_victory"));
 }
 
 #[test]
@@ -111,6 +120,7 @@ fn final_gameplay_services_do_not_call_fixture_or_placeholder_backends() {
         include_str!("services/game_view.rs"),
         include_str!("services/history.rs"),
         include_str!("services/movement.rs"),
+        include_str!("services/scenario_progress.rs"),
         include_str!("services/render_projection.rs"),
         include_str!("services/session_context.rs"),
         include_str!("services/town.rs"),
@@ -139,6 +149,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/api/account_lobby_session.rs",
         "src/api/game_view.rs",
         "src/api/movement.rs",
+        "src/api/scenario_progress.rs",
         "src/api/town.rs",
         "src/api/battle.rs",
         "src/api/champion_magic.rs",
@@ -151,6 +162,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/account_lobby_session.rs",
         "src/services/game_view.rs",
         "src/services/movement.rs",
+        "src/services/scenario_progress.rs",
         "src/services/town.rs",
         "src/services/battle.rs",
         "src/services/champion_magic.rs",
@@ -161,6 +173,7 @@ fn canister_domain_layout_has_required_module_files() {
         "src/services/economy_expansion.rs",
         "src/services/diagnostics.rs",
         "src/repos/players.rs",
+        "src/repos/scenario_progress.rs",
         "src/repos/sessions.rs",
         "src/repos/commands_events_effects.rs",
         "src/repos/content.rs",

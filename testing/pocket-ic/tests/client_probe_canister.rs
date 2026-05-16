@@ -1549,7 +1549,7 @@ fn install_degens_canister_fixture() -> StandaloneCanisterFixture {
     install_prebuilt_canister_with_cycles(
         wasm,
         candid::encode_args(()).expect("empty init args encode"),
-        10_000_000_000_000,
+        100_000_000_000_000,
     )
 }
 

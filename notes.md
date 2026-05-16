@@ -965,5 +965,39 @@ Implementation notes:
   first-playable stacks, and command-status nonce routing now includes magic and
   economy command discriminators. Both changes keep public query paths under
   the Pocket-IC single-query budget as the schema grows.
+- Checkpoint 24 schema growth pushed Gate M over the 5B query limit again, so
+  `GameParticipant` now persists a compact `champion_ids` roster and
+  `get_my_champions` stays a lightweight list. Full army stack and artifact
+  detail remains on `get_champion_view`.
 - Defeated champion reappearance, advanced economy buildings, and broader
   resource-source variety remain deferred for a later bounded economy spec.
+
+## Checkpoint 24: Quests, Objectives, Advanced Victory, And Scenario Rules
+
+Promoted the first bounded scenario-progress slice into Part 2 and runtime:
+central objective progress rows, one opening scenario quest, deterministic
+weekly world events, quest reward claiming, and visible scenario-rule state.
+
+Implementation notes:
+
+- New IcyDB entities are `ObjectiveProgress`, `QuestState`,
+  `WorldEventState`, and `ScenarioRuleState`, with unique/session indexes for
+  objective keys, quest keys, event keys/windows, and victory state.
+- New canister endpoints are `get_objective_progress`,
+  `get_scenario_rules`, `get_world_events`, `preview_quest`,
+  `accept_quest`, `claim_quest_reward`, `sync_objectives`,
+  `sync_world_events`, and `sync_advanced_victory`.
+- The opening quest is intentionally small and immediately claimable after
+  acceptance so reward idempotency is covered through real IcyDB ledger rows.
+  The reward is 500 gold and exact retries replay the same command response.
+- Artifact victory, king-of-the-hill, survival, and scenario-specific defeat
+  are represented as disabled `ScenarioRuleState` rows with
+  `checkpoint_24_schema_only`; their gameplay remains deferred until a later
+  bounded spec expands those systems.
+- Pocket-IC endpoint coverage calls every new public method and verifies exact
+  update retries for quest acceptance, objective sync, world-event sync,
+  advanced-victory sync, and quest reward claim.
+- Movement sync now resolves one microstep per canister update to keep the
+  enlarged schema below Pocket-IC's update instruction cap. The public e2e
+  tests drive sync loops until the expected event appears instead of assuming a
+  fixed two-step update.

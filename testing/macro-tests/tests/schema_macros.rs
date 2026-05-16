@@ -7,10 +7,11 @@ use domm_degens_schema::schema::{
     DATA_MEMORY_ID, DegensCanister, DegensStore, FactionDefinition, GameCommand, GameEvent,
     GameEventTurnSummary, GameParticipant, GameSession, INDEX_MEMORY_ID, LobbyCommand, MapChunk,
     MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot, NeutralArmy,
-    NeutralArmyStack, ParticipantKnownObject, ParticipantObjectVisit, PendingEffect, PlayerAccount,
-    PlayerMatchSummary, ResourceLedgerEntry, ResourceLedgerTurnSummary, RulesetDefinition,
-    SCHEMA_MEMORY_ID, SpellDefinition, TerrainDefinition, Town, TownBuilding, TownGarrisonStack,
-    TownRecruitPool, UnitDefinition, VisibilityChunk, WorldObject,
+    NeutralArmyStack, ObjectiveProgress, ParticipantKnownObject, ParticipantObjectVisit,
+    PendingEffect, PlayerAccount, PlayerMatchSummary, QuestState, ResourceLedgerEntry,
+    ResourceLedgerTurnSummary, RulesetDefinition, SCHEMA_MEMORY_ID, ScenarioRuleState,
+    SpellDefinition, TerrainDefinition, Town, TownBuilding, TownGarrisonStack, TownRecruitPool,
+    UnitDefinition, VisibilityChunk, WorldEventState, WorldObject,
 };
 use icydb::{
     model::{
@@ -43,7 +44,7 @@ fn part_two_entity_surface_is_registered() {
         .map(|model| model.name())
         .collect::<Vec<_>>();
 
-    assert_eq!(names.len(), 46);
+    assert_eq!(names.len(), 50);
     assert!(names.contains(&"PlayerAccount"));
     assert!(names.contains(&"GameSession"));
     assert!(names.contains(&"GameCommand"));
@@ -93,6 +94,13 @@ fn important_unique_indexes_match_checkpoint_one_invariants() {
         &["battle_id", "battle_x", "battle_y"],
     );
     assert_unique_index(BattleOccupancy::MODEL, &["battle_stack_id"]);
+    assert_unique_index(ObjectiveProgress::MODEL, &["session_id", "objective_key"]);
+    assert_unique_index(
+        QuestState::MODEL,
+        &["session_id", "participant_id", "quest_key"],
+    );
+    assert_unique_index(WorldEventState::MODEL, &["session_id", "event_key"]);
+    assert_unique_index(ScenarioRuleState::MODEL, &["session_id", "rule_key"]);
 }
 
 #[test]
@@ -157,6 +165,14 @@ fn weak_history_relations_remain_safe_for_retained_rows() {
         (CommandEffect::MODEL, "command_id"),
         (PendingEffect::MODEL, "source_command_id"),
         (ArtifactInstance::MODEL, "owner_champion_id"),
+        (ObjectiveProgress::MODEL, "last_command_id"),
+        (QuestState::MODEL, "accepted_command_id"),
+        (QuestState::MODEL, "claimed_command_id"),
+        (QuestState::MODEL, "last_command_id"),
+        (WorldEventState::MODEL, "last_command_id"),
+        (ScenarioRuleState::MODEL, "owner_participant_id"),
+        (ScenarioRuleState::MODEL, "winner_participant_id"),
+        (ScenarioRuleState::MODEL, "last_command_id"),
     ] {
         assert_relation_strength(model, field_name, RelationStrength::Weak);
     }
@@ -416,6 +432,17 @@ fn deletion_policy_lists_strong_children_before_targets() {
             "owner_participant_id",
             GameParticipant::MODEL,
         ),
+        DeleteEdge::new(ObjectiveProgress::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(
+            ObjectiveProgress::MODEL,
+            "participant_id",
+            GameParticipant::MODEL,
+        ),
+        DeleteEdge::new(ObjectiveProgress::MODEL, "object_id", WorldObject::MODEL),
+        DeleteEdge::new(QuestState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(QuestState::MODEL, "participant_id", GameParticipant::MODEL),
+        DeleteEdge::new(WorldEventState::MODEL, "session_id", GameSession::MODEL),
+        DeleteEdge::new(ScenarioRuleState::MODEL, "session_id", GameSession::MODEL),
         DeleteEdge::new(
             ParticipantObjectVisit::MODEL,
             "session_id",
@@ -524,6 +551,10 @@ fn entity_models() -> Vec<&'static EntityModel> {
         VisibilityChunk::MODEL,
         MapOccupancy::MODEL,
         WorldObject::MODEL,
+        ObjectiveProgress::MODEL,
+        QuestState::MODEL,
+        WorldEventState::MODEL,
+        ScenarioRuleState::MODEL,
         ParticipantObjectVisit::MODEL,
         ChampionObjectVisit::MODEL,
         ParticipantKnownObject::MODEL,
@@ -702,6 +733,10 @@ fn deletion_policy_order() -> &'static [&'static str] {
         "MapOccupancy",
         "VisibilityChunk",
         "MapChunk",
+        "ObjectiveProgress",
+        "QuestState",
+        "WorldEventState",
+        "ScenarioRuleState",
         "WorldObject",
         "ArtifactInstance",
         "Battle",

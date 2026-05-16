@@ -186,7 +186,8 @@ pub struct GameSession {}
             value(item(prim = "Timestamp")),
             default = "Timestamp::now",
             generated(insert = "Timestamp::now")
-        )
+        ),
+        field(ident = "champion_ids", value(many, item(prim = "Ulid")))
     )
 )]
 pub struct GameParticipant {}
@@ -1053,9 +1054,9 @@ pub struct TownGarrisonStack {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
-    index(fields = "session_id, participant_id"),
     index(fields = "session_id, x, y"),
     index(fields = "session_id, chunk_x, chunk_y, status"),
+    index(fields = "session_id, participant_id, status"),
     index(fields = "participant_id, status"),
     index(fields = "in_battle_id"),
     fields(
@@ -1434,6 +1435,201 @@ pub struct DwellingPool {}
     )
 )]
 pub struct DwellingRecruitment {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, objective_key", unique),
+    index(fields = "session_id, participant_id"),
+    index(fields = "object_id"),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(opt, item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "object_id",
+            value(opt, item(rel = "WorldObject", prim = "Ulid", strong))
+        ),
+        field(ident = "objective_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "objective_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "progress_value", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "required_value", value(item(prim = "Nat32")), default = 1u32),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "active"
+        ),
+        field(
+            ident = "visible_to",
+            value(item(prim = "Text", max_len = 32)),
+            default = "public"
+        ),
+        field(
+            ident = "last_scored_turn",
+            value(item(prim = "Nat32")),
+            default = 0u32
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct ObjectiveProgress {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, participant_id, quest_key", unique),
+    index(fields = "session_id, participant_id, status"),
+    index(fields = "session_id, quest_key"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "quest_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "title", value(item(prim = "Text", max_len = 96))),
+        field(ident = "objective_key", value(item(prim = "Text", max_len = 64))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "available"
+        ),
+        field(ident = "progress_value", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "required_value", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "reward_gold", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "accepted_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "claimed_turn", value(item(prim = "Nat32")), default = 0u32),
+        field(
+            ident = "accepted_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "claimed_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct QuestState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, event_key", unique),
+    index(fields = "session_id, event_window"),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "event_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "event_type", value(item(prim = "Text", max_len = 32))),
+        field(ident = "event_window", value(item(prim = "Text", max_len = 32))),
+        field(ident = "starts_turn", value(item(prim = "Nat32"))),
+        field(ident = "ends_turn", value(item(prim = "Nat32"))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "active"
+        ),
+        field(ident = "payload_json", value(item(prim = "Text", max_len = 2048))),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct WorldEventState {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, rule_key", unique),
+    index(fields = "session_id, victory_state"),
+    index(fields = "session_id, status"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(ident = "rule_key", value(item(prim = "Text", max_len = 64))),
+        field(ident = "rule_type", value(item(prim = "Text", max_len = 32))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "active"
+        ),
+        field(
+            ident = "victory_state",
+            value(item(prim = "Text", max_len = 24)),
+            default = "active"
+        ),
+        field(ident = "required_value", value(item(prim = "Nat32")), default = 1u32),
+        field(ident = "current_value", value(item(prim = "Nat32")), default = 0u32),
+        field(
+            ident = "owner_participant_id",
+            value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "winner_participant_id",
+            value(opt, item(rel = "GameParticipant", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "disabled_reason",
+            value(opt, item(prim = "Text", max_len = 128))
+        ),
+        field(
+            ident = "last_checked_turn",
+            value(item(prim = "Nat32")),
+            default = 0u32
+        ),
+        field(
+            ident = "last_command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        )
+    )
+)]
+pub struct ScenarioRuleState {}
 
 #[entity(
     store = "DegensStore",

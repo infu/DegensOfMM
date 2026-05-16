@@ -12,6 +12,7 @@ use crate::economy::ResourceBalances;
 use crate::lifecycle::{MatchHistoryEntry, ParticipantView};
 use crate::map::{MapChunkView, ObjectView, Viewport};
 use crate::movement::{MovementPreview, MovementSyncOutcome};
+use crate::scenario::AdvancedScenarioReceipt;
 use crate::strategic::StrategicCommandReceipt;
 use crate::town::{
     ArmyStackRecord, BuildPreview, RecruitPreview, TownBuildingRecord, TownRecord,
@@ -228,6 +229,7 @@ pub enum CommandResult {
     BattleSync(BattleSyncOutcome),
     ChampionMagic(ChampionMagicReceipt),
     ExpandedEconomy(ExpandedEconomyReceipt),
+    AdvancedScenario(AdvancedScenarioReceipt),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]

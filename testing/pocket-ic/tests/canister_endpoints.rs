@@ -15,9 +15,10 @@ use domm_game::{
     DwellingRecruitPreview, FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView,
     GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT,
     MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage,
-    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
-    ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView, TavernOffersView,
-    opening_viewport_for_slot,
+    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, OPENING_QUEST_KEY,
+    ObjectViewPage, ObjectiveProgressView, ParticipantView, PlayerView, QuestPreview,
+    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, TavernOffersView,
+    WorldEventsView, opening_viewport_for_slot,
 };
 
 #[test]
@@ -327,7 +328,10 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     assert_eq!(champions.len(), 1);
     let champion_id = champions[0].champion_id.clone();
     assert_eq!(champions[0].name.as_deref(), Some("Mara of the Toll"));
-    assert_eq!(champions[0].army_stacks.len(), 2);
+    assert!(
+        champions[0].army_stacks.is_empty(),
+        "get_my_champions stays a bounded list; get_champion_view returns stack detail"
+    );
 
     let champion = query_as::<ChampionView>(
         &fixture,
@@ -338,6 +342,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("get_champion_view should decode")
     .expect("own champion should be visible");
     assert_eq!(champion.champion_id, champion_id);
+    assert_eq!(champion.army_stacks.len(), 2);
     assert_eq!(champion.skill_points, 1);
 
     let progression = query_as::<ChampionProgressionView>(
@@ -538,6 +543,221 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("get_command_status by nonce should decode")
     .expect("start command status should be readable by nonce");
     assert_eq!(status_by_nonce.status, CommandStatus::Applied);
+
+    let objectives = query_as::<ObjectiveProgressView>(
+        &fixture,
+        player_one,
+        "get_objective_progress",
+        (session_id.clone(),),
+    )
+    .expect("get_objective_progress should decode")
+    .expect("objective progress should load from IcyDB rows");
+    assert_eq!(objectives.objectives.len(), 2);
+    assert!(
+        objectives
+            .objectives
+            .iter()
+            .any(|objective| objective.objective_key == "objective:north")
+    );
+
+    let rules = query_as::<ScenarioRulesView>(
+        &fixture,
+        player_one,
+        "get_scenario_rules",
+        (session_id.clone(),),
+    )
+    .expect("get_scenario_rules should decode")
+    .expect("scenario rules should load from IcyDB rows");
+    assert!(
+        rules
+            .rules
+            .iter()
+            .any(|rule| rule.rule_key == "rule:conquest" && rule.victory_state == "active")
+    );
+    assert!(rules.rules.iter().any(|rule| {
+        rule.rule_key == "rule:artifact-victory"
+            && rule.status == "disabled"
+            && rule.disabled_reason.as_deref() == Some("checkpoint_24_schema_only")
+    }));
+
+    let world_events = query_as::<WorldEventsView>(
+        &fixture,
+        player_one,
+        "get_world_events",
+        (session_id.clone(),),
+    )
+    .expect("get_world_events should decode")
+    .expect("world events should load from IcyDB rows");
+    assert_eq!(world_events.events.len(), 1);
+    assert_eq!(world_events.events[0].event_window, "week:1");
+
+    let quest_preview = query_as::<QuestPreview>(
+        &fixture,
+        player_one,
+        "preview_quest",
+        (session_id.clone(), OPENING_QUEST_KEY.to_string()),
+    )
+    .expect("preview_quest should decode")
+    .expect("quest preview should load from IcyDB rows");
+    assert!(quest_preview.can_accept);
+    assert_eq!(quest_preview.quest.reward_gold, Some(500));
+
+    let accepted_quest = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "accept_quest",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:presence:quest:accept".to_string(),
+        ),
+    )
+    .expect("accept_quest should decode")
+    .expect("accept_quest should succeed");
+    assert_eq!(accepted_quest.status, CommandStatus::Applied);
+    assert!(matches!(
+        accepted_quest.result,
+        CommandResult::AdvancedScenario(_)
+    ));
+    let accepted_quest_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "accept_quest",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:presence:quest:accept".to_string(),
+        ),
+    )
+    .expect("accept_quest replay should decode")
+    .expect("accept_quest replay should succeed");
+    assert_eq!(accepted_quest_replay.command_id, accepted_quest.command_id);
+
+    let synced_objectives = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_objectives",
+        (
+            session_id.clone(),
+            "nonce:presence:objective:sync".to_string(),
+        ),
+    )
+    .expect("sync_objectives should decode")
+    .expect("sync_objectives should succeed");
+    assert_eq!(synced_objectives.status, CommandStatus::Applied);
+    let synced_objectives_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_objectives",
+        (
+            session_id.clone(),
+            "nonce:presence:objective:sync".to_string(),
+        ),
+    )
+    .expect("sync_objectives replay should decode")
+    .expect("sync_objectives replay should succeed");
+    assert_eq!(
+        synced_objectives_replay.command_id,
+        synced_objectives.command_id
+    );
+
+    let synced_world_events = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_world_events",
+        (
+            session_id.clone(),
+            "nonce:presence:world-event:sync".to_string(),
+        ),
+    )
+    .expect("sync_world_events should decode")
+    .expect("sync_world_events should succeed");
+    assert_eq!(synced_world_events.status, CommandStatus::Applied);
+    let synced_world_events_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_world_events",
+        (
+            session_id.clone(),
+            "nonce:presence:world-event:sync".to_string(),
+        ),
+    )
+    .expect("sync_world_events replay should decode")
+    .expect("sync_world_events replay should succeed");
+    assert_eq!(
+        synced_world_events_replay.command_id,
+        synced_world_events.command_id
+    );
+
+    let synced_victory = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_advanced_victory",
+        (
+            session_id.clone(),
+            "nonce:presence:victory:sync".to_string(),
+        ),
+    )
+    .expect("sync_advanced_victory should decode")
+    .expect("sync_advanced_victory should succeed");
+    assert_eq!(synced_victory.status, CommandStatus::Applied);
+    let synced_victory_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_advanced_victory",
+        (
+            session_id.clone(),
+            "nonce:presence:victory:sync".to_string(),
+        ),
+    )
+    .expect("sync_advanced_victory replay should decode")
+    .expect("sync_advanced_victory replay should succeed");
+    assert_eq!(synced_victory_replay.command_id, synced_victory.command_id);
+
+    let claimed_quest = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "claim_quest_reward",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:presence:quest:claim".to_string(),
+        ),
+    )
+    .expect("claim_quest_reward should decode")
+    .expect("claim_quest_reward should succeed");
+    assert_eq!(claimed_quest.status, CommandStatus::Applied);
+    match &claimed_quest.result {
+        CommandResult::AdvancedScenario(receipt) => {
+            assert_eq!(receipt.action, "claim_quest_reward");
+            assert_eq!(receipt.reward_gold, 500);
+        }
+        other => panic!("claim_quest_reward returned unexpected result: {other:?}"),
+    }
+    let claimed_quest_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "claim_quest_reward",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:presence:quest:claim".to_string(),
+        ),
+    )
+    .expect("claim_quest_reward replay should decode")
+    .expect("claim_quest_reward replay should succeed");
+    assert_eq!(claimed_quest_replay.command_id, claimed_quest.command_id);
+
+    let quest_after_claim = query_as::<QuestPreview>(
+        &fixture,
+        player_one,
+        "preview_quest",
+        (session_id.clone(), OPENING_QUEST_KEY.to_string()),
+    )
+    .expect("preview_quest after claim should decode")
+    .expect("quest preview after claim should load");
+    assert_eq!(quest_after_claim.quest.status, "claimed");
+    assert!(!quest_after_claim.can_claim);
 
     let movement_preview = query_as::<MovementPreview>(
         &fixture,
@@ -768,25 +988,16 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("move command should be readable by nonce");
     assert_eq!(move_status.status, CommandStatus::Applied);
 
-    advance_time_ms(&fixture, 61_000);
-    let synced = update_as::<CommandResponse>(
+    let (synced, _) = sync_until_event(
         &fixture,
         player_one,
-        "sync_session_turn",
-        (
-            session_id.clone(),
-            "nonce:presence:sync-turn:wood".to_string(),
-        ),
-    )
-    .expect("sync_session_turn should decode")
-    .expect("sync_session_turn should succeed");
-    assert_eq!(synced.status, CommandStatus::Applied);
-    assert!(
-        synced
-            .events
-            .iter()
-            .any(|event| event.event_type == "resource_picked_up")
+        &session_id,
+        "nonce:presence:sync-turn:wood:",
+        61_000,
+        "resource_picked_up",
+        4,
     );
+    assert_eq!(synced.status, CommandStatus::Applied);
 
     let champion_after_move = query_as::<ChampionView>(
         &fixture,
@@ -1456,21 +1667,15 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         "nonce:gate-j:move:wood",
     );
     assert_eq!(moved_to_wood.status, CommandStatus::Applied);
-    advance_time_ms(&fixture, 61_000);
-    let synced_wood = gate_update_as::<CommandResponse>(
+    let (_synced_wood, _) = gate_sync_until_event(
         &mut metrics,
         &fixture,
         player_one,
-        "sync_session_turn",
-        (session_id.clone(), "nonce:gate-j:sync:wood".to_string()),
-    )
-    .expect("wood sync should succeed");
-    metrics.observe_command_response(&synced_wood);
-    assert!(
-        synced_wood
-            .events
-            .iter()
-            .any(|event| event.event_type == "resource_picked_up")
+        &session_id,
+        "nonce:gate-j:sync:wood:",
+        61_000,
+        "resource_picked_up",
+        4,
     );
     let participant_after_pickup = gate_query_as::<ParticipantView>(
         &mut metrics,
@@ -2023,21 +2228,15 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     .expect("wood movement command status should load");
     assert_eq!(wood_status.status, CommandStatus::Applied);
 
-    advance_time_ms(&fixture, 61_000);
-    let synced_wood = gate_update_as::<CommandResponse>(
+    let (_synced_wood, _) = gate_sync_until_event(
         &mut metrics,
         &fixture,
         player_one,
-        "sync_session_turn",
-        (session_id.clone(), "nonce:gate-l:sync:wood".to_string()),
-    )
-    .expect("wood sync should succeed");
-    metrics.observe_command_response(&synced_wood);
-    assert!(
-        synced_wood
-            .events
-            .iter()
-            .any(|event| event.event_type == "resource_picked_up")
+        &session_id,
+        "nonce:gate-l:sync:wood:",
+        61_000,
+        "resource_picked_up",
+        4,
     );
     let participant_after_pickup = gate_query_as::<ParticipantView>(
         &mut metrics,
@@ -2472,6 +2671,10 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert!(row_count(&final_storage, "ResourceLedgerEntry") > 0);
     assert!(row_count(&final_storage, "ResourceLedgerTurnSummary") > 0);
     assert!(row_count(&final_storage, "ParticipantObjectVisit") > 0);
+    assert!(row_count(&final_storage, "ObjectiveProgress") > 0);
+    assert!(row_count(&final_storage, "QuestState") > 0);
+    assert!(row_count(&final_storage, "WorldEventState") > 0);
+    assert!(row_count(&final_storage, "ScenarioRuleState") > 0);
     assert!(row_count(&final_storage, "TownBuilding") > 0);
     assert!(row_count(&final_storage, "TownGarrisonStack") > 0);
     assert!(row_count(&final_storage, "WorldObject") > 0);
@@ -2779,6 +2982,10 @@ const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
     "MapChunk",
     "VisibilityChunk",
     "ParticipantObjectVisit",
+    "ObjectiveProgress",
+    "QuestState",
+    "WorldEventState",
+    "ScenarioRuleState",
     "ResourceLedgerEntry",
     "ResourceLedgerTurnSummary",
     "TownBuilding",
@@ -2838,6 +3045,10 @@ const GATE_L_ENTITIES: &[&str] = &[
     "BattleObstacle",
     "WorldObject",
     "NeutralArmy",
+    "ObjectiveProgress",
+    "QuestState",
+    "WorldEventState",
+    "ScenarioRuleState",
 ];
 
 impl GateJMetrics {
@@ -3724,7 +3935,7 @@ fn install_degens_canister_fixture() -> StandaloneCanisterFixture {
     install_prebuilt_canister_with_cycles(
         wasm,
         candid::encode_args(()).expect("empty init args encode"),
-        10_000_000_000_000,
+        100_000_000_000_000,
     )
 }
 

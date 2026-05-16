@@ -17,7 +17,7 @@ use icydb::{
 
 use crate::repos::{
     champions_artifacts, content, economy, economy_expansion, foundation, map_visibility_occupancy,
-    neutrals, towns,
+    neutrals, sessions, towns,
 };
 
 #[derive(Clone)]
@@ -407,6 +407,13 @@ pub(crate) fn seed_first_playable_tavern_offers(
     seed_tavern_offers(session, participants)
 }
 
+pub(crate) fn seed_first_playable_scenario_progress(
+    session: &GameSession,
+    participants: &[GameParticipant],
+) -> foundation::RepoResult<()> {
+    super::scenario_progress::ensure_seeded_scenario_progress(session, participants)
+}
+
 fn participants_by_slot(participants: &[GameParticipant]) -> BTreeMap<u8, GameParticipant> {
     participants
         .iter()
@@ -498,6 +505,7 @@ fn seed_champions(
                 0,
             )?,
         };
+        sessions::ensure_participant_champion_id(participant.clone(), champion.id())?;
         for stack in &start.starting_army_stacks {
             let unit = require_unit(content_rows, &stack.unit_slug)?;
             if champions_artifacts::find_champion_army_stack(champion.id(), stack.slot_index)?

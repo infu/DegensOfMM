@@ -489,12 +489,12 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 ## 24. Quests, Objectives, Advanced Victory, And Scenario Rules
 
-- [ ] Promote and implement quest huts, objective tracking, weekly/monthly world events, artifact victory, king-of-the-hill, survival, quest victory, scenario-specific defeat, and richer scenario rules only after Part 2 is expanded for them.
-- [ ] Add bounded entities or effect rows for quest state, objective ownership, rewards, progress visibility, and victory checks.
-- [ ] Unit test objective progress, reward idempotency, visibility/redaction, bounded victory scoring, max-turn interactions, and event history.
-- [ ] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
-- [ ] Audit: confirm every advanced victory path is indexed, bounded, recoverable, and visible to the client.
-- [ ] Commit after this checkpoint.
+- [x] Promote and implement the bounded checkpoint 24 slice: central-objective tracking, one opening scenario quest, deterministic weekly world events, quest reward claim, active conquest/objective/quest/max-turn rule rows, and explicit disabled rows for artifact victory, king-of-the-hill, survival, and scenario-specific defeat.
+- [x] Add bounded entities or effect rows for quest state, objective ownership, rewards, progress visibility, and victory checks.
+- [x] Unit test objective progress, reward idempotency, visibility/redaction, bounded victory scoring, max-turn interactions, and event history.
+- [x] Add Candid inventory and Pocket-IC e2e coverage for every new canister endpoint before marking the bucket complete.
+- [x] Audit: confirm every advanced victory path is indexed, bounded, recoverable, and visible to the client.
+- [x] Commit after this checkpoint.
 
 ## 25. Siege, Naval Movement, Procedural Maps, And Skirmish Settings
 

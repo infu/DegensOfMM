@@ -32,6 +32,11 @@ const GAME_COMMAND_TYPES: &[&str] = &[
     "hire_tavern_champion",
     "submit_market_trade",
     "submit_dwelling_recruit",
+    "accept_quest",
+    "claim_quest_reward",
+    "sync_objectives",
+    "sync_world_events",
+    "sync_advanced_victory",
     "sync_battle",
     "submit_battle_action",
 ];
@@ -178,6 +183,16 @@ fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
         &["hire_tavern_champion"]
     } else if client_nonce.contains("market") {
         &["submit_market_trade"]
+    } else if client_nonce.contains("quest") && client_nonce.contains("claim") {
+        &["claim_quest_reward"]
+    } else if client_nonce.contains("quest") || client_nonce.contains("accept") {
+        &["accept_quest"]
+    } else if client_nonce.contains("objective") {
+        &["sync_objectives"]
+    } else if client_nonce.contains("world-event") || client_nonce.contains("event") {
+        &["sync_world_events"]
+    } else if client_nonce.contains("victory") {
+        &["sync_advanced_victory"]
     } else if client_nonce.contains("battle-action") {
         &["submit_battle_action"]
     } else if client_nonce.contains("sync-battle") {
@@ -230,6 +245,16 @@ fn game_command_type_candidates_without_lobby_fallback(
         &["hire_tavern_champion"]
     } else if client_nonce.contains("market") {
         &["submit_market_trade"]
+    } else if client_nonce.contains("quest") && client_nonce.contains("claim") {
+        &["claim_quest_reward"]
+    } else if client_nonce.contains("quest") || client_nonce.contains("accept") {
+        &["accept_quest"]
+    } else if client_nonce.contains("objective") {
+        &["sync_objectives"]
+    } else if client_nonce.contains("world-event") || client_nonce.contains("event") {
+        &["sync_world_events"]
+    } else if client_nonce.contains("victory") {
+        &["sync_advanced_victory"]
     } else if client_nonce.contains("battle-action") {
         &["submit_battle_action"]
     } else if client_nonce.contains("sync-battle") {

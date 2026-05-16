@@ -127,6 +127,7 @@ pub(crate) fn create_participant(
         ready_turn: Some(0),
         last_command_id: Some(None),
         last_resource_command_id: Some(None),
+        champion_ids: Some(Vec::new()),
     };
 
     foundation::create("sessions.create_participant", input)
@@ -138,6 +139,21 @@ pub(crate) fn load_participant(id: Id<GameParticipant>) -> RepoResult<Option<Gam
 
 pub(crate) fn update_participant(participant: GameParticipant) -> RepoResult<GameParticipant> {
     foundation::update("sessions.update_participant", participant)
+}
+
+pub(crate) fn ensure_participant_champion_id(
+    mut participant: GameParticipant,
+    champion_id: Id<domm_degens_schema::schema::Champion>,
+) -> RepoResult<GameParticipant> {
+    if participant
+        .champion_ids
+        .iter()
+        .any(|id| *id == champion_id.key())
+    {
+        return Ok(participant);
+    }
+    participant.champion_ids.push(champion_id.key());
+    foundation::update("sessions.ensure_participant_champion_id", participant)
 }
 
 pub(crate) fn find_participant_by_session_player(

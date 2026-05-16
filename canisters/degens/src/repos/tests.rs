@@ -6,7 +6,8 @@ use icydb::{
 
 use super::{
     aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects, content,
-    economy_expansion, foundation, map_visibility_occupancy, movement, players, sessions, towns,
+    economy_expansion, foundation, map_visibility_occupancy, movement, players, scenario_progress,
+    sessions, towns,
 };
 
 fn bootstrap_repo_memory() {
@@ -278,8 +279,13 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
         ),
         (
             "champion owner",
-            champions_artifacts::champions_by_owner_plan_text(participant_id, "active", 50)
-                .expect("champion plan should build"),
+            champions_artifacts::champions_by_session_owner_plan_text(
+                session_id,
+                participant_id,
+                "active",
+                50,
+            )
+            .expect("champion plan should build"),
         ),
         (
             "movement intent",
@@ -290,6 +296,31 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
             "movement snapshot",
             movement::movement_snapshot_plan_text(session_id, 1, champion_id)
                 .expect("movement snapshot plan should build"),
+        ),
+        (
+            "objective progress",
+            scenario_progress::objective_plan_text(session_id, "objective:north")
+                .expect("objective plan should build"),
+        ),
+        (
+            "quest state",
+            scenario_progress::quest_plan_text(session_id, participant_id, "quest:opening-ledger")
+                .expect("quest plan should build"),
+        ),
+        (
+            "world event",
+            scenario_progress::world_event_plan_text(session_id, "week:1")
+                .expect("world event plan should build"),
+        ),
+        (
+            "scenario rule",
+            scenario_progress::scenario_rule_plan_text(session_id, "active")
+                .expect("scenario rule plan should build"),
+        ),
+        (
+            "scenario rule status",
+            scenario_progress::scenario_rule_status_plan_text(session_id, "active")
+                .expect("scenario rule status plan should build"),
         ),
         (
             "active battles",
@@ -332,11 +363,20 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::OCCUPANCY_CELL_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
+        champions_artifacts::CHAMPIONS_BY_SESSION_OWNER_LOOKUP,
         economy_expansion::TAVERN_OFFERS_LOOKUP,
         economy_expansion::TAVERN_OFFER_KEY_LOOKUP,
         economy_expansion::MARKET_TRADE_COMMAND_LOOKUP,
         economy_expansion::DWELLING_POOL_OBJECT_LOOKUP,
         economy_expansion::DWELLING_RECRUIT_COMMAND_LOOKUP,
+        scenario_progress::OBJECTIVE_BY_KEY_LOOKUP,
+        scenario_progress::OBJECTIVES_BY_STATUS_LOOKUP,
+        scenario_progress::QUEST_BY_PARTICIPANT_KEY_LOOKUP,
+        scenario_progress::WORLD_EVENT_BY_KEY_LOOKUP,
+        scenario_progress::WORLD_EVENTS_BY_WINDOW_LOOKUP,
+        scenario_progress::SCENARIO_RULE_BY_KEY_LOOKUP,
+        scenario_progress::SCENARIO_RULES_BY_STATE_LOOKUP,
+        scenario_progress::SCENARIO_RULES_BY_STATUS_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPION_SPELLS_LOOKUP,
         movement::MOVEMENT_INTENT_UNIQUE_LOOKUP,
@@ -382,6 +422,7 @@ fn gameplay_repositories_do_not_use_generic_sql_or_core_db() {
         include_str!("movement.rs"),
         include_str!("neutrals.rs"),
         include_str!("players.rs"),
+        include_str!("scenario_progress.rs"),
         include_str!("sessions.rs"),
         include_str!("towns.rs"),
     ];

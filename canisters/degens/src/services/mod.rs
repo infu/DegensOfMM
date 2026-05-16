@@ -18,6 +18,7 @@ pub(crate) mod game_view;
 pub(crate) mod history;
 pub(crate) mod movement;
 pub(crate) mod render_projection;
+pub(crate) mod scenario_progress;
 pub(crate) mod session_context;
 #[cfg(test)]
 mod tests;

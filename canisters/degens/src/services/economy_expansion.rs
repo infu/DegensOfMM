@@ -387,6 +387,8 @@ fn apply_hire_command(
             champions_artifacts::update_champion(champion)?
         }
     };
+    context.participant =
+        sessions::ensure_participant_champion_id(context.participant.clone(), champion.id())?;
     hire.champion_id = Some(champion.id().key());
     economy_expansion::update_champion_hire(hire)?;
     offer.status = "hired".to_string();

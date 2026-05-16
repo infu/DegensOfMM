@@ -2707,7 +2707,8 @@ pub struct GameSession {}
             value(item(prim = "Timestamp")),
             default = "Timestamp::now",
             generated(insert = "Timestamp::now")
-        )
+        ),
+        field(ident = "champion_ids", value(many, item(prim = "Ulid")))
     )
 )]
 pub struct GameParticipant {}
@@ -3503,9 +3504,9 @@ pub struct TownGarrisonStack {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
-    index(fields = "session_id, participant_id"),
     index(fields = "session_id, x, y"),
     index(fields = "session_id, chunk_x, chunk_y, status"),
+    index(fields = "session_id, participant_id, status"),
     index(fields = "participant_id, status"),
     index(fields = "in_battle_id"),
     fields(
@@ -5779,7 +5780,8 @@ Authoritative triage artifact: `docs/full-spec-expansion-triage.md`.
 | --- | --- | --- |
 | Champion skill trees, level-up choices, skill ranks, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, advanced statuses, dispel/stacking, artifact-set-style effect expansion | promote-to-Part-2-first | Checkpoint 22 |
 | Tavern hiring, defeated champion reappearance, marketplace trading, external dwellings, direct map recruitment, advanced economy buildings, additional resource sources | promote-to-Part-2-first | Checkpoint 23 |
-| Quest huts, quest chains, objective tracking, weekly/monthly world events, artifact victory, king-of-the-hill, survival, quest victory, scenario-specific defeat, richer scenario rules | promote-to-Part-2-first | Checkpoint 24 |
+| Central objective tracking, one opening quest, weekly world events, quest reward claim, and typed scenario rules | promoted and implemented | Checkpoint 24 |
+| Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond disabled row visibility | promote-to-Part-2-first | Future scenario expansion |
 | Complex siege engines, walls/gates/towers, naval maps, boats, water movement layers, seeded procedural generation, skirmish settings, larger map variants | promote-to-Part-2-first | Checkpoint 25 |
 | Diplomacy, ranked leaderboard, guilds, campaign carryover, campaign persistence, rematch creation, broader match history, social/meta systems | promote-to-Part-2-first | Checkpoint 26 |
 | Full bot opponents and general strategic planners | still-deferred | Requires a later AI-specific Part 2 section. V1 keeps neutral battle behavior and bounded autopilot-style command generation only. |
@@ -5838,12 +5840,12 @@ tavern/market/growth keys; caps for offers, market operations, trade amounts,
 pool growth, and visible candidates; no-double-spend recovery; frontend
 affordances; cleanup; and Pocket-IC endpoint coverage.
 
-Checkpoint 24, quests/objectives/victory, must define quest/objective/event and
-victory state rows plus reward effects. It must add indexes by session,
+Checkpoint 24, quests/objectives/victory, implemented quest/objective/event and
+victory state rows plus reward effects. It added indexes by session,
 participant, objective, quest key, event window, and victory state; quest
 accept/claim, objective sync, event sync, and advanced victory query/update
 surfaces; deterministic event/reward keys; caps for active quests, objective
-rows, event rows, reward rows, and victory checks per update; redacted
+rows, event rows, rule rows, and victory checks per update; redacted
 progress/reward DTOs; cleanup; and Pocket-IC endpoint coverage.
 
 Checkpoint 25, siege/naval/procedural/skirmish, must define map-generation jobs,
@@ -5929,9 +5931,11 @@ submit_battle_action(... BattleActionInput { action = "CastAbility", ability_key
 
 `ChampionProgressionView` returns level, experience, skill points, selected skill
 keys, effective mana, learned spell slugs, and legal level-up choices. Normal
-`ChampionView` exposes only cheap render metadata plus skill/mana summary fields;
-learned spell details remain on the progression preview endpoint so hot render
-queries do not add per-champion spellbook lookups.
+`get_my_champions` returns a bounded roster/list projection with cheap render
+metadata plus skill/mana summary fields. Army stack and equipped-artifact
+detail stays behind `get_champion_view`, and learned spell details remain on
+the progression preview endpoint so hot render queries do not add
+per-champion child-row lookups.
 
 Recovery and idempotency:
 
@@ -6145,5 +6149,132 @@ TavernOffer, ChampionHire, MarketTrade, DwellingPool, and DwellingRecruitment ar
 ChampionHire keeps weak command/champion links for retained command history.
 MarketTrade and DwellingRecruitment use command_id as the recovery/audit key.
 DwellingPool is compacted with the owning WorldObject/session.
+ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
+```
+
+## 24.7 Checkpoint 24 Quests, Objectives, Advanced Victory, And Scenario Rules
+
+Checkpoint 24 promotes a bounded first slice of scenario systems:
+persisted central-objective progress, one opening scenario quest, deterministic
+weekly world events, and typed scenario-rule/victory rows. Artifact victory,
+king-of-the-hill, survival, and scenario-specific defeat are represented as
+disabled rule rows until a later bounded section defines their gameplay rules.
+
+IcyDB schema:
+
+```text
+ObjectiveProgress:
+  session_id, participant_id, object_id, objective_key, objective_type
+  progress_value, required_value, status, visible_to, last_scored_turn
+  last_command_id
+
+QuestState:
+  session_id, participant_id, quest_key, title, objective_key, status
+  progress_value, required_value, reward_gold, accepted_turn, claimed_turn
+  accepted_command_id, claimed_command_id, last_command_id
+
+WorldEventState:
+  session_id, event_key, event_type, event_window
+  starts_turn, ends_turn, status, payload_json, last_command_id
+
+ScenarioRuleState:
+  session_id, rule_key, rule_type, status, victory_state
+  required_value, current_value, owner_participant_id, winner_participant_id
+  disabled_reason, last_checked_turn, last_command_id
+```
+
+Indexes and lookup paths:
+
+```text
+ObjectiveProgress:
+  session_id + objective_key unique
+  session_id + participant_id
+  object_id
+  session_id + status
+
+QuestState:
+  session_id + participant_id + quest_key unique
+  session_id + participant_id + status
+  session_id + quest_key
+
+WorldEventState:
+  session_id + event_key unique
+  session_id + event_window
+  session_id + status
+
+ScenarioRuleState:
+  session_id + rule_key unique
+  session_id + victory_state
+  session_id + status
+```
+
+Public endpoints and command paths:
+
+```text
+get_objective_progress(session_id) -> ObjectiveProgressView
+get_scenario_rules(session_id) -> ScenarioRulesView
+get_world_events(session_id) -> WorldEventsView
+preview_quest(session_id, quest_key) -> QuestPreview
+accept_quest(session_id, quest_key, client_nonce) -> CommandResponse
+claim_quest_reward(session_id, quest_key, client_nonce) -> CommandResponse
+sync_objectives(session_id, client_nonce) -> CommandResponse
+sync_world_events(session_id, client_nonce) -> CommandResponse
+sync_advanced_victory(session_id, client_nonce) -> CommandResponse
+```
+
+Recovery and idempotency:
+
+```text
+All update endpoints use GameCommand actor/session/client_nonce idempotency.
+Exact retries replay the same CommandResponse.
+Same nonce with different payload returns duplicate_nonce_payload_mismatch.
+Quest rewards write ResourceLedgerEntry rows keyed by command and quest reward effect.
+QuestState command fields record accept/claim application.
+Objective, event, and rule sync rows record last_command_id.
+GameEvent and CommandEffect use stable per-command subject keys.
+```
+
+Deterministic keys and caps:
+
+```text
+opening quest key: quest:opening-ledger
+opening quest objective key: objective:opening-ledger
+opening quest reward: 500 gold
+world event key = world:event:week:<week>:<seeded_hash>
+event windows use week_for_turn(turn)
+
+objective rows per session: 16
+active quests per participant: 4
+world event rows per session: 16
+scenario rule rows per session: 16
+advanced victory checks per update: 8
+```
+
+Visibility and rule state:
+
+```text
+ObjectiveProgress is public in the first slice because central objectives are public map goals.
+QuestState is participant-scoped; non-owner quest DTOs redact progress and reward fields.
+WorldEventState is public for the first weekly omen event stream.
+ScenarioRuleState exposes active conquest, central-objective, quest-victory, and max-turn rows.
+Artifact victory, king-of-the-hill, survival, and scenario-specific defeat are disabled rows with disabled_reason = checkpoint_24_schema_only.
+```
+
+Tests:
+
+```text
+Pure Rust tests cover objective progress, quest reward idempotency, quest redaction, deterministic event keys, bounded victory checks, and max-turn state.
+Schema/macro tests cover the four new entities, unique indexes, weak command links, and cleanup ordering.
+Canister unit tests cover Candid endpoint export, repository inventory, layout, diagnostics, and indexed hot-path plans.
+Pocket-IC tests call every new query/update endpoint, verify exact update retries, and assert persisted objective, quest, event, and rule state through public Candid methods.
+```
+
+Cleanup:
+
+```text
+ObjectiveProgress, QuestState, WorldEventState, and ScenarioRuleState are GameSession children.
+ObjectiveProgress links strongly to the tracked WorldObject and optional owner participant.
+QuestState links strongly to the owning participant and weakly to accept/claim commands.
+WorldEventState and ScenarioRuleState keep weak command audit links.
 ResourceLedgerEntry, GameCommand, CommandEffect, and GameEvent cleanup follows the existing finished-session retention policy.
 ```

@@ -19,8 +19,8 @@ use crate::dto::public::{
     CommandResponse, CommandStatusView, ContentManifestResponse, DwellingPoolView,
     DwellingRecruitPreview, GameView, GameViewRequest, LobbyCommandResponse, MapChunkPage,
     MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, ObjectViewPage,
-    ParticipantView, PlayerView, RecruitPreview, RecruitTarget, SessionView, TavernOffersView,
-    Viewport,
+    ObjectiveProgressView, ParticipantView, PlayerView, QuestPreview, RecruitPreview,
+    RecruitTarget, ScenarioRulesView, SessionView, TavernOffersView, Viewport, WorldEventsView,
 };
 
 pub use contract::{

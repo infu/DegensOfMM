@@ -96,6 +96,11 @@ const SETUP_EFFECTS: &[SetupEffectSpec] = &[
         effect_type: "tavern_offers",
         target_kind: "tavern_offer",
     },
+    SetupEffectSpec {
+        key: "seed_scenario_progress",
+        effect_type: "scenario_progress",
+        target_kind: "scenario_rule",
+    },
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1033,6 +1038,9 @@ fn apply_setup_effect(
         "seed_economy" => first_playable_setup::seed_first_playable_economy(session, participants),
         "seed_tavern_offers" => {
             first_playable_setup::seed_first_playable_tavern_offers(session, participants)
+        }
+        "seed_scenario_progress" => {
+            first_playable_setup::seed_first_playable_scenario_progress(session, participants)
         }
         _ => Ok(()),
     }

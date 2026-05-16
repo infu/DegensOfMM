@@ -12,4 +12,5 @@ mod game_view;
 mod history;
 mod inventory;
 mod movement;
+mod scenario_progress;
 mod town;

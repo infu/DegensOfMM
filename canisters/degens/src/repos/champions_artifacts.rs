@@ -16,6 +16,13 @@ pub(crate) const CHAMPIONS_BY_OWNER_LOOKUP: IndexedQueryPlan = IndexedQueryPlan 
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const CHAMPIONS_BY_SESSION_OWNER_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "champions.by_session_owner_status",
+    entity: "Champion",
+    indexed_fields: &["session_id", "participant_id", "status"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const CHAMPION_STACKS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "champions.army_stacks_by_champion",
     entity: "ChampionArmyStack",
@@ -159,6 +166,26 @@ pub(crate) fn page_champions_by_owner_status(
     )
 }
 
+pub(crate) fn list_champions_by_session_owner_status(
+    session_id: Id<GameSession>,
+    owner_participant_id: Id<GameParticipant>,
+    status: &str,
+    limit: u32,
+) -> RepoResult<Vec<Champion>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::storage_result(
+        CHAMPIONS_BY_SESSION_OWNER_LOOKUP.name,
+        crate::db()
+            .load::<Champion>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("participant_id").eq(owner_participant_id.key()))
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("id")
+            .limit(limit)
+            .entities(),
+    )
+}
+
 pub(crate) fn page_champion_army_stacks(
     champion_id: Id<Champion>,
     limit: u32,
@@ -174,6 +201,23 @@ pub(crate) fn page_champion_army_stacks(
             .order_asc("id"),
         limit,
         cursor,
+    )
+}
+
+pub(crate) fn list_champion_army_stacks(
+    champion_id: Id<Champion>,
+    limit: u32,
+) -> RepoResult<Vec<ChampionArmyStack>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::storage_result(
+        CHAMPION_STACKS_LOOKUP.name,
+        crate::db()
+            .load::<ChampionArmyStack>()
+            .filter(FieldRef::new("champion_id").eq(champion_id.key()))
+            .order_asc("slot_index")
+            .order_asc("id")
+            .limit(limit)
+            .entities(),
     )
 }
 
@@ -422,6 +466,25 @@ pub(crate) fn champions_by_owner_plan_text(
         CHAMPIONS_BY_OWNER_LOOKUP.name,
         crate::db()
             .load::<Champion>()
+            .filter(FieldRef::new("participant_id").eq(owner_participant_id.key()))
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("id")
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn champions_by_session_owner_plan_text(
+    session_id: Id<GameSession>,
+    owner_participant_id: Id<GameParticipant>,
+    status: &str,
+    limit: u32,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        CHAMPIONS_BY_SESSION_OWNER_LOOKUP.name,
+        crate::db()
+            .load::<Champion>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
             .filter(FieldRef::new("participant_id").eq(owner_participant_id.key()))
             .filter(FieldRef::new("status").eq(status))
             .order_asc("id")

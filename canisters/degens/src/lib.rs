@@ -26,8 +26,8 @@ use crate::dto::public::{
 
 pub use contract::{
     CanisterEndpointView, DeferredEndpointDecision, DiagnosticRowCount, DiagnosticStorageSnapshot,
-    EndpointKind, EndpointSpec, REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions,
-    required_endpoint_views,
+    DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind, EndpointSpec,
+    REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions, required_endpoint_views,
 };
 
 icydb::start!();
@@ -44,6 +44,12 @@ fn post_upgrade() {
     if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
         canic_cdk::eprintln!("system job post-upgrade repair failed: {}", error.message);
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(export_name = "canister_heartbeat")]
+extern "C" fn canister_heartbeat() {
+    services::system_jobs::heartbeat_tick();
 }
 
 #[allow(dead_code)]

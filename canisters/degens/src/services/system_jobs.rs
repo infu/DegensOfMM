@@ -42,7 +42,7 @@ pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError>
 }
 
 pub(crate) fn schedule_nearest_due_job() -> Result<(), ApiError> {
-    let Some(job) = system_jobs::next_scheduled_system_job()? else {
+    let Some(job) = next_claimable_or_scheduled_job()? else {
         clear_nearest_timer();
         return Ok(());
     };
@@ -73,6 +73,19 @@ pub(crate) fn run_due_jobs_until_idle(max_ticks: u32) -> Result<u32, ApiError> {
         }
     }
     Ok(total)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn heartbeat_tick() {
+    if !nearest_timer_is_due() {
+        return;
+    }
+    if let Err(error) = run_due_jobs_now() {
+        canic_cdk::eprintln!("system job heartbeat failed: {}", error.message);
+    }
+    if let Err(error) = schedule_nearest_due_job() {
+        canic_cdk::eprintln!("system job heartbeat reschedule failed: {}", error.message);
+    }
 }
 
 fn repair_jobs_for_sessions_in_state(state: &str) -> Result<(), ApiError> {
@@ -128,7 +141,7 @@ fn repair_battle_timeout_jobs(session_id: Id<GameSession>) -> Result<(), ApiErro
         let page = battles::page_battles_by_session_state(
             session_id,
             "active",
-            domm_game::MAX_LIST_LIMIT,
+            domm_game::MAX_ACTIVE_BATTLES_PER_SESSION,
             cursor,
         )?;
         for battle in &page.items {
@@ -203,6 +216,15 @@ fn clear_fired_timer(job_key: &str, due_at_ms: i64) {
 }
 
 #[cfg(target_arch = "wasm32")]
+fn nearest_timer_is_due() -> bool {
+    let now_ms = Timestamp::now().as_millis();
+    NEAREST_TIMER.with_borrow(|slot| {
+        slot.as_ref()
+            .is_some_and(|wakeup| now_ms >= wakeup.due_at_ms)
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
 fn timer_delay(due_at: Timestamp) -> Duration {
     let now_ms = Timestamp::now().as_millis();
     let delay_ms = due_at.as_millis().saturating_sub(now_ms).max(1);
@@ -223,6 +245,16 @@ fn run_due_jobs(first_job_key: Option<String>) -> Result<u32, ApiError> {
         }
         processed += run_job_by_key(&job.job_key)?;
     }
+    if processed < MAX_JOBS_PER_TICK {
+        let remaining = MAX_JOBS_PER_TICK.saturating_sub(processed);
+        let page = system_jobs::page_expired_running_system_jobs(now, remaining, None)?;
+        for job in page.items {
+            if processed >= MAX_JOBS_PER_TICK {
+                break;
+            }
+            processed += run_job_by_key(&job.job_key)?;
+        }
+    }
     Ok(processed)
 }
 
@@ -236,6 +268,14 @@ fn run_job_by_key(job_key: &str) -> Result<u32, ApiError> {
 
     dispatch_claimed_job(job)?;
     Ok(1)
+}
+
+fn next_claimable_or_scheduled_job() -> Result<Option<SystemJob>, ApiError> {
+    let now = Timestamp::now();
+    if let Some(job) = system_jobs::next_expired_running_system_job(now)? {
+        return Ok(Some(job));
+    }
+    system_jobs::next_scheduled_system_job()
 }
 
 fn dispatch_claimed_job(job: SystemJob) -> Result<(), ApiError> {

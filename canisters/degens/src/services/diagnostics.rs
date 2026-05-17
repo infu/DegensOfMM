@@ -14,11 +14,19 @@ use domm_degens_schema::schema::{
     UnitDefinition, VisibilityChunk, WorldEventState, WorldObject,
 };
 use domm_game::ApiError;
-use icydb::{db::PersistedRow, traits::EntityValue};
+use icydb::{
+    db::PersistedRow,
+    traits::EntityValue,
+    types::{Id, Timestamp, Ulid},
+};
 
 use crate::{
-    contract::{DiagnosticRowCount, DiagnosticStorageSnapshot},
-    repos::foundation,
+    contract::{
+        DiagnosticRowCount, DiagnosticStorageSnapshot, DiagnosticSystemJobPage,
+        DiagnosticSystemJobView,
+    },
+    repos::{foundation, system_jobs},
+    services::system_jobs as system_job_service,
 };
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
@@ -55,6 +63,72 @@ pub(crate) fn get_diagnostic_storage_snapshot(
         total_rows,
         stable_memory_pages: canic_cdk::api::stable_size(),
     })
+}
+
+pub(crate) fn get_diagnostic_system_jobs(
+    session_id: Option<String>,
+    status: Option<String>,
+    limit: u32,
+    cursor: Option<String>,
+) -> Result<DiagnosticSystemJobPage, ApiError> {
+    crate::auth::require_controller("get_diagnostic_system_jobs")?;
+    let limit = foundation::validate_list_limit(limit)?;
+    let page = match (session_id, status) {
+        (Some(session_id), Some(status)) => system_jobs::page_system_jobs_by_session_status(
+            parse_session_id(&session_id)?,
+            &status,
+            limit,
+            cursor,
+        )?,
+        (Some(session_id), None) => {
+            system_jobs::page_system_jobs_by_session(parse_session_id(&session_id)?, limit, cursor)?
+        }
+        (None, Some(status)) => system_jobs::page_system_jobs_by_status(&status, limit, cursor)?,
+        (None, None) => system_jobs::page_system_jobs(limit, cursor)?,
+    };
+
+    Ok(DiagnosticSystemJobPage {
+        jobs: page.items.iter().map(system_job_view).collect(),
+        next_cursor: page.next_cursor,
+        limit: page.limit,
+    })
+}
+
+pub(crate) fn force_diagnostic_system_job_running(
+    job_key: String,
+    lease_expires_at_ms: u64,
+) -> Result<DiagnosticSystemJobView, ApiError> {
+    crate::auth::require_controller("force_diagnostic_system_job_running")?;
+    let Some(mut job) = system_jobs::find_system_job_by_key(&job_key)? else {
+        return Err(ApiError::new(
+            "system_job_not_found",
+            format!("system job not found: {job_key}"),
+            false,
+        ));
+    };
+
+    job.status = system_jobs::STATUS_RUNNING.to_string();
+    job.lease_owner = Some("diagnostic".to_string());
+    job.lease_expires_at = Some(Timestamp::from_millis(u64_to_i64_saturating(
+        lease_expires_at_ms,
+    )));
+    job.attempt_count = job.attempt_count.saturating_add(1);
+    job.last_error = None;
+
+    let updated = system_jobs::update_system_job(job)?;
+    Ok(system_job_view(&updated))
+}
+
+pub(crate) fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError> {
+    crate::auth::require_controller("run_diagnostic_system_jobs")?;
+    if max_ticks == 0 || max_ticks > 32 {
+        return Err(ApiError::new(
+            "diagnostic_tick_limit_invalid",
+            "diagnostic system job ticks must be between 1 and 32",
+            false,
+        ));
+    }
+    system_job_service::run_due_jobs_until_idle(max_ticks)
 }
 
 fn push_named_count(
@@ -146,4 +220,36 @@ where
         count: rows.len() as u32,
     });
     Ok(())
+}
+
+fn system_job_view(job: &SystemJob) -> DiagnosticSystemJobView {
+    DiagnosticSystemJobView {
+        job_key: job.job_key.clone(),
+        job_kind: job.job_kind.clone(),
+        session_id: job.session_id.to_string(),
+        battle_id: job.battle_id.map(|id| id.to_string()),
+        turn_number: job.turn_number,
+        due_at_ms: timestamp_ms(job.due_at),
+        status: job.status.clone(),
+        lease_owner: job.lease_owner.clone(),
+        lease_expires_at_ms: job.lease_expires_at.map(timestamp_ms),
+        attempt_count: job.attempt_count,
+        command_id: job.command_id.map(|id| id.to_string()),
+        cursor_json: job.cursor_json.clone(),
+        last_error: job.last_error.clone(),
+    }
+}
+
+fn timestamp_ms(timestamp: Timestamp) -> u64 {
+    u64::try_from(timestamp.as_millis()).unwrap_or(0)
+}
+
+fn u64_to_i64_saturating(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn parse_session_id(value: &str) -> Result<Id<GameSession>, ApiError> {
+    Ulid::from_str(value)
+        .map(Id::from_key)
+        .map_err(|_| ApiError::new("invalid_id", "session_id is not a valid Ulid", false))
 }

@@ -23,6 +23,13 @@ pub(crate) const SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP: IndexedQueryPlan = IndexedQue
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const SYSTEM_JOBS_BY_STATUS_LEASE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "system_jobs.by_status_lease",
+    entity: "SystemJob",
+    indexed_fields: &["status", "lease_expires_at"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const SYSTEM_JOBS_BY_SESSION_STATUS_DUE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "system_jobs.by_session_status_due",
     entity: "SystemJob",
@@ -143,6 +150,25 @@ pub(crate) fn page_due_system_jobs(
     )
 }
 
+pub(crate) fn page_expired_running_system_jobs(
+    now: Timestamp,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<SystemJob>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        SYSTEM_JOBS_BY_STATUS_LEASE_LOOKUP.name,
+        crate::db()
+            .load::<SystemJob>()
+            .filter(FieldRef::new("status").eq(STATUS_RUNNING))
+            .filter(FieldRef::new("lease_expires_at").lte(now))
+            .order_asc("lease_expires_at")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
 pub(crate) fn next_scheduled_system_job() -> RepoResult<Option<SystemJob>> {
     foundation::storage_result(
         SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP.name,
@@ -153,6 +179,67 @@ pub(crate) fn next_scheduled_system_job() -> RepoResult<Option<SystemJob>> {
             .order_asc("id")
             .limit(1)
             .try_entity(),
+    )
+}
+
+pub(crate) fn next_expired_running_system_job(now: Timestamp) -> RepoResult<Option<SystemJob>> {
+    foundation::storage_result(
+        SYSTEM_JOBS_BY_STATUS_LEASE_LOOKUP.name,
+        crate::db()
+            .load::<SystemJob>()
+            .filter(FieldRef::new("status").eq(STATUS_RUNNING))
+            .filter(FieldRef::new("lease_expires_at").lte(now))
+            .order_asc("lease_expires_at")
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn page_system_jobs(
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<SystemJob>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        "system_jobs.page_all",
+        crate::db().load::<SystemJob>().order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_system_jobs_by_status(
+    status: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<SystemJob>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP.name,
+        crate::db()
+            .load::<SystemJob>()
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_system_jobs_by_session(
+    session_id: Id<GameSession>,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<SystemJob>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        SYSTEM_JOBS_BY_SESSION_STATUS_DUE_LOOKUP.name,
+        crate::db()
+            .load::<SystemJob>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .order_asc("id"),
+        limit,
+        cursor,
     )
 }
 

@@ -36,6 +36,30 @@ pub struct DiagnosticStorageSnapshot {
     pub stable_memory_pages: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticSystemJobView {
+    pub job_key: String,
+    pub job_kind: String,
+    pub session_id: String,
+    pub battle_id: Option<String>,
+    pub turn_number: Option<u32>,
+    pub due_at_ms: u64,
+    pub status: String,
+    pub lease_owner: Option<String>,
+    pub lease_expires_at_ms: Option<u64>,
+    pub attempt_count: u32,
+    pub command_id: Option<String>,
+    pub cursor_json: Option<String>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticSystemJobPage {
+    pub jobs: Vec<DiagnosticSystemJobView>,
+    pub next_cursor: Option<String>,
+    pub limit: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeferredEndpointDecision {
     pub name: &'static str,

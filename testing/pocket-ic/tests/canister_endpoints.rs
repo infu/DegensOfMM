@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_degens_canister::{
-    CanisterEndpointView, DiagnosticStorageSnapshot, REQUIRED_GAME_ENDPOINTS,
+    CanisterEndpointView, DiagnosticStorageSnapshot, DiagnosticSystemJobPage,
+    DiagnosticSystemJobView, REQUIRED_GAME_ENDPOINTS,
 };
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
@@ -2174,6 +2175,154 @@ fn pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance() {
         .expect("week-two town view should include the mudhook pool");
     assert_eq!(grown_pool.last_growth_week, 2);
     assert!(grown_pool.available > initial_pool.available);
+}
+
+#[test]
+fn pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-timer-jobs-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-timer-jobs-player-two");
+    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "timers");
+
+    let initial_view = compact_game_view(&fixture, player_one, &session_id);
+    assert_eq!(initial_view.session.current_turn, 1);
+    assert!(!initial_view.render_time.sync_required);
+
+    let system_job_snapshot = diagnostic_snapshot(&fixture, &["SystemJob"]);
+    assert!(
+        row_count(&system_job_snapshot, "SystemJob") > 0,
+        "active session setup should schedule durable system jobs"
+    );
+
+    let turn_one_key = turn_deadline_job_key(&session_id, 1);
+    let turn_one_job = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    )
+    .jobs
+    .into_iter()
+    .find(|job| job.job_key == turn_one_key)
+    .expect("turn one deadline job should be scheduled");
+    assert_eq!(turn_one_job.job_kind, "turn_deadline");
+    assert_eq!(turn_one_job.turn_number, Some(1));
+
+    upgrade_degens_canister(&fixture);
+    let repaired_turn_one = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    );
+    assert!(
+        repaired_turn_one
+            .jobs
+            .iter()
+            .any(|job| job.job_key == turn_one_key && job.status == "scheduled"),
+        "post-upgrade repair should preserve or recreate the active turn deadline"
+    );
+
+    advance_time_for_timers(
+        &fixture,
+        millis_until_due(
+            initial_view.render_time.server_now_ms,
+            turn_one_job.due_at_ms,
+        ),
+    );
+    replay_player_registration(&fixture, player_one, "timers", "one");
+    let after_upgrade_timer = compact_game_view(&fixture, player_one, &session_id);
+    assert_eq!(after_upgrade_timer.session.current_turn, 2);
+    assert!(!after_upgrade_timer.render_time.sync_required);
+
+    let duplicate_turn_one = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_session_turn",
+        (
+            session_id.clone(),
+            "nonce:timers:duplicate:turn-one".to_string(),
+        ),
+    )
+    .expect("duplicate sync after timer should decode")
+    .expect("duplicate sync after timer should return a command response");
+    assert_eq!(duplicate_turn_one.status, CommandStatus::Failed);
+    assert_eq!(
+        duplicate_turn_one
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("turn_not_due")
+    );
+
+    let turn_two_key = turn_deadline_job_key(&session_id, 2);
+    let turn_two_job = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    )
+    .jobs
+    .into_iter()
+    .find(|job| job.job_key == turn_two_key)
+    .expect("turn two deadline job should be scheduled");
+
+    let forced_running = force_system_job_running(
+        &fixture,
+        &turn_two_key,
+        after_upgrade_timer
+            .render_time
+            .server_now_ms
+            .saturating_sub(1),
+    );
+    assert_eq!(forced_running.status, "running");
+    assert_eq!(
+        forced_running.attempt_count,
+        turn_two_job.attempt_count.saturating_add(1)
+    );
+    assert_eq!(forced_running.lease_owner.as_deref(), Some("diagnostic"));
+
+    advance_time_for_timers(
+        &fixture,
+        millis_until_due(
+            after_upgrade_timer.render_time.server_now_ms,
+            turn_two_job.due_at_ms,
+        ),
+    );
+    replay_player_registration(&fixture, player_one, "timers", "one");
+    let after_lease_recovery = compact_game_view(&fixture, player_one, &session_id);
+    assert_eq!(after_lease_recovery.session.current_turn, 3);
+
+    let completed_jobs = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("completed".to_string()),
+    );
+    let recovered_job = completed_jobs
+        .jobs
+        .iter()
+        .find(|job| job.job_key == turn_two_key)
+        .expect("expired running turn deadline should recover and complete");
+    assert_eq!(recovered_job.status, "completed");
+    assert!(
+        recovered_job.attempt_count > forced_running.attempt_count,
+        "lease recovery should reclaim the running job before completing it"
+    );
+
+    let public_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 100_u32),
+    )
+    .expect("timer event feed should decode")
+    .expect("timer event feed should load");
+    let advanced_payloads = public_events
+        .events
+        .iter()
+        .filter(|event| event.event_type == "session_turn_advanced")
+        .filter_map(|event| event.payload.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(advanced_payloads.len(), 2);
+    assert!(advanced_payloads[0].contains(r#""current_turn":2"#));
+    assert!(advanced_payloads[1].contains(r#""current_turn":3"#));
 }
 
 #[test]
@@ -4360,9 +4509,105 @@ fn row_count(snapshot: &DiagnosticStorageSnapshot, entity: &str) -> u32 {
         .count
 }
 
+fn compact_game_view(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+) -> GameView {
+    query_as::<GameView>(
+        fixture,
+        player,
+        "get_game_view",
+        (
+            session_id.to_string(),
+            GameViewRequest {
+                viewport: opening_viewport_for_slot(0),
+                chunk_cursor: None,
+                chunk_limit: 1,
+                object_cursor: None,
+                object_limit: 1,
+                events_after_seq: 0,
+                event_limit: 1,
+                include_battle: false,
+            },
+        ),
+    )
+    .expect("compact game view should decode")
+    .expect("compact game view should load")
+}
+
+fn diagnostic_system_jobs(
+    fixture: &StandaloneCanisterFixture,
+    session_id: Option<String>,
+    status: Option<String>,
+) -> DiagnosticSystemJobPage {
+    query_as::<DiagnosticSystemJobPage>(
+        fixture,
+        candid::Principal::anonymous(),
+        "get_diagnostic_system_jobs",
+        (session_id, status, 50_u32, Option::<String>::None),
+    )
+    .expect("diagnostic system jobs should decode")
+    .expect("diagnostic system jobs should load")
+}
+
+fn force_system_job_running(
+    fixture: &StandaloneCanisterFixture,
+    job_key: &str,
+    lease_expires_at_ms: u64,
+) -> DiagnosticSystemJobView {
+    update_as::<DiagnosticSystemJobView>(
+        fixture,
+        candid::Principal::anonymous(),
+        "force_diagnostic_system_job_running",
+        (job_key.to_string(), lease_expires_at_ms),
+    )
+    .expect("force diagnostic system job should decode")
+    .expect("force diagnostic system job should succeed")
+}
+
+fn replay_player_registration(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    nonce_stem: &str,
+    player_suffix: &str,
+) {
+    let display_suffix = match player_suffix {
+        "one" => "One",
+        "two" => "Two",
+        value => value,
+    };
+    let response = update_as::<LobbyCommandResponse>(
+        fixture,
+        player,
+        "register_player",
+        (
+            Some(format!("{nonce_stem}-{player_suffix}")),
+            Some(format!("{nonce_stem} {display_suffix}")),
+            format!("nonce:{nonce_stem}:register:{player_suffix}"),
+        ),
+    )
+    .expect("registration replay should decode")
+    .expect("registration replay should return a command response");
+    assert_eq!(response.status, CommandStatus::Applied);
+}
+
+fn turn_deadline_job_key(session_id: &str, turn: u32) -> String {
+    format!("turn_deadline:{session_id}:{turn}")
+}
+
+fn millis_until_due(now_ms: u64, due_at_ms: u64) -> u64 {
+    due_at_ms.saturating_sub(now_ms).saturating_add(1_000)
+}
+
 fn advance_time_ms(fixture: &StandaloneCanisterFixture, millis: u64) {
     fixture.pic().advance_time(Duration::from_millis(millis));
     fixture.pic().tick();
+}
+
+fn advance_time_for_timers(fixture: &StandaloneCanisterFixture, millis: u64) {
+    fixture.pic().advance_time(Duration::from_millis(millis));
+    fixture.pic().tick_n(5);
 }
 
 fn json_string_field(json: &str, field: &str) -> Option<String> {
@@ -4746,6 +4991,27 @@ fn install_degens_canister_fixture() -> StandaloneCanisterFixture {
         candid::encode_args(()).expect("empty init args encode"),
         100_000_000_000_000,
     )
+}
+
+fn upgrade_degens_canister(fixture: &StandaloneCanisterFixture) {
+    let wasm_path = build_degens_canister();
+    let wasm = fs::read(&wasm_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", wasm_path.display()));
+    fixture
+        .pic()
+        .retry_install_code_ok(5, Duration::from_secs(5), || {
+            fixture
+                .pic()
+                .upgrade_canister(
+                    fixture.canister_id(),
+                    wasm.clone(),
+                    candid::encode_args(()).expect("empty upgrade args encode"),
+                    None,
+                )
+                .map_err(|error| error.to_string())
+        })
+        .expect("degens canister upgrade should succeed");
+    fixture.pic().tick();
 }
 
 fn build_degens_canister() -> PathBuf {

@@ -77,6 +77,10 @@ add_group "gate-m" \
     "Gate M canister-backed web client probe" \
     "cargo test -p domm-pocket-ic-tests --test client_probe_canister --no-run" \
     "cargo test -p domm-pocket-ic-tests --test client_probe_canister gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter -- --nocapture"
+add_group "timer-jobs" \
+    "timer jobs scheduling, repair, no-op, and lease recovery PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases -- --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_GROUPS=(
@@ -90,6 +94,7 @@ POCKET_GROUPS=(
     "stationary"
     "week-two"
     "gate-m"
+    "timer-jobs"
 )
 
 usage() {

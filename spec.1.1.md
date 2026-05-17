@@ -46,7 +46,7 @@ Current timing notes from 2026-05-17:
 
 | Test group | Last observed result/time | Parallel status / next action |
 | --- | --- | --- |
-| PocketIC harness parallelism baseline | Parallel launch serialized behind `/tmp/canic-pocket-ic.lock` | Fix lock/isolation before trusting 32-core runs |
+| PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Verified by `cargo test --manifest-path vendor/canic-testkit/Cargo.toml process_lock --lib`, `cargo test -p domm-pocket-ic-tests --test pic_lock -- --nocapture` in 0.81s, and `cargo check -p domm-pocket-ic-tests --tests` in 33.7s |
 | Endpoint inventory/public surface | Failed in 47.9s; expected visible object `Mara of the Toll` | Fix expectation/state setup, then retime |
 | Gate J strategic loop/IcyDB rows | Failed in 597.8s observed; expected `neutral:west-mine` | Fix scenario/object persistence, then retime |
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
@@ -59,8 +59,14 @@ Current timing notes from 2026-05-17:
 Testing-first todo:
 
 - [x] Capture the current PocketIC timing/failure inventory in this spec.
-- [ ] Remove, shard, or replace the cross-process PocketIC lock so independent
-  PocketIC instances can run concurrently on this 32-core machine.
+- [x] Remove, shard, or replace the cross-process PocketIC lock so independent
+  PocketIC instances can run concurrently on this 32-core machine. Completed
+  2026-05-17 by vendoring `canic-testkit` and replacing the single
+  `/tmp/canic-pocket-ic.lock` path with process-local lock namespaces by
+  default. Evidence: `cargo test --manifest-path
+  vendor/canic-testkit/Cargo.toml process_lock --lib`, `cargo test -p
+  domm-pocket-ic-tests --test pic_lock -- --nocapture`, and `cargo check -p
+  domm-pocket-ic-tests --tests`.
 - [ ] Add a fast timing harness or make target that prebuilds once, runs
   independent groups with bounded parallelism, and reports per-group wall time.
 - [ ] Endpoint inventory/public surface group:

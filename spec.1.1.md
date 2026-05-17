@@ -55,7 +55,7 @@ Current timing notes from 2026-05-17:
 | Movement crossing conflict | Passed 2026-05-17 in 181.928s after crossing-conflict fast path | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Stationary enemy blocker | Passed 2026-05-17 in 194.921s after turn-sync yield split | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
-| Gate M web client probe | Failed in 256.6s; `turn_not_due` | Fix client probe timing/turn readiness |
+| Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
 
 Testing-first todo:
 
@@ -103,8 +103,11 @@ Testing-first todo:
 - [x] Week-two tavern/recruit growth group:
   `pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance`
   currently passes; retime after the shared PocketIC lock is fixed.
-- [ ] Gate M web client probe group:
-  `gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter`.
+- [x] Gate M web client probe group:
+  `gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter`. Completed
+  2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-m`
+  passing in 345.324s after prebuild. Evidence also included `cargo check -p
+  domm-degens-canister`.
 - [ ] Timer jobs PocketIC group: scheduling, duplicate timer no-op, expired
   lease recovery, post-upgrade repair, and deadline progression.
 - [ ] End-turn PocketIC group: ended-player-still-acts, final participant

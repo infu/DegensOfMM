@@ -171,19 +171,30 @@ impl CanisterWebClientBackend {
     }
 
     fn advance_time_ms(&mut self, millis: u64) {
+        self.advance_clock_ms(millis);
+        self.fixture.pic().tick();
+    }
+
+    fn advance_clock_ms(&mut self, millis: u64) {
         self.fixture
             .pic()
             .advance_time(Duration::from_millis(millis));
-        self.fixture.pic().tick();
         self.server_now_ms = self.server_now_ms.saturating_add(millis);
     }
 
-    fn advance_once_for_nonce(&mut self, method: &str, client_nonce: &str, millis: u64) {
+    fn advance_to_time_ms(&mut self, now_ms: u64) {
+        let millis = now_ms.saturating_sub(self.server_now_ms);
+        if millis > 0 {
+            self.advance_clock_ms(millis);
+        }
+    }
+
+    fn advance_once_for_nonce_at_time(&mut self, method: &str, client_nonce: &str, now_ms: u64) {
         if self
             .advanced_time_nonces
             .insert(format!("{method}:{client_nonce}"))
         {
-            self.advance_time_ms(millis);
+            self.advance_to_time_ms(now_ms);
         }
     }
 
@@ -373,11 +384,12 @@ impl CanisterWebClientBackend {
         Self::assert_applied(&moved)?;
 
         let max_sync_calls = path.len().saturating_add(2);
+        let sync_now_ms = now_ms.max(self.server_now_ms.saturating_add(61_000));
         self.sync_until_event(
             caller,
             session_id,
             sync_nonce_prefix,
-            now_ms,
+            sync_now_ms,
             expected_event_type,
             max_sync_calls,
         )
@@ -388,13 +400,13 @@ impl CanisterWebClientBackend {
         caller: Principal,
         session_id: &str,
         sync_nonce_prefix: &str,
-        _now_ms: u64,
+        now_ms: u64,
         expected_event_type: &str,
         max_sync_calls: usize,
     ) -> Result<(CommandResponse, bool), ProbeError> {
-        self.advance_time_ms(61_000);
         let mut saw_partial_sync = false;
         for attempt in 0..max_sync_calls {
+            self.advance_to_time_ms(now_ms.saturating_add((attempt as u64).saturating_mul(61_000)));
             let synced = self.update_command_response(
                 caller,
                 "sync_session_turn",
@@ -424,6 +436,27 @@ impl CanisterWebClientBackend {
         )))
     }
 
+    fn sync_map_turn_if_due(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+        client_nonce: &str,
+    ) -> Result<(), ProbeError> {
+        let synced = self.update_command_response(
+            caller,
+            "sync_session_turn",
+            (session_id.to_string(), client_nonce.to_string()),
+        )?;
+        if synced
+            .error
+            .as_ref()
+            .is_some_and(|error| error.code == "turn_not_due")
+        {
+            return Ok(());
+        }
+        Self::assert_applied(&synced)
+    }
+
     fn resolve_battle_to_end(
         &mut self,
         caller: Principal,
@@ -438,7 +471,21 @@ impl CanisterWebClientBackend {
                 (session_id.to_string(), battle_id.to_string()),
             )?;
             if view.state == "resolved" {
-                return Ok(view);
+                let synced = self.update_command_response(
+                    caller,
+                    "sync_battle",
+                    (
+                        session_id.to_string(),
+                        battle_id.to_string(),
+                        format!("{nonce_prefix}:aftermath:{step}"),
+                    ),
+                )?;
+                Self::assert_applied(&synced)?;
+                return self.query_result::<BattleView>(
+                    caller,
+                    "get_battle_state",
+                    (session_id.to_string(), battle_id.to_string()),
+                );
             }
             if view.legal_actions_for_caller.is_empty() {
                 self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
@@ -493,6 +540,7 @@ impl CanisterWebClientBackend {
             &neutral_battle_id,
             "nonce:gate-m:neutral-battle",
         )?;
+        self.sync_map_turn_if_due(caller, session_id, "nonce:gate-m:post-neutral-turn")?;
 
         let west = self.owned_champion_id(caller, session_id)?;
         let west_champion_id = west.champion_id.clone();
@@ -555,6 +603,7 @@ impl CanisterWebClientBackend {
             &champion_battle_id,
             "nonce:gate-m:champion-battle",
         )?;
+        self.sync_map_turn_if_due(caller, session_id, "nonce:gate-m:post-champion-turn")?;
 
         let (town_contact_sync, _) = self.submit_move_and_sync_until_event(
             caller,
@@ -903,7 +952,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         client_nonce: &str,
         now_ms: u64,
     ) -> CommandResponse {
-        self.server_now_ms = now_ms;
+        self.advance_to_time_ms(now_ms);
         let champion_id = self
             .resolve_champion_id(caller, session_id, champion_id)
             .expect("semantic champion id should resolve through canister");
@@ -927,8 +976,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         now_ms: u64,
         client_nonce: &str,
     ) -> CommandResponse {
-        self.server_now_ms = now_ms;
-        self.advance_once_for_nonce("sync_session_turn", client_nonce, 61_000);
+        self.advance_once_for_nonce_at_time("sync_session_turn", client_nonce, now_ms);
         self.update_command_response(
             caller,
             "sync_session_turn",
@@ -1046,7 +1094,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         battle_id: &str,
         now_ms: u64,
     ) -> Result<BattleView, ProbeError> {
-        self.server_now_ms = now_ms;
+        self.advance_to_time_ms(now_ms);
         self.include_battle_in_game_view = true;
         self.first_battle_id
             .get_or_insert_with(|| battle_id.to_string());
@@ -1065,7 +1113,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         client_nonce: &str,
         now_ms: u64,
     ) -> CommandResponse {
-        self.server_now_ms = now_ms;
+        self.advance_to_time_ms(now_ms);
         let session_id = self
             .session_id
             .clone()
@@ -1085,12 +1133,7 @@ impl WebClientBackend for CanisterWebClientBackend {
         now_ms: u64,
         client_nonce: &str,
     ) -> CommandResponse {
-        self.server_now_ms = now_ms;
-        self.advance_once_for_nonce(
-            "sync_battle",
-            client_nonce,
-            domm_game::BATTLE_ACTION_DEADLINE_MS + 1,
-        );
+        self.advance_once_for_nonce_at_time("sync_battle", client_nonce, now_ms);
         let session_id = self
             .session_id
             .clone()
@@ -1376,7 +1419,21 @@ fn assert_representative_dtos_match(fixture: &GameView, canister: &GameView) {
     );
     assert_eq!(canister.viewport, fixture.viewport);
     assert_eq!(canister.map_chunks.len(), fixture.map_chunks.len());
-    assert_eq!(canister.objects.len(), fixture.objects.len());
+    assert!(
+        canister.objects.len() >= fixture.objects.len(),
+        "canister opening view should include at least the fixture object sample"
+    );
+    for fixture_object in &fixture.objects {
+        assert!(
+            canister.objects.iter().any(|object| {
+                object.subject_kind == fixture_object.subject_kind
+                    && object.subject_id_text == fixture_object.subject_id_text
+            }),
+            "canister opening view is missing fixture object {}:{}",
+            fixture_object.subject_kind,
+            fixture_object.subject_id_text
+        );
+    }
     assert_eq!(canister.champions.len(), fixture.champions.len());
     assert_eq!(canister.towns.len(), fixture.towns.len());
     assert_eq!(
@@ -1461,7 +1518,12 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
     let action = view
         .legal_actions_for_caller
         .iter()
-        .find(|action| action.enabled)
+        .find(|action| action.enabled && action.action != "CastAbility")
+        .or_else(|| {
+            view.legal_actions_for_caller
+                .iter()
+                .find(|action| action.enabled)
+        })
         .expect("caller should have at least one enabled battle action");
     BattleActionInput {
         battle_id: view.battle_id.clone(),

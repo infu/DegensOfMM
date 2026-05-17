@@ -96,12 +96,18 @@ pub(crate) fn visible_objects(
         "list_limit_exceeded",
     )?;
     let mut objects = Vec::new();
+    let live_world_objects_by_coord = live_world_objects_by_coord(context.session.id())?;
 
     for subject in visible_subjects_for_viewport(context, viewport) {
         if !viewport.contains(subject.x, subject.y) {
             continue;
         }
-        if let Some(view) = object_view_from_known_fast(context, &subject, Some(viewport))? {
+        if let Some(view) = object_view_from_known_fast(
+            context,
+            &subject,
+            Some(viewport),
+            Some(&live_world_objects_by_coord),
+        )? {
             objects.push(view);
         }
     }
@@ -165,7 +171,7 @@ pub(crate) fn object_view_by_subject(
         ));
     }
     let subject = ObjectSubject::from_known(&known);
-    object_view_from_known_fast(context, &subject, None)?
+    object_view_from_known_fast(context, &subject, None, None)?
         .ok_or_else(|| public_error("not_visible", "object is no longer visible", false))
 }
 
@@ -740,11 +746,12 @@ fn object_view_from_known_fast(
     context: &SessionCallerContext,
     subject: &ObjectSubject,
     viewport: Option<&Viewport>,
+    live_world_objects_by_coord: Option<&BTreeMap<(u16, u16), WorldObject>>,
 ) -> Result<Option<ObjectView>, ApiError> {
     match subject.subject_kind.as_str() {
         "world_object" => {
             if viewport.is_some() {
-                return world_object_list_view(context, subject);
+                return world_object_list_view(context, subject, live_world_objects_by_coord);
             }
             let Some(object) = live_world_object_for_known(context.session.id(), subject)? else {
                 return Ok(None);
@@ -775,6 +782,15 @@ fn object_view_from_known_fast(
         }
         "neutral_army" => {
             if viewport.is_some() {
+                let Some(neutral) = live_neutral_for_known(context.session.id(), subject)? else {
+                    return Ok(None);
+                };
+                if neutral.state == "defeated" {
+                    return Ok(None);
+                }
+                if viewport.is_some_and(|viewport| !viewport.contains(neutral.x, neutral.y)) {
+                    return Ok(None);
+                }
                 let details = scenario_subject_details(
                     &subject.subject_kind,
                     &subject.subject_id_text,
@@ -785,15 +801,17 @@ fn object_view_from_known_fast(
                     subject_id_text: subject.subject_id_text.clone(),
                     visibility: "visible".to_string(),
                     redaction_level: "none".to_string(),
-                    x: subject.x,
-                    y: subject.y,
+                    x: neutral.x,
+                    y: neutral.y,
                     last_seen_turn: Some(context.session.current_turn),
                     display_name: Some(details.display_name),
                     asset_key: details.asset_key,
                     owner_participant_id: None,
                     details_json: format!(
-                        "{{\"type\":\"neutral_army\",\"scenario_key\":\"{}\",\"state\":\"active\"}}",
-                        escape_json(&subject.subject_id_text)
+                        "{{\"type\":\"neutral_army\",\"scenario_key\":\"{}\",\"neutral_army_id\":\"{}\",\"state\":\"{}\"}}",
+                        escape_json(&subject.subject_id_text),
+                        neutral.id(),
+                        escape_json(&neutral.state)
                     ),
                 }));
             }
@@ -977,6 +995,7 @@ fn object_view_from_known_fast(
 fn world_object_list_view(
     context: &SessionCallerContext,
     subject: &ObjectSubject,
+    live_world_objects_by_coord: Option<&BTreeMap<(u16, u16), WorldObject>>,
 ) -> Result<Option<ObjectView>, ApiError> {
     let mut state = "available".to_string();
     let mut owner_participant_id = None;
@@ -990,11 +1009,18 @@ fn world_object_list_view(
     let mut x = subject.x;
     let mut y = subject.y;
     let mut details_json = None;
-    if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
-        context.session.id(),
-        subject.x,
-        subject.y,
-    )? {
+    let live_object = if let Some(object) = live_world_objects_by_coord
+        .and_then(|objects| objects.get(&(subject.x, subject.y)).cloned())
+    {
+        Some(object)
+    } else {
+        map_visibility_occupancy::find_world_object_by_session_xy(
+            context.session.id(),
+            subject.x,
+            subject.y,
+        )?
+    };
+    if let Some(object) = live_object {
         if object.state == "collected" {
             return Ok(None);
         }
@@ -1030,6 +1056,20 @@ fn world_object_list_view(
             escape_json(&scoring_kind)
         )),
     }))
+}
+
+fn live_world_objects_by_coord(
+    session_id: Id<GameSession>,
+) -> Result<BTreeMap<(u16, u16), WorldObject>, ApiError> {
+    Ok(map_visibility_occupancy::page_world_objects_by_session(
+        session_id,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    .into_iter()
+    .map(|object| ((object.x, object.y), object))
+    .collect())
 }
 
 fn scenario_champion_belongs_to_participant(

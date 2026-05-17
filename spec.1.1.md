@@ -57,6 +57,7 @@ Current timing notes from 2026-05-17:
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
 | Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
 | Timer jobs PocketIC group | Passed 2026-05-17 in 59.586s after post-upgrade repair, heartbeat backstop, and expired-lease recovery fixes | New focused group is fast enough for repeated timer regression checks |
+| End-turn PocketIC group | Passed 2026-05-17 in 59.621s after ready-row stale action guard and replay coverage | New focused group is fast enough for repeated end-turn regression checks |
 
 Testing-first todo:
 
@@ -115,8 +116,12 @@ Testing-first todo:
   passing in 59.586s after prebuild. Evidence also included `cargo check -p
   domm-degens-canister` and a focused no-run build for
   `pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases`.
-- [ ] End-turn PocketIC group: ended-player-still-acts, final participant
-  closes the turn, stale turn commands, and replay semantics.
+- [x] End-turn PocketIC group: ended-player-still-acts, final participant
+  closes the turn, stale turn commands, and replay semantics. Completed
+  2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh end-turn`
+  passing in 59.621s after prebuild. Evidence also included `cargo check -p
+  domm-degens-canister` and a focused no-run build for
+  `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions`.
 - [ ] Battle-round readiness PocketIC group: timer auto-defend,
   `end_battle_turn`, auto-ready stacks, and replay semantics.
 - [ ] Render projection PocketIC group: live object hydration, consumed piles,

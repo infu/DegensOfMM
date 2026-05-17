@@ -12,7 +12,7 @@ use icydb::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::repos::{commands_events_effects, sessions, system_jobs};
+use crate::repos::{commands_events_effects, sessions, system_jobs, turn_ready};
 
 use super::session_context::{SessionCallerContext, public_error};
 
@@ -160,6 +160,19 @@ fn ensure_map_turn_accepts_new_command(
                 ));
             }
         }
+    }
+    if turn_ready::find_turn_ready(
+        context.session.id(),
+        context.participant.id(),
+        context.session.current_turn,
+    )?
+    .is_some()
+    {
+        return Err(public_error(
+            "turn_already_ended",
+            "this participant has already ended the current turn",
+            false,
+        ));
     }
     Ok(())
 }

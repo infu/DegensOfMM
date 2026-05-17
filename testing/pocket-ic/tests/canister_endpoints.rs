@@ -2326,6 +2326,132 @@ fn pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases() {
 }
 
 #[test]
+fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-end-turn-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-end-turn-player-two");
+    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "end-turn");
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+
+    let player_one_ended = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "end_turn",
+        (session_id.clone(), "nonce:end-turn:end:one".to_string()),
+    )
+    .expect("player one end_turn should decode")
+    .expect("player one end_turn should succeed");
+    assert_eq!(player_one_ended.status, CommandStatus::Applied);
+    assert!(player_one_ended.events.iter().any(|event| {
+        event.event_type == "participant_turn_ready"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""all_ready":false"#))
+    }));
+
+    let ended_player_move = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            vec![MoveCoord::new(9, 24)],
+            "nonce:end-turn:move-after-ended".to_string(),
+        ),
+    )
+    .expect("ended-player move denial should decode")
+    .expect_err("ended player should not create new turn commands");
+    assert_eq!(ended_player_move.code, "turn_already_ended");
+
+    let player_one_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "end_turn",
+        (session_id.clone(), "nonce:end-turn:end:one".to_string()),
+    )
+    .expect("player one end_turn replay should decode")
+    .expect("player one end_turn replay should succeed");
+    assert_eq!(player_one_replay.command_id, player_one_ended.command_id);
+    assert_eq!(player_one_replay.status, CommandStatus::Applied);
+
+    let player_two_ended = update_as::<CommandResponse>(
+        &fixture,
+        player_two,
+        "end_turn",
+        (session_id.clone(), "nonce:end-turn:end:two".to_string()),
+    )
+    .expect("player two end_turn should decode")
+    .expect("player two end_turn should succeed");
+    assert_eq!(player_two_ended.status, CommandStatus::Applied);
+    assert!(player_two_ended.events.iter().any(|event| {
+        event.event_type == "participant_turn_ready"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""all_ready":true"#))
+    }));
+
+    assert!(
+        player_two_ended
+            .changed_subjects
+            .iter()
+            .any(|subject| subject.subject_kind == "system_job"),
+        "final participant readiness should schedule immediate turn resolution"
+    );
+
+    let mut after_turn_resolution = compact_game_view(&fixture, player_one, &session_id);
+    if after_turn_resolution.session.current_turn == 1 {
+        advance_time_for_timers(&fixture, 1_000);
+        replay_player_registration(&fixture, player_two, "end-turn", "two");
+        after_turn_resolution = compact_game_view(&fixture, player_one, &session_id);
+    }
+    assert_eq!(after_turn_resolution.session.current_turn, 2);
+
+    let player_one_stale_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "end_turn",
+        (session_id.clone(), "nonce:end-turn:end:one".to_string()),
+    )
+    .expect("player one stale end_turn replay should decode")
+    .expect("player one stale end_turn replay should succeed");
+    assert_eq!(
+        player_one_stale_replay.command_id,
+        player_one_ended.command_id
+    );
+
+    let turn_two_move = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id,
+            vec![MoveCoord::new(9, 24)],
+            "nonce:end-turn:turn-two-move".to_string(),
+        ),
+    )
+    .expect("turn two move should decode")
+    .expect("old turn ready rows should not block turn two commands");
+    assert_eq!(turn_two_move.status, CommandStatus::Applied);
+    assert_eq!(turn_two_move.effective_turn, 2);
+
+    let player_two_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_two,
+        "end_turn",
+        (session_id.clone(), "nonce:end-turn:end:two".to_string()),
+    )
+    .expect("player two end_turn replay should decode")
+    .expect("player two end_turn replay should succeed");
+    assert_eq!(player_two_replay.command_id, player_two_ended.command_id);
+    let after_replay = compact_game_view(&fixture, player_one, &session_id);
+    assert_eq!(after_replay.session.current_turn, 2);
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");

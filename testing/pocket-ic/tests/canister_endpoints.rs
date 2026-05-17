@@ -6204,7 +6204,12 @@ fn sync_until_event(
                 format!("{sync_nonce_prefix}{attempt}"),
             ),
         )
-        .expect("sync_session_turn should decode")
+        .unwrap_or_else(|error| {
+            panic!(
+                "sync_session_turn {}{} should decode: {error}",
+                sync_nonce_prefix, attempt
+            )
+        })
         .expect("sync_session_turn should succeed");
         if synced.status != CommandStatus::Applied {
             if synced

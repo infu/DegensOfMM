@@ -15,14 +15,20 @@ pub(crate) fn start_champion_battle(
     session: &GameSession,
     command_id: Id<GameCommand>,
     attacker: &Champion,
-    attacker_participant_id: Id<GameParticipant>,
+    _attacker_participant_id: Id<GameParticipant>,
     defender: &Champion,
     coord: MoveCoord,
-) -> Result<Battle, ApiError> {
+) -> Result<Option<Battle>, ApiError> {
     if let Some(existing) = battles::find_battle_by_attacker(attacker.id())? {
-        if existing.state == "active" && existing.defender_champion_id == Some(defender.id().key())
+        if (existing.state == "active" || existing.state.starts_with("starting"))
+            && existing.defender_champion_id == Some(defender.id().key())
         {
-            return Ok(existing);
+            if existing.state.starts_with("starting") {
+                return continue_champion_battle_start(
+                    session, command_id, existing, attacker, defender,
+                );
+            }
+            return Ok(Some(existing));
         }
     }
     let mut battle = create_battle(
@@ -35,27 +41,76 @@ pub(crate) fn start_champion_battle(
         None,
         battle_seed(session, attacker, &defender.id().to_string(), coord),
     )?;
-    let mut stacks = Vec::new();
-    stacks.extend(create_champion_side_stacks(
-        command_id,
+    battle.state = "starting".to_string();
+    battles::update_battle(battle)?;
+    Ok(None)
+}
+
+fn continue_champion_battle_start(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    mut battle: Battle,
+    attacker: &Champion,
+    defender: &Champion,
+) -> Result<Option<Battle>, ApiError> {
+    let attacker_stacks = battles::page_battle_stacks_by_side(
         battle.id(),
-        attacker.id(),
-        Some(attacker_participant_id),
         "attacker",
-        1,
-    )?);
-    stacks.extend(create_champion_side_stacks(
-        command_id,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    let defender_stacks = battles::page_battle_stacks_by_side(
         battle.id(),
-        defender.id(),
-        Some(Id::<GameParticipant>::from_key(defender.participant_id)),
         "defender",
-        domm_game::BATTLE_GRID_WIDTH - 2,
-    )?);
-    create_default_obstacles(command_id, battle.id())?;
-    let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
-    battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
-    Ok(battle)
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    match battle.state.as_str() {
+        "starting" => {
+            if attacker_stacks.items.is_empty() {
+                create_champion_side_stacks(
+                    command_id,
+                    battle.id(),
+                    attacker.id(),
+                    Some(Id::<GameParticipant>::from_key(attacker.participant_id)),
+                    "attacker",
+                    1,
+                )?;
+            }
+            battle.state = "starting_attacker".to_string();
+            battles::update_battle(battle)?;
+            Ok(None)
+        }
+        "starting_attacker" => {
+            if defender_stacks.items.is_empty() {
+                create_champion_side_stacks(
+                    command_id,
+                    battle.id(),
+                    defender.id(),
+                    Some(Id::<GameParticipant>::from_key(defender.participant_id)),
+                    "defender",
+                    domm_game::BATTLE_GRID_WIDTH - 2,
+                )?;
+            }
+            battle.state = "starting_defender".to_string();
+            battles::update_battle(battle)?;
+            Ok(None)
+        }
+        "starting_defender" => {
+            create_default_obstacles(command_id, battle.id())?;
+            battle.state = "starting_obstacles".to_string();
+            battles::update_battle(battle)?;
+            Ok(None)
+        }
+        "starting_obstacles" => {
+            let mut stacks = attacker_stacks.items;
+            stacks.extend(defender_stacks.items);
+            battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
+            battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+            Ok(Some(battle))
+        }
+        _ => Ok(None),
+    }
 }
 
 pub(crate) fn start_town_battle(

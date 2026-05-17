@@ -52,7 +52,7 @@ Current timing notes from 2026-05-17:
 | Gate J strategic loop/IcyDB rows | Revalidated 2026-05-17 in 110.259s after movement event yielding and explicit follow-up income sync coverage | Improved but still a long route; keep serial until the remaining full-route groups are retimed |
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
 | Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
-| Movement crossing conflict | Passed 2026-05-17 in 181.928s after crossing-conflict fast path | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
+| Movement crossing conflict | Revalidated 2026-05-17 in 202.583s after phased champion battle setup removed the crossing sync instruction trap | Slow full-route group; keep serial while battle setup is split further |
 | Stationary enemy blocker | Passed 2026-05-17 in 194.921s after turn-sync yield split | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
 | Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
@@ -105,8 +105,9 @@ Testing-first todo:
 - [x] Movement crossing conflict group:
   `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh movement`
-  passing in 181.928s after prebuild. Evidence also included
-  `cargo check -p domm-degens-canister`.
+  passing in 181.928s after prebuild. Revalidated 2026-05-17 in 202.583s
+  after phased champion battle setup removed the crossing sync instruction
+  trap. Evidence also included `cargo check -p domm-degens-canister`.
 - [x] Stationary enemy blocker group:
   `pocket_ic_stationary_enemy_blocker_starts_champion_encounter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh movement

@@ -659,7 +659,7 @@ fn resolve_pending_movement(
             step_index,
             changed_subjects,
         )?;
-        resolve_crossing_conflicts(
+        let crossing_resolution_complete = resolve_crossing_conflicts(
             session,
             command_id,
             &mut pending,
@@ -668,6 +668,17 @@ fn resolve_pending_movement(
             events,
             changed_subjects,
         )?;
+        if !crossing_resolution_complete {
+            park_partial_movements(
+                session,
+                command_id,
+                &mut pending,
+                step_index,
+                events,
+                changed_subjects,
+            )?;
+            return Ok(false);
+        }
         let blocker_resolution_complete = resolve_blockers_and_guarded_objects(
             session,
             command_id,
@@ -783,14 +794,17 @@ fn resolve_single_long_movement_fast(
             })?;
             let enemy = blocker_champion.participant_id != pending[0].participant.id().key();
             if enemy {
-                let event = mark_stationary_champion_encounter_pending(
+                let Some(event) = mark_stationary_champion_encounter_pending(
                     session,
                     command_id,
                     pending,
                     0,
                     &mut blocker_champion,
                     final_coord,
-                )?;
+                )?
+                else {
+                    return Ok(Some(false));
+                };
                 events.push(event);
                 changed_subjects.push(command_response::changed(
                     "champion",
@@ -1039,7 +1053,11 @@ fn resolve_two_movement_crossing_fast(
         let right_remaining =
             apply_fast_path_position(session, command_id, &mut pending[1], right_from, right_cost);
 
-        let event = mark_champion_encounter_pending(session, command_id, pending, 0, 1, left_to)?;
+        let Some(event) =
+            mark_champion_encounter_pending(session, command_id, pending, 0, 1, left_to)?
+        else {
+            return Ok(Some(false));
+        };
         events.push(event);
         changed_subjects.push(command_response::changed(
             "champion",
@@ -1488,7 +1506,7 @@ fn resolve_crossing_conflicts(
     step_index: u16,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
-) -> Result<(), ApiError> {
+) -> Result<bool, ApiError> {
     let keys = active.keys().copied().collect::<Vec<_>>();
     let mut stopped = BTreeSet::new();
     for left_pos in 0..keys.len() {
@@ -1508,14 +1526,17 @@ fn resolve_crossing_conflicts(
                 let enemy = pending[left.pending_index].participant.id()
                     != pending[right.pending_index].participant.id();
                 if enemy {
-                    let event = mark_champion_encounter_pending(
+                    let Some(event) = mark_champion_encounter_pending(
                         session,
                         command_id,
                         pending,
                         left.pending_index,
                         right.pending_index,
                         left.to,
-                    )?;
+                    )?
+                    else {
+                        return Ok(false);
+                    };
                     events.push(event);
                     changed_subjects.push(command_response::changed(
                         "champion",
@@ -1575,7 +1596,7 @@ fn resolve_crossing_conflicts(
             }
         }
     }
-    Ok(())
+    Ok(true)
 }
 
 fn resolve_blockers_and_guarded_objects(
@@ -1685,27 +1706,33 @@ fn resolve_blockers_and_guarded_objects(
                 if let Some(blocker_index) = blocker_index {
                     active.remove(&blocker_index);
                     if enemy {
-                        let event = mark_champion_encounter_pending(
+                        let Some(event) = mark_champion_encounter_pending(
                             session,
                             command_id,
                             pending,
                             candidate.pending_index,
                             blocker_index,
                             candidate.to,
-                        )?;
+                        )?
+                        else {
+                            return Ok(false);
+                        };
                         events.push(event);
                     }
                 } else if enemy {
                     let mut blocker_champion =
                         stationary_blocker.expect("enemy stationary blocker should be loaded");
-                    let event = mark_stationary_champion_encounter_pending(
+                    let Some(event) = mark_stationary_champion_encounter_pending(
                         session,
                         command_id,
                         pending,
                         candidate.pending_index,
                         &mut blocker_champion,
                         candidate.to,
-                    )?;
+                    )?
+                    else {
+                        return Ok(false);
+                    };
                     events.push(event);
                     changed_subjects.push(command_response::changed(
                         "champion",
@@ -2371,15 +2398,18 @@ fn mark_champion_encounter_pending(
     attacker_index: usize,
     defender_index: usize,
     coord: MoveCoord,
-) -> Result<domm_game::ApiEventView, ApiError> {
-    let battle = battle_start::start_champion_battle(
+) -> Result<Option<domm_game::ApiEventView>, ApiError> {
+    let Some(battle) = battle_start::start_champion_battle(
         session,
         command_id,
         &pending[attacker_index].champion,
         pending[attacker_index].participant.id(),
         &pending[defender_index].champion,
         coord,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     for index in [attacker_index, defender_index] {
         pending[index].champion.status = "in_battle".to_string();
         pending[index].champion.in_battle_id = Some(battle.id().key());
@@ -2408,6 +2438,7 @@ fn mark_champion_encounter_pending(
             coord.y
         ),
     )
+    .map(Some)
 }
 
 fn mark_stationary_champion_encounter_pending(
@@ -2417,15 +2448,18 @@ fn mark_stationary_champion_encounter_pending(
     attacker_index: usize,
     defender: &mut Champion,
     coord: MoveCoord,
-) -> Result<domm_game::ApiEventView, ApiError> {
-    let battle = battle_start::start_champion_battle(
+) -> Result<Option<domm_game::ApiEventView>, ApiError> {
+    let Some(battle) = battle_start::start_champion_battle(
         session,
         command_id,
         &pending[attacker_index].champion,
         pending[attacker_index].participant.id(),
         defender,
         coord,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     pending[attacker_index].champion.status = "in_battle".to_string();
     pending[attacker_index].champion.in_battle_id = Some(battle.id().key());
     pending[attacker_index].champion.last_command_id = Some(command_id.key());
@@ -2454,6 +2488,7 @@ fn mark_stationary_champion_encounter_pending(
             coord.y
         ),
     )
+    .map(Some)
 }
 
 fn mark_neutral_encounter_pending(

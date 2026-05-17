@@ -1122,11 +1122,15 @@ fn prepare_fast_path_stop(
     pending_move: &mut PendingMovement,
 ) -> Result<(u16, MoveCoord, u16, u16), ApiError> {
     let stop_len = pending_move.path.len().saturating_sub(1);
-    let stop_coord = pending_move
-        .path
-        .get(stop_len.saturating_sub(1))
-        .copied()
-        .unwrap_or(pending_move.start);
+    let stop_coord = if stop_len == 0 {
+        pending_move.start
+    } else {
+        pending_move
+            .path
+            .get(stop_len - 1)
+            .copied()
+            .unwrap_or(pending_move.start)
+    };
     let movement_cost = movement_cost_for_path(session, &pending_move.path[..stop_len])?;
     let remaining_after =
         apply_fast_path_position(session, command_id, pending_move, stop_coord, movement_cost);
@@ -2257,6 +2261,9 @@ fn update_champion_occupancy(
     old: MoveCoord,
     champion: &Champion,
 ) -> Result<(), ApiError> {
+    if old.x == champion.x && old.y == champion.y {
+        return Ok(());
+    }
     let occupant_id = champion.id().to_string();
     let old_occupancy =
         map_visibility_occupancy::find_occupancy_cell(session_id, old.x, old.y, "champion")?;

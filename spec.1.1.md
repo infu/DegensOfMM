@@ -53,7 +53,7 @@ Current timing notes from 2026-05-17:
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
 | Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
 | Movement crossing conflict | Revalidated 2026-05-17 in 202.583s after phased champion battle setup removed the crossing sync instruction trap | Slow full-route group; keep serial while battle setup is split further |
-| Stationary enemy blocker | Passed 2026-05-17 in 194.921s after turn-sync yield split | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
+| Stationary enemy blocker | Revalidated 2026-05-17 in 237.215s after phased champion battle setup and one-step blocker stop-coordinate fix | Slow full-route group; keep serial while champion battle setup is split further |
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
 | Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
 | Timer jobs PocketIC group | Passed 2026-05-17 in 59.586s after post-upgrade repair, heartbeat backstop, and expired-lease recovery fixes | New focused group is fast enough for repeated timer regression checks |
@@ -111,8 +111,10 @@ Testing-first todo:
 - [x] Stationary enemy blocker group:
   `pocket_ic_stationary_enemy_blocker_starts_champion_encounter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh movement
-  stationary` passing the stationary group in 194.921s after prebuild. Evidence
-  also included `cargo check -p domm-degens-canister`.
+  stationary` passing the stationary group in 194.921s after prebuild.
+  Revalidated 2026-05-17 in 237.215s after phased champion battle setup and
+  the one-step blocker stop-coordinate fix. Evidence also included `cargo
+  check -p domm-degens-canister`.
 - [x] Week-two tavern/recruit growth group:
   `pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance`
   currently passes; retime after the shared PocketIC lock is fixed.

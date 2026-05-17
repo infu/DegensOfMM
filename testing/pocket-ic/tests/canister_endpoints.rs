@@ -5031,7 +5031,7 @@ fn pocket_ic_stationary_enemy_blocker_starts_champion_encounter() {
         "nonce:blocker:sync:west:",
         244_000_u64,
         "champion_encounter_pending",
-        4,
+        6,
         61_000,
     );
     assert!(
@@ -6210,7 +6210,12 @@ fn sync_until_event(
                 sync_nonce_prefix, attempt
             )
         })
-        .expect("sync_session_turn should succeed");
+        .unwrap_or_else(|error| {
+            panic!(
+                "sync_session_turn {}{} should succeed: {error:?}",
+                sync_nonce_prefix, attempt
+            )
+        });
         if synced.status != CommandStatus::Applied {
             if synced
                 .error

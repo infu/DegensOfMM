@@ -59,6 +59,7 @@ Current timing notes from 2026-05-17:
 | Timer jobs PocketIC group | Passed 2026-05-17 in 59.586s after post-upgrade repair, heartbeat backstop, and expired-lease recovery fixes | New focused group is fast enough for repeated timer regression checks |
 | End-turn PocketIC group | Passed 2026-05-17 in 59.621s after ready-row stale action guard and replay coverage | New focused group is fast enough for repeated end-turn regression checks |
 | Battle-round readiness PocketIC group | Passed 2026-05-17 in 89.423s after auto-ready, round auto-defend, `end_battle_turn`, and replay coverage | Focused battle readiness route is isolated from the longer Gate K/L battle routes |
+| Render projection PocketIC group | Passed 2026-05-17 in 228.116s after participant-known render candidates, fog/cursor assertions, and guarded-mine aftermath projection coverage | Focused render route is green but still long; consumed-pile disappearance remains covered by the Gate J route until pickup sync is optimized |
 
 Testing-first todo:
 
@@ -129,8 +130,17 @@ Testing-first todo:
   battle-round` passing in 89.423s after prebuild. Evidence also included
   `cargo check -p domm-degens-canister` and a focused no-run build for
   `pocket_ic_battle_round_readiness_advances_and_replays`.
-- [ ] Render projection PocketIC group: live object hydration, consumed piles,
+- [x] Render projection PocketIC group: live object hydration, consumed piles,
   defeated neutrals, captured mines, champion coordinates, fog, and cursors.
+  Completed 2026-05-17 with `DOMM_TEST_JOBS=1
+  scripts/run-test-groups.sh render-projection` passing in 228.116s after
+  prebuild. Evidence also included `cargo check -p domm-degens-canister`, a
+  focused no-run build for `pocket_ic_render_projection`, and focused
+  repository hot-path inventory coverage. The new group covers opening live
+  object hydration, fog, cursors, defeated neutrals, captured mines, and
+  champion coordinates; consumed-pile disappearance remains covered by the
+  already-passing Gate J route while the pickup sync path is tracked under the
+  query budget/test-speed work.
 - [ ] Query budget group: representative preview/submit movement paths,
   bounded render reads, and query instruction ceilings.
 - [ ] Command recovery group: build, recruit, tavern hire, dwelling recruit,

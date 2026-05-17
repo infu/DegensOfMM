@@ -98,7 +98,7 @@ pub(crate) fn visible_objects(
     let mut objects = Vec::new();
     let live_world_objects_by_coord = live_world_objects_by_coord(context.session.id())?;
 
-    for subject in visible_subjects_for_viewport(context, viewport) {
+    for subject in known_subjects_for_viewport(context, viewport)? {
         if !viewport.contains(subject.x, subject.y) {
             continue;
         }
@@ -107,6 +107,7 @@ pub(crate) fn visible_objects(
             &subject,
             Some(viewport),
             Some(&live_world_objects_by_coord),
+            None,
         )? {
             objects.push(view);
         }
@@ -171,7 +172,7 @@ pub(crate) fn object_view_by_subject(
         ));
     }
     let subject = ObjectSubject::from_known(&known);
-    object_view_from_known_fast(context, &subject, None, None)?
+    object_view_from_known_fast(context, &subject, None, None, None)?
         .ok_or_else(|| public_error("not_visible", "object is no longer visible", false))
 }
 
@@ -510,190 +511,6 @@ fn town_faction_slug(town: &Town) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-struct KnownSubjectSeed {
-    subject_kind: &'static str,
-    subject_id_text: &'static str,
-    x: u16,
-    y: u16,
-}
-
-const FIRST_PLAYABLE_KNOWN_SUBJECTS: &[KnownSubjectSeed] = &[
-    KnownSubjectSeed {
-        subject_kind: "town",
-        subject_id_text: "town:west",
-        x: 6,
-        y: 24,
-    },
-    KnownSubjectSeed {
-        subject_kind: "town",
-        subject_id_text: "town:east",
-        x: 41,
-        y: 24,
-    },
-    KnownSubjectSeed {
-        subject_kind: "champion",
-        subject_id_text: "champion:west",
-        x: 8,
-        y: 24,
-    },
-    KnownSubjectSeed {
-        subject_kind: "champion",
-        subject_id_text: "champion:east",
-        x: 39,
-        y: 24,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "mine:west-gold",
-        x: 12,
-        y: 22,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "mine:west-crystal",
-        x: 14,
-        y: 30,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "mine:east-gold",
-        x: 35,
-        y: 26,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "mine:east-crystal",
-        x: 33,
-        y: 18,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "dwelling:west-mudhook",
-        x: 10,
-        y: 25,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "objective:north",
-        x: 24,
-        y: 20,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "objective:south",
-        x: 24,
-        y: 28,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-wood-1",
-        x: 9,
-        y: 23,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-gold-1",
-        x: 10,
-        y: 27,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-stone-1",
-        x: 13,
-        y: 18,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-iron-1",
-        x: 16,
-        y: 31,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-ember-1",
-        x: 19,
-        y: 20,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:west-aether-1",
-        x: 21,
-        y: 30,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-wood-1",
-        x: 38,
-        y: 25,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-gold-1",
-        x: 37,
-        y: 21,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-stone-1",
-        x: 34,
-        y: 30,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-iron-1",
-        x: 31,
-        y: 17,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-ember-1",
-        x: 28,
-        y: 28,
-    },
-    KnownSubjectSeed {
-        subject_kind: "world_object",
-        subject_id_text: "pile:east-aether-1",
-        x: 26,
-        y: 18,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:west-mine",
-        x: 12,
-        y: 22,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:east-mine",
-        x: 35,
-        y: 26,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:west-road",
-        x: 18,
-        y: 22,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:east-road",
-        x: 30,
-        y: 24,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:north-objective",
-        x: 24,
-        y: 20,
-    },
-    KnownSubjectSeed {
-        subject_kind: "neutral_army",
-        subject_id_text: "neutral:south-objective",
-        x: 24,
-        y: 28,
-    },
-];
-
 struct ObjectSubject {
     subject_kind: String,
     subject_id_text: String,
@@ -714,32 +531,37 @@ impl ObjectSubject {
             redacted_json: known.redacted_json.clone(),
         }
     }
-
-    fn from_seed(seed: &KnownSubjectSeed, turn_number: u32) -> Self {
-        Self {
-            subject_kind: seed.subject_kind.to_string(),
-            subject_id_text: seed.subject_id_text.to_string(),
-            x: seed.x,
-            y: seed.y,
-            last_seen_turn: turn_number,
-            redacted_json: None,
-        }
-    }
 }
 
-fn visible_subjects_for_viewport(
+fn known_subjects_for_viewport(
     context: &SessionCallerContext,
     viewport: &Viewport,
-) -> Vec<ObjectSubject> {
+) -> Result<Vec<ObjectSubject>, ApiError> {
     let mut subjects = Vec::new();
-    for seed in FIRST_PLAYABLE_KNOWN_SUBJECTS {
-        if !viewport.contains(seed.x, seed.y) {
+    let page = map_visibility_occupancy::page_known_objects_for_participant(
+        context.session.id(),
+        context.participant.id(),
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    for known in page.items {
+        if known.visibility == "hidden" || !viewport.contains(known.x, known.y) {
             continue;
         }
-        subjects.push(ObjectSubject::from_seed(seed, context.session.current_turn));
+        subjects.push(ObjectSubject::from_known(&known));
     }
-
-    subjects
+    subjects.sort_by_key(|subject| {
+        (
+            subject.y,
+            subject.x,
+            subject.subject_kind.clone(),
+            subject.subject_id_text.clone(),
+        )
+    });
+    subjects.dedup_by(|left, right| {
+        left.subject_kind == right.subject_kind && left.subject_id_text == right.subject_id_text
+    });
+    Ok(subjects)
 }
 
 fn object_view_from_known_fast(
@@ -747,11 +569,17 @@ fn object_view_from_known_fast(
     subject: &ObjectSubject,
     viewport: Option<&Viewport>,
     live_world_objects_by_coord: Option<&BTreeMap<(u16, u16), WorldObject>>,
+    visibility_by_coord: Option<&BTreeMap<(u16, u16), VisibilityChunk>>,
 ) -> Result<Option<ObjectView>, ApiError> {
     match subject.subject_kind.as_str() {
         "world_object" => {
             if viewport.is_some() {
-                return world_object_list_view(context, subject, live_world_objects_by_coord);
+                return world_object_list_view(
+                    context,
+                    subject,
+                    live_world_objects_by_coord,
+                    visibility_by_coord,
+                );
             }
             let Some(object) = live_world_object_for_known(context.session.id(), subject)? else {
                 return Ok(None);
@@ -788,6 +616,16 @@ fn object_view_from_known_fast(
                 if neutral.state == "defeated" {
                     return Ok(None);
                 }
+                if visibility_by_coord.is_some()
+                    && !is_visible_for_projection(
+                        context,
+                        visibility_by_coord,
+                        neutral.x,
+                        neutral.y,
+                    )?
+                {
+                    return Ok(None);
+                }
                 if viewport.is_some_and(|viewport| !viewport.contains(neutral.x, neutral.y)) {
                     return Ok(None);
                 }
@@ -820,6 +658,11 @@ fn object_view_from_known_fast(
             };
             if neutral.state == "defeated" {
                 return Ok(None);
+            }
+            if visibility_by_coord.is_some()
+                && !is_visible_for_projection(context, visibility_by_coord, neutral.x, neutral.y)?
+            {
+                return Ok(last_known_object_view_fast(subject, viewport));
             }
             if viewport.is_some_and(|viewport| !viewport.contains(neutral.x, neutral.y)) {
                 return Ok(None);
@@ -996,6 +839,7 @@ fn world_object_list_view(
     context: &SessionCallerContext,
     subject: &ObjectSubject,
     live_world_objects_by_coord: Option<&BTreeMap<(u16, u16), WorldObject>>,
+    visibility_by_coord: Option<&BTreeMap<(u16, u16), VisibilityChunk>>,
 ) -> Result<Option<ObjectView>, ApiError> {
     let mut state = "available".to_string();
     let mut owner_participant_id = None;
@@ -1009,10 +853,8 @@ fn world_object_list_view(
     let mut x = subject.x;
     let mut y = subject.y;
     let mut details_json = None;
-    let live_object = if let Some(object) = live_world_objects_by_coord
-        .and_then(|objects| objects.get(&(subject.x, subject.y)).cloned())
-    {
-        Some(object)
+    let live_object = if let Some(objects) = live_world_objects_by_coord {
+        objects.get(&(subject.x, subject.y)).cloned()
     } else {
         map_visibility_occupancy::find_world_object_by_session_xy(
             context.session.id(),
@@ -1020,6 +862,9 @@ fn world_object_list_view(
             subject.y,
         )?
     };
+    if live_world_objects_by_coord.is_some() && live_object.is_none() {
+        return Ok(None);
+    }
     if let Some(object) = live_object {
         if object.state == "collected" {
             return Ok(None);
@@ -1035,6 +880,11 @@ fn world_object_list_view(
             &subject.subject_id_text,
             &object,
         ));
+    }
+    if visibility_by_coord.is_some()
+        && !is_visible_for_projection(context, visibility_by_coord, x, y)?
+    {
+        return Ok(None);
     }
 
     Ok(Some(ObjectView {
@@ -1070,6 +920,23 @@ fn live_world_objects_by_coord(
     .into_iter()
     .map(|object| ((object.x, object.y), object))
     .collect())
+}
+
+fn is_visible_for_projection(
+    context: &SessionCallerContext,
+    visibility_by_coord: Option<&BTreeMap<(u16, u16), VisibilityChunk>>,
+    x: u16,
+    y: u16,
+) -> Result<bool, ApiError> {
+    if let Some(visibility_by_coord) = visibility_by_coord {
+        return Ok(is_visible_with_cache(
+            &context.session,
+            visibility_by_coord,
+            x,
+            y,
+        ));
+    }
+    is_visible_at(&context.session, context.participant.id(), x, y)
 }
 
 fn scenario_champion_belongs_to_participant(

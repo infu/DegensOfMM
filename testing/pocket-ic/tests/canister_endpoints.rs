@@ -20,7 +20,7 @@ use domm_game::{
     OPENING_QUEST_KEY, ObjectView, ObjectViewPage, ObjectiveProgressView,
     PROCEDURAL_GENERATION_KEY, ParticipantView, PlayerView, ProceduralMapView, QuestPreview,
     RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
-    SkirmishSettingsView, TavernOffersView, WorldEventsView, opening_viewport_for_slot,
+    SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView, opening_viewport_for_slot,
 };
 
 #[test]
@@ -1292,6 +1292,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         61_000,
         "resource_picked_up",
         4,
+        61_000,
     );
     assert_eq!(synced.status, CommandStatus::Applied);
 
@@ -2639,6 +2640,174 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
 }
 
 #[test]
+fn pocket_ic_render_projection_tracks_live_objects_and_fog() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-render-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-render-two");
+    let viewport = opening_viewport_for_slot(0);
+    let remote_viewport = opening_viewport_for_slot(1);
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "render-projection");
+
+    let first_page = visible_objects_page(&fixture, player_one, &session_id, &viewport, None, 3);
+    assert_eq!(first_page.objects.len(), 3);
+    assert!(first_page.has_more);
+    assert_eq!(first_page.next_cursor, Some(3));
+    let second_page = visible_objects_page(
+        &fixture,
+        player_one,
+        &session_id,
+        &viewport,
+        first_page.next_cursor,
+        3,
+    );
+    assert!(!second_page.objects.is_empty());
+    for second in &second_page.objects {
+        assert!(
+            first_page.objects.iter().all(|first| {
+                first.subject_kind != second.subject_kind
+                    || first.subject_id_text != second.subject_id_text
+            }),
+            "cursor page should not duplicate {}:{}",
+            second.subject_kind,
+            second.subject_id_text
+        );
+    }
+
+    let opening_objects =
+        visible_objects_page(&fixture, player_one, &session_id, &viewport, None, 128);
+    let opening_champion = visible_object(&opening_objects, "champion:west");
+    assert_eq!(
+        opening_champion.display_name.as_deref(),
+        Some("Mara of the Toll")
+    );
+    assert_eq!((opening_champion.x, opening_champion.y), (8, 24));
+    assert!(
+        opening_objects
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "pile:west-wood-1")
+    );
+    assert!(
+        opening_objects
+            .objects
+            .iter()
+            .any(|object| object.subject_id_text == "neutral:west-mine")
+    );
+
+    let remote_objects = visible_objects_page(
+        &fixture,
+        player_one,
+        &session_id,
+        &remote_viewport,
+        None,
+        128,
+    );
+    let remote_subjects = remote_objects
+        .objects
+        .iter()
+        .map(|object| format!("{}:{}", object.subject_kind, object.subject_id_text))
+        .collect::<Vec<_>>();
+    assert!(
+        remote_objects.objects.is_empty(),
+        "remote fog should not leak dynamic objects: {remote_subjects:?}"
+    );
+}
+
+#[test]
+fn pocket_ic_render_projection_tracks_battle_aftermath_objects() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-render-battle-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-render-battle-two");
+    let viewport = Viewport::new(8, 20, 7, 5);
+    let session_id = start_active_two_player_session(
+        &fixture,
+        player_one,
+        player_two,
+        "render-projection-battle",
+    );
+    let west_participant = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("battle participant query should decode")
+    .expect("battle participant should load");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
+
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:render-battle:move:neutral",
+        "nonce:render-battle:sync:neutral:",
+        122_000_u64,
+        "neutral_encounter_pending",
+    );
+    let neutral_battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    resolve_battle_to_end(
+        &fixture,
+        player_one,
+        &session_id,
+        &neutral_battle_id,
+        "nonce:render-battle:neutral",
+    );
+
+    let public_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("public events should decode")
+    .expect("public events should load");
+    for expected in [
+        "mine_captured",
+        "neutral_defeated",
+        "battle_aftermath_applied",
+    ] {
+        assert!(
+            public_events
+                .events
+                .iter()
+                .any(|event| event.event_type == expected),
+            "render route should publish {expected}"
+        );
+    }
+
+    let after_battle = visible_objects_page(&fixture, player_one, &session_id, &viewport, None, 32);
+    let champion_after_battle = visible_object(&after_battle, "champion:west");
+    assert_eq!((champion_after_battle.x, champion_after_battle.y), (12, 22));
+    assert!(
+        after_battle
+            .objects
+            .iter()
+            .all(|object| object.subject_id_text != "neutral:west-mine"),
+        "defeated neutral guards must not render as active objects"
+    );
+    let guarded_mine = visible_object(&after_battle, "mine:west-gold");
+    assert_eq!(
+        guarded_mine.owner_participant_id.as_deref(),
+        Some(west_participant.participant_id.as_str())
+    );
+    assert!(
+        guarded_mine.details_json.contains(r#""state":"captured""#),
+        "captured mine should render captured live details: {}",
+        guarded_mine.details_json
+    );
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");
@@ -3930,6 +4099,7 @@ fn pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor() {
         122_000_u64,
         "champion_encounter_pending",
         8,
+        61_000,
     );
     assert_eq!(synced.status, CommandStatus::Applied);
     assert!(saw_partial_sync);
@@ -4005,6 +4175,7 @@ fn pocket_ic_stationary_enemy_blocker_starts_champion_encounter() {
         244_000_u64,
         "champion_encounter_pending",
         4,
+        61_000,
     );
     assert!(
         blocked_sync
@@ -4849,6 +5020,36 @@ fn compact_game_view(
     .expect("compact game view should load")
 }
 
+fn visible_objects_page(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    viewport: &Viewport,
+    cursor: Option<u32>,
+    limit: u32,
+) -> ObjectViewPage {
+    query_as::<ObjectViewPage>(
+        fixture,
+        player,
+        "get_visible_objects",
+        (session_id.to_string(), viewport.clone(), cursor, limit),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "visible objects should decode for viewport {:?}, cursor {:?}, limit {}: {error}",
+            viewport, cursor, limit
+        )
+    })
+    .expect("visible objects should load")
+}
+
+fn visible_object<'a>(page: &'a ObjectViewPage, subject_id_text: &str) -> &'a ObjectView {
+    page.objects
+        .iter()
+        .find(|object| object.subject_id_text == subject_id_text)
+        .unwrap_or_else(|| panic!("{subject_id_text} should render in visible objects"))
+}
+
 fn diagnostic_system_jobs(
     fixture: &StandaloneCanisterFixture,
     session_id: Option<String>,
@@ -4985,6 +5186,32 @@ fn submit_move_and_sync_until_event(
     now_ms: u64,
     expected_event_type: &str,
 ) -> (CommandResponse, bool) {
+    submit_move_and_sync_until_event_after(
+        fixture,
+        player,
+        session_id,
+        champion_id,
+        path,
+        move_nonce,
+        sync_nonce_prefix,
+        now_ms,
+        expected_event_type,
+        61_000,
+    )
+}
+
+fn submit_move_and_sync_until_event_after(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    champion_id: &str,
+    path: Vec<MoveCoord>,
+    move_nonce: &str,
+    sync_nonce_prefix: &str,
+    now_ms: u64,
+    expected_event_type: &str,
+    sync_advance_ms: u64,
+) -> (CommandResponse, bool) {
     let max_sync_calls = path.len().saturating_add(2);
     submit_move_intent(
         fixture,
@@ -5003,6 +5230,7 @@ fn submit_move_and_sync_until_event(
         now_ms,
         expected_event_type,
         max_sync_calls,
+        sync_advance_ms,
     )
 }
 
@@ -5014,8 +5242,9 @@ fn sync_until_event(
     _now_ms: u64,
     expected_event_type: &str,
     max_sync_calls: usize,
+    sync_advance_ms: u64,
 ) -> (CommandResponse, bool) {
-    advance_time_ms(fixture, 61_000);
+    advance_time_ms(fixture, sync_advance_ms);
     let mut saw_partial_sync = false;
     for attempt in 0..max_sync_calls {
         let synced = update_as::<CommandResponse>(

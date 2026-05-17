@@ -55,6 +55,13 @@ pub(crate) const KNOWN_OBJECT_CHUNK_LOOKUP: IndexedQueryPlan = IndexedQueryPlan 
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const KNOWN_OBJECT_PARTICIPANT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "map.known_objects_by_participant",
+    entity: "ParticipantKnownObject",
+    indexed_fields: &["session_id", "participant_id"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const KNOWN_OBJECT_SUBJECT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "map.known_object_by_subject",
     entity: "ParticipantKnownObject",
@@ -337,7 +344,7 @@ pub(crate) fn page_known_objects_for_participant(
 ) -> RepoResult<RepositoryPage<ParticipantKnownObject>> {
     let limit = foundation::validate_list_limit(limit)?;
     foundation::execute_page(
-        "map.known_objects_by_participant",
+        KNOWN_OBJECT_PARTICIPANT_LOOKUP.name,
         crate::db()
             .load::<ParticipantKnownObject>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))

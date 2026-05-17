@@ -414,6 +414,7 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::VISIBILITY_CHUNK_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_CELL_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
+        map_visibility_occupancy::KNOWN_OBJECT_PARTICIPANT_LOOKUP,
         map_visibility_occupancy::KNOWN_OBJECT_SUBJECT_LOOKUP,
         map_visibility_occupancy::WORLD_OBJECT_OWNER_SCORING_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,

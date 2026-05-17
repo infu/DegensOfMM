@@ -89,6 +89,10 @@ add_group "battle-round" \
     "battle-round readiness, auto-defend, end-turn, and replay PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture"
+add_group "render-projection" \
+    "render projection live objects, fog, cursors, and aftermath PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_render_projection -- --test-threads=1 --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_GROUPS=(
@@ -105,6 +109,7 @@ POCKET_GROUPS=(
     "timer-jobs"
     "end-turn"
     "battle-round"
+    "render-projection"
 )
 
 usage() {

@@ -1765,23 +1765,13 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .any(|event| event.event_type == "mine_captured")
     );
 
-    advance_time_ms(&fixture, 61_000);
-    let income_sync = update_as::<CommandResponse>(
+    let _income_sync = sync_turn_until_event(
         &fixture,
         player_one,
-        "sync_session_turn",
-        (
-            session_id.clone(),
-            "nonce:presence:sync-turn:income".to_string(),
-        ),
-    )
-    .expect("income sync should decode")
-    .expect("income sync should succeed");
-    assert!(
-        income_sync
-            .events
-            .iter()
-            .any(|event| event.event_type == "income_materialized")
+        &session_id,
+        "nonce:presence:sync-turn:income:",
+        "income_materialized",
+        4,
     );
 
     let (guarded_mine_sync, guarded_saw_partial_sync) = submit_move_and_sync_until_event(
@@ -3952,21 +3942,14 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
             > row_count(&recruit_storage, "ParticipantObjectVisit")
     );
 
-    advance_time_ms(&fixture, 61_000);
-    let income_sync = gate_update_as::<CommandResponse>(
+    let _income_sync = gate_sync_turn_until_event(
         &mut metrics,
         &fixture,
         player_one,
-        "sync_session_turn",
-        (session_id.clone(), "nonce:gate-j:sync:income".to_string()),
-    )
-    .expect("income sync should succeed");
-    metrics.observe_command_response(&income_sync);
-    assert!(
-        income_sync
-            .events
-            .iter()
-            .any(|event| event.event_type == "income_materialized")
+        &session_id,
+        "nonce:gate-j:sync:income:",
+        "income_materialized",
+        4,
     );
     let income_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
     assert!(
@@ -4481,21 +4464,14 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert_eq!(crystal_sync.status, CommandStatus::Applied);
     assert!(crystal_saw_partial_sync);
 
-    advance_time_ms(&fixture, 61_000);
-    let income_sync = gate_update_as::<CommandResponse>(
+    let _income_sync = gate_sync_turn_until_event(
         &mut metrics,
         &fixture,
         player_one,
-        "sync_session_turn",
-        (session_id.clone(), "nonce:gate-l:sync:income".to_string()),
-    )
-    .expect("income sync should succeed");
-    metrics.observe_command_response(&income_sync);
-    assert!(
-        income_sync
-            .events
-            .iter()
-            .any(|event| event.event_type == "income_materialized")
+        &session_id,
+        "nonce:gate-l:sync:income:",
+        "income_materialized",
+        4,
     );
 
     let (neutral_sync, neutral_saw_partial_sync) = gate_submit_move_and_sync_until_event(
@@ -5628,6 +5604,56 @@ fn gate_sync_until_event(
     panic!("sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls");
 }
 
+fn gate_sync_turn_until_event(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    sync_nonce_prefix: &str,
+    expected_event_type: &str,
+    max_sync_calls: usize,
+) -> CommandResponse {
+    let mut observed = Vec::new();
+    for attempt in 0..max_sync_calls {
+        fixture.pic().advance_time(Duration::from_millis(61_000));
+        let synced = gate_update_as::<CommandResponse>(
+            metrics,
+            fixture,
+            player,
+            "sync_session_turn",
+            (
+                session_id.to_string(),
+                format!("{sync_nonce_prefix}{attempt}"),
+            ),
+        )
+        .expect("sync_session_turn should succeed");
+        metrics.observe_command_response(&synced);
+        observed.push(sync_summary(attempt, &synced));
+        if synced.status != CommandStatus::Applied {
+            if synced
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "turn_not_due")
+            {
+                continue;
+            }
+            panic!("sync_session_turn failed while waiting for {expected_event_type}: {synced:?}");
+        }
+        if synced
+            .events
+            .iter()
+            .any(|event| event.event_type == expected_event_type)
+        {
+            return synced;
+        }
+    }
+
+    panic!(
+        "sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls: {}",
+        observed.join(" | ")
+    );
+}
+
 fn gate_submit_retryable_battle_action(
     metrics: &mut GateJMetrics,
     fixture: &StandaloneCanisterFixture,
@@ -6180,7 +6206,16 @@ fn sync_until_event(
         )
         .expect("sync_session_turn should decode")
         .expect("sync_session_turn should succeed");
-        assert_eq!(synced.status, CommandStatus::Applied);
+        if synced.status != CommandStatus::Applied {
+            if synced
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "turn_not_due")
+            {
+                continue;
+            }
+            panic!("sync_session_turn failed while waiting for {expected_event_type}: {synced:?}");
+        }
         saw_partial_sync |= synced
             .events
             .iter()
@@ -6195,6 +6230,72 @@ fn sync_until_event(
     }
 
     panic!("sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls");
+}
+
+fn sync_turn_until_event(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    sync_nonce_prefix: &str,
+    expected_event_type: &str,
+    max_sync_calls: usize,
+) -> CommandResponse {
+    let mut observed = Vec::new();
+    for attempt in 0..max_sync_calls {
+        fixture.pic().advance_time(Duration::from_millis(61_000));
+        let synced = update_as::<CommandResponse>(
+            fixture,
+            player,
+            "sync_session_turn",
+            (
+                session_id.to_string(),
+                format!("{sync_nonce_prefix}{attempt}"),
+            ),
+        )
+        .expect("sync_session_turn should decode")
+        .expect("sync_session_turn should succeed");
+        observed.push(sync_summary(attempt, &synced));
+        if synced.status != CommandStatus::Applied {
+            if synced
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "turn_not_due")
+            {
+                continue;
+            }
+            panic!("sync_session_turn failed while waiting for {expected_event_type}: {synced:?}");
+        }
+        if synced
+            .events
+            .iter()
+            .any(|event| event.event_type == expected_event_type)
+        {
+            return synced;
+        }
+    }
+
+    panic!(
+        "sync_session_turn did not emit {expected_event_type} after {max_sync_calls} calls: {}",
+        observed.join(" | ")
+    );
+}
+
+fn sync_summary(attempt: usize, response: &CommandResponse) -> String {
+    let events = response
+        .events
+        .iter()
+        .map(|event| event.event_type.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
+    let error = response
+        .error
+        .as_ref()
+        .map(|error| error.code.as_str())
+        .unwrap_or("-");
+    format!(
+        "#{attempt}:status={:?}:turn={}:events=[{}]:error={}",
+        response.status, response.effective_turn, events, error
+    )
 }
 
 fn resolve_battle_to_end(

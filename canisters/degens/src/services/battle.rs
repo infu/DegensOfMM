@@ -73,13 +73,18 @@ pub(crate) fn get_battle_state(
     let suppress_actions =
         should_suppress_battle_actions(&battle, context.participant.id(), now_ms)?;
     let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?.items;
-    Ok(canister_battle_view_from_rows(
-        &battle,
-        &stacks,
-        &participant_id,
-        now_ms,
-        suppress_actions,
-    ))
+    let mut view =
+        canister_battle_view_from_rows(&battle, &stacks, &participant_id, now_ms, suppress_actions);
+    if !suppress_actions {
+        enrich_battle_spell_actions_from_rows(
+            &context.session,
+            &battle,
+            &stacks,
+            &mut view,
+            &participant_id,
+        )?;
+    }
+    Ok(view)
 }
 
 fn battle_visible_to_participant(
@@ -372,7 +377,7 @@ fn cheap_legal_actions_for_stack_rows(
 
 #[allow(dead_code)]
 fn enrich_battle_spell_actions_from_rows(
-    session: &GameSession,
+    _session: &GameSession,
     battle: &Battle,
     stacks: &[BattleStack],
     view: &mut BattleView,
@@ -387,6 +392,12 @@ fn enrich_battle_spell_actions_from_rows(
     else {
         return Ok(());
     };
+    let caster_participant_id = caster_stack
+        .owner_participant_id
+        .map(|id| Id::<GameParticipant>::from_key(id).to_string());
+    if caster_participant_id.as_deref() != Some(participant_id) {
+        return Ok(());
+    }
     let spell_slugs = caster_stack
         .status_keys
         .iter()
@@ -397,27 +408,6 @@ fn enrich_battle_spell_actions_from_rows(
     if spell_slugs.is_empty() {
         return Ok(());
     }
-    let caster_participant_id = caster_stack
-        .owner_participant_id
-        .map(|id| Id::<GameParticipant>::from_key(id).to_string());
-    if caster_participant_id.as_deref() != Some(participant_id) {
-        return Ok(());
-    }
-    let caster_champion_id = if caster_stack.side == domm_game::BATTLE_SIDE_ATTACKER {
-        battle.attacker_champion_id
-    } else {
-        battle.defender_champion_id
-    };
-    let Some(caster_champion_id) = caster_champion_id else {
-        return Ok(());
-    };
-    let champion_id = Id::<Champion>::from_key(caster_champion_id);
-    let Some(champion) = champions_artifacts::load_champion(champion_id)? else {
-        return Ok(());
-    };
-    if Id::<GameParticipant>::from_key(champion.participant_id).to_string() != participant_id {
-        return Ok(());
-    }
 
     let targets = stacks
         .iter()
@@ -426,42 +416,21 @@ fn enrich_battle_spell_actions_from_rows(
         })
         .map(|stack| stack.id().to_string())
         .collect::<Vec<_>>();
-    let available_mana = if champion.mana_turn == session.current_turn {
-        champion.mana
-    } else {
-        champion.mana_max
-    };
-    let learned_spell_ids =
-        champions_artifacts::page_champion_spells(champion.id(), domm_game::MAX_LIST_LIMIT, None)?
-            .items
-            .into_iter()
-            .map(|spell| spell.spell_id)
-            .collect::<BTreeSet<_>>();
     let mut spell_actions = Vec::new();
     for spell_slug in spell_slugs {
-        let Some(spell) =
-            content::find_spell_by_ruleset_slug(Id::from_key(session.ruleset_id), &spell_slug)?
-        else {
-            continue;
-        };
-        if !learned_spell_ids.contains(&spell.id().key()) {
-            continue;
-        }
-        if spell.target_type != "enemy_battle_stack" {
+        if !is_supported_battle_spell(&spell_slug) {
             continue;
         }
         let disabled_reason = if caster_stack.cast_round >= battle.current_round {
             Some("battle_stack_already_cast".to_string())
         } else if targets.is_empty() {
             Some("battle_target_not_legal".to_string())
-        } else if spell.mana_cost > available_mana {
-            Some("insufficient_mana".to_string())
         } else {
             None
         };
         spell_actions.push(domm_game::LegalBattleAction {
             action: "CastAbility".to_string(),
-            ability_key: Some(format!("spell:{}", spell.slug)),
+            ability_key: Some(format!("spell:{spell_slug}")),
             enabled: disabled_reason.is_none(),
             disabled_reason,
             targets: targets.clone(),
@@ -475,6 +444,10 @@ fn enrich_battle_spell_actions_from_rows(
         view.legal_actions_for_caller.extend(spell_actions);
     }
     Ok(())
+}
+
+fn is_supported_battle_spell(spell_slug: &str) -> bool {
+    matches!(spell_slug, "hex-spark")
 }
 
 pub(crate) fn submit_battle_action(

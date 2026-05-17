@@ -152,6 +152,7 @@ fn create_champion_side_stacks(
     x: u8,
 ) -> Result<Vec<BattleStack>, ApiError> {
     let mut rows = Vec::new();
+    let battle_spell_status_keys = battle_spell_status_keys_for_champion(champion_id)?;
     for stack in champions_artifacts::page_champion_army_stacks(
         champion_id,
         domm_game::MAX_LIST_LIMIT,
@@ -171,7 +172,7 @@ fn create_champion_side_stacks(
                 .saturating_add(value)
                 .min(domm_game::BATTLE_GRID_HEIGHT - 1),
         };
-        let battle_stack = create_stack_from_unit(
+        let mut battle_stack = create_stack_from_unit(
             command_id,
             battle_id,
             unit.id(),
@@ -196,6 +197,11 @@ fn create_champion_side_stacks(
             x,
             y,
         )?;
+        if !battle_spell_status_keys.is_empty() {
+            battle_stack.status_keys = battle_spell_status_keys.clone();
+            battle_stack.last_command_id = Some(command_id.key());
+            battle_stack = battles::update_battle_stack(battle_stack)?;
+        }
         battles::create_battle_occupancy(
             battle_id,
             battle_stack.id(),
@@ -206,6 +212,21 @@ fn create_champion_side_stacks(
         rows.push(battle_stack);
     }
     Ok(rows)
+}
+
+fn battle_spell_status_keys_for_champion(
+    champion_id: Id<Champion>,
+) -> Result<Vec<String>, ApiError> {
+    let mut status_keys =
+        champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?
+            .items
+            .into_iter()
+            .filter_map(|spell| spell.spell_slug)
+            .map(|slug| format!("battle_spell:{slug}"))
+            .collect::<Vec<_>>();
+    status_keys.sort();
+    status_keys.dedup();
+    Ok(status_keys)
 }
 
 fn create_town_defender_stacks(

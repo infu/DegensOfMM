@@ -404,24 +404,7 @@ pub(crate) fn sync_session_turn(
 }
 
 fn should_yield_after_movement_events(events: &[domm_game::ApiEventView]) -> bool {
-    let mut saw_movement_checkpoint = false;
-    let mut saw_non_checkpoint_event = false;
-    for event in events {
-        match event.event_type.as_str() {
-            "champion_encounter_pending"
-            | "neutral_encounter_pending"
-            | "town_encounter_pending" => {
-                return true;
-            }
-            "movement_sync_incomplete" => {
-                saw_movement_checkpoint = true;
-            }
-            _ => {
-                saw_non_checkpoint_event = true;
-            }
-        }
-    }
-    saw_movement_checkpoint && !saw_non_checkpoint_event
+    !events.is_empty()
 }
 
 pub(crate) fn process_turn_resolution_job(job: SystemJob) -> Result<(), ApiError> {
@@ -469,7 +452,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         &mut events,
         &mut changed_subjects,
     )?;
-    if !movement_complete {
+    if !movement_complete || should_yield_after_movement_events(&events) {
         let mut command = command;
         command.status = "applying".to_string();
         command.phase = "movement_partial".to_string();

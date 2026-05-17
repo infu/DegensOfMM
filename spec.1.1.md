@@ -48,7 +48,7 @@ Current timing notes from 2026-05-17:
 | --- | --- | --- |
 | PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Verified by `cargo test --manifest-path vendor/canic-testkit/Cargo.toml process_lock --lib`, `cargo test -p domm-pocket-ic-tests --test pic_lock -- --nocapture` in 0.81s, and `cargo check -p domm-pocket-ic-tests --tests` in 33.7s |
 | Fast timing harness | Added 2026-05-17: `scripts/run-test-groups.sh`, `make test-fast`, `make test-groups`, and `make test-groups-list` | `make test-fast` passed after prebuild; group wall times: pure 2.277s, schema 0.482s, generated 0.521s, canister-check 0.500s, pocket-lock 1.373s |
-| Endpoint inventory/public surface | Passed 2026-05-17 in 260.810s after render list and battle query-budget fixes | Still too slow for an inner loop; keep optimizing after the group is green |
+| Endpoint inventory/public surface | Revalidated 2026-05-17 in 260.541s after turn-sync event yielding, explicit follow-up income sync coverage, and row-local battle spell metadata | Still too slow for an inner loop; keep serial until the older full-route sync path is split further |
 | Gate J strategic loop/IcyDB rows | Passed 2026-05-17 in 219.521s after movement fast-path snapshot and sync-budget fixes | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
 | Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
@@ -85,8 +85,11 @@ Testing-first todo:
 - [x] Endpoint inventory/public surface group:
   `pocket_ic_canister_exposes_every_required_game_endpoint`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh endpoint`
-  passing in 260.810s after prebuild. Evidence also included
-  `cargo check -p domm-degens-canister`.
+  passing in 260.810s after prebuild. Revalidated 2026-05-17 in 260.541s
+  after movement event yielding, explicit post-capture income sync coverage,
+  and row-local battle spell metadata kept `get_battle_state` under the query
+  instruction limit. Evidence also included `cargo check -p
+  domm-degens-canister`.
 - [x] Gate J strategic loop/IcyDB persistence group:
   `pocket_ic_gate_j_strategic_loop_persists_icydb_rows`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-j`

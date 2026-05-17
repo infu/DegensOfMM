@@ -52,7 +52,7 @@ Current timing notes from 2026-05-17:
 | Gate J strategic loop/IcyDB rows | Passed 2026-05-17 in 219.521s after movement fast-path snapshot and sync-budget fixes | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
 | Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
-| Movement crossing conflict | Failed 2026-05-17 in 208.495s after turn-sync yield split; still hits `sync_session_turn` instruction cap | Continue slicing crossing-conflict movement resolution |
+| Movement crossing conflict | Passed 2026-05-17 in 181.928s after crossing-conflict fast path | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Stationary enemy blocker | Passed 2026-05-17 in 194.921s after turn-sync yield split | Still slow; keep out of fast inner loop and retime with broader PocketIC parallelism |
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
 | Gate M web client probe | Failed in 256.6s; `turn_not_due` | Fix client probe timing/turn readiness |
@@ -90,8 +90,11 @@ Testing-first todo:
 - [x] Gate L first-playable canister route group:
   `pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`
   passed cleanly in about 7.2 minutes.
-- [ ] Movement crossing conflict group:
-  `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`.
+- [x] Movement crossing conflict group:
+  `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`. Completed
+  2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh movement`
+  passing in 181.928s after prebuild. Evidence also included
+  `cargo check -p domm-degens-canister`.
 - [x] Stationary enemy blocker group:
   `pocket_ic_stationary_enemy_blocker_starts_champion_encounter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh movement

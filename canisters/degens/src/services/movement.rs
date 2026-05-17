@@ -627,6 +627,15 @@ fn resolve_pending_movement(
     )?;
 
     let mut pending = load_pending_movements(session)?;
+    if let Some(complete) = resolve_two_movement_crossing_fast(
+        session,
+        command_id,
+        &mut pending,
+        events,
+        changed_subjects,
+    )? {
+        return Ok(complete);
+    }
     if let Some(complete) = resolve_single_long_movement_fast(
         session,
         command_id,
@@ -955,6 +964,125 @@ fn resolve_single_long_movement_fast(
     Ok(Some(true))
 }
 
+fn resolve_two_movement_crossing_fast(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    pending: &mut [PendingMovement],
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<Option<bool>, ApiError> {
+    if pending.len() != 2 {
+        return Ok(None);
+    }
+    if pending[0].participant.id() == pending[1].participant.id() {
+        return Ok(None);
+    }
+
+    let max_step = pending[0].path.len().min(pending[1].path.len());
+    for step in 0..max_step {
+        let left_from = if step == 0 {
+            MoveCoord::new(pending[0].champion.x, pending[0].champion.y)
+        } else {
+            pending[0].path[step - 1]
+        };
+        let right_from = if step == 0 {
+            MoveCoord::new(pending[1].champion.x, pending[1].champion.y)
+        } else {
+            pending[1].path[step - 1]
+        };
+        let left_to = pending[0].path[step];
+        let right_to = pending[1].path[step];
+        if left_to != right_from || right_to != left_from {
+            continue;
+        }
+
+        let event = command_response::append_public_event(
+            session,
+            command_id,
+            format!(
+                "movement_sync_incomplete:{}:{}:crossing-fast",
+                session.id(),
+                session.current_turn
+            ),
+            "movement_sync_incomplete".to_string(),
+            Some("session".to_string()),
+            Some(session.id().to_string()),
+            format!(
+                r#"{{"consumed_steps":{},"parked_intents":2}}"#,
+                step.saturating_add(1)
+            ),
+        )?;
+        events.push(event);
+
+        let step_index = step.min(usize::from(u16::MAX)) as u16;
+        let left_start = pending[0].start;
+        let right_start = pending[1].start;
+        let left_cost = movement_cost_for_path(session, &pending[0].path[..step])?;
+        let right_cost = movement_cost_for_path(session, &pending[1].path[..step])?;
+        let left_remaining =
+            apply_fast_path_position(session, command_id, &mut pending[0], left_from, left_cost);
+        let right_remaining =
+            apply_fast_path_position(session, command_id, &mut pending[1], right_from, right_cost);
+
+        let event = mark_champion_encounter_pending(session, command_id, pending, 0, 1, left_to)?;
+        events.push(event);
+        changed_subjects.push(command_response::changed(
+            "champion",
+            &pending[0].champion.id().to_string(),
+            "status",
+        ));
+        changed_subjects.push(command_response::changed(
+            "champion",
+            &pending[1].champion.id().to_string(),
+            "status",
+        ));
+
+        let left_champion_id = pending[0].champion.id().to_string();
+        let right_champion_id = pending[1].champion.id().to_string();
+        stop_candidate_fast(
+            session,
+            command_id,
+            &mut pending[0],
+            step_index,
+            left_start,
+            left_from,
+            left_cost,
+            left_remaining,
+            "started_crossing_battle",
+            Some(MovementPathStop {
+                reason: "crossing_conflict".to_string(),
+                subject_kind: "champion".to_string(),
+                subject_id_text: right_champion_id.clone(),
+                x: left_to.x,
+                y: left_to.y,
+            }),
+            changed_subjects,
+        )?;
+        stop_candidate_fast(
+            session,
+            command_id,
+            &mut pending[1],
+            step_index,
+            right_start,
+            right_from,
+            right_cost,
+            right_remaining,
+            "started_crossing_battle",
+            Some(MovementPathStop {
+                reason: "crossing_conflict".to_string(),
+                subject_kind: "champion".to_string(),
+                subject_id_text: left_champion_id,
+                x: right_to.x,
+                y: right_to.y,
+            }),
+            changed_subjects,
+        )?;
+        return Ok(Some(true));
+    }
+
+    Ok(None)
+}
+
 fn prepare_fast_path_stop(
     session: &GameSession,
     command_id: Id<GameCommand>,
@@ -967,21 +1095,33 @@ fn prepare_fast_path_stop(
         .copied()
         .unwrap_or(pending_move.start);
     let movement_cost = movement_cost_for_path(session, &pending_move.path[..stop_len])?;
-    let remaining_after = effective_movement(&pending_move.champion, session.current_turn)
-        .saturating_sub(movement_cost);
-    pending_move.champion.x = stop_coord.x;
-    pending_move.champion.y = stop_coord.y;
-    pending_move.champion.chunk_x = chunk_coord(session, stop_coord.x);
-    pending_move.champion.chunk_y = chunk_coord(session, stop_coord.y);
-    pending_move.champion.movement_remaining = remaining_after;
-    pending_move.champion.movement_turn = session.current_turn;
-    pending_move.champion.last_command_id = Some(command_id.key());
+    let remaining_after =
+        apply_fast_path_position(session, command_id, pending_move, stop_coord, movement_cost);
     let stop_step = pending_move
         .path
         .len()
         .saturating_sub(1)
         .min(usize::from(u16::MAX)) as u16;
     Ok((stop_step, stop_coord, movement_cost, remaining_after))
+}
+
+fn apply_fast_path_position(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &mut PendingMovement,
+    coord: MoveCoord,
+    movement_cost: u16,
+) -> u16 {
+    let remaining_after = effective_movement(&pending_move.champion, session.current_turn)
+        .saturating_sub(movement_cost);
+    pending_move.champion.x = coord.x;
+    pending_move.champion.y = coord.y;
+    pending_move.champion.chunk_x = chunk_coord(session, coord.x);
+    pending_move.champion.chunk_y = chunk_coord(session, coord.y);
+    pending_move.champion.movement_remaining = remaining_after;
+    pending_move.champion.movement_turn = session.current_turn;
+    pending_move.champion.last_command_id = Some(command_id.key());
+    remaining_after
 }
 
 fn movement_cost_for_path(session: &GameSession, path: &[MoveCoord]) -> Result<u16, ApiError> {

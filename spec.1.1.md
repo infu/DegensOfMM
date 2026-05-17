@@ -119,11 +119,16 @@ Testing-first todo:
   ledger effects, and battle aftermath retry/idempotency.
 - [ ] Visibility/redaction group: opponent events, neutral battle details,
   town build/recruit visibility, and public/private payload separation.
-- [ ] Pure rules group: `cargo test -p domm-game`.
+- [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17
+  with `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pure schema generated
+  canister-check` passing the pure group in 2.018s after prebuild.
 - [ ] Canister crate group: `cargo check -p domm-degens-canister` and focused
   canister tests.
-- [ ] Generated-session/schema group: `make test-generated` and repository
-  inventory coverage.
+- [x] Generated-session/schema group: `make test-generated` and repository
+  inventory coverage. Completed 2026-05-17 with `DOMM_TEST_JOBS=4
+  scripts/run-test-groups.sh pure schema generated canister-check` passing
+  schema in 0.366s and generated-session in 0.349s after prebuild. The
+  equivalent make targets are `make test-schema` and `make test-generated`.
 - [ ] Local DFX/blast smoke group: deploy, scan public endpoints, and play the
   required direct `blast call` route with IcyDB diagnostics.
 - [ ] Full regression orchestration group: `make regression`,

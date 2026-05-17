@@ -85,6 +85,10 @@ add_group "end-turn" \
     "end-turn readiness, stale command, and replay PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture"
+add_group "battle-round" \
+    "battle-round readiness, auto-defend, end-turn, and replay PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_GROUPS=(
@@ -100,6 +104,7 @@ POCKET_GROUPS=(
     "gate-m"
     "timer-jobs"
     "end-turn"
+    "battle-round"
 )
 
 usage() {

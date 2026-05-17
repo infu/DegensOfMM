@@ -58,6 +58,7 @@ Current timing notes from 2026-05-17:
 | Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
 | Timer jobs PocketIC group | Passed 2026-05-17 in 59.586s after post-upgrade repair, heartbeat backstop, and expired-lease recovery fixes | New focused group is fast enough for repeated timer regression checks |
 | End-turn PocketIC group | Passed 2026-05-17 in 59.621s after ready-row stale action guard and replay coverage | New focused group is fast enough for repeated end-turn regression checks |
+| Battle-round readiness PocketIC group | Passed 2026-05-17 in 89.423s after auto-ready, round auto-defend, `end_battle_turn`, and replay coverage | Focused battle readiness route is isolated from the longer Gate K/L battle routes |
 
 Testing-first todo:
 
@@ -122,8 +123,12 @@ Testing-first todo:
   passing in 59.621s after prebuild. Evidence also included `cargo check -p
   domm-degens-canister` and a focused no-run build for
   `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions`.
-- [ ] Battle-round readiness PocketIC group: timer auto-defend,
-  `end_battle_turn`, auto-ready stacks, and replay semantics.
+- [x] Battle-round readiness PocketIC group: timer auto-defend,
+  `end_battle_turn`, auto-ready stacks, and replay semantics. Completed
+  2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh
+  battle-round` passing in 89.423s after prebuild. Evidence also included
+  `cargo check -p domm-degens-canister` and a focused no-run build for
+  `pocket_ic_battle_round_readiness_advances_and_replays`.
 - [ ] Render projection PocketIC group: live object hydration, consumed piles,
   defeated neutrals, captured mines, champion coordinates, fog, and cursors.
 - [ ] Query budget group: representative preview/submit movement paths,

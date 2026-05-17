@@ -2452,6 +2452,193 @@ fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
 }
 
 #[test]
+fn pocket_ic_battle_round_readiness_advances_and_replays() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-battle-ready-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-battle-ready-player-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "battle-ready");
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:battle-ready:move:neutral",
+        "nonce:battle-ready:sync:neutral:",
+        61_000,
+        "neutral_encounter_pending",
+    );
+    let battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let opening_view = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("opening battle state should decode")
+    .expect("opening battle state should load");
+    assert_eq!(opening_view.current_round, 1);
+
+    let mut first_input = None;
+    let mut saw_auto_ready = false;
+    for attempt in 0..8 {
+        let view = query_as::<BattleView>(
+            &fixture,
+            player_one,
+            "get_battle_state",
+            (session_id.clone(), battle_id.clone()),
+        )
+        .expect("battle readiness loop view should decode")
+        .expect("battle readiness loop view should load");
+        if view.state != "active" {
+            break;
+        }
+        if !view
+            .legal_actions_for_caller
+            .iter()
+            .any(|action| action.enabled)
+        {
+            advance_time_for_timers(&fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
+            replay_player_registration(&fixture, player_one, "battle-ready", "one");
+            continue;
+        }
+
+        let input = choose_battle_action(&view);
+        let nonce = format!("nonce:battle-ready:action:{attempt}");
+        let action = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "submit_battle_action",
+            (session_id.clone(), input.clone(), nonce.clone()),
+        )
+        .expect("battle action should decode")
+        .expect("battle action should succeed");
+        assert_eq!(action.status, CommandStatus::Applied);
+        if first_input.is_none() {
+            first_input = Some(input.clone());
+            let replay = update_as::<CommandResponse>(
+                &fixture,
+                player_one,
+                "submit_battle_action",
+                (session_id.clone(), input.clone(), nonce),
+            )
+            .expect("battle action replay should decode")
+            .expect("battle action replay should succeed");
+            assert_eq!(replay.command_id, action.command_id);
+        }
+        saw_auto_ready |= action
+            .changed_subjects
+            .iter()
+            .any(|subject| subject.subject_kind == "battle_participant_round_ready");
+        if action
+            .changed_subjects
+            .iter()
+            .any(|subject| subject.subject_kind == "system_job")
+        {
+            saw_auto_ready = true;
+            break;
+        }
+    }
+    assert!(
+        saw_auto_ready,
+        "spending all meaningful owned stack actions should auto-ready the battle participant"
+    );
+    let first_input = first_input.expect("battle readiness route should submit an action");
+
+    advance_time_for_timers(&fixture, 1_000);
+    replay_player_registration(&fixture, player_one, "battle-ready", "one");
+    let after_auto_defend = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("post-auto-defend battle state should decode")
+    .expect("post-auto-defend battle state should load");
+    assert!(
+        after_auto_defend.current_round > opening_view.current_round
+            || after_auto_defend.state != "active",
+        "battle round timer should advance the round or resolve the battle"
+    );
+
+    let public_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 100_u32),
+    )
+    .expect("battle-ready public events should decode")
+    .expect("battle-ready public events should load");
+    assert!(
+        public_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "battle_round_auto_defend"),
+        "round advancement should auto-defend remaining stacks"
+    );
+
+    if after_auto_defend.state == "active" {
+        let ended_round = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "end_battle_turn",
+            (
+                session_id.clone(),
+                battle_id.clone(),
+                "nonce:battle-ready:end-round".to_string(),
+            ),
+        )
+        .expect("end_battle_turn should decode")
+        .expect("end_battle_turn should succeed");
+        assert_eq!(ended_round.status, CommandStatus::Applied);
+        assert!(
+            ended_round
+                .events
+                .iter()
+                .any(|event| event.event_type == "battle_participant_round_ready")
+        );
+
+        let ended_round_replay = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "end_battle_turn",
+            (
+                session_id.clone(),
+                battle_id.clone(),
+                "nonce:battle-ready:end-round".to_string(),
+            ),
+        )
+        .expect("end_battle_turn replay should decode")
+        .expect("end_battle_turn replay should succeed");
+        assert_eq!(ended_round_replay.command_id, ended_round.command_id);
+
+        let blocked_action = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "submit_battle_action",
+            (
+                session_id.clone(),
+                first_input.clone(),
+                "nonce:battle-ready:action:after-ended".to_string(),
+            ),
+        )
+        .expect("post-end battle action denial should decode")
+        .expect_err("ended battle round should block new battle actions");
+        assert_eq!(blocked_action.code, "battle_round_closed");
+    }
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");

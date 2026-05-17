@@ -97,7 +97,7 @@ pub(crate) fn visible_objects(
     )?;
     let mut objects = Vec::new();
 
-    for subject in visible_subjects_for_viewport(context, viewport)? {
+    for subject in visible_subjects_for_viewport(context, viewport) {
         if !viewport.contains(subject.x, subject.y) {
             continue;
         }
@@ -724,7 +724,7 @@ impl ObjectSubject {
 fn visible_subjects_for_viewport(
     context: &SessionCallerContext,
     viewport: &Viewport,
-) -> Result<Vec<ObjectSubject>, ApiError> {
+) -> Vec<ObjectSubject> {
     let mut subjects = Vec::new();
     for seed in FIRST_PLAYABLE_KNOWN_SUBJECTS {
         if !viewport.contains(seed.x, seed.y) {
@@ -733,7 +733,7 @@ fn visible_subjects_for_viewport(
         subjects.push(ObjectSubject::from_seed(seed, context.session.current_turn));
     }
 
-    Ok(subjects)
+    subjects
 }
 
 fn object_view_from_known_fast(
@@ -775,7 +775,27 @@ fn object_view_from_known_fast(
         }
         "neutral_army" => {
             if viewport.is_some() {
-                return Ok(None);
+                let details = scenario_subject_details(
+                    &subject.subject_kind,
+                    &subject.subject_id_text,
+                    &BTreeMap::new(),
+                );
+                return Ok(Some(ObjectView {
+                    subject_kind: subject.subject_kind.clone(),
+                    subject_id_text: subject.subject_id_text.clone(),
+                    visibility: "visible".to_string(),
+                    redaction_level: "none".to_string(),
+                    x: subject.x,
+                    y: subject.y,
+                    last_seen_turn: Some(context.session.current_turn),
+                    display_name: Some(details.display_name),
+                    asset_key: details.asset_key,
+                    owner_participant_id: None,
+                    details_json: format!(
+                        "{{\"type\":\"neutral_army\",\"scenario_key\":\"{}\",\"state\":\"active\"}}",
+                        escape_json(&subject.subject_id_text)
+                    ),
+                }));
             }
             let Some(neutral) = live_neutral_for_known(context.session.id(), subject)? else {
                 return Ok(None);
@@ -807,7 +827,30 @@ fn object_view_from_known_fast(
         }
         "champion" => {
             if viewport.is_some() {
-                return Ok(None);
+                if !scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
+                    return Ok(None);
+                }
+                let details = scenario_subject_details(
+                    &subject.subject_kind,
+                    &subject.subject_id_text,
+                    &BTreeMap::new(),
+                );
+                return Ok(Some(ObjectView {
+                    subject_kind: subject.subject_kind.clone(),
+                    subject_id_text: subject.subject_id_text.clone(),
+                    visibility: "visible".to_string(),
+                    redaction_level: "none".to_string(),
+                    x: subject.x,
+                    y: subject.y,
+                    last_seen_turn: Some(context.session.current_turn),
+                    display_name: Some(details.display_name),
+                    asset_key: details.asset_key,
+                    owner_participant_id: Some(context.participant.id().to_string()),
+                    details_json: format!(
+                        "{{\"type\":\"champion\",\"scenario_key\":\"{}\",\"status\":\"active\"}}",
+                        escape_json(&subject.subject_id_text)
+                    ),
+                }));
             }
             let Some(champion) = fast_champion_for_known(context, subject)? else {
                 return Ok(last_known_object_view_fast(subject, viewport));
@@ -842,6 +885,14 @@ fn object_view_from_known_fast(
         }
         "town" => {
             if viewport.is_some() {
+                if !scenario_town_belongs_to_participant(context, &subject.subject_id_text) {
+                    return Ok(None);
+                }
+                let details = scenario_subject_details(
+                    &subject.subject_kind,
+                    &subject.subject_id_text,
+                    &BTreeMap::new(),
+                );
                 return Ok(Some(ObjectView {
                     subject_kind: subject.subject_kind.clone(),
                     subject_id_text: subject.subject_id_text.clone(),
@@ -850,9 +901,9 @@ fn object_view_from_known_fast(
                     x: subject.x,
                     y: subject.y,
                     last_seen_turn: Some(context.session.current_turn),
-                    display_name: Some(subject.subject_id_text.clone()),
-                    asset_key: None,
-                    owner_participant_id: None,
+                    display_name: Some(details.display_name),
+                    asset_key: details.asset_key,
+                    owner_participant_id: Some(context.participant.id().to_string()),
                     details_json: format!(
                         "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"status\":\"active\"}}",
                         escape_json(&subject.subject_id_text)
@@ -943,6 +994,31 @@ fn world_object_list_view(
             escape_json(&scoring_kind)
         ),
     }))
+}
+
+fn scenario_champion_belongs_to_participant(
+    context: &SessionCallerContext,
+    subject_id_text: &str,
+) -> bool {
+    domm_game::first_playable_scenario()
+        .starts
+        .iter()
+        .any(|start| {
+            start.champion_key == subject_id_text
+                && start.slot_index == context.participant.slot_index
+        })
+}
+
+fn scenario_town_belongs_to_participant(
+    context: &SessionCallerContext,
+    subject_id_text: &str,
+) -> bool {
+    domm_game::first_playable_scenario()
+        .starts
+        .iter()
+        .any(|start| {
+            start.town_key == subject_id_text && start.slot_index == context.participant.slot_index
+        })
 }
 
 fn fast_champion_for_known(

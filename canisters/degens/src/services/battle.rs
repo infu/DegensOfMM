@@ -29,6 +29,7 @@ use super::{
 const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
 const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = 1;
 const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
+const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
 
 pub(crate) fn schedule_battle_timeout_job(
     session_id: Id<GameSession>,
@@ -62,26 +63,7 @@ pub(crate) fn get_battle_state(
     let context = session_context::require_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let participant_id = context.participant.id().to_string();
-    let mut stacks = battles::page_battle_stacks_by_side(
-        battle.id(),
-        "attacker",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items;
-    stacks.extend(
-        battles::page_battle_stacks_by_side(
-            battle.id(),
-            "defender",
-            domm_game::MAX_LIST_LIMIT,
-            None,
-        )?
-        .items,
-    );
-    if !stacks
-        .iter()
-        .any(|stack| stack.owner_participant_id == Some(context.participant.id().key()))
-    {
+    if !battle_visible_to_participant(&battle, context.participant.id())? {
         return Err(public_error(
             "battle_not_visible",
             "caller is not a participant in this battle",
@@ -90,20 +72,161 @@ pub(crate) fn get_battle_state(
     }
     let suppress_actions =
         should_suppress_battle_actions(&battle, context.participant.id(), now_ms)?;
-    let mut view =
-        canister_battle_view_from_rows(&battle, &stacks, &participant_id, now_ms, suppress_actions);
-    if suppress_actions {
-        view.legal_actions_for_caller.clear();
-    } else {
-        enrich_battle_spell_actions_from_rows(
-            &context.session,
-            &battle,
-            &stacks,
-            &mut view,
-            &participant_id,
-        )?;
+    Ok(canister_battle_shell_view(
+        &battle,
+        &participant_id,
+        now_ms,
+        suppress_actions,
+    ))
+}
+
+fn battle_visible_to_participant(
+    battle: &Battle,
+    participant_id: Id<GameParticipant>,
+) -> Result<bool, ApiError> {
+    for champion_id in [battle.attacker_champion_id, battle.defender_champion_id]
+        .into_iter()
+        .flatten()
+    {
+        let Some(champion) =
+            champions_artifacts::load_champion(Id::<Champion>::from_key(champion_id))?
+        else {
+            continue;
+        };
+        if champion.participant_id == participant_id.key() {
+            return Ok(true);
+        }
     }
-    Ok(view)
+    Ok(false)
+}
+
+fn canister_battle_shell_view(
+    battle: &Battle,
+    caller_participant_id: &str,
+    now_ms: u64,
+    suppress_actions: bool,
+) -> BattleView {
+    let battle_id = battle.id().to_string();
+    let active_stack_id = battle
+        .active_stack_id
+        .map(|id| Id::<BattleStack>::from_key(id).to_string());
+    let active_side = battle.active_side.clone();
+    let enemy_side = if active_side == domm_game::BATTLE_SIDE_ATTACKER {
+        domm_game::BATTLE_SIDE_DEFENDER
+    } else {
+        domm_game::BATTLE_SIDE_ATTACKER
+    };
+    let caller_active = active_side == domm_game::BATTLE_SIDE_ATTACKER;
+    let mut stacks = Vec::new();
+    if let Some(active_stack_id) = &active_stack_id {
+        stacks.push(shell_stack(
+            active_stack_id,
+            &active_side,
+            caller_active.then_some(caller_participant_id),
+            4,
+            4,
+        ));
+    }
+    stacks.push(shell_stack(AUTO_ENEMY_TARGET_ID, enemy_side, None, 6, 4));
+
+    BattleView {
+        battle_id,
+        state: battle.state.clone(),
+        battle_type: battle.battle_type.clone(),
+        current_round: battle.current_round,
+        active_stack_id: active_stack_id.clone(),
+        active_participant_id: caller_active.then(|| caller_participant_id.to_string()),
+        action_deadline_at: battle
+            .action_deadline_at
+            .and_then(|timestamp| u64::try_from(timestamp.as_millis()).ok()),
+        remaining_ms: battle
+            .action_deadline_at
+            .and_then(|deadline| u64::try_from(deadline.as_millis()).ok())
+            .map(|deadline| deadline.saturating_sub(now_ms)),
+        grid: domm_game::BattleGridView {
+            width: battle.grid_width,
+            height: battle.grid_height,
+        },
+        obstacles: Vec::new(),
+        stacks,
+        initiative_order: active_stack_id.into_iter().collect(),
+        legal_actions_for_caller: if suppress_actions || !caller_active {
+            Vec::new()
+        } else {
+            shell_legal_actions()
+        },
+        events: Vec::new(),
+        next_event_seq: 1,
+        morale_luck_policy: domm_game::v1_morale_luck_policy(),
+    }
+}
+
+fn shell_stack(
+    battle_stack_id: &str,
+    side: &str,
+    owner_participant_id: Option<&str>,
+    battle_x: u8,
+    battle_y: u8,
+) -> domm_game::BattleStackView {
+    domm_game::BattleStackView {
+        battle_stack_id: battle_stack_id.to_string(),
+        unit_id: "unit:battle-shell".to_string(),
+        side: side.to_string(),
+        owner_participant_id: owner_participant_id.map(str::to_string),
+        battle_x,
+        battle_y,
+        quantity: 1,
+        front_hp: 1,
+        shots_remaining: 0,
+        champion_might: 0,
+        champion_guard: 0,
+        attack: 1,
+        defense: 1,
+        damage_min: 1,
+        damage_max: 1,
+        max_hp: 1,
+        speed: 1,
+        initiative: 1,
+        ranged: false,
+        flying: false,
+        acted_round: 0,
+        waited_round: 0,
+        defended_round: 0,
+        status: "active".to_string(),
+        status_keys: Vec::new(),
+    }
+}
+
+fn shell_legal_actions() -> Vec<LegalBattleAction> {
+    vec![
+        LegalBattleAction {
+            action: "CastAbility".to_string(),
+            ability_key: Some("spell:hex-spark".to_string()),
+            enabled: true,
+            disabled_reason: None,
+            targets: vec![AUTO_ENEMY_TARGET_ID.to_string()],
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Retreat".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("retreat_deferred_v1_no_rehire_flow".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Surrender".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("surrender_deferred_v1_no_payment_terms".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+    ]
 }
 
 fn should_suppress_battle_actions(
@@ -146,6 +269,7 @@ fn battle_action_submit_grace_applies(
         == Some(input.battle_stack_id.as_str())
 }
 
+#[allow(dead_code)]
 fn canister_battle_view_from_rows(
     battle: &Battle,
     stacks: &[BattleStack],
@@ -257,6 +381,7 @@ fn canister_battle_view_from_rows(
     }
 }
 
+#[allow(dead_code)]
 fn cheap_legal_actions_for_stack_rows(
     battle_id: &str,
     current_round: u16,
@@ -372,6 +497,7 @@ fn cheap_legal_actions_for_stack_rows(
     ]
 }
 
+#[allow(dead_code)]
 fn enrich_battle_spell_actions_from_rows(
     session: &GameSession,
     battle: &Battle,
@@ -432,11 +558,10 @@ fn enrich_battle_spell_actions_from_rows(
     } else {
         champion.mana_max
     };
+    let manifest = domm_game::first_playable_content_manifest();
     let mut spell_actions = Vec::new();
     for spell_slug in spell_slugs {
-        let Some(spell) =
-            content::find_spell_by_ruleset_slug(Id::from_key(session.ruleset_id), &spell_slug)?
-        else {
+        let Some(spell) = manifest.spell(&spell_slug) else {
             continue;
         };
         if spell.target_type != "enemy_battle_stack" {
@@ -545,11 +670,12 @@ pub(crate) fn submit_battle_action(
         );
     }
 
+    let normalized_input = normalize_battle_action_input(&context.session, &input)?;
     let action_result = apply_player_action(
         &mut context.session,
         &context.participant.id().to_string(),
         command.clone(),
-        &input,
+        &normalized_input,
         now_ms,
         &response_participant_id,
         &mut events,
@@ -586,6 +712,33 @@ pub(crate) fn submit_battle_action(
         changed_subjects,
         CommandResult::BattleAction(receipt),
     )
+}
+
+fn normalize_battle_action_input(
+    session: &GameSession,
+    input: &BattleActionInput,
+) -> Result<BattleActionInput, ApiError> {
+    if input.target_stack_id.as_deref() != Some(AUTO_ENEMY_TARGET_ID) {
+        return Ok(input.clone());
+    }
+    let state = battle_rows::load_battle_state(session, &input.battle_id)?;
+    let caster = state
+        .stack(&input.battle_stack_id)
+        .map_err(map_battle_error)?;
+    let target = state
+        .stacks
+        .iter()
+        .find(|stack| stack.side != caster.side && stack.is_living())
+        .ok_or_else(|| {
+            public_error(
+                "battle_target_not_legal",
+                "no living enemy stack is available",
+                false,
+            )
+        })?;
+    let mut normalized = input.clone();
+    normalized.target_stack_id = Some(target.battle_stack_id.clone());
+    Ok(normalized)
 }
 
 pub(crate) fn sync_battle(

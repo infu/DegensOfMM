@@ -2808,6 +2808,114 @@ fn pocket_ic_render_projection_tracks_battle_aftermath_objects() {
 }
 
 #[test]
+fn pocket_ic_query_budget_keeps_preview_submit_and_render_bounded() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-pocket-query-budget-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-pocket-query-budget-two");
+    let viewport = opening_viewport_for_slot(0);
+    let mut metrics = GateJMetrics::default();
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "query-budget");
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let pickup_path = vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)];
+
+    let preview = gate_query_as::<MovementPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_move_path",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            pickup_path.clone(),
+            1_000_u64,
+        ),
+    )
+    .expect("movement preview should stay under query budget");
+    assert_eq!(preview.path, pickup_path);
+    assert!(preview.total_cost > 0);
+    assert!(
+        preview
+            .stop
+            .as_ref()
+            .is_some_and(|stop| stop.subject_id_text == "pile:west-wood-1")
+    );
+
+    let submitted = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id,
+            pickup_path,
+            "nonce:query-budget:move:wood".to_string(),
+        ),
+    )
+    .expect("movement submit should stay under update budget");
+    assert_eq!(submitted.status, CommandStatus::Applied);
+
+    let first_objects = gate_query_as::<ObjectViewPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 3_u32),
+    )
+    .expect("small object page should stay bounded");
+    assert_eq!(first_objects.objects.len(), 3);
+    assert!(first_objects.has_more);
+    let second_objects = gate_query_as::<ObjectViewPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (
+            session_id.clone(),
+            viewport.clone(),
+            first_objects.next_cursor,
+            3_u32,
+        ),
+    )
+    .expect("cursor object page should stay bounded");
+    assert!(!second_objects.objects.is_empty());
+
+    let compact_view = gate_query_as::<GameView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_game_view",
+        (
+            session_id,
+            GameViewRequest {
+                viewport,
+                chunk_cursor: None,
+                chunk_limit: 2,
+                object_cursor: None,
+                object_limit: 3,
+                events_after_seq: 0,
+                event_limit: 4,
+                include_battle: false,
+            },
+        ),
+    )
+    .expect("compact game view should stay bounded");
+    assert!(compact_view.objects.len() <= 3);
+    assert!(compact_view.map_chunks.len() <= 2);
+    assert_eq!(compact_view.object_page_info.limit, 3);
+    assert_eq!(compact_view.map_page_info.limit, 2);
+    assert!(
+        metrics.max_response_bytes <= 64 * 1024,
+        "query budget route response too large: {} bytes from {}",
+        metrics.max_response_bytes,
+        metrics.max_response_method
+    );
+    assert!(metrics.query_calls >= 4);
+    assert_eq!(metrics.update_calls, 1);
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");

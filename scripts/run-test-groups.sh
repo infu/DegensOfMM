@@ -93,6 +93,10 @@ add_group "render-projection" \
     "render projection live objects, fog, cursors, and aftermath PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_render_projection -- --test-threads=1 --nocapture"
+add_group "query-budget" \
+    "query budget preview, submit, bounded render reads, and response sizes PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_query_budget_keeps_preview_submit_and_render_bounded -- --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_GROUPS=(
@@ -110,6 +114,7 @@ POCKET_GROUPS=(
     "end-turn"
     "battle-round"
     "render-projection"
+    "query-budget"
 )
 
 usage() {

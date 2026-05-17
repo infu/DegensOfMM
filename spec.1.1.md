@@ -63,6 +63,7 @@ Current timing notes from 2026-05-17:
 | Query budget PocketIC group | Passed 2026-05-17 in 54.613s after bounded movement preview, submit, object pages, compact game view, and response-size assertions | New focused group avoids long sync progression and is fast enough for repeated public query-budget checks |
 | Command recovery PocketIC group | Passed 2026-05-17 in 269.686s after ledger replay reconciliation plus build, recruit, tavern hire, dwelling recruit, and battle aftermath retry/idempotency coverage | Green but too slow for an inner loop; split economy replay and battle aftermath routes during test-speed optimization |
 | Visibility/redaction PocketIC group | Passed 2026-05-17 in 75.491s after town build/recruit public/private event separation, hidden town denial, and neutral battle visibility denial coverage | Focused group is fast enough for repeated redaction regression checks |
+| Local DFX/blast smoke group | Passed manual direct smoke 2026-05-17: release deploy build finished in 2m27s, `blast scan` exposed 63 methods, setup reached `active` at `start:6`, direct movement/build/recruit/collect calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because `sync_session_turn` waits on the local replica deadline |
 
 Testing-first todo:
 
@@ -189,8 +190,23 @@ Testing-first todo:
   scripts/run-test-groups.sh pure schema generated canister-check` passing
   schema in 0.366s and generated-session in 0.349s after prebuild. The
   equivalent make targets are `make test-schema` and `make test-generated`.
-- [ ] Local DFX/blast smoke group: deploy, scan public endpoints, and play the
-  required direct `blast call` route with IcyDB diagnostics.
+- [x] Local DFX/blast smoke group: deploy, scan public endpoints, and play the
+  required direct `blast call` route with IcyDB diagnostics. Completed
+  2026-05-17 with `DFX_IDENTITY=domm-local-smoke dfx start --background
+  --clean`, `IC_WASM=/nix/store/8qsl9cdb7l6zd0lazygf1y5v5kpaaw54-ic-wasm-10f1b59/bin/ic-wasm
+  dfx deploy degens --network local`, and direct `blast` calls. Evidence:
+  release wasm build completed in 2m27s, `blast scan` exposed 63 public
+  methods, two blast identities registered/created/joined/readied, phased
+  setup reached `active` at `start:6`, `submit_move_intent`,
+  `submit_build_town_structure`, `submit_recruit_units`, and two
+  `sync_session_turn` calls produced `movement_sync_incomplete`,
+  `resource_picked_up`, and `session_turn_synced`. Diagnostic evidence:
+  `icydb_snapshot` reported `corrupted_entries = 0` and `corrupted_keys = 0`;
+  small-batch snapshots reported `GameSession=1`, `GameCommand=8`,
+  `SystemJob=4`, `WorldObject=19`, `Champion=2`,
+  `ParticipantKnownObject=13`, `ParticipantObjectVisit=1`,
+  `ResourceLedgerEntry=5`, `MovementSnapshot=2`, `TownBuilding=3`, and
+  `TownGarrisonStack=1`.
 - [ ] Full regression orchestration group: `make regression`,
   `make check-canister`, and `make test-pocket` with a final timing table and
   parallel-safe command recipe.
@@ -1477,6 +1493,14 @@ income, and full regression/PocketIC evidence.
   deploy path and agent-run `blast` command checklist.
 - [ ] Gate evidence: direct local `blast` smoke plus `icydb_snapshot`
   corruption checks.
+  - 2026-05-17 smoke evidence: local DFX deploy with public Candid metadata
+    succeeded, `blast scan` exposed 63 methods, direct calls registered two
+    identities and drove session setup to `active` at `start:6`, direct
+    movement/build/recruit/sync calls produced `resource_picked_up`, and
+    `icydb_snapshot` reported `corrupted_entries = 0` and
+    `corrupted_keys = 0`. Keep this item open until the lower Gate 8 full
+    route covers the remaining guarded-mine/capture/income path in the same
+    fresh local smoke.
 
 ### Gate 9. Render Projection Truth
 

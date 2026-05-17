@@ -47,11 +47,12 @@ blast call "$CANISTER_ID" register_player '["p2", "Player Two", "nonce:blast:reg
 blast call "$CANISTER_ID" create_session '["Blast Smoke", "ruleset:first-playable:v1", 42, "nonce:blast:create"]' --host "$HOST" --id 1
 ```
 
-Continue with `join_session`, `mark_ready` for both players, one host
-`start_session` call, then poll `get_session` until `state == "active"`. Active
-play should use `get_game_view`, `get_content_manifest`, visible map/object
-queries, champion/town/battle detail queries, and `get_command_status_by_nonce`
-for nonce polling.
+Continue with `join_session` and `mark_ready` for both players. On the current
+branch, `start_session` is still a phased setup command, so call it with fresh
+nonces until the returned session has `state == "active"`. Active play should
+use `get_game_view`, `get_content_manifest`, visible map/object queries,
+champion/town/battle detail queries, and `get_command_status_by_nonce` for
+nonce polling.
 
 After moving, collecting, building, recruiting, fighting the guarded mine, and
 advancing income, check storage health:
@@ -65,10 +66,15 @@ blast call "$CANISTER_ID" get_diagnostic_storage_snapshot '[["ParticipantObjectV
 ```
 
 The diagnostic snapshot is controller-gated. For local smoke, deploy with the
-same identity that runs the diagnostic calls, or add that identity as a local
-controller with `dfx canister update-settings`. Keep diagnostic entity lists in
-small batches; large combined batches can exceed the local replica instruction
-limit.
+same identity that runs the diagnostic calls, or add the blast identity as a
+local controller:
+
+```text
+dfx canister update-settings degens --network local --add-controller "$(blast principal --id 1)"
+```
+
+Keep diagnostic entity lists in small batches; large combined batches can
+exceed the local replica instruction limit.
 
 ## Cleanup
 

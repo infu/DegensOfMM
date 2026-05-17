@@ -3447,6 +3447,248 @@ fn pocket_ic_command_recovery_replays_economy_and_battle_effects() {
 }
 
 #[test]
+fn pocket_ic_visibility_redaction_keeps_private_payloads_private() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-visibility-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-visibility-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "visibility-redaction");
+    let town_id = "town:west".to_string();
+    let participant_one = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("visibility participant query should decode")
+    .expect("visibility participant should load");
+
+    let hidden_town = query_as::<ApiTownView>(
+        &fixture,
+        player_two,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("opponent hidden town query should decode")
+    .expect_err("opponent should not read a town outside visibility");
+    assert_eq!(hidden_town.code, "not_visible");
+
+    let built = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:visibility:build".to_string(),
+        ),
+    )
+    .expect("visibility build should decode")
+    .expect("visibility build should succeed");
+    assert_eq!(built.status, CommandStatus::Applied);
+    assert!(built.events.iter().any(|event| {
+        event.audience_key == format!("participant:{}", participant_one.participant_id)
+            && event.event_type == "town_building_built"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("freehold-training-yard"))
+    }));
+    assert!(built.events.iter().any(|event| {
+        event.audience_key == "public"
+            && event.event_type == "town_building_built"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""redacted":true"#))
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| !payload.contains("freehold-training-yard"))
+    }));
+
+    let recruited = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_recruit_units",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+            "nonce:visibility:recruit".to_string(),
+        ),
+    )
+    .expect("visibility recruit should decode")
+    .expect("visibility recruit should succeed");
+    assert_eq!(recruited.status, CommandStatus::Applied);
+    assert!(recruited.events.iter().any(|event| {
+        event.audience_key == format!("participant:{}", participant_one.participant_id)
+            && event.event_type == "units_recruited"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("mudhook-levy"))
+    }));
+    assert!(recruited.events.iter().any(|event| {
+        event.audience_key == "public"
+            && event.event_type == "units_recruited"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""redacted":true"#))
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| !payload.contains("mudhook-levy"))
+    }));
+
+    let private_page = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (
+            session_id.clone(),
+            format!("participant:{}", participant_one.participant_id),
+            0_u64,
+            50_u32,
+        ),
+    )
+    .expect("private event page should decode")
+    .expect("private event page should load");
+    assert!(private_page.events.iter().any(|event| {
+        event.event_type == "town_building_built"
+            && event.audience_key.starts_with("participant:")
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("freehold-training-yard"))
+    }));
+    assert!(private_page.events.iter().any(|event| {
+        event.event_type == "units_recruited"
+            && event.audience_key.starts_with("participant:")
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("mudhook-levy"))
+    }));
+
+    let forbidden_private_page = query_as::<ApiEventPage>(
+        &fixture,
+        player_two,
+        "get_events_after",
+        (
+            session_id.clone(),
+            format!("participant:{}", participant_one.participant_id),
+            0_u64,
+            50_u32,
+        ),
+    )
+    .expect("forbidden private event query should decode")
+    .expect_err("opponent must not read participant-private events");
+    assert_eq!(forbidden_private_page.code, "audience_not_allowed");
+
+    let public_page_for_opponent = query_as::<ApiEventPage>(
+        &fixture,
+        player_two,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 50_u32),
+    )
+    .expect("opponent public event page should decode")
+    .expect("opponent public event page should load");
+    for event_type in ["town_building_built", "units_recruited"] {
+        let event = public_page_for_opponent
+            .events
+            .iter()
+            .find(|event| event.event_type == event_type)
+            .unwrap_or_else(|| panic!("public feed should include redacted {event_type}"));
+        assert_eq!(event.audience_key, "public");
+        let payload = event
+            .payload
+            .as_deref()
+            .expect("public redacted event should carry a payload");
+        assert!(payload.contains(r#""redacted":true"#));
+        assert!(!payload.contains("freehold-training-yard"));
+        assert!(!payload.contains("mudhook-levy"));
+    }
+
+    let still_hidden_town = query_as::<ApiTownView>(
+        &fixture,
+        player_two,
+        "get_town_view",
+        (session_id.clone(), town_id),
+    )
+    .expect("opponent hidden town after build/recruit should decode")
+    .expect_err("opponent should still not read hidden town internals");
+    assert_eq!(still_hidden_town.code, "not_visible");
+
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:visibility:move:neutral",
+        "nonce:visibility:sync-turn:neutral:",
+        122_000_u64,
+        "neutral_encounter_pending",
+    );
+    let battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let own_battle = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("own neutral battle view should decode")
+    .expect("own neutral battle view should load");
+    assert_eq!(own_battle.battle_type, "neutral");
+    assert!(!own_battle.stacks.is_empty());
+
+    let hidden_battle = query_as::<BattleView>(
+        &fixture,
+        player_two,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("opponent neutral battle query should decode")
+    .expect_err("uninvolved opponent should not read neutral battle state");
+    assert_eq!(hidden_battle.code, "battle_not_visible");
+
+    let public_after_battle = query_as::<ApiEventPage>(
+        &fixture,
+        player_two,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 100_u32),
+    )
+    .expect("opponent public battle events should decode")
+    .expect("opponent public battle events should load");
+    let neutral_event = public_after_battle
+        .events
+        .iter()
+        .find(|event| event.event_type == "neutral_encounter_pending")
+        .expect("public feed should include the neutral encounter marker");
+    let neutral_payload = neutral_event
+        .payload
+        .as_deref()
+        .expect("neutral encounter marker should include a bounded payload");
+    assert!(neutral_payload.contains(r#""battle_id":"#));
+    assert!(!neutral_payload.contains("quantity"));
+    assert!(!neutral_payload.contains("front_hp"));
+    assert!(!neutral_payload.contains("damage_min"));
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");

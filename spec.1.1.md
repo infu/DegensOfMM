@@ -62,6 +62,7 @@ Current timing notes from 2026-05-17:
 | Render projection PocketIC group | Passed 2026-05-17 in 228.116s after participant-known render candidates, fog/cursor assertions, and guarded-mine aftermath projection coverage | Focused render route is green but still long; consumed-pile disappearance remains covered by the Gate J route until pickup sync is optimized |
 | Query budget PocketIC group | Passed 2026-05-17 in 54.613s after bounded movement preview, submit, object pages, compact game view, and response-size assertions | New focused group avoids long sync progression and is fast enough for repeated public query-budget checks |
 | Command recovery PocketIC group | Passed 2026-05-17 in 269.686s after ledger replay reconciliation plus build, recruit, tavern hire, dwelling recruit, and battle aftermath retry/idempotency coverage | Green but too slow for an inner loop; split economy replay and battle aftermath routes during test-speed optimization |
+| Visibility/redaction PocketIC group | Passed 2026-05-17 in 75.491s after town build/recruit public/private event separation, hidden town denial, and neutral battle visibility denial coverage | Focused group is fast enough for repeated redaction regression checks |
 
 Testing-first todo:
 
@@ -163,8 +164,17 @@ Testing-first todo:
   stability for build, town recruit, tavern hire, and dwelling recruit;
   resource ledgers and command effects do not duplicate on replay, and resolved
   battle aftermath exact/fresh retries remain no-ops for event/effect rows.
-- [ ] Visibility/redaction group: opponent events, neutral battle details,
+- [x] Visibility/redaction group: opponent events, neutral battle details,
   town build/recruit visibility, and public/private payload separation.
+  Completed 2026-05-17 with `DOMM_TEST_JOBS=1
+  scripts/run-test-groups.sh visibility-redaction` passing in 75.491s after
+  prebuild. Evidence also included `cargo check -p domm-degens-canister`,
+  a focused no-run build for
+  `pocket_ic_visibility_redaction_keeps_private_payloads_private`, and `bash -n
+  scripts/run-test-groups.sh`. The route verifies opponent private-event denial,
+  public redacted town build/recruit payloads, owner private payloads, hidden
+  town internals staying hidden, and neutral battle state/details staying
+  inaccessible to an uninvolved opponent.
 - [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17
   with `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pure schema generated
   canister-check` passing the pure group in 2.018s after prebuild.

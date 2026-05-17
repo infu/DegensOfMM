@@ -101,6 +101,10 @@ add_group "command-recovery" \
     "command recovery replay, ledger, and aftermath idempotency PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_command_recovery_replays_economy_and_battle_effects -- --nocapture"
+add_group "visibility-redaction" \
+    "visibility and public/private redaction PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_visibility_redaction_keeps_private_payloads_private -- --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_GROUPS=(
@@ -120,6 +124,7 @@ POCKET_GROUPS=(
     "render-projection"
     "query-budget"
     "command-recovery"
+    "visibility-redaction"
 )
 
 usage() {

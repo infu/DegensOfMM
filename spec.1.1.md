@@ -13,6 +13,100 @@ movement, large procedural maps, diplomacy, guilds, ranked play, durable
 rematch, broad neutral AI, large spell trees, full bot opponents, and other
 items already parked in `spec.v2.md`.
 
+## 0. Testing Speed, Parallelism, And Checkpoint Discipline
+
+Priority: P0.
+
+This testing work comes before the remaining spec 1.1 implementation points
+until the suite is fast, trustworthy, and easy to run repeatedly. The machine
+has enough CPU to run many independent checks at once, so test work should
+exploit parallelism wherever the harness and state isolation permit it.
+
+Checkpoint rules:
+
+- Testing should be fast. Prefer small targeted groups, prebuilt test binaries,
+  isolated temp/target directories where useful, and parallel workers over
+  one large serial run.
+- Do not assume PocketIC tests are parallel just because multiple cargo
+  processes were launched. Current runs wait on `/tmp/canic-pocket-ic.lock`, so
+  the first optimization checkpoint is removing or isolating that global lock.
+- Ramp PocketIC concurrency deliberately after the lock fix. Start with 4-8
+  independent PocketIC instances, verify port/temp/state isolation, then
+  increase worker count only when memory and process overhead are stable.
+- Run pure Rust/unit groups in parallel with canister/PocketIC groups whenever
+  cargo build locks allow it.
+- Each test group below owns its own checkbox. Mark it `[x]` only after the
+  group is passing or the named checkpoint is complete, and leave a timing or
+  evidence note.
+- Commit after every completed checkpoint with a clear commit message that
+  explains what was accomplished. Each checkpoint commit should include the
+  relevant `spec.1.1.md` checkbox/evidence update.
+
+Current timing notes from 2026-05-17:
+
+| Test group | Last observed result/time | Parallel status / next action |
+| --- | --- | --- |
+| PocketIC harness parallelism baseline | Parallel launch serialized behind `/tmp/canic-pocket-ic.lock` | Fix lock/isolation before trusting 32-core runs |
+| Endpoint inventory/public surface | Failed in 47.9s; expected visible object `Mara of the Toll` | Fix expectation/state setup, then retime |
+| Gate J strategic loop/IcyDB rows | Failed in 597.8s observed; expected `neutral:west-mine` | Fix scenario/object persistence, then retime |
+| Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
+| Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
+| Movement crossing conflict | Failed in 132.4s observed; `sync_session_turn` instruction cap | Slice/fix turn sync path, then retime |
+| Stationary enemy blocker | Failed in 200.9s observed; `sync_session_turn` instruction cap | Slice/fix turn sync path, then retime |
+| Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
+| Gate M web client probe | Failed in 256.6s; `turn_not_due` | Fix client probe timing/turn readiness |
+
+Testing-first todo:
+
+- [x] Capture the current PocketIC timing/failure inventory in this spec.
+- [ ] Remove, shard, or replace the cross-process PocketIC lock so independent
+  PocketIC instances can run concurrently on this 32-core machine.
+- [ ] Add a fast timing harness or make target that prebuilds once, runs
+  independent groups with bounded parallelism, and reports per-group wall time.
+- [ ] Endpoint inventory/public surface group:
+  `pocket_ic_canister_exposes_every_required_game_endpoint`.
+- [ ] Gate J strategic loop/IcyDB persistence group:
+  `pocket_ic_gate_j_strategic_loop_persists_icydb_rows`.
+- [x] Gate K battle aftermath/victory/history group:
+  `pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows`
+  currently passes; retime after the shared PocketIC lock is fixed.
+- [x] Gate L first-playable canister route group:
+  `pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`
+  passed cleanly in about 7.2 minutes.
+- [ ] Movement crossing conflict group:
+  `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`.
+- [ ] Stationary enemy blocker group:
+  `pocket_ic_stationary_enemy_blocker_starts_champion_encounter`.
+- [x] Week-two tavern/recruit growth group:
+  `pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance`
+  currently passes; retime after the shared PocketIC lock is fixed.
+- [ ] Gate M web client probe group:
+  `gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter`.
+- [ ] Timer jobs PocketIC group: scheduling, duplicate timer no-op, expired
+  lease recovery, post-upgrade repair, and deadline progression.
+- [ ] End-turn PocketIC group: ended-player-still-acts, final participant
+  closes the turn, stale turn commands, and replay semantics.
+- [ ] Battle-round readiness PocketIC group: timer auto-defend,
+  `end_battle_turn`, auto-ready stacks, and replay semantics.
+- [ ] Render projection PocketIC group: live object hydration, consumed piles,
+  defeated neutrals, captured mines, champion coordinates, fog, and cursors.
+- [ ] Query budget group: representative preview/submit movement paths,
+  bounded render reads, and query instruction ceilings.
+- [ ] Command recovery group: build, recruit, tavern hire, dwelling recruit,
+  ledger effects, and battle aftermath retry/idempotency.
+- [ ] Visibility/redaction group: opponent events, neutral battle details,
+  town build/recruit visibility, and public/private payload separation.
+- [ ] Pure rules group: `cargo test -p domm-game`.
+- [ ] Canister crate group: `cargo check -p domm-degens-canister` and focused
+  canister tests.
+- [ ] Generated-session/schema group: `make test-generated` and repository
+  inventory coverage.
+- [ ] Local DFX/blast smoke group: deploy, scan public endpoints, and play the
+  required direct `blast call` route with IcyDB diagnostics.
+- [ ] Full regression orchestration group: `make regression`,
+  `make check-canister`, and `make test-pocket` with a final timing table and
+  parallel-safe command recipe.
+
 ## Five-Agent Investigation Synthesis
 
 On 2026-05-16, five read-only domain agents reviewed `spec.md`,

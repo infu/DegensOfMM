@@ -830,6 +830,35 @@ fn object_view_from_known_fast(
                 if !scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
                     return Ok(None);
                 }
+                if let Some(champion) = fast_champion_for_known(context, subject)? {
+                    if !matches!(champion.status.as_str(), "active" | "in_battle") {
+                        return Ok(None);
+                    }
+                    if viewport.is_some_and(|viewport| !viewport.contains(champion.x, champion.y)) {
+                        return Ok(None);
+                    }
+                    return Ok(Some(ObjectView {
+                        subject_kind: subject.subject_kind.clone(),
+                        subject_id_text: subject.subject_id_text.clone(),
+                        visibility: "visible".to_string(),
+                        redaction_level: "none".to_string(),
+                        x: champion.x,
+                        y: champion.y,
+                        last_seen_turn: Some(context.session.current_turn),
+                        display_name: Some(champion.name.clone()),
+                        asset_key: None,
+                        owner_participant_id: Some(
+                            Id::<GameParticipant>::from_key(champion.participant_id).to_string(),
+                        ),
+                        details_json: format!(
+                            "{{\"type\":\"champion\",\"scenario_key\":\"{}\",\"champion_id\":\"{}\",\"class_key\":\"{}\",\"status\":\"{}\"}}",
+                            escape_json(&subject.subject_id_text),
+                            champion.id(),
+                            escape_json(&champion.class_key),
+                            escape_json(&champion.status)
+                        ),
+                    }));
+                }
                 let details = scenario_subject_details(
                     &subject.subject_kind,
                     &subject.subject_id_text,
@@ -958,21 +987,28 @@ fn world_object_list_view(
     }
     .to_string();
 
-    if subject.subject_id_text == "mine:west-gold" {
-        if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
-            context.session.id(),
-            subject.x,
-            subject.y,
-        )? {
-            if object.state == "collected" {
-                return Ok(None);
-            }
-            state = object.state;
-            owner_participant_id = object
-                .owner_participant_id
-                .map(|id| Id::<GameParticipant>::from_key(id).to_string());
-            scoring_kind = object.scoring_kind;
+    let mut x = subject.x;
+    let mut y = subject.y;
+    let mut details_json = None;
+    if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
+        context.session.id(),
+        subject.x,
+        subject.y,
+    )? {
+        if object.state == "collected" {
+            return Ok(None);
         }
+        x = object.x;
+        y = object.y;
+        state = object.state.clone();
+        owner_participant_id = object
+            .owner_participant_id
+            .map(|id| Id::<GameParticipant>::from_key(id).to_string());
+        scoring_kind = object.scoring_kind.clone();
+        details_json = Some(world_object_live_details_json(
+            &subject.subject_id_text,
+            &object,
+        ));
     }
 
     Ok(Some(ObjectView {
@@ -980,19 +1016,19 @@ fn world_object_list_view(
         subject_id_text: subject.subject_id_text.clone(),
         visibility: "visible".to_string(),
         redaction_level: "none".to_string(),
-        x: subject.x,
-        y: subject.y,
+        x,
+        y,
         last_seen_turn: Some(context.session.current_turn),
         display_name: Some(subject.subject_id_text.clone()),
         asset_key: None,
         owner_participant_id,
-        details_json: format!(
+        details_json: details_json.unwrap_or_else(|| format!(
             "{{\"type\":\"world_object\",\"scenario_key\":\"{}\",\"object_slug\":\"{}\",\"state\":\"{}\",\"scoring_kind\":\"{}\"}}",
             escape_json(&subject.subject_id_text),
             escape_json(&subject.subject_id_text),
             escape_json(&state),
             escape_json(&scoring_kind)
-        ),
+        )),
     }))
 }
 
@@ -1027,6 +1063,20 @@ fn fast_champion_for_known(
 ) -> Result<Option<Champion>, ApiError> {
     if let Ok(id) = Ulid::from_str(&subject.subject_id_text).map(Id::<Champion>::from_key) {
         return champions_artifacts::load_champion(id);
+    }
+    if scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
+        for champion_id in &context.participant.champion_ids {
+            let Some(champion) =
+                champions_artifacts::load_champion(Id::<Champion>::from_key(*champion_id))?
+            else {
+                continue;
+            };
+            if champion.session_id == context.session.id().key()
+                && champion.participant_id == context.participant.id().key()
+            {
+                return Ok(Some(champion));
+            }
+        }
     }
     champions_artifacts::find_champion_by_session_xy(context.session.id(), subject.x, subject.y)
 }

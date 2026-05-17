@@ -576,24 +576,15 @@ pub(crate) fn start_session(
 
             #[cfg(not(target_arch = "wasm32"))]
             {
-                for _ in 0..(SETUP_EFFECTS.len() + 2) {
-                    if let Some(job) = system_job_repo::find_system_job_by_key(
-                        &setup_session_job_key(session.id()),
-                    )? {
-                        process_setup_session_job(job)?;
-                    } else {
-                        let setup_complete =
-                            run_setup(&mut session, &setup_command, &participants)?;
-                        if setup_complete {
-                            session.state = "active".to_string();
-                            session = sessions::update_session(session)?;
-                        }
-                    }
-                    if let Some(updated) = sessions::load_session(session.id())? {
-                        session = updated;
-                    }
-                    if session.state == "active" {
-                        break;
+                if let Some(job) =
+                    system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?
+                {
+                    process_setup_session_job(job)?;
+                } else {
+                    let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+                    if setup_complete {
+                        session.state = "active".to_string();
+                        session = sessions::update_session(session)?;
                     }
                 }
                 if let Some(updated) = sessions::load_session(session.id())? {

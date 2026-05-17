@@ -432,6 +432,9 @@ pub(crate) fn battle_stacks_plan_text(battle_id: Id<Battle>, limit: u32) -> Repo
         crate::db()
             .load::<BattleStack>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("side")
+            .order_asc("slot_index")
+            .order_asc("id")
             .limit(limit),
     )
 }
@@ -443,6 +446,9 @@ pub(crate) fn battle_obstacles_plan_text(battle_id: Id<Battle>, limit: u32) -> R
         crate::db()
             .load::<BattleObstacle>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_x")
+            .order_asc("battle_y")
+            .order_asc("id")
             .limit(limit),
     )
 }
@@ -454,6 +460,9 @@ pub(crate) fn battle_occupancy_plan_text(battle_id: Id<Battle>, limit: u32) -> R
         crate::db()
             .load::<BattleOccupancy>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_x")
+            .order_asc("battle_y")
+            .order_asc("id")
             .limit(limit),
     )
 }

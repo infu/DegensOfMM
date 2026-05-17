@@ -122,8 +122,12 @@ Testing-first todo:
 - [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17
   with `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pure schema generated
   canister-check` passing the pure group in 2.018s after prebuild.
-- [ ] Canister crate group: `cargo check -p domm-degens-canister` and focused
-  canister tests.
+- [x] Canister crate group: `cargo check -p domm-degens-canister` and focused
+  canister tests. Completed 2026-05-17 with `cargo check -p
+  domm-degens-canister`, focused `repository_hot_path_plans_are_indexed_and_bounded`,
+  focused `lobby_session_setup_recovers_from_starting_state_and_replays_nonce`
+  passing in 288.42s, and full `cargo test -p domm-degens-canister` passing
+  14 tests in 288.02s.
 - [x] Generated-session/schema group: `make test-generated` and repository
   inventory coverage. Completed 2026-05-17 with `DOMM_TEST_JOBS=4
   scripts/run-test-groups.sh pure schema generated canister-check` passing

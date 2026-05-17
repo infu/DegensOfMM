@@ -1626,6 +1626,14 @@ fn apply_cast_ability_command(
         Some(response_participant_id),
         events,
     )?;
+    append_cast_action_feed_events(
+        session,
+        command.id(),
+        &state,
+        input,
+        response_participant_id,
+        events,
+    )?;
     if !battle_state_resolved(&state, &input.battle_id)? {
         battle_aftermath::apply_resolved_battle_aftermath(
             session,
@@ -2306,6 +2314,73 @@ fn validate_cast_ability_action(
             false,
         ));
     }
+    Ok(())
+}
+
+fn append_cast_action_feed_events(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    state: &domm_game::BattleState,
+    input: &BattleActionInput,
+    response_participant_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+) -> Result<(), ApiError> {
+    let action_payload = format!(
+        r#"{{"action":"{}","stack_id":"{}","ability_key":{},"target_stack_id":{}}}"#,
+        command_response::escape_json(&input.action),
+        command_response::escape_json(&input.battle_stack_id),
+        input
+            .ability_key
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string()),
+        input
+            .target_stack_id
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string())
+    );
+    let detailed_payload = format!(
+        r#"{{"battle_id":"{}","subject_id_text":"{}","payload":{}}}"#,
+        command_response::escape_json(&input.battle_id),
+        command_response::escape_json(&input.battle_stack_id),
+        action_payload
+    );
+    for participant_id in involved_battle_participant_ids(state, &input.battle_id)? {
+        let audience_key = format!("participant:{participant_id}");
+        let view = command_response::append_event_for_audience(
+            session,
+            command_id,
+            format!(
+                "battle:{}:{}:action_applied:{}",
+                input.battle_id, command_id, audience_key
+            ),
+            audience_key,
+            "battle_action_applied".to_string(),
+            Some("battle".to_string()),
+            Some(input.battle_id.clone()),
+            detailed_payload.clone(),
+        )?;
+        if response_participant_id == participant_id {
+            events.push(view);
+        }
+    }
+    let public_event = command_response::append_public_event(
+        session,
+        command_id,
+        format!(
+            "battle:{}:{}:action_applied:public",
+            input.battle_id, command_id
+        ),
+        "battle_action_applied".to_string(),
+        Some("battle".to_string()),
+        Some(input.battle_id.clone()),
+        format!(
+            r#"{{"battle_id":"{}","event_type":"battle_action_applied","redacted":true}}"#,
+            command_response::escape_json(&input.battle_id)
+        ),
+    )?;
+    events.push(public_event);
     Ok(())
 }
 

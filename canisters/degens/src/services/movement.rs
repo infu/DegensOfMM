@@ -752,7 +752,7 @@ fn resolve_single_long_movement_fast(
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<Option<bool>, ApiError> {
-    if pending.len() != 1 || pending[0].path.len() <= 4 {
+    if pending.len() != 1 {
         return Ok(None);
     }
 
@@ -761,6 +761,11 @@ fn resolve_single_long_movement_fast(
         .last()
         .copied()
         .expect("long movement path must have a final coord");
+    if pending[0].path.len() <= 4
+        && !fast_path_final_contact_exists(session, &pending[0], final_coord)?
+    {
+        return Ok(None);
+    }
     let partial_event = command_response::append_public_event(
         session,
         command_id,
@@ -962,6 +967,33 @@ fn resolve_single_long_movement_fast(
         "update",
     ));
     Ok(Some(true))
+}
+
+fn fast_path_final_contact_exists(
+    session: &GameSession,
+    pending_move: &PendingMovement,
+    final_coord: MoveCoord,
+) -> Result<bool, ApiError> {
+    if map_visibility_occupancy::find_world_object_by_session_xy(
+        session.id(),
+        final_coord.x,
+        final_coord.y,
+    )?
+    .and_then(|object| object.guarded_neutral_army_id)
+    .is_some()
+    {
+        return Ok(true);
+    }
+    let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
+        session.id(),
+        final_coord.x,
+        final_coord.y,
+        "champion",
+    )?
+    else {
+        return Ok(false);
+    };
+    Ok(blocker.blocking && blocker.occupant_id_text != pending_move.champion.id().to_string())
 }
 
 fn resolve_two_movement_crossing_fast(
@@ -1929,7 +1961,7 @@ fn commit_candidate_move(
     pending_move.champion.movement_turn = session.current_turn;
     pending_move.champion.last_command_id = Some(command_id.key());
     update_known_champion_projection(session, &pending_move.participant, &pending_move.champion)?;
-    if outcome != "moved" || pending_move.path.len() <= usize::from(step_index) + 1 {
+    if outcome != "moved" {
         record_movement_snapshot(
             session,
             command_id,

@@ -3147,7 +3147,9 @@ fn apply_resource_delta(
     delta: i64,
     reason: &str,
 ) -> Result<(), ApiError> {
-    if economy::find_resource_ledger_entry(command_id, &ledger_key)?.is_some() {
+    if let Some(entry) = economy::find_resource_ledger_entry(command_id, &ledger_key)? {
+        reconcile_resource_balance(participant, resource_key, entry.balance_after)?;
+        participant.last_resource_command_id = Some(command_id.key());
         return Ok(());
     }
     let balance_after = match resource_key {
@@ -3201,6 +3203,60 @@ fn apply_resource_delta(
     )?;
     participant.last_resource_command_id = Some(command_id.key());
     Ok(())
+}
+
+fn reconcile_resource_balance(
+    participant: &mut GameParticipant,
+    resource_key: &str,
+    balance_after: u64,
+) -> Result<(), ApiError> {
+    match resource_key {
+        "gold" => {
+            participant.gold = balance_after;
+            Ok(())
+        }
+        "wood" => {
+            participant.wood = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        "stone" => {
+            participant.stone = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        "iron" => {
+            participant.iron = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        "crystal" => {
+            participant.crystal = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        "ember" => {
+            participant.ember = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        "aether" => {
+            participant.aether = u32::try_from(balance_after).map_err(|_| {
+                public_error("resource_cap_exceeded", "resource cap exceeded", false)
+            })?;
+            Ok(())
+        }
+        _ => Err(public_error(
+            "unknown_resource",
+            "unknown resource key",
+            false,
+        )),
+    }
 }
 
 fn resolve_owned_champion(

@@ -2916,6 +2916,537 @@ fn pocket_ic_query_budget_keeps_preview_submit_and_render_bounded() {
 }
 
 #[test]
+fn pocket_ic_command_recovery_replays_economy_and_battle_effects() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-command-recovery-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-command-recovery-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "command-recovery");
+    let town_id = "town:west".to_string();
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let initial_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_eq!(row_count(&initial_storage, "ChampionHire"), 0);
+    assert_eq!(row_count(&initial_storage, "DwellingRecruitment"), 0);
+    assert!(row_count(&initial_storage, "TavernOffer") > 0);
+    assert!(row_count(&initial_storage, "DwellingPool") > 0);
+
+    let built = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:command-recovery:build".to_string(),
+        ),
+    )
+    .expect("build recovery command should decode")
+    .expect("build recovery command should succeed");
+    assert_eq!(built.status, CommandStatus::Applied);
+    let build_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_eq!(
+        row_count(&build_storage, "TownBuilding"),
+        row_count(&initial_storage, "TownBuilding") + 1
+    );
+    let participant_after_build = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after build should decode")
+    .expect("participant after build should load");
+    let build_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:command-recovery:build".to_string(),
+        ),
+    )
+    .expect("build replay should decode")
+    .expect("build replay should succeed");
+    assert_eq!(build_replay.command_id, built.command_id);
+    assert!(build_replay.events.is_empty());
+    let participant_after_build_replay = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after build replay should decode")
+    .expect("participant after build replay should load");
+    assert_eq!(
+        participant_after_build_replay.resources,
+        participant_after_build.resources
+    );
+    let build_replay_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_row_count_stable(&build_storage, &build_replay_storage, "CommandEffect");
+    assert_row_count_stable(&build_storage, &build_replay_storage, "GameEvent");
+    assert_row_count_stable(&build_storage, &build_replay_storage, "ResourceLedgerEntry");
+    assert_row_count_stable(&build_storage, &build_replay_storage, "TownBuilding");
+
+    let town_after_build = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after build should decode")
+    .expect("town after build should load");
+    let recruit_pool_before = town_after_build
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("training yard should expose a mudhook recruit pool")
+        .available;
+    assert!(recruit_pool_before > 0);
+
+    let recruited = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_recruit_units",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+            "nonce:command-recovery:recruit".to_string(),
+        ),
+    )
+    .expect("recruit recovery command should decode")
+    .expect("recruit recovery command should succeed");
+    assert_eq!(recruited.status, CommandStatus::Applied);
+    let recruit_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_eq!(
+        row_count(&recruit_storage, "TownGarrisonStack"),
+        row_count(&build_replay_storage, "TownGarrisonStack") + 1
+    );
+    let town_after_recruit = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after recruit should decode")
+    .expect("town after recruit should load");
+    let recruit_pool_after = town_after_recruit
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("recruit pool should remain visible after recruit")
+        .available;
+    assert_eq!(recruit_pool_after, recruit_pool_before - 1);
+    assert!(
+        town_after_recruit
+            .garrison_stacks
+            .iter()
+            .any(|stack| stack.unit_slug == "mudhook-levy" && stack.quantity == 1)
+    );
+    let participant_after_recruit = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after recruit should decode")
+    .expect("participant after recruit should load");
+    let recruit_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_recruit_units",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+            "nonce:command-recovery:recruit".to_string(),
+        ),
+    )
+    .expect("recruit replay should decode")
+    .expect("recruit replay should succeed");
+    assert_eq!(recruit_replay.command_id, recruited.command_id);
+    assert!(recruit_replay.events.is_empty());
+    let participant_after_recruit_replay = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after recruit replay should decode")
+    .expect("participant after recruit replay should load");
+    assert_eq!(
+        participant_after_recruit_replay.resources,
+        participant_after_recruit.resources
+    );
+    let town_after_recruit_replay = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after recruit replay should decode")
+    .expect("town after recruit replay should load");
+    assert_eq!(
+        town_after_recruit_replay
+            .recruit_pools
+            .iter()
+            .find(|pool| pool.unit_slug == "mudhook-levy")
+            .expect("recruit pool should exist after replay")
+            .available,
+        recruit_pool_after
+    );
+    assert!(
+        town_after_recruit_replay
+            .garrison_stacks
+            .iter()
+            .any(|stack| stack.unit_slug == "mudhook-levy" && stack.quantity == 1)
+    );
+    let recruit_replay_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    for entity in [
+        "CommandEffect",
+        "GameEvent",
+        "ResourceLedgerEntry",
+        "TownGarrisonStack",
+        "TownRecruitPool",
+    ] {
+        assert_row_count_stable(&recruit_storage, &recruit_replay_storage, entity);
+    }
+
+    let tavern_offers = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("tavern offers should decode")
+    .expect("tavern offers should load");
+    let tavern_offer = tavern_offers
+        .offers
+        .iter()
+        .find(|offer| offer.status == "available")
+        .expect("an available tavern offer should exist")
+        .clone();
+    let hired = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "hire_tavern_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer.offer_key.clone(),
+            "nonce:command-recovery:hire".to_string(),
+        ),
+    )
+    .expect("hire recovery command should decode")
+    .expect("hire recovery command should succeed");
+    assert_eq!(hired.status, CommandStatus::Applied);
+    let hired_champion_id = match &hired.result {
+        CommandResult::ExpandedEconomy(receipt) => receipt
+            .champion_id
+            .clone()
+            .expect("hire receipt should include a champion id"),
+        other => panic!("hire recovery returned unexpected result: {other:?}"),
+    };
+    let hire_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_eq!(
+        row_count(&hire_storage, "Champion"),
+        row_count(&recruit_replay_storage, "Champion") + 1
+    );
+    assert_eq!(
+        row_count(&hire_storage, "ChampionHire"),
+        row_count(&recruit_replay_storage, "ChampionHire") + 1
+    );
+    let participant_after_hire = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after hire should decode")
+    .expect("participant after hire should load");
+    let hire_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "hire_tavern_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer.offer_key.clone(),
+            "nonce:command-recovery:hire".to_string(),
+        ),
+    )
+    .expect("hire replay should decode")
+    .expect("hire replay should succeed");
+    assert_eq!(hire_replay.command_id, hired.command_id);
+    assert!(hire_replay.events.is_empty());
+    match &hire_replay.result {
+        CommandResult::ExpandedEconomy(receipt) => {
+            assert_eq!(
+                receipt.champion_id.as_deref(),
+                Some(hired_champion_id.as_str())
+            );
+        }
+        other => panic!("hire replay returned unexpected result: {other:?}"),
+    }
+    let participant_after_hire_replay = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after hire replay should decode")
+    .expect("participant after hire replay should load");
+    assert_eq!(
+        participant_after_hire_replay.resources,
+        participant_after_hire.resources
+    );
+    let tavern_after_hire_replay = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("tavern offers after hire replay should decode")
+    .expect("tavern offers after hire replay should load");
+    assert!(tavern_after_hire_replay.offers.iter().any(|offer| {
+        offer.offer_key == tavern_offer.offer_key
+            && offer.status == "hired"
+            && offer.hired_champion_id.as_deref() == Some(hired_champion_id.as_str())
+    }));
+    let hire_replay_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    for entity in [
+        "Champion",
+        "ChampionHire",
+        "CommandEffect",
+        "GameEvent",
+        "ResourceLedgerEntry",
+        "TavernOffer",
+    ] {
+        assert_row_count_stable(&hire_storage, &hire_replay_storage, entity);
+    }
+
+    let dwelling_id = "dwelling:west-mudhook".to_string();
+    let dwelling_pool = query_as::<DwellingPoolView>(
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id.clone()),
+    )
+    .expect("dwelling pool should decode")
+    .expect("dwelling pool should load");
+    assert!(dwelling_pool.available > 0);
+    let dwelling_recruit = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            "nonce:command-recovery:dwelling".to_string(),
+        ),
+    )
+    .expect("dwelling recovery command should decode")
+    .expect("dwelling recovery command should succeed");
+    assert_eq!(dwelling_recruit.status, CommandStatus::Applied);
+    let dwelling_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    assert_eq!(
+        row_count(&dwelling_storage, "DwellingRecruitment"),
+        row_count(&hire_replay_storage, "DwellingRecruitment") + 1
+    );
+    let dwelling_after_recruit = query_as::<DwellingPoolView>(
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id.clone()),
+    )
+    .expect("dwelling pool after recruit should decode")
+    .expect("dwelling pool after recruit should load");
+    assert_eq!(
+        dwelling_after_recruit.available,
+        dwelling_pool.available.saturating_sub(1)
+    );
+    let participant_after_dwelling = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after dwelling should decode")
+    .expect("participant after dwelling should load");
+    let dwelling_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            "nonce:command-recovery:dwelling".to_string(),
+        ),
+    )
+    .expect("dwelling replay should decode")
+    .expect("dwelling replay should succeed");
+    assert_eq!(dwelling_replay.command_id, dwelling_recruit.command_id);
+    assert!(dwelling_replay.events.is_empty());
+    let dwelling_after_replay = query_as::<DwellingPoolView>(
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id.clone()),
+    )
+    .expect("dwelling pool after replay should decode")
+    .expect("dwelling pool after replay should load");
+    assert_eq!(
+        dwelling_after_replay.available,
+        dwelling_after_recruit.available
+    );
+    let participant_after_dwelling_replay = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("participant after dwelling replay should decode")
+    .expect("participant after dwelling replay should load");
+    assert_eq!(
+        participant_after_dwelling_replay.resources,
+        participant_after_dwelling.resources
+    );
+    let dwelling_replay_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    for entity in [
+        "ChampionArmyStack",
+        "CommandEffect",
+        "DwellingPool",
+        "DwellingRecruitment",
+        "GameEvent",
+        "ResourceLedgerEntry",
+    ] {
+        assert_row_count_stable(&dwelling_storage, &dwelling_replay_storage, entity);
+    }
+
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:command-recovery:move:neutral",
+        "nonce:command-recovery:sync-turn:neutral:",
+        122_000_u64,
+        "neutral_encounter_pending",
+    );
+    let battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    resolve_battle_to_end(
+        &fixture,
+        player_one,
+        &session_id,
+        &battle_id,
+        "nonce:command-recovery:battle",
+    );
+    let aftermath_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    let events_after_aftermath = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("events after battle aftermath should decode")
+    .expect("events after battle aftermath should load");
+    assert_eq!(
+        event_count_for_subject(
+            &events_after_aftermath,
+            "battle_aftermath_applied",
+            &battle_id,
+        ),
+        1
+    );
+    let aftermath_nonce = "nonce:command-recovery:battle:aftermath".to_string();
+    let aftermath_status = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "sync_battle".to_string(),
+            aftermath_nonce.clone(),
+        ),
+    )
+    .expect("aftermath command status should decode")
+    .expect("aftermath command status should load");
+    assert_eq!(aftermath_status.status, CommandStatus::Applied);
+    let aftermath_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_battle",
+        (session_id.clone(), battle_id.clone(), aftermath_nonce),
+    )
+    .expect("aftermath exact nonce replay should decode")
+    .expect("aftermath exact nonce replay should succeed");
+    assert_eq!(aftermath_replay.command_id, aftermath_status.command_id);
+    assert!(aftermath_replay.events.is_empty());
+    let aftermath_retry = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:command-recovery:battle:aftermath-retry".to_string(),
+        ),
+    )
+    .expect("aftermath fresh retry should decode")
+    .expect("aftermath fresh retry should succeed");
+    assert_eq!(aftermath_retry.status, CommandStatus::Applied);
+    assert!(
+        aftermath_retry
+            .events
+            .iter()
+            .all(|event| event.event_type != "battle_aftermath_applied")
+    );
+    let retry_storage = diagnostic_snapshot(&fixture, COMMAND_RECOVERY_ENTITIES);
+    for entity in [
+        "Battle",
+        "CommandEffect",
+        "GameEvent",
+        "NeutralArmy",
+        "WorldObject",
+    ] {
+        assert_row_count_stable(&aftermath_storage, &retry_storage, entity);
+    }
+    let events_after_retry = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("events after battle retry should decode")
+    .expect("events after battle retry should load");
+    assert_eq!(
+        event_count_for_subject(&events_after_retry, "battle_aftermath_applied", &battle_id),
+        1
+    );
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");
@@ -4511,6 +5042,25 @@ const GATE_L_ENTITIES: &[&str] = &[
     "SiegeRuleState",
 ];
 
+const COMMAND_RECOVERY_ENTITIES: &[&str] = &[
+    "Battle",
+    "Champion",
+    "ChampionArmyStack",
+    "ChampionHire",
+    "CommandEffect",
+    "DwellingPool",
+    "DwellingRecruitment",
+    "GameCommand",
+    "GameEvent",
+    "NeutralArmy",
+    "ResourceLedgerEntry",
+    "TavernOffer",
+    "TownBuilding",
+    "TownGarrisonStack",
+    "TownRecruitPool",
+    "WorldObject",
+];
+
 impl GateJMetrics {
     fn record_query<T: candid::CandidType>(
         &mut self,
@@ -5099,6 +5649,28 @@ fn row_count(snapshot: &DiagnosticStorageSnapshot, entity: &str) -> u32 {
         .find(|row| row.entity == entity)
         .unwrap_or_else(|| panic!("diagnostic row count missing {entity}"))
         .count
+}
+
+fn assert_row_count_stable(
+    before: &DiagnosticStorageSnapshot,
+    after: &DiagnosticStorageSnapshot,
+    entity: &str,
+) {
+    assert_eq!(
+        row_count(after, entity),
+        row_count(before, entity),
+        "{entity} row count should stay stable"
+    );
+}
+
+fn event_count_for_subject(page: &ApiEventPage, event_type: &str, subject_id_text: &str) -> usize {
+    page.events
+        .iter()
+        .filter(|event| {
+            event.event_type == event_type
+                && event.subject_id_text.as_deref() == Some(subject_id_text)
+        })
+        .count()
 }
 
 fn compact_game_view(

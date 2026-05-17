@@ -61,6 +61,7 @@ Current timing notes from 2026-05-17:
 | Battle-round readiness PocketIC group | Passed 2026-05-17 in 89.423s after auto-ready, round auto-defend, `end_battle_turn`, and replay coverage | Focused battle readiness route is isolated from the longer Gate K/L battle routes |
 | Render projection PocketIC group | Passed 2026-05-17 in 228.116s after participant-known render candidates, fog/cursor assertions, and guarded-mine aftermath projection coverage | Focused render route is green but still long; consumed-pile disappearance remains covered by the Gate J route until pickup sync is optimized |
 | Query budget PocketIC group | Passed 2026-05-17 in 54.613s after bounded movement preview, submit, object pages, compact game view, and response-size assertions | New focused group avoids long sync progression and is fast enough for repeated public query-budget checks |
+| Command recovery PocketIC group | Passed 2026-05-17 in 269.686s after ledger replay reconciliation plus build, recruit, tavern hire, dwelling recruit, and battle aftermath retry/idempotency coverage | Green but too slow for an inner loop; split economy replay and battle aftermath routes during test-speed optimization |
 
 Testing-first todo:
 
@@ -152,8 +153,16 @@ Testing-first todo:
   `get_visible_objects`, compact `get_game_view`, and a 64 KiB max Candid
   response-size ceiling while verifying the queries execute below PocketIC
   instruction limits.
-- [ ] Command recovery group: build, recruit, tavern hire, dwelling recruit,
-  ledger effects, and battle aftermath retry/idempotency.
+- [x] Command recovery group: build, recruit, tavern hire, dwelling recruit,
+  ledger effects, and battle aftermath retry/idempotency. Completed 2026-05-17
+  with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh command-recovery` passing
+  in 269.686s after prebuild. Evidence also included `cargo check -p
+  domm-degens-canister`, a focused no-run build for
+  `pocket_ic_command_recovery_replays_economy_and_battle_effects`, and `bash
+  -n scripts/run-test-groups.sh`. The route verifies exact-nonce replay
+  stability for build, town recruit, tavern hire, and dwelling recruit;
+  resource ledgers and command effects do not duplicate on replay, and resolved
+  battle aftermath exact/fresh retries remain no-ops for event/effect rows.
 - [ ] Visibility/redaction group: opponent events, neutral battle details,
   town build/recruit visibility, and public/private payload separation.
 - [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17

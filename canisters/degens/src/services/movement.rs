@@ -307,7 +307,7 @@ pub(crate) fn sync_session_turn(
         command.id(),
         &mut events,
         &mut changed_subjects,
-    )? && !pending_movements_remain(&context.session)?;
+    )?;
     if let Some(updated_participant) = sessions::load_participant(context.participant.id())? {
         context.participant = updated_participant;
     }
@@ -447,7 +447,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         command.id(),
         &mut events,
         &mut changed_subjects,
-    )? && !pending_movements_remain(&session)?;
+    )?;
     if !movement_complete {
         let mut command = command;
         command.status = "applying".to_string();
@@ -757,6 +757,8 @@ fn resolve_single_long_movement_fast(
     )? {
         let moving_id = pending[0].champion.id().to_string();
         if blocker.blocking && blocker.occupant_id_text != moving_id {
+            let (stop_step, stop_coord, movement_cost, remaining_after) =
+                prepare_fast_path_stop(session, command_id, &mut pending[0])?;
             let mut blocker_champion = load_champion_by_text(session, &blocker.occupant_id_text)?
                 .ok_or_else(|| {
                 public_error("champion_not_found", "champion blocker was not found", true)
@@ -783,7 +785,34 @@ fn resolve_single_long_movement_fast(
                     "status",
                 ));
             }
-            stop_candidate_fast(session, command_id, &mut pending[0], changed_subjects)?;
+            let start_coord = pending[0].start;
+            stop_candidate_fast(
+                session,
+                command_id,
+                &mut pending[0],
+                stop_step,
+                start_coord,
+                stop_coord,
+                movement_cost,
+                remaining_after,
+                if enemy {
+                    "started_champion_battle"
+                } else {
+                    "stopped_champion_blocker"
+                },
+                Some(MovementPathStop {
+                    reason: if enemy {
+                        "enemy_champion_blocker".to_string()
+                    } else {
+                        "friendly_champion_blocker".to_string()
+                    },
+                    subject_kind: "champion".to_string(),
+                    subject_id_text: blocker.occupant_id_text,
+                    x: final_coord.x,
+                    y: final_coord.y,
+                }),
+                changed_subjects,
+            )?;
             return Ok(Some(!enemy));
         }
     }
@@ -795,6 +824,8 @@ fn resolve_single_long_movement_fast(
     )? {
         if let Some(neutral_id) = object.guarded_neutral_army_id {
             let neutral_id = Id::<NeutralArmy>::from_key(neutral_id);
+            let (stop_step, stop_coord, movement_cost, remaining_after) =
+                prepare_fast_path_stop(session, command_id, &mut pending[0])?;
             if let Some(event) = mark_neutral_encounter_pending(
                 session,
                 command_id,
@@ -805,17 +836,41 @@ fn resolve_single_long_movement_fast(
                 final_coord,
             )? {
                 events.push(event);
-                stop_candidate_fast(session, command_id, &mut pending[0], changed_subjects)?;
+                let start_coord = pending[0].start;
+                stop_candidate_fast(
+                    session,
+                    command_id,
+                    &mut pending[0],
+                    stop_step,
+                    start_coord,
+                    stop_coord,
+                    movement_cost,
+                    remaining_after,
+                    "started_neutral_battle",
+                    Some(MovementPathStop {
+                        reason: "guarded_object".to_string(),
+                        subject_kind: "neutral_army".to_string(),
+                        subject_id_text: neutral_id.to_string(),
+                        x: final_coord.x,
+                        y: final_coord.y,
+                    }),
+                    changed_subjects,
+                )?;
                 return Ok(Some(true));
             }
             return Ok(Some(false));
         }
     }
 
+    let movement_cost = movement_cost_for_path(session, &pending[0].path)?;
+    let remaining_after = effective_movement(&pending[0].champion, session.current_turn)
+        .saturating_sub(movement_cost);
     pending[0].champion.x = final_coord.x;
     pending[0].champion.y = final_coord.y;
     pending[0].champion.chunk_x = chunk_coord(session, final_coord.x);
     pending[0].champion.chunk_y = chunk_coord(session, final_coord.y);
+    pending[0].champion.movement_remaining = remaining_after;
+    pending[0].champion.movement_turn = session.current_turn;
     pending[0].champion.last_command_id = Some(command_id.key());
     pending[0].champion = champions_artifacts::update_champion(pending[0].champion.clone())?;
     update_champion_occupancy(
@@ -843,6 +898,27 @@ fn resolve_single_long_movement_fast(
             "resources",
         ));
     }
+    let final_step = pending[0]
+        .path
+        .len()
+        .saturating_sub(1)
+        .min(usize::from(u16::MAX)) as u16;
+    record_movement_snapshot(
+        session,
+        command_id,
+        &pending[0],
+        final_step,
+        pending[0].start,
+        final_coord,
+        movement_cost,
+        remaining_after,
+        if interaction.stop_path {
+            "stopped_object_interaction"
+        } else {
+            "moved"
+        },
+        None,
+    )?;
     pending[0].intent = movement::mark_intent_resolved(pending[0].intent.clone())?;
     pending[0].resolved = true;
     changed_subjects.push(command_response::changed(
@@ -858,12 +934,67 @@ fn resolve_single_long_movement_fast(
     Ok(Some(true))
 }
 
+fn prepare_fast_path_stop(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    pending_move: &mut PendingMovement,
+) -> Result<(u16, MoveCoord, u16, u16), ApiError> {
+    let stop_len = pending_move.path.len().saturating_sub(1);
+    let stop_coord = pending_move
+        .path
+        .get(stop_len.saturating_sub(1))
+        .copied()
+        .unwrap_or(pending_move.start);
+    let movement_cost = movement_cost_for_path(session, &pending_move.path[..stop_len])?;
+    let remaining_after = effective_movement(&pending_move.champion, session.current_turn)
+        .saturating_sub(movement_cost);
+    pending_move.champion.x = stop_coord.x;
+    pending_move.champion.y = stop_coord.y;
+    pending_move.champion.chunk_x = chunk_coord(session, stop_coord.x);
+    pending_move.champion.chunk_y = chunk_coord(session, stop_coord.y);
+    pending_move.champion.movement_remaining = remaining_after;
+    pending_move.champion.movement_turn = session.current_turn;
+    pending_move.champion.last_command_id = Some(command_id.key());
+    let stop_step = pending_move
+        .path
+        .len()
+        .saturating_sub(1)
+        .min(usize::from(u16::MAX)) as u16;
+    Ok((stop_step, stop_coord, movement_cost, remaining_after))
+}
+
+fn movement_cost_for_path(session: &GameSession, path: &[MoveCoord]) -> Result<u16, ApiError> {
+    path.iter()
+        .map(|coord| movement_cost_at(session, *coord).map(u16::from))
+        .try_fold(0_u16, |sum, cost| cost.map(|cost| sum.saturating_add(cost)))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn stop_candidate_fast(
     session: &GameSession,
     command_id: Id<GameCommand>,
     pending_move: &mut PendingMovement,
+    step_index: u16,
+    from: MoveCoord,
+    to: MoveCoord,
+    movement_cost: u16,
+    remaining_after: u16,
+    outcome: &str,
+    stop: Option<MovementPathStop>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
+    record_movement_snapshot(
+        session,
+        command_id,
+        pending_move,
+        step_index,
+        from,
+        to,
+        movement_cost,
+        remaining_after,
+        outcome,
+        stop,
+    )?;
     pending_move.champion = champions_artifacts::update_champion(pending_move.champion.clone())?;
     update_champion_occupancy(
         session.id(),
@@ -1637,7 +1768,7 @@ fn commit_candidate_move(
     pending_move.champion.movement_turn = session.current_turn;
     pending_move.champion.last_command_id = Some(command_id.key());
     update_known_champion_projection(session, &pending_move.participant, &pending_move.champion)?;
-    if outcome != "moved" {
+    if outcome != "moved" || pending_move.path.len() <= usize::from(step_index) + 1 {
         record_movement_snapshot(
             session,
             command_id,

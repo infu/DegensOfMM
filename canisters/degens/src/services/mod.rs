@@ -20,6 +20,7 @@ pub(crate) mod movement;
 pub(crate) mod render_projection;
 pub(crate) mod scenario_progress;
 pub(crate) mod session_context;
+pub(crate) mod system_jobs;
 #[cfg(test)]
 mod tests;
 pub(crate) mod town;

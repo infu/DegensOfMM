@@ -1,7 +1,7 @@
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     GameCommand, GameParticipant, GameSession, ObjectiveProgress, QuestState, ScenarioRuleState,
-    WorldEventState, WorldObject,
+    SystemJob, WorldEventState, WorldObject,
 };
 use domm_game::{
     AdvancedScenarioReceipt, ApiError, ChangedSubject, CommandResponse, CommandResult,
@@ -9,9 +9,15 @@ use domm_game::{
     ObjectiveProgressRecord, ObjectiveProgressView, QuestPreview, QuestProgressView,
     ResourceBalances, ScenarioRuleView, ScenarioRulesView, WorldEventView, WorldEventsView,
 };
-use icydb::{traits::EntityValue, types::Id};
+use icydb::{
+    traits::EntityValue,
+    types::{Id, Timestamp},
+};
 
-use crate::repos::{economy, map_visibility_occupancy, scenario_progress, sessions};
+use crate::repos::{
+    commands_events_effects, economy, map_visibility_occupancy, scenario_progress, sessions,
+    system_jobs as system_job_repo,
+};
 
 use super::{
     command_response::{self, GameCommandAction},
@@ -327,6 +333,120 @@ pub(crate) fn sync_advanced_victory(
     )
 }
 
+pub(crate) fn schedule_turn_maintenance_jobs(
+    _session: &GameSession,
+    _command_id: Option<Id<GameCommand>>,
+) -> Result<(), ApiError> {
+    Ok(())
+}
+
+pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
+    let fallback = job.clone();
+    if let Err(error) = process_scenario_maintenance_job_inner(job) {
+        system_job_repo::fail_system_job(fallback, error.retryable, error.message.clone())?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let session_id = Id::<GameSession>::from_key(job.session_id);
+    let Some(session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "scenario maintenance session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
+    if session.state != "active" {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+    if job
+        .turn_number
+        .is_some_and(|turn| turn != session.current_turn)
+    {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+
+    let mut command = ensure_system_scenario_command(&session, &job)?;
+    command.status = "applying".to_string();
+    command.phase = "applying".to_string();
+    command = commands_events_effects::update_game_command(command)?;
+
+    let touched = match job.job_kind.as_str() {
+        "scenario_objectives" => sync_objective_rows_for_session(session.id(), Some(command.id()))?,
+        "world_events" => {
+            ensure_current_world_event(&session, Some(command.id()))?;
+            1
+        }
+        "advanced_victory" => {
+            sync_objective_rows_for_session(session.id(), Some(command.id()))?;
+            sync_scenario_rule_rows_for_session(&session, Some(command.id()))?
+        }
+        _ => {
+            system_job_repo::fail_system_job(
+                job,
+                false,
+                "unsupported scenario maintenance job kind".to_string(),
+            )?;
+            return Ok(());
+        }
+    };
+
+    command.status = "applied".to_string();
+    command.phase = "complete".to_string();
+    command.result_json = Some(format!(
+        r#"{{"command_kind":"{}","current_turn":{},"touched":{},"command_count":1,"event_count":0}}"#,
+        command_response::escape_json(&job.job_kind),
+        session.current_turn,
+        touched
+    ));
+    command.retryable = false;
+    command.applied_at = Some(Timestamp::now());
+    command.failed_at = None;
+    commands_events_effects::update_game_command(command)?;
+    system_job_repo::complete_system_job(job)?;
+    Ok(())
+}
+
+fn ensure_system_scenario_command(
+    session: &GameSession,
+    job: &SystemJob,
+) -> Result<GameCommand, ApiError> {
+    let command_type = job.job_kind.as_str();
+    let client_nonce = command_response::nonce_u64(command_type, &job.job_key);
+    if let Some(command) = commands_events_effects::find_game_command_by_idempotency(
+        session.id(),
+        "system",
+        &job.job_key,
+        client_nonce,
+    )? {
+        return Ok(command);
+    }
+    let payload_json = format!(
+        r#"{{"job_key":"{}","job_kind":"{}","turn_number":{}}}"#,
+        command_response::escape_json(&job.job_key),
+        command_response::escape_json(&job.job_kind),
+        session.current_turn
+    );
+    commands_events_effects::create_game_command(
+        session.id(),
+        "system".to_string(),
+        job.job_key.clone(),
+        None,
+        None,
+        None,
+        session.current_turn,
+        client_nonce,
+        command_type.to_string(),
+        command_response::payload_hash(command_type, &job.job_key, &job.job_key, &payload_json),
+        payload_json,
+    )
+}
+
 fn apply_accept_quest(
     caller: CandidPrincipal,
     context: &mut session_context::SessionCallerContext,
@@ -387,6 +507,7 @@ fn apply_accept_quest(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
+    schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
     command_response::apply_command_with_result(
         caller,
         context,
@@ -481,6 +602,7 @@ fn apply_claim_quest_reward(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
+    schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
     command_response::apply_command_with_result(
         caller,
         context,
@@ -641,17 +763,21 @@ fn sync_objective_rows(
     context: &mut session_context::SessionCallerContext,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<u32, ApiError> {
+    sync_objective_rows_for_session(context.session.id(), command_id)
+}
+
+fn sync_objective_rows_for_session(
+    session_id: Id<GameSession>,
+    command_id: Option<Id<GameCommand>>,
+) -> Result<u32, ApiError> {
     let mut touched = 0_u32;
     for seed in &domm_game::first_playable_scenario().central_objectives {
-        let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
-            context.session.id(),
-            seed.x,
-            seed.y,
-        )?
+        let Some(object) =
+            map_visibility_occupancy::find_world_object_by_session_xy(session_id, seed.x, seed.y)?
         else {
             continue;
         };
-        ensure_objective_row_for_object(context.session.id(), &object, &seed.key, command_id)?;
+        ensure_objective_row_for_object(session_id, &object, &seed.key, command_id)?;
         touched = touched.saturating_add(1);
     }
     Ok(touched)

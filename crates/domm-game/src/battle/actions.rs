@@ -25,6 +25,7 @@ pub fn legal_actions_for_stack(
     let mut actions = Vec::new();
     actions.push(LegalBattleAction {
         action: "Move".to_string(),
+        ability_key: None,
         enabled: !reachable.is_empty(),
         disabled_reason: if reachable.is_empty() {
             Some("no_reachable_tile".to_string())
@@ -37,6 +38,7 @@ pub fn legal_actions_for_stack(
     });
     actions.push(LegalBattleAction {
         action: "MeleeAttack".to_string(),
+        ability_key: None,
         enabled: !adjacent_enemies.is_empty(),
         disabled_reason: if adjacent_enemies.is_empty() {
             Some("no_adjacent_enemy".to_string())
@@ -59,6 +61,7 @@ pub fn legal_actions_for_stack(
     let ranged_disabled = ranged_disabled_reason(state, battle_id, stack);
     actions.push(LegalBattleAction {
         action: "RangedAttack".to_string(),
+        ability_key: None,
         enabled: ranged_disabled.is_none() && !non_adjacent_targets.is_empty(),
         disabled_reason: ranged_disabled.or_else(|| {
             if non_adjacent_targets.is_empty() {
@@ -76,6 +79,7 @@ pub fn legal_actions_for_stack(
     });
     actions.push(LegalBattleAction {
         action: "Defend".to_string(),
+        ability_key: None,
         enabled: stack.is_living() && stack.acted_round < battle.current_round,
         disabled_reason: None,
         targets: Vec::new(),
@@ -84,6 +88,7 @@ pub fn legal_actions_for_stack(
     });
     actions.push(LegalBattleAction {
         action: "Wait".to_string(),
+        ability_key: None,
         enabled: stack.is_living()
             && stack.acted_round < battle.current_round
             && stack.waited_round < battle.current_round,
@@ -94,16 +99,27 @@ pub fn legal_actions_for_stack(
     });
     actions.push(LegalBattleAction {
         action: "CastAbility".to_string(),
+        ability_key: None,
         enabled: false,
-        disabled_reason: Some("cast_ability_deferred_v1".to_string()),
+        disabled_reason: Some("no_learned_battle_spell".to_string()),
         targets: Vec::new(),
         path: Vec::new(),
         damage_preview: None,
     });
     actions.push(LegalBattleAction {
         action: "Retreat".to_string(),
+        ability_key: None,
         enabled: false,
-        disabled_reason: Some("retreat_deferred_checkpoint_14".to_string()),
+        disabled_reason: Some("retreat_deferred_v1_no_rehire_flow".to_string()),
+        targets: Vec::new(),
+        path: Vec::new(),
+        damage_preview: None,
+    });
+    actions.push(LegalBattleAction {
+        action: "Surrender".to_string(),
+        ability_key: None,
+        enabled: false,
+        disabled_reason: Some("surrender_deferred_v1_no_payment_terms".to_string()),
         targets: Vec::new(),
         path: Vec::new(),
         damage_preview: None,

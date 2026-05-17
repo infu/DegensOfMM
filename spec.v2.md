@@ -194,6 +194,11 @@ defeated champion reappearance
 advanced economy buildings
 broader resource-source variety
 additional tavern/market/dwelling variants
+champion-target town recruitment
+local/same-tile external dwelling recruitment variants
+town hall income
+captured-town unrest penalties and pacification
+desperation income
 ```
 
 Before implementation, define resource ledger effects, no-double-spend recovery,

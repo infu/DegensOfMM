@@ -54,6 +54,13 @@ pub(crate) const PENDING_EFFECT_DUE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan 
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const COMMAND_EFFECT_SESSION_STATUS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "effects.command_effect_by_session_status",
+    entity: "CommandEffect",
+    indexed_fields: &["session_id", "status"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) fn find_game_command_by_idempotency(
     session_id: Id<GameSession>,
     actor_kind: &str,
@@ -292,6 +299,23 @@ pub(crate) fn find_command_effect(
         crate::db()
             .load::<CommandEffect>()
             .filter(FieldRef::new("command_id").eq(command_id.key()))
+            .filter(FieldRef::new("effect_key").eq(effect_key))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
+pub(crate) fn find_applied_command_effect_by_session_key(
+    session_id: Id<GameSession>,
+    effect_key: &str,
+) -> RepoResult<Option<CommandEffect>> {
+    foundation::storage_result(
+        COMMAND_EFFECT_SESSION_STATUS_LOOKUP.name,
+        crate::db()
+            .load::<CommandEffect>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("status").eq("applied"))
             .filter(FieldRef::new("effect_key").eq(effect_key))
             .order_asc("id")
             .limit(1)

@@ -208,9 +208,10 @@ pub use strategic::{
     StrategicStepView, run_first_playable_strategic_gate,
 };
 pub use town::{
-    ArmyStackRecord, BuildPreview, ChampionTownRecord, MAX_ARMY_SLOTS, RecruitPreview,
-    RecruitTarget, TownBuildingRecord, TownError, TownRecord, TownRecruitPoolRecord, TownSmokeView,
-    TownState, build_first_playable_town_state, run_first_playable_town_smoke,
+    ArmyStackRecord, BuildPreview, ChampionTownRecord, MAX_ARMY_SLOTS, RECRUIT_POOL_CAP,
+    RecruitPreview, RecruitTarget, TownBuildingRecord, TownError, TownRecord,
+    TownRecruitPoolRecord, TownSmokeView, TownState, build_first_playable_town_state,
+    run_first_playable_town_smoke,
 };
 pub use world_object::{
     ChampionObjectVisitRecord, ObjectCommandEffectRecord, ObjectInteractionCommandRecord,

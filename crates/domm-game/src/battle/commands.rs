@@ -157,7 +157,7 @@ pub fn apply_battle_command_by_id(
     let current_round = state.battle(&battle_id)?.current_round;
 
     match command.action.as_str() {
-        "Defend" | "AutoDefend" => {
+        "Defend" | "AutoDefend" | "RoundAutoDefend" => {
             let stack = state.stack_mut(&stack_id)?;
             stack.defended_round = current_round;
             stack.acted_round = current_round;
@@ -205,7 +205,9 @@ pub fn apply_battle_command_by_id(
         }
     }
 
-    let event_type = if command.system {
+    let event_type = if command.system && command.action == "RoundAutoDefend" {
+        "battle_round_auto_defend"
+    } else if command.system {
         "battle_timeout_auto_defend"
     } else {
         "battle_action_applied"

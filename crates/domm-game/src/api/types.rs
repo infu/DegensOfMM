@@ -202,6 +202,7 @@ pub struct GameView {
     pub content_manifest_hash: String,
     pub render_time: RenderTimeMeta,
     pub action_affordances: Vec<ActionAffordance>,
+    pub omitted_fields: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]

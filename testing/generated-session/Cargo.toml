@@ -10,6 +10,7 @@ description = "Generated-session harness tests for Degens of Misery & Mayhem"
 [dependencies]
 domm-degens-schema = { workspace = true }
 domm-game = { workspace = true }
+icydb = { workspace = true }
 
 [lints]
 workspace = true

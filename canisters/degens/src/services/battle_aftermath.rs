@@ -1,6 +1,6 @@
 use domm_degens_schema::schema::{
     Battle, Champion, ChampionArmyStack, GameCommand, GameParticipant, GameSession, MapOccupancy,
-    NeutralArmy, PlayerAccount, Town, UnitDefinition,
+    NeutralArmy, PlayerAccount, Town, UnitDefinition, WorldObject,
 };
 use domm_game::{ApiError, ApiEventView, ChangedSubject, MAX_LIST_LIMIT};
 use icydb::{traits::EntityValue, types::Id};
@@ -11,7 +11,7 @@ use crate::repos::{
 };
 
 use super::{
-    command_response,
+    command_response, scenario_progress,
     session_context::{self, public_error},
 };
 
@@ -33,7 +33,12 @@ pub(crate) fn apply_resolved_battle_aftermath(
         return Ok(());
     }
     let effect_key = format!("battle_aftermath:{battle_id}");
-    if commands_events_effects::find_command_effect(command_id, &effect_key)?.is_some() {
+    if commands_events_effects::find_applied_command_effect_by_session_key(
+        session.id(),
+        &effect_key,
+    )?
+    .is_some()
+    {
         finalize_victory_if_ready(session, command_id, events, changed_subjects)?;
         return Ok(());
     }
@@ -82,6 +87,7 @@ pub(crate) fn apply_resolved_battle_aftermath(
         &battle_id.to_string(),
         "aftermath",
     ));
+    scenario_progress::schedule_turn_maintenance_jobs(session, Some(command_id))?;
 
     finalize_victory_if_ready(session, command_id, events, changed_subjects)
 }
@@ -130,7 +136,35 @@ fn apply_neutral_aftermath(
     champion = champions_artifacts::update_champion(champion)?;
     move_champion_occupancy(session.id(), command_id, &champion)?;
 
-    capture_guarded_object_if_present(session, command_id, winner_id, neutral.x, neutral.y)?;
+    if let Some(object) =
+        capture_guarded_object_if_present(session, command_id, winner_id, neutral.x, neutral.y)?
+    {
+        let event_type = if object.scoring_kind == "mine" {
+            "mine_captured"
+        } else {
+            "world_object_captured"
+        };
+        let event = command_response::append_public_event(
+            session,
+            command_id,
+            format!("guarded_object_captured:{}:{}", object.id(), battle.id()),
+            event_type.to_string(),
+            Some("world_object".to_string()),
+            Some(object.id().to_string()),
+            format!(
+                r#"{{"battle_id":"{}","object_id":"{}","owner_participant_id":"{}"}}"#,
+                battle.id(),
+                object.id(),
+                winner_id
+            ),
+        )?;
+        events.push(event);
+        changed_subjects.push(command_response::changed(
+            "world_object",
+            &object.id().to_string(),
+            "capture",
+        ));
+    }
 
     let event = command_response::append_public_event(
         session,
@@ -405,20 +439,22 @@ fn capture_guarded_object_if_present(
     winner_id: Id<GameParticipant>,
     x: u16,
     y: u16,
-) -> Result<(), ApiError> {
+) -> Result<Option<WorldObject>, ApiError> {
     let Some(mut object) =
         map_visibility_occupancy::find_world_object_by_session_xy(session.id(), x, y)?
     else {
-        return Ok(());
+        return Ok(None);
     };
     object.guarded_neutral_army_id = None;
     object.owner_participant_id = Some(winner_id.key());
+    object.state = "captured".to_string();
     object.captured_turn = session.current_turn;
-    object.income_started_turn = session.current_turn;
+    object.income_started_turn = session.current_turn.saturating_add(1);
     object.last_visited_turn = session.current_turn;
     object.last_command_id = Some(command_id.key());
-    map_visibility_occupancy::update_world_object(object)?;
-    Ok(())
+    map_visibility_occupancy::update_world_object(object)
+        .map(Some)
+        .map_err(Into::into)
 }
 
 fn finalize_victory_if_ready(
@@ -456,7 +492,12 @@ fn finalize_victory_if_ready(
     };
 
     let effect_key = format!("victory_finalized:{}", session.id());
-    if commands_events_effects::find_command_effect(command_id, &effect_key)?.is_some() {
+    if commands_events_effects::find_applied_command_effect_by_session_key(
+        session.id(),
+        &effect_key,
+    )?
+    .is_some()
+    {
         return Ok(());
     }
 

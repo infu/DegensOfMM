@@ -18,15 +18,17 @@ For checkpoint 0, the regression suite is the newly added harness suite.
 make test-pure       # deterministic fixtures, DTO roundtrips, headless driver
 make test-schema     # schema/canister macro compilation surface
 make test-generated  # generated-session harness surface
-make test-pocket     # Pocket-IC canister test scaffold
+make test-pocket     # Pocket-IC public canister route tests
 make smoke-e2e       # checkpoint 19 first-playable e2e fixture with metrics
+make build-wasm      # release wasm plus extracted Candid for local dfx
 make regression      # all workspace tests
 make check-canister  # canister crate build check
 ```
 
-The Pocket-IC crate is intentionally a scaffold at checkpoint 0 because public gameplay
-entrypoints are introduced in later checkpoints. Its tests still validate the deterministic
-canister/package configuration that future deployment tests will use.
+Pocket-IC tests now exercise meaningful canister routes. New v1.1 suites should stay split
+by failure mode (`timer_jobs`, `end_turn`, `battle_round_readiness`,
+`render_projection`, `query_budgets`, `command_recovery`, and
+`visibility_redaction`) rather than growing one monolithic endpoint test.
 
 ## Fixtures
 
@@ -52,3 +54,17 @@ completes, the Gate M canister-backed client route reports Pocket-IC/IcyDB respo
 metrics, Gate L still completes the public canister first-playable route, the Gate D backend
 route still reports stable command/event/query/storage counts, and the full workspace
 regression suite passes.
+
+## Local DFX And Blast
+
+The reproducible local deploy path is:
+
+```text
+make build-wasm
+dfx start --background --clean
+dfx deploy degens --network local
+blast scan "$(dfx canister id degens --network local)" --host "http://127.0.0.1:$(dfx info webserver-port)"
+```
+
+Use `docs/local-deploy-blast.md` for the full multi-identity command checklist and
+diagnostic snapshot evidence.

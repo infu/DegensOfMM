@@ -12,7 +12,7 @@ use icydb::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::repos::{commands_events_effects, sessions};
+use crate::repos::{commands_events_effects, sessions, system_jobs};
 
 use super::session_context::{SessionCallerContext, public_error};
 
@@ -29,6 +29,29 @@ pub(crate) fn begin_participant_command(
     champion_id: Option<Id<Champion>>,
     payload_json: String,
 ) -> Result<GameCommandAction, ApiError> {
+    begin_participant_command_guarded(
+        caller,
+        context,
+        command_type,
+        client_nonce_text,
+        champion_id,
+        payload_json,
+        || ensure_map_turn_accepts_new_command(context, command_type),
+    )
+}
+
+pub(crate) fn begin_participant_command_guarded<F>(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    champion_id: Option<Id<Champion>>,
+    payload_json: String,
+    new_command_guard: F,
+) -> Result<GameCommandAction, ApiError>
+where
+    F: FnOnce() -> Result<(), ApiError>,
+{
     if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
         return Ok(GameCommandAction::Return(failed_response(
             caller,
@@ -85,6 +108,8 @@ pub(crate) fn begin_participant_command(
             .map(GameCommandAction::Return);
     }
 
+    new_command_guard()?;
+
     let command = commands_events_effects::create_game_command(
         context.session.id(),
         "player".to_string(),
@@ -101,13 +126,73 @@ pub(crate) fn begin_participant_command(
     Ok(GameCommandAction::Apply(command))
 }
 
+fn ensure_map_turn_accepts_new_command(
+    context: &SessionCallerContext,
+    command_type: &str,
+) -> Result<(), ApiError> {
+    if !is_map_turn_sensitive_command(command_type) {
+        return Ok(());
+    }
+    let now = Timestamp::now();
+    for status in [system_jobs::STATUS_RUNNING, system_jobs::STATUS_SCHEDULED] {
+        let page = system_jobs::page_system_jobs_by_session_status(
+            context.session.id(),
+            status,
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?;
+        for job in page.items {
+            if !matches!(job.job_kind.as_str(), "turn_resolution" | "turn_deadline") {
+                continue;
+            }
+            if job
+                .turn_number
+                .is_some_and(|turn| turn != context.session.current_turn)
+            {
+                continue;
+            }
+            let closure_accepted = job.status == system_jobs::STATUS_RUNNING || job.due_at <= now;
+            if closure_accepted {
+                return Err(public_error(
+                    "backend_work_pending",
+                    "the current turn is closing; refresh before submitting another turn action",
+                    true,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_map_turn_sensitive_command(command_type: &str) -> bool {
+    matches!(
+        command_type,
+        "submit_move_intent"
+            | "end_turn"
+            | "submit_build_town_structure"
+            | "submit_recruit_units"
+            | "hire_tavern_champion"
+            | "submit_market_trade"
+            | "submit_dwelling_recruit"
+            | "select_champion_level_up"
+            | "learn_champion_spell"
+            | "cast_adventure_spell"
+            | "accept_quest"
+            | "claim_quest_reward"
+    )
+}
+
 fn is_recoverable_movement_command(command_type: &str) -> bool {
     matches!(
         command_type,
         "submit_move_intent"
+            | "end_turn"
             | "sync_session_turn"
             | "submit_battle_action"
+            | "end_battle_turn"
             | "sync_battle"
+            | "submit_build_town_structure"
+            | "submit_recruit_units"
             | "select_champion_level_up"
             | "learn_champion_spell"
             | "cast_adventure_spell"
@@ -239,6 +324,29 @@ pub(crate) fn append_public_event(
     subject_id_text: Option<String>,
     payload_json: String,
 ) -> Result<ApiEventView, ApiError> {
+    append_event_for_audience(
+        session,
+        command_id,
+        event_key,
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn append_event_for_audience(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    audience_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
     let event = if let Some(event) =
         commands_events_effects::find_event_by_key(session.id(), &event_key)?
     {
@@ -252,7 +360,7 @@ pub(crate) fn append_public_event(
             session.current_turn,
             event_seq,
             event_key,
-            "public".to_string(),
+            audience_key,
             event_type,
             subject_kind,
             subject_id_text,

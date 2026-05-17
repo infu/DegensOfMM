@@ -35,6 +35,11 @@ fn submit_move_intent(
 }
 
 #[update]
+fn end_turn(session_id: String, client_nonce: String) -> Result<CommandResponse, ApiError> {
+    crate::services::movement::end_turn(canic_cdk::api::msg_caller(), session_id, client_nonce)
+}
+
+#[update]
 fn sync_session_turn(
     session_id: String,
     client_nonce: String,

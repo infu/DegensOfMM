@@ -2,16 +2,16 @@
 
 use domm_degens_schema::schema::{
     AiActorState, ArtifactDefinition, ArtifactEquipment, ArtifactInstance, Battle, BattleObstacle,
-    BattleOccupancy, BattleStack, BuildingDefinition, Champion, ChampionArmyStack,
-    ChampionClassDefinition, ChampionObjectVisit, ChampionSpell, CommandEffect, FactionDefinition,
-    GameCommand, GameEvent, GameEventTurnSummary, GameParticipant, GameSession, LobbyCommand,
-    MapChunk, MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot, NavalRouteState,
-    NeutralArmy, NeutralArmyStack, ObjectiveProgress, ParticipantKnownObject,
-    ParticipantObjectVisit, PendingEffect, PlayerAccount, PlayerMatchSummary, ProceduralMapState,
-    QuestState, ResourceLedgerEntry, ResourceLedgerTurnSummary, RulesetDefinition,
-    ScenarioRuleState, SiegeRuleState, SkirmishSettingsState, SpellDefinition, TerrainDefinition,
-    Town, TownBuilding, TownGarrisonStack, TownRecruitPool, UnitDefinition, VisibilityChunk,
-    WorldEventState, WorldObject,
+    BattleOccupancy, BattleParticipantRoundReady, BattleStack, BuildingDefinition, Champion,
+    ChampionArmyStack, ChampionClassDefinition, ChampionObjectVisit, ChampionSpell, CommandEffect,
+    FactionDefinition, GameCommand, GameEvent, GameEventTurnSummary, GameParticipant, GameSession,
+    LobbyCommand, MapChunk, MapObjectDefinition, MapOccupancy, MovementIntent, MovementSnapshot,
+    NavalRouteState, NeutralArmy, NeutralArmyStack, ObjectiveProgress, ParticipantKnownObject,
+    ParticipantObjectVisit, ParticipantTurnReady, PendingEffect, PlayerAccount, PlayerMatchSummary,
+    ProceduralMapState, QuestState, ResourceLedgerEntry, ResourceLedgerTurnSummary,
+    RulesetDefinition, ScenarioRuleState, SiegeRuleState, SkirmishSettingsState, SpellDefinition,
+    SystemJob, TerrainDefinition, Town, TownBuilding, TownGarrisonStack, TownRecruitPool,
+    UnitDefinition, VisibilityChunk, WorldEventState, WorldObject,
 };
 use domm_game::ApiError;
 use icydb::{db::PersistedRow, traits::EntityValue};
@@ -69,6 +69,9 @@ fn push_named_count(
         "Battle" => push_count::<Battle>(row_counts, entity),
         "BattleObstacle" => push_count::<BattleObstacle>(row_counts, entity),
         "BattleOccupancy" => push_count::<BattleOccupancy>(row_counts, entity),
+        "BattleParticipantRoundReady" => {
+            push_count::<BattleParticipantRoundReady>(row_counts, entity)
+        }
         "BattleStack" => push_count::<BattleStack>(row_counts, entity),
         "BuildingDefinition" => push_count::<BuildingDefinition>(row_counts, entity),
         "Champion" => push_count::<Champion>(row_counts, entity),
@@ -95,6 +98,7 @@ fn push_named_count(
         "ObjectiveProgress" => push_count::<ObjectiveProgress>(row_counts, entity),
         "ParticipantKnownObject" => push_count::<ParticipantKnownObject>(row_counts, entity),
         "ParticipantObjectVisit" => push_count::<ParticipantObjectVisit>(row_counts, entity),
+        "ParticipantTurnReady" => push_count::<ParticipantTurnReady>(row_counts, entity),
         "PendingEffect" => push_count::<PendingEffect>(row_counts, entity),
         "PlayerAccount" => push_count::<PlayerAccount>(row_counts, entity),
         "PlayerMatchSummary" => push_count::<PlayerMatchSummary>(row_counts, entity),
@@ -107,6 +111,7 @@ fn push_named_count(
         "SiegeRuleState" => push_count::<SiegeRuleState>(row_counts, entity),
         "SkirmishSettingsState" => push_count::<SkirmishSettingsState>(row_counts, entity),
         "SpellDefinition" => push_count::<SpellDefinition>(row_counts, entity),
+        "SystemJob" => push_count::<SystemJob>(row_counts, entity),
         "TerrainDefinition" => push_count::<TerrainDefinition>(row_counts, entity),
         "Town" => push_count::<Town>(row_counts, entity),
         "TownBuilding" => push_count::<TownBuilding>(row_counts, entity),

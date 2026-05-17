@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     Champion, GameCommand, GameParticipant, GameSession, Town, UnitDefinition, WorldObject,
@@ -208,34 +210,25 @@ pub(crate) fn preview_dwelling_recruit(
     let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
         .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
     let champion = resolve_champion(&context.session, &champion_id)?;
-    let unit =
-        content::find_unit_by_ruleset_slug(Id::from_key(context.session.ruleset_id), &unit_slug)?
-            .ok_or_else(|| public_error("unit_not_found", "unit definition was not found", false))?;
-    let available = domm_game::dwelling_effective_available(
-        pool.available,
-        pool.last_growth_week,
-        domm_game::week_for_turn(context.session.current_turn),
-        pool.growth_per_week,
-    );
-    let total_cost = domm_game::dwelling_recruit_cost(unit.gold_cost, quantity);
-    let disabled_reason = dwelling_recruit_disabled_reason(
+    let check = dwelling_recruit_check(
+        context.session.id(),
+        Id::from_key(context.session.ruleset_id),
         &context.participant,
         &pool,
         &champion,
         &unit_slug,
         quantity,
-        available,
-        &total_cost,
-    );
+        context.session.current_turn,
+    )?;
     Ok(DwellingRecruitPreview {
-        allowed: disabled_reason.is_none(),
-        disabled_reason,
+        allowed: check.disabled_reason.is_none(),
+        disabled_reason: check.disabled_reason,
         object_id: object.id().to_string(),
         unit_slug,
         quantity,
         target_champion_id: champion.id().to_string(),
-        total_cost,
-        available,
+        total_cost: check.total_cost,
+        available: check.available,
     })
 }
 
@@ -251,6 +244,29 @@ pub(crate) fn submit_dwelling_recruit(
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
     let champion = resolve_champion(&context.session, &champion_id)?;
+    let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
+        .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
+    let check = dwelling_recruit_check(
+        context.session.id(),
+        Id::from_key(context.session.ruleset_id),
+        &context.participant,
+        &pool,
+        &champion,
+        &unit_slug,
+        quantity,
+        context.session.current_turn,
+    )?;
+    if let Some(reason) = check
+        .disabled_reason
+        .as_deref()
+        .filter(|reason| dwelling_recruit_pre_command_error(reason))
+    {
+        return Err(public_error(
+            reason.to_string(),
+            format!("dwelling recruit disabled: {reason}"),
+            false,
+        ));
+    }
     let payload_json = format!(
         r#"{{"object_id":"{}","unit_slug":"{}","quantity":{},"champion_id":"{}"}}"#,
         command_response::escape_json(&object_id),
@@ -279,6 +295,49 @@ pub(crate) fn submit_dwelling_recruit(
         command,
         &client_nonce,
     )
+}
+
+pub(crate) fn materialize_weekly_economy(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+) -> Result<u32, ApiError> {
+    let current_week = domm_game::week_for_turn(session.current_turn);
+    let class_rows = content::page_champion_classes_by_ruleset(Id::from_key(session.ruleset_id))?;
+    let class_slugs = class_rows
+        .iter()
+        .map(|class| class.slug.clone())
+        .collect::<Vec<_>>();
+    let class_rows = class_rows
+        .into_iter()
+        .map(|class| (class.slug.clone(), class))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut touched = 0_u32;
+    for start in domm_game::first_playable_scenario().starts {
+        let Some(town) = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+        else {
+            continue;
+        };
+        if let Some(participant_id) = town
+            .owner_participant_id
+            .map(Id::<GameParticipant>::from_key)
+        {
+            touched = touched.saturating_add(ensure_tavern_offers_for_week(
+                session,
+                &town,
+                participant_id,
+                current_week,
+                &class_slugs,
+                &class_rows,
+            )?);
+        }
+        touched = touched.saturating_add(materialize_town_recruit_growth(
+            &town,
+            current_week,
+            command_id,
+        )?);
+    }
+    Ok(touched)
 }
 
 fn apply_hire_command(
@@ -585,6 +644,7 @@ fn apply_dwelling_recruit_command(
     pool.last_growth_week = current_week;
     let total_cost = domm_game::dwelling_recruit_cost(unit.gold_cost, quantity);
     if let Some(reason) = dwelling_recruit_disabled_reason(
+        context.session.id(),
         &context.participant,
         &pool,
         &champion,
@@ -695,6 +755,87 @@ fn apply_dwelling_recruit_command(
     )
 }
 
+fn ensure_tavern_offers_for_week(
+    session: &GameSession,
+    town: &Town,
+    participant_id: Id<GameParticipant>,
+    week_number: u32,
+    class_slugs: &[String],
+    class_rows: &BTreeMap<String, domm_degens_schema::schema::ChampionClassDefinition>,
+) -> Result<u32, ApiError> {
+    if class_slugs.is_empty() {
+        return Err(public_error(
+            "content_seed_missing",
+            "champion class definitions are missing",
+            true,
+        ));
+    }
+
+    let mut created = 0_u32;
+    for slot in 0..domm_game::TAVERN_OFFERS_PER_WEEK {
+        let offer = domm_game::deterministic_tavern_offer(
+            &session.seed.to_string(),
+            &town.id().to_string(),
+            week_number,
+            u8::try_from(slot).unwrap_or(u8::MAX),
+            class_slugs,
+        );
+        if economy_expansion::find_tavern_offer_by_key(&offer.offer_key)?.is_some() {
+            continue;
+        }
+        let class = class_rows.get(&offer.champion_class_slug).ok_or_else(|| {
+            public_error(
+                "content_seed_missing",
+                "tavern champion class definition is missing",
+                true,
+            )
+        })?;
+        economy_expansion::create_tavern_offer(
+            session.id(),
+            town.id(),
+            participant_id,
+            week_number,
+            offer.offer_slot,
+            offer.offer_key,
+            class.id(),
+            offer.champion_class_slug,
+            offer.candidate_name,
+            offer.cost_gold,
+        )?;
+        created = created.saturating_add(1);
+    }
+    Ok(created)
+}
+
+fn materialize_town_recruit_growth(
+    town: &Town,
+    current_week: u32,
+    command_id: Id<GameCommand>,
+) -> Result<u32, ApiError> {
+    let mut touched = 0_u32;
+    for mut pool in
+        towns::page_town_recruit_pools(town.id(), domm_game::MAX_LIST_LIMIT, None)?.items
+    {
+        let growth_weeks = current_week.saturating_sub(pool.last_growth_week).min(2);
+        if growth_weeks == 0 {
+            continue;
+        }
+        let Some(unit) = content::load_unit(Id::<UnitDefinition>::from_key(pool.unit_id))? else {
+            continue;
+        };
+        let growth = u32::from(unit.weekly_growth).saturating_mul(growth_weeks);
+        pool.available = pool
+            .available
+            .saturating_add(growth)
+            .min(domm_game::RECRUIT_POOL_CAP);
+        pool.last_growth_week = current_week;
+        pool.last_command_id = Some(command_id.key());
+        towns::update_town_recruit_pool(pool)?;
+        touched = touched.saturating_add(1);
+    }
+    Ok(touched)
+}
+
 fn load_offer_for_town(
     context: &session_context::SessionCallerContext,
     town_id: Id<Town>,
@@ -747,8 +888,16 @@ fn resolve_dwelling_object(
 
 fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion, ApiError> {
     if let Ok(id) = session_context::parse_id::<Champion>(champion_id, "champion_id") {
-        return champions_artifacts::load_champion(id)?
-            .ok_or_else(|| public_error("champion_not_found", "champion not found", false));
+        let champion = champions_artifacts::load_champion(id)?
+            .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
+        if champion.session_id != session.id().key() {
+            return Err(public_error(
+                "champion_wrong_session",
+                "champion does not belong to this session",
+                false,
+            ));
+        }
+        return Ok(champion);
     }
     let scenario = domm_game::first_playable_scenario();
     let start = scenario
@@ -756,12 +905,13 @@ fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion
         .iter()
         .find(|start| start.champion_key == champion_id)
         .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
-    champions_artifacts::find_champion_by_session_xy(
+    let champion = champions_artifacts::find_champion_by_session_xy(
         session.id(),
         start.champion_x,
         start.champion_y,
     )?
-    .ok_or_else(|| public_error("champion_not_found", "champion not found", false))
+    .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
+    Ok(champion)
 }
 
 fn tavern_offer_view(offer: domm_degens_schema::schema::TavernOffer) -> TavernOfferView {
@@ -795,6 +945,7 @@ fn dwelling_pool_view(pool: domm_degens_schema::schema::DwellingPool) -> Dwellin
 }
 
 fn dwelling_recruit_disabled_reason(
+    session_id: Id<GameSession>,
     participant: &GameParticipant,
     pool: &domm_degens_schema::schema::DwellingPool,
     champion: &Champion,
@@ -807,8 +958,14 @@ fn dwelling_recruit_disabled_reason(
         Some("not_owner".to_string())
     } else if !pool.direct_recruit {
         Some("direct_recruit_disabled".to_string())
+    } else if champion.session_id != session_id.key() {
+        Some("champion_wrong_session".to_string())
     } else if champion.participant_id != participant.id().key() {
         Some("champion_not_owned".to_string())
+    } else if champion.in_battle_id.is_some() || champion.status == "in_battle" {
+        Some("champion_in_battle".to_string())
+    } else if champion.status != "active" {
+        Some("champion_not_active".to_string())
     } else if pool.unit_slug != unit_slug {
         Some("unit_not_available".to_string())
     } else if quantity == 0 || quantity > domm_game::DWELLING_RECRUIT_MAX_QUANTITY {
@@ -820,6 +977,60 @@ fn dwelling_recruit_disabled_reason(
     } else {
         None
     }
+}
+
+fn dwelling_recruit_pre_command_error(reason: &str) -> bool {
+    matches!(
+        reason,
+        "not_owner"
+            | "direct_recruit_disabled"
+            | "champion_wrong_session"
+            | "champion_not_owned"
+            | "champion_in_battle"
+            | "champion_not_active"
+    )
+}
+
+struct DwellingRecruitCheck {
+    disabled_reason: Option<String>,
+    available: u32,
+    total_cost: ResourceBalances,
+}
+
+fn dwelling_recruit_check(
+    session_id: Id<GameSession>,
+    ruleset_id: Id<domm_degens_schema::schema::RulesetDefinition>,
+    participant: &GameParticipant,
+    pool: &domm_degens_schema::schema::DwellingPool,
+    champion: &Champion,
+    unit_slug: &str,
+    quantity: u32,
+    current_turn: u32,
+) -> Result<DwellingRecruitCheck, ApiError> {
+    let unit = content::find_unit_by_ruleset_slug(ruleset_id, unit_slug)?
+        .ok_or_else(|| public_error("unit_not_found", "unit definition was not found", false))?;
+    let available = domm_game::dwelling_effective_available(
+        pool.available,
+        pool.last_growth_week,
+        domm_game::week_for_turn(current_turn),
+        pool.growth_per_week,
+    );
+    let total_cost = domm_game::dwelling_recruit_cost(unit.gold_cost, quantity);
+    let disabled_reason = dwelling_recruit_disabled_reason(
+        session_id,
+        participant,
+        pool,
+        champion,
+        unit_slug,
+        quantity,
+        available,
+        &total_cost,
+    );
+    Ok(DwellingRecruitCheck {
+        disabled_reason,
+        available,
+        total_cost,
+    })
 }
 
 fn recruit_to_champion(

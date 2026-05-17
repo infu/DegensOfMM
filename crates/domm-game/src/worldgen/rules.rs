@@ -129,6 +129,7 @@ pub fn first_playable_naval_route() -> NavalRouteRecord {
     NavalRouteRecord {
         route_key: NAVAL_ROUTE_KEY.to_string(),
         status: "disabled".to_string(),
+        actionable: false,
         from_x: 7,
         from_y: 22,
         to_x: 13,
@@ -144,6 +145,7 @@ pub fn first_playable_siege_rule() -> SiegeRuleRecord {
     SiegeRuleRecord {
         rule_key: SIEGE_RULE_KEY.to_string(),
         status: "disabled".to_string(),
+        actionable: false,
         fortification_level: "palisade".to_string(),
         wall_segments: 6,
         gate_count: 1,

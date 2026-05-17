@@ -68,6 +68,7 @@ pub struct ProceduralMapView {
 pub struct NavalRouteRecord {
     pub route_key: String,
     pub status: String,
+    pub actionable: bool,
     pub from_x: u16,
     pub from_y: u16,
     pub to_x: u16,
@@ -88,6 +89,7 @@ pub struct NavalRoutesView {
 pub struct SiegeRuleRecord {
     pub rule_key: String,
     pub status: String,
+    pub actionable: bool,
     pub fortification_level: String,
     pub wall_segments: u16,
     pub gate_count: u8,

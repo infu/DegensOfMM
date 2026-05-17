@@ -38,4 +38,12 @@ make regression
 make check-canister
 ```
 
-See `TESTING.md` for the test layers and intended checkpoint loop.
+Local canister deployment is committed through `dfx.json`:
+
+```text
+make build-wasm
+make dfx-deploy-local
+```
+
+See `TESTING.md` for the test layers and `docs/local-deploy-blast.md` for the
+agent-run `blast` smoke checklist.

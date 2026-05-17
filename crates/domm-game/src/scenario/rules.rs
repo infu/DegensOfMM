@@ -16,11 +16,17 @@ pub fn quest_accept_transition(status: &str) -> QuestMutation {
             reward_gold_delta: 0,
             disabled_reason: None,
         },
-        "accepted" | "completed" | "claimed" => QuestMutation {
+        "accepted" | "completed" => QuestMutation {
             allowed: false,
             next_status: status.to_string(),
             reward_gold_delta: 0,
             disabled_reason: Some("quest_already_accepted".to_string()),
+        },
+        "claimed" => QuestMutation {
+            allowed: false,
+            next_status: "claimed".to_string(),
+            reward_gold_delta: 0,
+            disabled_reason: Some("quest_already_claimed".to_string()),
         },
         _ => QuestMutation {
             allowed: false,

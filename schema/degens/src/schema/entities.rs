@@ -195,6 +195,129 @@ pub struct GameParticipant {}
 #[entity(
     store = "DegensStore",
     pk(field = "id"),
+    index(fields = "job_key", unique),
+    index(fields = "status, due_at"),
+    index(fields = "session_id, status, due_at"),
+    index(fields = "battle_id, status, due_at"),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(ident = "job_key", value(item(prim = "Text", max_len = 160))),
+        field(ident = "job_kind", value(item(prim = "Text", max_len = 48))),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "battle_id",
+            value(opt, item(rel = "Battle", prim = "Ulid", weak))
+        ),
+        field(ident = "turn_number", value(opt, item(prim = "Nat32"))),
+        field(ident = "due_at", value(item(prim = "Timestamp"))),
+        field(
+            ident = "status",
+            value(item(prim = "Text", max_len = 24)),
+            default = "scheduled"
+        ),
+        field(ident = "lease_owner", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "lease_expires_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "attempt_count", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "generation", value(item(prim = "Nat64")), default = 0u64),
+        field(
+            ident = "command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(ident = "cursor_json", value(opt, item(prim = "Text", max_len = 4096))),
+        field(ident = "last_error", value(opt, item(prim = "Text", max_len = 2048)))
+    )
+)]
+pub struct SystemJob {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, participant_id, turn_number", unique),
+    index(fields = "session_id, turn_number"),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(
+            ident = "command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(
+            ident = "ended_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct ParticipantTurnReady {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "battle_id, participant_id, round_number", unique),
+    index(fields = "session_id, battle_id, round_number"),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+        field(
+            ident = "session_id",
+            value(item(rel = "GameSession", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "battle_id",
+            value(item(rel = "Battle", prim = "Ulid", strong))
+        ),
+        field(
+            ident = "participant_id",
+            value(item(rel = "GameParticipant", prim = "Ulid", strong))
+        ),
+        field(ident = "round_number", value(item(prim = "Nat16"))),
+        field(
+            ident = "command_id",
+            value(opt, item(rel = "GameCommand", prim = "Ulid", weak))
+        ),
+        field(ident = "ready_reason", value(item(prim = "Text", max_len = 32))),
+        field(
+            ident = "ended_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct BattleParticipantRoundReady {}
+
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
     index(fields = "command_id, ledger_key", unique),
     index(fields = "participant_id, turn_number"),
     index(fields = "session_id, participant_id"),
@@ -1189,6 +1312,7 @@ pub struct ChampionArmyStack {}
             ident = "spell_id",
             value(item(rel = "SpellDefinition", prim = "Ulid", strong))
         ),
+        field(ident = "spell_slug", value(opt, item(prim = "Text", max_len = 64))),
         field(ident = "learned_turn", value(item(prim = "Nat32"))),
         field(
             ident = "last_command_id",

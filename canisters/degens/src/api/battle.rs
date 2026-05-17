@@ -31,6 +31,20 @@ fn sync_battle(
 }
 
 #[update]
+fn end_battle_turn(
+    session_id: String,
+    battle_id: String,
+    client_nonce: String,
+) -> Result<CommandResponse, ApiError> {
+    crate::services::battle::end_battle_turn(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        battle_id,
+        client_nonce,
+    )
+}
+
+#[update]
 fn submit_battle_action(
     session_id: String,
     input: BattleActionInput,

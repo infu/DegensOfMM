@@ -29,21 +29,21 @@ pub(crate) const BATTLE_STACKS_BY_SIDE_LOOKUP: IndexedQueryPlan = IndexedQueryPl
 pub(crate) const BATTLE_STACKS_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "battles.stacks_by_battle",
     entity: "BattleStack",
-    indexed_fields: &["battle_id"],
+    indexed_fields: &["battle_id", "side", "slot_index"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
 pub(crate) const BATTLE_OBSTACLES_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "battles.obstacles_by_battle",
     entity: "BattleObstacle",
-    indexed_fields: &["battle_id"],
+    indexed_fields: &["battle_id", "battle_x", "battle_y"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
 pub(crate) const BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "battles.occupancy_by_battle",
     entity: "BattleOccupancy",
-    indexed_fields: &["battle_id"],
+    indexed_fields: &["battle_id", "battle_x", "battle_y"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
@@ -159,6 +159,24 @@ pub(crate) fn page_battle_stacks(
             .order_asc("id"),
         limit,
         cursor,
+    )
+}
+
+pub(crate) fn list_battle_stacks(
+    battle_id: Id<Battle>,
+    limit: u32,
+) -> RepoResult<Vec<BattleStack>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::storage_result(
+        BATTLE_STACKS_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleStack>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("side")
+            .order_asc("slot_index")
+            .order_asc("id")
+            .limit(limit)
+            .entities(),
     )
 }
 
@@ -288,11 +306,29 @@ pub(crate) fn page_battle_obstacles(
         crate::db()
             .load::<BattleObstacle>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
-            .order_asc("battle_y")
             .order_asc("battle_x")
+            .order_asc("battle_y")
             .order_asc("id"),
         limit,
         cursor,
+    )
+}
+
+pub(crate) fn list_battle_obstacles(
+    battle_id: Id<Battle>,
+    limit: u32,
+) -> RepoResult<Vec<BattleObstacle>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::storage_result(
+        BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleObstacle>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_x")
+            .order_asc("battle_y")
+            .order_asc("id")
+            .limit(limit)
+            .entities(),
     )
 }
 
@@ -307,11 +343,29 @@ pub(crate) fn page_battle_occupancy(
         crate::db()
             .load::<BattleOccupancy>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
-            .order_asc("battle_y")
             .order_asc("battle_x")
+            .order_asc("battle_y")
             .order_asc("id"),
         limit,
         cursor,
+    )
+}
+
+pub(crate) fn list_battle_occupancy(
+    battle_id: Id<Battle>,
+    limit: u32,
+) -> RepoResult<Vec<BattleOccupancy>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::storage_result(
+        BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleOccupancy>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .order_asc("battle_x")
+            .order_asc("battle_y")
+            .order_asc("id")
+            .limit(limit)
+            .entities(),
     )
 }
 
@@ -367,6 +421,39 @@ pub(crate) fn active_battles_plan_text(
             .filter(FieldRef::new("state").eq(state))
             .order_asc("created_turn")
             .order_asc("id")
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn battle_stacks_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        BATTLE_STACKS_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleStack>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn battle_obstacles_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleObstacle>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn battle_occupancy_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP.name,
+        crate::db()
+            .load::<BattleOccupancy>()
+            .filter(FieldRef::new("battle_id").eq(battle_id.key()))
             .limit(limit),
     )
 }

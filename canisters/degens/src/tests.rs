@@ -14,20 +14,20 @@ fn endpoint_inventory_has_required_groups_without_duplicates() {
         assert!(!endpoint.fixture_mapping.is_empty());
     }
 
-    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 54);
+    assert_eq!(REQUIRED_GAME_ENDPOINTS.len(), 58);
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Update)
             .count(),
-        23
+        25
     );
     assert_eq!(
         REQUIRED_GAME_ENDPOINTS
             .iter()
             .filter(|endpoint| endpoint.kind == EndpointKind::Query)
             .count(),
-        31
+        33
     );
     assert!(names.contains("register_player"));
     assert!(names.contains("get_game_view"));

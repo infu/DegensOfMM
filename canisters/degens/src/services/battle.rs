@@ -1,22 +1,57 @@
+use std::collections::BTreeSet;
+
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{Battle, BattleStack, Champion, GameCommand, GameSession};
+use domm_degens_schema::schema::{
+    Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, SystemJob, Town,
+};
 use domm_game::{
     ApiError, BattleActionInput, BattleActionReceipt, BattleCommandBudget, BattleCoord,
-    BattleError, BattleSyncOutcome, BattleView, CommandResponse, CommandResult, RollKey,
-    legal_actions_for_stack,
+    BattleError, BattleSyncOutcome, BattleView, CommandResponse, CommandResult, LegalBattleAction,
+    RollKey, legal_actions_for_stack,
 };
 use icydb::{
     traits::EntityValue,
-    types::{Id, Timestamp},
+    types::{Id, Timestamp, Ulid},
 };
 
-use crate::repos::{battles, champions_artifacts, commands_events_effects, content};
+use crate::repos::{
+    battle_round_ready, battles, champions_artifacts, commands_events_effects, content, sessions,
+    system_jobs as system_job_repo, towns,
+};
 
 use super::{
     battle_aftermath, battle_rows,
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
+    system_jobs as system_job_service,
 };
+
+const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
+const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = 1;
+const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
+
+pub(crate) fn schedule_battle_timeout_job(
+    session_id: Id<GameSession>,
+    battle: &Battle,
+) -> Result<(), ApiError> {
+    if battle.state != "active" {
+        return Ok(());
+    }
+    let Some(deadline) = battle.action_deadline_at else {
+        return Ok(());
+    };
+    system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+        job_key: format!("battle_timeout:{}:{}", battle.id(), deadline.as_millis()),
+        job_kind: "battle_timeout".to_string(),
+        session_id,
+        battle_id: Some(battle.id()),
+        turn_number: Some(battle.created_turn),
+        due_at: deadline,
+        command_id: None,
+        cursor_json: None,
+    })?;
+    Ok(())
+}
 
 pub(crate) fn get_battle_state(
     caller: CandidPrincipal,
@@ -25,14 +60,413 @@ pub(crate) fn get_battle_state(
     now_ms: u64,
 ) -> Result<BattleView, ApiError> {
     let context = session_context::require_session_caller(caller, &session_id)?;
-    let state = battle_rows::load_battle_state(&context.session, &battle_id)?;
-    domm_game::battle_view_for_participant(
-        &state,
-        &battle_id,
-        &context.participant.id().to_string(),
-        now_ms,
-    )
-    .map_err(map_battle_error)
+    let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
+    let participant_id = context.participant.id().to_string();
+    let mut stacks = battles::page_battle_stacks_by_side(
+        battle.id(),
+        "attacker",
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items;
+    stacks.extend(
+        battles::page_battle_stacks_by_side(
+            battle.id(),
+            "defender",
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items,
+    );
+    if !stacks
+        .iter()
+        .any(|stack| stack.owner_participant_id == Some(context.participant.id().key()))
+    {
+        return Err(public_error(
+            "battle_not_visible",
+            "caller is not a participant in this battle",
+            false,
+        ));
+    }
+    let suppress_actions =
+        should_suppress_battle_actions(&battle, context.participant.id(), now_ms)?;
+    let mut view =
+        canister_battle_view_from_rows(&battle, &stacks, &participant_id, now_ms, suppress_actions);
+    if suppress_actions {
+        view.legal_actions_for_caller.clear();
+    } else {
+        enrich_battle_spell_actions_from_rows(
+            &context.session,
+            &battle,
+            &stacks,
+            &mut view,
+            &participant_id,
+        )?;
+    }
+    Ok(view)
+}
+
+fn should_suppress_battle_actions(
+    battle: &Battle,
+    _participant_id: Id<GameParticipant>,
+    now_ms: u64,
+) -> Result<bool, ApiError> {
+    if battle
+        .action_deadline_at
+        .and_then(|deadline| u64::try_from(deadline.as_millis()).ok())
+        .is_some_and(|deadline| {
+            now_ms > deadline.saturating_add(CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS)
+        })
+    {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+fn battle_action_submit_grace_applies(
+    battle: &Battle,
+    input: &BattleActionInput,
+    now_ms: u64,
+) -> bool {
+    let Some(deadline_ms) = battle
+        .action_deadline_at
+        .and_then(|deadline| u64::try_from(deadline.as_millis()).ok())
+    else {
+        return false;
+    };
+    if now_ms < deadline_ms
+        || now_ms > deadline_ms.saturating_add(CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS)
+    {
+        return false;
+    }
+    battle
+        .active_stack_id
+        .map(|id| Id::<BattleStack>::from_key(id).to_string())
+        .as_deref()
+        == Some(input.battle_stack_id.as_str())
+}
+
+fn canister_battle_view_from_rows(
+    battle: &Battle,
+    stacks: &[BattleStack],
+    caller_participant_id: &str,
+    now_ms: u64,
+    suppress_actions: bool,
+) -> BattleView {
+    let battle_id = battle.id().to_string();
+    let active_stack = battle
+        .active_stack_id
+        .map(Id::<BattleStack>::from_key)
+        .and_then(|active_id| stacks.iter().find(|stack| stack.id() == active_id));
+    let active_participant_id = active_stack.and_then(|stack| {
+        stack
+            .owner_participant_id
+            .map(|id| Id::<GameParticipant>::from_key(id).to_string())
+    });
+    let legal_actions_for_caller = if suppress_actions {
+        Vec::new()
+    } else {
+        match active_stack {
+            Some(stack)
+                if stack
+                    .owner_participant_id
+                    .map(|id| Id::<GameParticipant>::from_key(id).to_string())
+                    .as_deref()
+                    == Some(caller_participant_id) =>
+            {
+                cheap_legal_actions_for_stack_rows(&battle_id, battle.current_round, stacks, stack)
+            }
+            _ => Vec::new(),
+        }
+    };
+
+    let mut initiative_order = stacks
+        .iter()
+        .filter(|stack| stack.status == "active" && stack.quantity > 0)
+        .collect::<Vec<_>>();
+    initiative_order.sort_by(|left, right| {
+        right
+            .initiative
+            .cmp(&left.initiative)
+            .then_with(|| right.speed.cmp(&left.speed))
+            .then_with(|| left.id().cmp(&right.id()))
+    });
+
+    BattleView {
+        battle_id,
+        state: battle.state.clone(),
+        battle_type: battle.battle_type.clone(),
+        current_round: battle.current_round,
+        active_stack_id: battle
+            .active_stack_id
+            .map(|id| Id::<BattleStack>::from_key(id).to_string()),
+        active_participant_id,
+        action_deadline_at: battle
+            .action_deadline_at
+            .and_then(|timestamp| u64::try_from(timestamp.as_millis()).ok()),
+        remaining_ms: battle
+            .action_deadline_at
+            .and_then(|deadline| u64::try_from(deadline.as_millis()).ok())
+            .map(|deadline| deadline.saturating_sub(now_ms)),
+        grid: domm_game::BattleGridView {
+            width: battle.grid_width,
+            height: battle.grid_height,
+        },
+        obstacles: Vec::new(),
+        stacks: stacks
+            .iter()
+            .map(|stack| domm_game::BattleStackView {
+                battle_stack_id: stack.id().to_string(),
+                unit_id: Id::<domm_degens_schema::schema::UnitDefinition>::from_key(stack.unit_id)
+                    .to_string(),
+                side: stack.side.clone(),
+                owner_participant_id: stack
+                    .owner_participant_id
+                    .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
+                battle_x: stack.battle_x,
+                battle_y: stack.battle_y,
+                quantity: stack.quantity,
+                front_hp: stack.front_hp,
+                shots_remaining: stack.shots_remaining,
+                champion_might: 0,
+                champion_guard: 0,
+                attack: stack.attack,
+                defense: stack.defense,
+                damage_min: stack.damage_min,
+                damage_max: stack.damage_max,
+                max_hp: stack.max_hp,
+                speed: stack.speed,
+                initiative: stack.initiative,
+                ranged: stack.ranged,
+                flying: stack.flying,
+                acted_round: stack.acted_round,
+                waited_round: stack.waited_round,
+                defended_round: stack.defended_round,
+                status: stack.status.clone(),
+                status_keys: stack.status_keys.clone(),
+            })
+            .collect(),
+        initiative_order: initiative_order
+            .into_iter()
+            .map(|stack| stack.id().to_string())
+            .collect(),
+        legal_actions_for_caller,
+        events: Vec::new(),
+        next_event_seq: 1,
+        morale_luck_policy: domm_game::v1_morale_luck_policy(),
+    }
+}
+
+fn cheap_legal_actions_for_stack_rows(
+    battle_id: &str,
+    current_round: u16,
+    stacks: &[BattleStack],
+    stack: &BattleStack,
+) -> Vec<LegalBattleAction> {
+    let can_act =
+        stack.status == "active" && stack.quantity > 0 && stack.acted_round < current_round;
+    let enemies = stacks
+        .iter()
+        .filter(|target| {
+            Id::<Battle>::from_key(target.battle_id).to_string() == battle_id
+                && target.side != stack.side
+                && target.status == "active"
+                && target.quantity > 0
+        })
+        .collect::<Vec<_>>();
+    let adjacent_targets = enemies
+        .iter()
+        .filter(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y) == 1
+        })
+        .map(|target| target.id().to_string())
+        .collect::<Vec<_>>();
+    let ranged_targets = enemies
+        .iter()
+        .filter(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y) > 1
+        })
+        .map(|target| target.id().to_string())
+        .collect::<Vec<_>>();
+    vec![
+        LegalBattleAction {
+            action: "Move".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("query_budget_move_preview_deferred".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "MeleeAttack".to_string(),
+            ability_key: None,
+            enabled: can_act && !adjacent_targets.is_empty(),
+            disabled_reason: adjacent_targets
+                .is_empty()
+                .then(|| "no_adjacent_enemy".to_string()),
+            targets: adjacent_targets,
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "RangedAttack".to_string(),
+            ability_key: None,
+            enabled: can_act && stack.ranged && !ranged_targets.is_empty(),
+            disabled_reason: (!stack.ranged)
+                .then(|| "stack_not_ranged".to_string())
+                .or_else(|| {
+                    ranged_targets
+                        .is_empty()
+                        .then(|| "no_non_adjacent_enemy".to_string())
+                }),
+            targets: ranged_targets,
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Defend".to_string(),
+            ability_key: None,
+            enabled: can_act,
+            disabled_reason: None,
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Wait".to_string(),
+            ability_key: None,
+            enabled: can_act && stack.waited_round < current_round,
+            disabled_reason: None,
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "CastAbility".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("no_learned_battle_spell".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Retreat".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("retreat_deferred_v1_no_rehire_flow".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Surrender".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("surrender_deferred_v1_no_payment_terms".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+    ]
+}
+
+fn enrich_battle_spell_actions_from_rows(
+    session: &GameSession,
+    battle: &Battle,
+    stacks: &[BattleStack],
+    view: &mut BattleView,
+    participant_id: &str,
+) -> Result<(), ApiError> {
+    let Some(active_stack_id) = view.active_stack_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(caster_stack) = stacks
+        .iter()
+        .find(|stack| stack.id().to_string() == active_stack_id)
+    else {
+        return Ok(());
+    };
+    let spell_slugs = caster_stack
+        .status_keys
+        .iter()
+        .filter_map(|key| key.strip_prefix("battle_spell:"))
+        .filter(|slug| !slug.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if spell_slugs.is_empty() {
+        return Ok(());
+    }
+    let caster_participant_id = caster_stack
+        .owner_participant_id
+        .map(|id| Id::<GameParticipant>::from_key(id).to_string());
+    if caster_participant_id.as_deref() != Some(participant_id) {
+        return Ok(());
+    }
+    let caster_champion_id = if caster_stack.side == domm_game::BATTLE_SIDE_ATTACKER {
+        battle.attacker_champion_id
+    } else {
+        battle.defender_champion_id
+    };
+    let Some(caster_champion_id) = caster_champion_id else {
+        return Ok(());
+    };
+    let champion_id = Id::<Champion>::from_key(caster_champion_id);
+    let Some(champion) = champions_artifacts::load_champion(champion_id)? else {
+        return Ok(());
+    };
+    if Id::<GameParticipant>::from_key(champion.participant_id).to_string() != participant_id {
+        return Ok(());
+    }
+
+    let targets = stacks
+        .iter()
+        .filter(|stack| {
+            stack.side != caster_stack.side && stack.status == "active" && stack.quantity > 0
+        })
+        .map(|stack| stack.id().to_string())
+        .collect::<Vec<_>>();
+    let available_mana = if champion.mana_turn == session.current_turn {
+        champion.mana
+    } else {
+        champion.mana_max
+    };
+    let mut spell_actions = Vec::new();
+    for spell_slug in spell_slugs {
+        let Some(spell) =
+            content::find_spell_by_ruleset_slug(Id::from_key(session.ruleset_id), &spell_slug)?
+        else {
+            continue;
+        };
+        if spell.target_type != "enemy_battle_stack" {
+            continue;
+        }
+        let disabled_reason = if caster_stack.cast_round >= battle.current_round {
+            Some("battle_stack_already_cast".to_string())
+        } else if targets.is_empty() {
+            Some("battle_target_not_legal".to_string())
+        } else if spell.mana_cost > available_mana {
+            Some("insufficient_mana".to_string())
+        } else {
+            None
+        };
+        spell_actions.push(domm_game::LegalBattleAction {
+            action: "CastAbility".to_string(),
+            ability_key: Some(format!("spell:{}", spell.slug)),
+            enabled: disabled_reason.is_none(),
+            disabled_reason,
+            targets: targets.clone(),
+            path: Vec::new(),
+            damage_preview: None,
+        });
+    }
+    if !spell_actions.is_empty() {
+        view.legal_actions_for_caller
+            .retain(|action| action.action != "CastAbility" || action.ability_key.is_some());
+        view.legal_actions_for_caller.extend(spell_actions);
+    }
+    Ok(())
 }
 
 pub(crate) fn submit_battle_action(
@@ -45,13 +479,21 @@ pub(crate) fn submit_battle_action(
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &input.battle_id)?;
     let payload_json = battle_action_payload_json(&input);
-    let command = match command_response::begin_participant_command(
+    let command = match command_response::begin_participant_command_guarded(
         caller,
         &context,
         "submit_battle_action",
         &client_nonce,
         battle.attacker_champion_id.map(Id::from_key),
         payload_json,
+        || {
+            ensure_battle_round_accepts_new_action(
+                context.session.id(),
+                battle.id(),
+                context.participant.id(),
+                battle.current_round,
+            )
+        },
     )? {
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
@@ -59,24 +501,32 @@ pub(crate) fn submit_battle_action(
 
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
+    let response_participant_id = context.participant.id().to_string();
     let recovery_result = recover_applying_battle_commands(
         &mut context.session,
         battle.id(),
         command.id(),
+        Some(&response_participant_id),
         &mut events,
         &mut changed_subjects,
     );
     if let Err(error) = recovery_result {
         return command_response::fail_command(caller, &context, command, &client_nonce, error);
     }
-    let sync_result = apply_due_timeouts(
-        &mut context.session,
-        battle.id(),
-        now_ms,
-        BattleCommandBudget::default().max_timeout_actions,
-        &mut events,
-        &mut changed_subjects,
-    );
+    let skip_timeout_for_submit_grace = battle_action_submit_grace_applies(&battle, &input, now_ms);
+    let sync_result = if skip_timeout_for_submit_grace {
+        Ok(false)
+    } else {
+        apply_due_timeouts(
+            &mut context.session,
+            battle.id(),
+            now_ms,
+            CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+            Some(&response_participant_id),
+            &mut events,
+            &mut changed_subjects,
+        )
+    };
     if let Err(error) = sync_result {
         return command_response::fail_command(caller, &context, command, &client_nonce, error);
     }
@@ -88,8 +538,8 @@ pub(crate) fn submit_battle_action(
             command,
             &client_nonce,
             public_error(
-                "battle_sync_incomplete",
-                "battle timeout sync is incomplete; call sync_battle before submitting an action",
+                "battle_processing",
+                "battle timeout work is still processing; retry after refreshing battle state",
                 true,
             ),
         );
@@ -101,6 +551,7 @@ pub(crate) fn submit_battle_action(
         command.clone(),
         &input,
         now_ms,
+        &response_participant_id,
         &mut events,
         &mut changed_subjects,
     );
@@ -110,6 +561,16 @@ pub(crate) fn submit_battle_action(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
+    if let Some(updated_battle) = battles::load_battle(battle.id())? {
+        let readiness = recompute_battle_round_readiness_and_schedule(
+            context.session.id(),
+            &updated_battle,
+            Some(command.id()),
+            true,
+        )?;
+        changed_subjects.extend(readiness.changed_subjects);
+        schedule_battle_timeout_job(context.session.id(), &updated_battle)?;
+    }
 
     if let Some(updated_session) = crate::repos::sessions::load_session(context.session.id())? {
         context.session = updated_session;
@@ -154,10 +615,12 @@ pub(crate) fn sync_battle(
 
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
+    let response_participant_id = context.participant.id().to_string();
     let recovered = match recover_applying_battle_commands(
         &mut context.session,
         battle.id(),
         command.id(),
+        Some(&response_participant_id),
         &mut events,
         &mut changed_subjects,
     ) {
@@ -170,7 +633,8 @@ pub(crate) fn sync_battle(
         &mut context.session,
         battle.id(),
         now_ms,
-        BattleCommandBudget::default().max_timeout_actions,
+        CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+        Some(&response_participant_id),
         &mut events,
         &mut changed_subjects,
     ) {
@@ -179,6 +643,15 @@ pub(crate) fn sync_battle(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
+    if let Some(updated_battle) = battles::load_battle(battle.id())? {
+        let readiness = recompute_battle_round_readiness_and_schedule(
+            context.session.id(),
+            &updated_battle,
+            Some(command.id()),
+            true,
+        )?;
+        changed_subjects.extend(readiness.changed_subjects);
+    }
     if let Err(error) = battle_aftermath::apply_resolved_battle_aftermath(
         &mut context.session,
         command.id(),
@@ -220,12 +693,540 @@ pub(crate) fn sync_battle(
     )
 }
 
+pub(crate) fn end_battle_turn(
+    caller: CandidPrincipal,
+    session_id: String,
+    battle_id: String,
+    client_nonce: String,
+) -> Result<CommandResponse, ApiError> {
+    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
+    let payload_json = format!(
+        r#"{{"battle_id":"{}"}}"#,
+        command_response::escape_json(&battle_id)
+    );
+    let command = match command_response::begin_participant_command(
+        caller,
+        &context,
+        "end_battle_turn",
+        &client_nonce,
+        battle.attacker_champion_id.map(Id::from_key),
+        payload_json,
+    )? {
+        GameCommandAction::Apply(command) => command,
+        GameCommandAction::Return(response) => return Ok(response),
+    };
+
+    let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?;
+    let caller_participant_id = context.participant.id();
+    let caller_has_stack = stacks
+        .items
+        .iter()
+        .any(|stack| stack.owner_participant_id == Some(caller_participant_id.key()));
+    if !caller_has_stack {
+        return command_response::fail_command(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            public_error(
+                "battle_not_visible",
+                "caller does not control stacks in this battle",
+                false,
+            ),
+        );
+    }
+
+    let ready = battle_round_ready::mark_battle_round_ready(
+        context.session.id(),
+        battle.id(),
+        caller_participant_id,
+        battle.current_round,
+        Some(command.id()),
+        "player_end_turn".to_string(),
+        Timestamp::now(),
+    )?;
+    let mut changed_subjects = vec![command_response::changed(
+        "battle_participant_round_ready",
+        &ready.id().to_string(),
+        "upsert",
+    )];
+    let readiness = recompute_battle_round_readiness_and_schedule(
+        context.session.id(),
+        &battle,
+        Some(command.id()),
+        true,
+    )?;
+    changed_subjects.extend(readiness.changed_subjects);
+
+    let ready_count = readiness.ready_count;
+    let participant_count = readiness.participant_count;
+    let all_ready = readiness.all_ready;
+    let event = command_response::append_public_event(
+        &mut context.session,
+        command.id(),
+        format!(
+            "end_battle_turn:{}:{}:{}",
+            battle.id(),
+            battle.current_round,
+            context.participant.id()
+        ),
+        "battle_participant_round_ready".to_string(),
+        Some("battle".to_string()),
+        Some(battle.id().to_string()),
+        format!(
+            r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
+            battle.id(),
+            battle.current_round,
+            ready_count,
+            participant_count,
+            all_ready
+        ),
+    )?;
+
+    command_response::apply_command(
+        caller,
+        &context,
+        command,
+        &client_nonce,
+        format!(
+            r#"{{"command_kind":"end_battle_turn","battle_id":"{}","current_turn":{},"round_number":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
+            battle.id(),
+            context.session.current_turn,
+            battle.current_round,
+            ready_count,
+            participant_count,
+            all_ready
+        ),
+        vec![event],
+        changed_subjects,
+    )
+}
+
+pub(crate) fn process_battle_timeout_job(job: SystemJob) -> Result<(), ApiError> {
+    let fallback = job.clone();
+    if let Err(error) = process_battle_timeout_job_inner(job) {
+        system_job_repo::fail_system_job(fallback, error.retryable, error.message.clone())?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let session_id = Id::<GameSession>::from_key(job.session_id);
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle timeout session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(battle_id_key) = job.battle_id else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle timeout job is missing battle_id".to_string(),
+        )?;
+        return Ok(());
+    };
+    let battle_id = Id::<Battle>::from_key(battle_id_key);
+    let Some(battle) = battles::load_battle(battle_id)? else {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    };
+    if battle.state != "active" {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+    if battle.action_deadline_at != Some(job.due_at) {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+
+    let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    let sync_incomplete = apply_due_timeouts(
+        &mut session,
+        battle_id,
+        now_ms,
+        CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+        None,
+        &mut events,
+        &mut changed_subjects,
+    )?;
+    if sync_incomplete {
+        system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
+        return Ok(());
+    }
+
+    if let Some(updated_battle) = battles::load_battle(battle_id)? {
+        recompute_battle_round_readiness_and_schedule(session.id(), &updated_battle, None, true)?;
+    }
+
+    system_job_repo::complete_system_job(job)?;
+    if let Some(updated_battle) = battles::load_battle(battle_id)?
+        && updated_battle.state == "active"
+        && let Some(deadline) = updated_battle.action_deadline_at
+    {
+        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: format!("battle_timeout:{battle_id}:{}", deadline.as_millis()),
+            job_kind: "battle_timeout".to_string(),
+            session_id,
+            battle_id: Some(battle_id),
+            turn_number: Some(session.current_turn),
+            due_at: deadline,
+            command_id: None,
+            cursor_json: None,
+        })?;
+    }
+    Ok(())
+}
+
+pub(crate) fn process_battle_round_advance_job(job: SystemJob) -> Result<(), ApiError> {
+    let fallback = job.clone();
+    if let Err(error) = process_battle_round_advance_job_inner(job) {
+        system_job_repo::fail_system_job(fallback, error.retryable, error.message.clone())?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let session_id = Id::<GameSession>::from_key(job.session_id);
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle round advance session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(battle_id_key) = job.battle_id else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle round advance job is missing battle_id".to_string(),
+        )?;
+        return Ok(());
+    };
+    let Some(round_number) = battle_round_from_job_key(&job.job_key) else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle round advance job key is missing round_number".to_string(),
+        )?;
+        return Ok(());
+    };
+    let battle_id = Id::<Battle>::from_key(battle_id_key);
+    let Some(battle) = battles::load_battle(battle_id)? else {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    };
+    if battle.state != "active" || battle.current_round != round_number {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+
+    let readiness =
+        recompute_battle_round_readiness_and_schedule(session_id, &battle, None, false)?;
+    if !readiness.all_ready {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
+    loop {
+        let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+            public_error(
+                "battle_not_found",
+                "battle disappeared during round advance",
+                true,
+            )
+        })?;
+        if current_battle.state != "active" || current_battle.current_round != round_number {
+            break;
+        }
+        let state = battle_rows::load_battle_state_from_row(&session, current_battle)?;
+        let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id.to_string())
+            .map_err(map_battle_error)?
+        else {
+            break;
+        };
+        let stack = state.stack(&stack_id).map_err(map_battle_error)?;
+        if !stack.is_living() || stack.acted_round >= round_number {
+            break;
+        }
+        let command =
+            begin_round_auto_defend_command(&session, battle_id, &stack_id, round_number)?;
+        apply_round_auto_defend_command(
+            &mut session,
+            command,
+            battle_id,
+            stack_id,
+            round_number,
+            now_ms,
+            None,
+            &mut events,
+            &mut changed_subjects,
+        )?;
+    }
+
+    system_job_repo::complete_system_job(job)?;
+    if let Some(updated_battle) = battles::load_battle(battle_id)?
+        && updated_battle.state == "active"
+    {
+        schedule_battle_timeout_job(session.id(), &updated_battle)?;
+    }
+    Ok(())
+}
+
+struct BattleRoundReadinessSummary {
+    ready_count: usize,
+    participant_count: usize,
+    all_ready: bool,
+    changed_subjects: Vec<domm_game::ChangedSubject>,
+}
+
+fn recompute_battle_round_readiness_and_schedule(
+    session_id: Id<GameSession>,
+    battle: &Battle,
+    command_id: Option<Id<GameCommand>>,
+    schedule_if_ready: bool,
+) -> Result<BattleRoundReadinessSummary, ApiError> {
+    if battle.state != "active" {
+        return Ok(BattleRoundReadinessSummary {
+            ready_count: 0,
+            participant_count: 0,
+            all_ready: false,
+            changed_subjects: Vec::new(),
+        });
+    }
+
+    let state = battle_rows::load_battle_state_from_row(
+        &sessions::load_session(session_id)?.ok_or_else(|| {
+            public_error(
+                "session_not_found",
+                "session was not found while recomputing battle readiness",
+                true,
+            )
+        })?,
+        battle.clone(),
+    )?;
+    let mut changed_subjects = mark_auto_ready_participants(session_id, battle, &state)?;
+    let participant_ids = alive_battle_participant_ids(&state, &battle.id().to_string())?;
+    let ready_rows = battle_round_ready::page_battle_round_ready(
+        session_id,
+        battle.id(),
+        battle.current_round,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    let ready_participant_ids = ready_rows
+        .items
+        .iter()
+        .map(|row| row.participant_id)
+        .collect::<BTreeSet<_>>();
+    let all_ready = !participant_ids.is_empty()
+        && participant_ids
+            .iter()
+            .all(|participant_id| ready_participant_ids.contains(participant_id));
+
+    if all_ready && schedule_if_ready {
+        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: format!(
+                "battle_round_advance:{}:{}",
+                battle.id(),
+                battle.current_round
+            ),
+            job_kind: "battle_round_advance".to_string(),
+            session_id,
+            battle_id: Some(battle.id()),
+            turn_number: None,
+            due_at: Timestamp::now(),
+            command_id,
+            cursor_json: None,
+        })?;
+        changed_subjects.push(command_response::changed(
+            "system_job",
+            &job.id().to_string(),
+            "upsert",
+        ));
+    }
+
+    Ok(BattleRoundReadinessSummary {
+        ready_count: ready_rows.items.len(),
+        participant_count: participant_ids.len(),
+        all_ready,
+        changed_subjects,
+    })
+}
+
+fn mark_auto_ready_participants(
+    session_id: Id<GameSession>,
+    battle: &Battle,
+    state: &domm_game::BattleState,
+) -> Result<Vec<domm_game::ChangedSubject>, ApiError> {
+    let mut changed_subjects = Vec::new();
+    let battle_id_text = battle.id().to_string();
+    for participant_id_key in alive_battle_participant_ids(state, &battle_id_text)? {
+        let participant_id =
+            Id::<domm_degens_schema::schema::GameParticipant>::from_key(participant_id_key);
+        if battle_round_ready::find_battle_round_ready(
+            battle.id(),
+            participant_id,
+            battle.current_round,
+        )?
+        .is_some()
+        {
+            continue;
+        }
+        let participant_text = participant_id.to_string();
+        let living_owned = state
+            .stacks
+            .iter()
+            .filter(|stack| {
+                stack.battle_id == battle_id_text
+                    && stack.owner_participant_id.as_deref() == Some(participant_text.as_str())
+                    && stack.is_living()
+            })
+            .collect::<Vec<_>>();
+        let all_acted = !living_owned.is_empty()
+            && living_owned
+                .iter()
+                .all(|stack| stack.acted_round >= battle.current_round);
+        let reason = if all_acted {
+            Some("auto_all_stacks_acted")
+        } else if !participant_has_meaningful_action(
+            state,
+            &battle_id_text,
+            &participant_text,
+            battle.current_round,
+        )? {
+            Some("auto_no_actions")
+        } else {
+            None
+        };
+        let Some(reason) = reason else {
+            continue;
+        };
+        let ready = battle_round_ready::mark_battle_round_ready(
+            session_id,
+            battle.id(),
+            participant_id,
+            battle.current_round,
+            None,
+            reason.to_string(),
+            Timestamp::now(),
+        )?;
+        changed_subjects.push(command_response::changed(
+            "battle_participant_round_ready",
+            &ready.id().to_string(),
+            "upsert",
+        ));
+    }
+    Ok(changed_subjects)
+}
+
+fn alive_battle_participant_ids(
+    state: &domm_game::BattleState,
+    battle_id: &str,
+) -> Result<BTreeSet<Ulid>, ApiError> {
+    let mut participant_ids = BTreeSet::new();
+    for stack in state
+        .stacks
+        .iter()
+        .filter(|stack| stack.battle_id == battle_id && stack.is_living())
+    {
+        let Some(participant_id_text) = stack.owner_participant_id.as_deref() else {
+            continue;
+        };
+        let participant_id = session_context::parse_id::<
+            domm_degens_schema::schema::GameParticipant,
+        >(participant_id_text, "participant_id")?;
+        participant_ids.insert(participant_id.key());
+    }
+    Ok(participant_ids)
+}
+
+fn participant_has_meaningful_action(
+    state: &domm_game::BattleState,
+    battle_id: &str,
+    participant_id: &str,
+    round_number: u16,
+) -> Result<bool, ApiError> {
+    for stack in state.stacks.iter().filter(|stack| {
+        stack.battle_id == battle_id
+            && stack.owner_participant_id.as_deref() == Some(participant_id)
+            && stack.is_living()
+            && stack.acted_round < round_number
+    }) {
+        let actions = legal_actions_for_stack(state, battle_id, &stack.battle_stack_id)
+            .map_err(map_battle_error)?;
+        if actions.iter().any(|action| {
+            action.enabled
+                && matches!(
+                    action.action.as_str(),
+                    "Move" | "MeleeAttack" | "RangedAttack" | "Attack" | "CastAbility"
+                )
+        }) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn ensure_battle_round_accepts_new_action(
+    _session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    participant_id: Id<domm_degens_schema::schema::GameParticipant>,
+    round_number: u16,
+) -> Result<(), ApiError> {
+    if battle_round_ready::find_battle_round_ready(battle_id, participant_id, round_number)?
+        .is_some()
+    {
+        return Err(public_error(
+            "battle_round_closed",
+            "this participant has already ended the current battle round",
+            false,
+        ));
+    }
+    if battle_round_processing(battle_id, round_number)? {
+        return Err(public_error(
+            "battle_processing",
+            "the current battle round is advancing; refresh before submitting another battle action",
+            true,
+        ));
+    }
+    Ok(())
+}
+
+fn battle_round_processing(battle_id: Id<Battle>, round_number: u16) -> Result<bool, ApiError> {
+    let now = Timestamp::now();
+    let job_key = format!("battle_round_advance:{battle_id}:{round_number}");
+    Ok(
+        system_job_repo::find_system_job_by_key(&job_key)?.is_some_and(|job| {
+            job.job_kind == "battle_round_advance"
+                && (job.status == system_job_repo::STATUS_RUNNING
+                    || (job.status == system_job_repo::STATUS_SCHEDULED && job.due_at <= now))
+        }),
+    )
+}
+
+fn battle_round_from_job_key(job_key: &str) -> Option<u16> {
+    job_key.rsplit(':').next()?.parse().ok()
+}
+
 fn apply_player_action(
     session: &mut GameSession,
     participant_id: &str,
     mut command: GameCommand,
     input: &BattleActionInput,
     now_ms: u64,
+    response_participant_id: &str,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<BattleActionReceipt, ApiError> {
@@ -234,13 +1235,20 @@ fn apply_player_action(
     command = commands_events_effects::update_game_command(command)?;
 
     let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
-    validate_player_action(&state, participant_id, input, now_ms)?;
+    validate_player_action(
+        &state,
+        participant_id,
+        input,
+        now_ms,
+        CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
+    )?;
     if input.action == "CastAbility" {
         return apply_cast_ability_command(
             session,
             participant_id,
             command,
             input,
+            response_participant_id,
             events,
             changed_subjects,
         );
@@ -259,14 +1267,22 @@ fn apply_player_action(
     domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), now_ms)
         .map_err(map_battle_error)?;
     battle_rows::persist_battle_state(&state, command.id())?;
-    append_new_battle_events(session, command.id(), &state, events)?;
-    battle_aftermath::apply_resolved_battle_aftermath(
+    append_new_battle_events(
         session,
         command.id(),
-        session_context::parse_id::<Battle>(&input.battle_id, "battle_id")?,
+        &state,
+        Some(response_participant_id),
         events,
-        changed_subjects,
     )?;
+    if !battle_state_resolved(&state, &input.battle_id)? {
+        battle_aftermath::apply_resolved_battle_aftermath(
+            session,
+            command.id(),
+            session_context::parse_id::<Battle>(&input.battle_id, "battle_id")?,
+            events,
+            changed_subjects,
+        )?;
+    }
     changed_subjects.push(command_response::changed(
         "battle",
         &input.battle_id,
@@ -281,6 +1297,7 @@ fn apply_cast_ability_command(
     participant_id: &str,
     command: GameCommand,
     input: &BattleActionInput,
+    response_participant_id: &str,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<BattleActionReceipt, ApiError> {
@@ -449,14 +1466,22 @@ fn apply_cast_ability_command(
             command_response::escape_json(&status_key)
         ),
     )?;
-    append_new_battle_events(session, command.id(), &state, events)?;
-    battle_aftermath::apply_resolved_battle_aftermath(
+    append_new_battle_events(
         session,
         command.id(),
-        session_context::parse_id::<Battle>(&input.battle_id, "battle_id")?,
+        &state,
+        Some(response_participant_id),
         events,
-        changed_subjects,
     )?;
+    if !battle_state_resolved(&state, &input.battle_id)? {
+        battle_aftermath::apply_resolved_battle_aftermath(
+            session,
+            command.id(),
+            session_context::parse_id::<Battle>(&input.battle_id, "battle_id")?,
+            events,
+            changed_subjects,
+        )?;
+    }
     changed_subjects.push(command_response::changed(
         "battle",
         &input.battle_id,
@@ -468,6 +1493,13 @@ fn apply_cast_ability_command(
         "update",
     ));
     battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error)
+}
+
+fn battle_state_resolved(
+    state: &domm_game::BattleState,
+    battle_id: &str,
+) -> Result<bool, ApiError> {
+    Ok(state.battle(battle_id).map_err(map_battle_error)?.state == "resolved")
 }
 
 fn caster_champion_for_battle(
@@ -497,6 +1529,7 @@ fn recover_applying_battle_commands(
     session: &mut GameSession,
     battle_id: Id<Battle>,
     current_command_id: Id<GameCommand>,
+    response_participant_id: Option<&str>,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<u32, ApiError> {
@@ -537,6 +1570,7 @@ fn recover_applying_battle_commands(
                         &participant_id,
                         command.clone(),
                         &input,
+                        response_participant_id.unwrap_or(&participant_id),
                         events,
                         changed_subjects,
                     )?
@@ -560,7 +1594,13 @@ fn recover_applying_battle_commands(
                     )
                     .map_err(map_battle_error)?;
                     battle_rows::persist_battle_state(&state, command.id())?;
-                    append_new_battle_events(session, command.id(), &state, events)?;
+                    append_new_battle_events(
+                        session,
+                        command.id(),
+                        &state,
+                        response_participant_id,
+                        events,
+                    )?;
                     battle_aftermath::apply_resolved_battle_aftermath(
                         session,
                         command.id(),
@@ -606,7 +1646,13 @@ fn recover_applying_battle_commands(
                 )
                 .map_err(map_battle_error)?;
                 battle_rows::persist_battle_state(&state, command.id())?;
-                append_new_battle_events(session, command.id(), &state, events)?;
+                append_new_battle_events(
+                    session,
+                    command.id(),
+                    &state,
+                    response_participant_id,
+                    events,
+                )?;
                 battle_aftermath::apply_resolved_battle_aftermath(
                     session,
                     command.id(),
@@ -625,6 +1671,57 @@ fn recover_applying_battle_commands(
                 commands_events_effects::update_game_command(applied)?;
                 recovered = recovered.saturating_add(1);
             }
+            "battle_round_auto_defend" => {
+                let round = parse_round_auto_defend_payload(&command.payload_json)?;
+                let mut state = battle_rows::load_battle_state_from_row(
+                    session,
+                    battles::load_battle(battle_id)?.ok_or_else(|| {
+                        public_error("battle_not_found", "battle not found during recovery", true)
+                    })?,
+                )?;
+                let battle_command = battle_rows::battle_action_command(
+                    &command,
+                    &battle_id.to_string(),
+                    None,
+                    round.stack_id,
+                    "RoundAutoDefend".to_string(),
+                    None,
+                    None,
+                    true,
+                );
+                state.commands.push(battle_command);
+                domm_game::apply_battle_command_by_id(
+                    &mut state,
+                    &command.id().to_string(),
+                    command.created_at.as_millis().try_into().unwrap_or(0),
+                )
+                .map_err(map_battle_error)?;
+                battle_rows::persist_battle_state(&state, command.id())?;
+                append_new_battle_events(
+                    session,
+                    command.id(),
+                    &state,
+                    response_participant_id,
+                    events,
+                )?;
+                battle_aftermath::apply_resolved_battle_aftermath(
+                    session,
+                    command.id(),
+                    battle_id,
+                    events,
+                    changed_subjects,
+                )?;
+                let mut applied = command;
+                applied.status = "applied".to_string();
+                applied.phase = "complete".to_string();
+                applied.result_json = Some(command_response::result_json(
+                    "battle_round_auto_defend",
+                    session.current_turn,
+                ));
+                applied.applied_at = Some(Timestamp::now());
+                commands_events_effects::update_game_command(applied)?;
+                recovered = recovered.saturating_add(1);
+            }
             _ => {}
         }
     }
@@ -636,6 +1733,7 @@ fn apply_due_timeouts(
     battle_id: Id<Battle>,
     now_ms: u64,
     max_timeout_actions: u32,
+    response_participant_id: Option<&str>,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
@@ -677,6 +1775,7 @@ fn apply_due_timeouts(
             battle_id,
             active_stack_id,
             deadline,
+            response_participant_id,
             events,
             changed_subjects,
         )?;
@@ -732,6 +1831,7 @@ fn apply_timeout_command(
     battle_id: Id<Battle>,
     active_stack_id: String,
     deadline_ms: u64,
+    response_participant_id: Option<&str>,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -764,7 +1864,13 @@ fn apply_timeout_command(
     domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), deadline_ms)
         .map_err(map_battle_error)?;
     battle_rows::persist_battle_state(&state, command.id())?;
-    append_new_battle_events(session, command.id(), &state, events)?;
+    append_new_battle_events(
+        session,
+        command.id(),
+        &state,
+        response_participant_id,
+        events,
+    )?;
     battle_aftermath::apply_resolved_battle_aftermath(
         session,
         command.id(),
@@ -788,11 +1894,132 @@ fn apply_timeout_command(
     Ok(())
 }
 
+fn begin_round_auto_defend_command(
+    session: &GameSession,
+    battle_id: Id<Battle>,
+    stack_id: &str,
+    round_number: u16,
+) -> Result<GameCommand, ApiError> {
+    let command_type = "battle_round_auto_defend";
+    let actor_key = format!("battle_round:{battle_id}:{round_number}");
+    let nonce_text = format!("round_auto_defend:{battle_id}:{round_number}:{stack_id}");
+    let client_nonce = command_response::nonce_u64(command_type, &nonce_text);
+    if let Some(command) = commands_events_effects::find_game_command_by_idempotency(
+        session.id(),
+        "system",
+        &actor_key,
+        client_nonce,
+    )? {
+        return Ok(command);
+    }
+    let payload = format!(
+        r#"{{"battle_id":"{}","stack_id":"{}","round_number":{round_number}}}"#,
+        battle_id,
+        command_response::escape_json(stack_id)
+    );
+    let hash = command_response::payload_hash(command_type, &actor_key, &nonce_text, &payload);
+    commands_events_effects::create_game_command(
+        session.id(),
+        "system".to_string(),
+        actor_key,
+        None,
+        None,
+        None,
+        session.current_turn,
+        client_nonce,
+        command_type.to_string(),
+        hash,
+        payload,
+    )
+}
+
+fn apply_round_auto_defend_command(
+    session: &mut GameSession,
+    mut command: GameCommand,
+    battle_id: Id<Battle>,
+    stack_id: String,
+    round_number: u16,
+    deadline_base_ms: u64,
+    response_participant_id: Option<&str>,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    if command.status == "applied" {
+        return Ok(());
+    }
+    command.status = "applying".to_string();
+    command.phase = "applying".to_string();
+    command = commands_events_effects::update_game_command(command)?;
+
+    let battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+        public_error(
+            "battle_not_found",
+            "battle not found during round advance",
+            true,
+        )
+    })?;
+    if battle.current_round != round_number {
+        command.status = "applied".to_string();
+        command.phase = "complete".to_string();
+        command.result_json = Some(command_response::result_json(
+            "battle_round_auto_defend",
+            session.current_turn,
+        ));
+        command.applied_at = Some(Timestamp::now());
+        commands_events_effects::update_game_command(command)?;
+        return Ok(());
+    }
+    let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
+    let battle_command = battle_rows::battle_action_command(
+        &command,
+        &battle_id.to_string(),
+        None,
+        stack_id.clone(),
+        "RoundAutoDefend".to_string(),
+        None,
+        None,
+        true,
+    );
+    state.commands.push(battle_command);
+    domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), deadline_base_ms)
+        .map_err(map_battle_error)?;
+    battle_rows::persist_battle_state(&state, command.id())?;
+    append_new_battle_events(
+        session,
+        command.id(),
+        &state,
+        response_participant_id,
+        events,
+    )?;
+    battle_aftermath::apply_resolved_battle_aftermath(
+        session,
+        command.id(),
+        battle_id,
+        events,
+        changed_subjects,
+    )?;
+    command.status = "applied".to_string();
+    command.phase = "complete".to_string();
+    command.result_json = Some(command_response::result_json(
+        "battle_round_auto_defend",
+        session.current_turn,
+    ));
+    command.applied_at = Some(Timestamp::now());
+    commands_events_effects::update_game_command(command)?;
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &battle_id.to_string(),
+        "round_auto_defend",
+    ));
+    Ok(())
+}
+
 fn validate_player_action(
     state: &domm_game::BattleState,
     participant_id: &str,
     input: &BattleActionInput,
     now_ms: u64,
+    deadline_grace_ms: u64,
 ) -> Result<(), ApiError> {
     let battle = state.battle(&input.battle_id).map_err(map_battle_error)?;
     if battle.state != "active" {
@@ -809,7 +2036,7 @@ fn validate_player_action(
     }
     if battle
         .action_deadline_at
-        .is_some_and(|deadline| now_ms >= deadline)
+        .is_some_and(|deadline| now_ms > deadline.saturating_add(deadline_grace_ms))
     {
         return Err(map_battle_error(BattleError::ActionAfterDeadline));
     }
@@ -933,6 +2160,7 @@ fn append_new_battle_events(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     state: &domm_game::BattleState,
+    response_participant_id: Option<&str>,
     events: &mut Vec<domm_game::ApiEventView>,
 ) -> Result<(), ApiError> {
     for event in state
@@ -940,21 +2168,93 @@ fn append_new_battle_events(
         .iter()
         .filter(|event| event.command_id == command_id.to_string())
     {
-        let event = command_response::append_public_event(
+        let detailed_payload = format!(
+            r#"{{"battle_id":"{}","subject_id_text":"{}","payload":{}}}"#,
+            command_response::escape_json(&event.battle_id),
+            command_response::escape_json(&event.subject_id_text),
+            json_string(&event.payload)
+        );
+        for participant_id in involved_battle_participant_ids(state, &event.battle_id)? {
+            let audience_key = format!("participant:{participant_id}");
+            let view = command_response::append_event_for_audience(
+                session,
+                command_id,
+                format!(
+                    "battle:{}:{}:{}",
+                    event.battle_id, event.event_key, audience_key
+                ),
+                audience_key,
+                event.event_type.clone(),
+                Some("battle".to_string()),
+                Some(event.battle_id.clone()),
+                detailed_payload.clone(),
+            )?;
+            if response_participant_id == Some(participant_id.as_str()) {
+                events.push(view);
+            }
+        }
+        let public_event = command_response::append_public_event(
             session,
             command_id,
-            format!("battle:{}:{}", event.battle_id, event.event_key),
+            format!("battle:{}:{}:public", event.battle_id, event.event_key),
             event.event_type.clone(),
             Some("battle".to_string()),
             Some(event.battle_id.clone()),
             format!(
-                r#"{{"battle_id":"{}","subject_id_text":"{}","payload":{}}}"#,
+                r#"{{"battle_id":"{}","event_type":"{}","redacted":true}}"#,
                 command_response::escape_json(&event.battle_id),
-                command_response::escape_json(&event.subject_id_text),
-                json_string(&event.payload)
+                command_response::escape_json(&event.event_type)
             ),
         )?;
-        events.push(event);
+        events.push(public_event);
+    }
+    Ok(())
+}
+
+fn involved_battle_participant_ids(
+    state: &domm_game::BattleState,
+    battle_id: &str,
+) -> Result<BTreeSet<String>, ApiError> {
+    let mut participant_ids = state
+        .stacks
+        .iter()
+        .filter(|stack| stack.battle_id == battle_id)
+        .filter_map(|stack| stack.owner_participant_id.clone())
+        .collect::<BTreeSet<_>>();
+    let battle = state.battle(battle_id).map_err(map_battle_error)?;
+    if let Some(champion_id) = battle.attacker_champion_id.as_deref() {
+        add_champion_owner_participant(&mut participant_ids, champion_id)?;
+    }
+    if let Some(champion_id) = battle.defender_champion_id.as_deref() {
+        add_champion_owner_participant(&mut participant_ids, champion_id)?;
+    }
+    if let Some(town_id) = battle.defender_town_id.as_deref() {
+        add_town_owner_participant(&mut participant_ids, town_id)?;
+    }
+    Ok(participant_ids)
+}
+
+fn add_champion_owner_participant(
+    participant_ids: &mut BTreeSet<String>,
+    champion_id: &str,
+) -> Result<(), ApiError> {
+    let champion_id = session_context::parse_id::<Champion>(champion_id, "champion_id")?;
+    if let Some(champion) = champions_artifacts::load_champion(champion_id)? {
+        participant_ids
+            .insert(Id::<GameParticipant>::from_key(champion.participant_id).to_string());
+    }
+    Ok(())
+}
+
+fn add_town_owner_participant(
+    participant_ids: &mut BTreeSet<String>,
+    town_id: &str,
+) -> Result<(), ApiError> {
+    let town_id = session_context::parse_id::<Town>(town_id, "town_id")?;
+    if let Some(town) = towns::load_town(town_id)?
+        && let Some(owner_participant_id) = town.owner_participant_id
+    {
+        participant_ids.insert(Id::<GameParticipant>::from_key(owner_participant_id).to_string());
     }
     Ok(())
 }
@@ -1045,6 +2345,10 @@ struct TimeoutPayload {
     deadline_ms: u64,
 }
 
+struct RoundAutoDefendPayload {
+    stack_id: String,
+}
+
 fn parse_timeout_payload(payload: &str) -> Result<TimeoutPayload, ApiError> {
     Ok(TimeoutPayload {
         stack_id: json_field(payload, "stack_id").ok_or_else(|| {
@@ -1058,6 +2362,18 @@ fn parse_timeout_payload(payload: &str) -> Result<TimeoutPayload, ApiError> {
             public_error(
                 "invalid_battle_payload",
                 "timeout payload is missing deadline_ms",
+                true,
+            )
+        })?,
+    })
+}
+
+fn parse_round_auto_defend_payload(payload: &str) -> Result<RoundAutoDefendPayload, ApiError> {
+    Ok(RoundAutoDefendPayload {
+        stack_id: json_field(payload, "stack_id").ok_or_else(|| {
+            public_error(
+                "invalid_battle_payload",
+                "round auto-defend payload is missing stack_id",
                 true,
             )
         })?,
@@ -1163,4 +2479,12 @@ fn map_battle_error(error: BattleError) -> ApiError {
         }
         _ => ApiError::new("battle_action_invalid", error.to_string(), false),
     }
+}
+
+fn partial_retry_at() -> Timestamp {
+    Timestamp::from_millis(
+        Timestamp::now()
+            .as_millis()
+            .saturating_add(SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS),
+    )
 }

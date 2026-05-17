@@ -888,6 +888,7 @@ impl WebClientBackend for CanisterWebClientBackend {
                 sync_required: false,
             },
             action_affordances: Vec::new(),
+            omitted_fields: Vec::new(),
         };
         self.observe_game_view(&view);
         Ok(view)
@@ -1437,7 +1438,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
                 battle_id: view.battle_id.clone(),
                 battle_stack_id: active_stack_id,
                 action: action.action.clone(),
-                ability_key: None,
+                ability_key: action.ability_key.clone(),
                 target_stack_id: action.targets.first().cloned(),
                 destination: None,
             };
@@ -1466,7 +1467,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
         battle_id: view.battle_id.clone(),
         battle_stack_id: active_stack_id,
         action: action.action.clone(),
-        ability_key: None,
+        ability_key: action.ability_key.clone(),
         target_stack_id: action.targets.first().cloned(),
         destination: action.path.first().copied(),
     }

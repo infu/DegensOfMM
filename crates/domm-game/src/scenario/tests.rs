@@ -25,6 +25,14 @@ fn quest_accept_and_reward_claim_are_idempotent_by_status() {
         Some("quest_already_accepted")
     );
 
+    let accept_claimed = quest_accept_transition("claimed");
+    assert!(!accept_claimed.allowed);
+    assert_eq!(accept_claimed.next_status, "claimed");
+    assert_eq!(
+        accept_claimed.disabled_reason.as_deref(),
+        Some("quest_already_claimed")
+    );
+
     let premature = quest_claim_transition("accepted", 0, 1, OPENING_QUEST_REWARD_GOLD);
     assert!(!premature.allowed);
     assert_eq!(

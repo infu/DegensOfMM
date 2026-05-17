@@ -52,8 +52,10 @@ fn naval_routes_require_enabled_route_and_boat() {
             .code,
         "naval_route_disabled"
     );
+    assert!(!route.actionable);
 
     route.status = "active".to_string();
+    route.actionable = true;
     route.disabled_reason = None;
     assert_eq!(
         validate_boat_movement(&route, false)
@@ -69,6 +71,7 @@ fn siege_rule_is_bounded_and_explicitly_disabled() {
     let rule = first_playable_siege_rule();
     assert_eq!(rule.rule_key, "siege:first-playable-disabled");
     assert_eq!(rule.status, "disabled");
+    assert!(!rule.actionable);
     assert_eq!(rule.gate_count, 1);
     assert_eq!(rule.tower_count, 1);
     assert_eq!(

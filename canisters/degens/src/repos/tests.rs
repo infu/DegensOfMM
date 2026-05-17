@@ -1,13 +1,14 @@
-use domm_degens_schema::schema::{Battle, Champion, GameSession, PlayerAccount};
+use domm_degens_schema::schema::{Battle, Champion, GameSession, PlayerAccount, SystemJob};
 use icydb::{
+    db::query::FieldRef,
     traits::EntityValue,
     types::{Id, Principal, Timestamp, Ulid},
 };
 
 use super::{
-    aftermath_history, battles, champions_artifacts, cleanup, commands_events_effects, content,
-    economy_expansion, foundation, map_visibility_occupancy, movement, players, scenario_progress,
-    sessions, towns, worldgen,
+    aftermath_history, battle_round_ready, battles, champions_artifacts, cleanup,
+    commands_events_effects, content, economy_expansion, foundation, map_visibility_occupancy,
+    movement, players, scenario_progress, sessions, system_jobs, towns, turn_ready, worldgen,
 };
 
 fn bootstrap_repo_memory() {
@@ -348,6 +349,36 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
                 .expect("battle plan should build"),
         ),
         (
+            "battle stacks",
+            battles::battle_stacks_plan_text(_battle_id, 50)
+                .expect("battle stack plan should build"),
+        ),
+        (
+            "battle obstacles",
+            battles::battle_obstacles_plan_text(_battle_id, 50)
+                .expect("battle obstacle plan should build"),
+        ),
+        (
+            "battle occupancy",
+            battles::battle_occupancy_plan_text(_battle_id, 50)
+                .expect("battle occupancy plan should build"),
+        ),
+        (
+            "system jobs due",
+            system_jobs::due_jobs_plan_text(Timestamp::from_millis(19_200), 2)
+                .expect("system jobs due plan should build"),
+        ),
+        (
+            "turn ready",
+            turn_ready::turn_ready_session_turn_plan_text(session_id, 1, 2)
+                .expect("turn ready plan should build"),
+        ),
+        (
+            "battle round ready",
+            battle_round_ready::battle_round_ready_plan_text(session_id, _battle_id, 1, 2)
+                .expect("battle round ready plan should build"),
+        ),
+        (
             "match history",
             aftermath_history::match_history_plan_text(player_id, 50)
                 .expect("history plan should build"),
@@ -378,10 +409,13 @@ fn repository_query_inventory_covers_required_hot_paths() {
         sessions::PARTICIPANT_SESSION_PLAYER_LOOKUP,
         commands_events_effects::GAME_COMMAND_IDEMPOTENCY_LOOKUP,
         commands_events_effects::EVENT_FEED_LOOKUP,
+        commands_events_effects::COMMAND_EFFECT_SESSION_STATUS_LOOKUP,
         map_visibility_occupancy::MAP_CHUNK_COORD_LOOKUP,
         map_visibility_occupancy::VISIBILITY_CHUNK_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_CELL_LOOKUP,
         map_visibility_occupancy::OCCUPANCY_OCCUPANT_LOOKUP,
+        map_visibility_occupancy::KNOWN_OBJECT_SUBJECT_LOOKUP,
+        map_visibility_occupancy::WORLD_OBJECT_OWNER_SCORING_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_SESSION_OWNER_LOOKUP,
         economy_expansion::TAVERN_OFFERS_LOOKUP,
@@ -410,6 +444,17 @@ fn repository_query_inventory_covers_required_hot_paths() {
         movement::MOVEMENT_SNAPSHOT_UNIQUE_LOOKUP,
         movement::MOVEMENT_SNAPSHOTS_BY_CHAMPION_LOOKUP,
         battles::BATTLES_BY_SESSION_STATE_LOOKUP,
+        system_jobs::SYSTEM_JOB_BY_KEY_LOOKUP,
+        system_jobs::SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP,
+        system_jobs::SYSTEM_JOBS_BY_SESSION_STATUS_DUE_LOOKUP,
+        system_jobs::SYSTEM_JOBS_BY_BATTLE_STATUS_DUE_LOOKUP,
+        system_jobs::SYSTEM_JOBS_BY_COMMAND_LOOKUP,
+        turn_ready::TURN_READY_UNIQUE_LOOKUP,
+        turn_ready::TURN_READY_BY_SESSION_TURN_LOOKUP,
+        turn_ready::TURN_READY_BY_COMMAND_LOOKUP,
+        battle_round_ready::BATTLE_ROUND_READY_UNIQUE_LOOKUP,
+        battle_round_ready::BATTLE_ROUND_READY_BY_SESSION_BATTLE_ROUND_LOOKUP,
+        battle_round_ready::BATTLE_ROUND_READY_BY_COMMAND_LOOKUP,
         aftermath_history::MATCH_HISTORY_LOOKUP,
     ];
 
@@ -434,6 +479,91 @@ fn repository_query_inventory_covers_required_hot_paths() {
 }
 
 #[test]
+fn system_job_due_pagination_executes() {
+    bootstrap_repo_memory();
+
+    let player = players::create_player_account(
+        Principal::dummy(61),
+        Some("repo19c_jobs_player".to_string()),
+        Some("Repo 19C Jobs".to_string()),
+    )
+    .expect("player create should use typed IcyDB create");
+    let ruleset = content::create_ruleset_definition(
+        "repo19c_jobs_rules".to_string(),
+        1,
+        "Repo 19C Jobs Rules".to_string(),
+        None,
+        Some("repo19c_jobs_hash".to_string()),
+    )
+    .expect("ruleset create should use typed IcyDB create");
+    let session = sessions::create_game_session(
+        ruleset.id(),
+        player.id(),
+        "Repo 19C Jobs Session".to_string(),
+        19_401,
+        16,
+        16,
+        Timestamp::from_millis(1_940_100),
+    )
+    .expect("session create should use typed IcyDB create");
+
+    let due_at = Timestamp::from_millis(1_940_000);
+    let job = system_jobs::create_system_job(system_jobs::SystemJobDraft {
+        job_key: "repo19c:job:due".to_string(),
+        job_kind: "turn_deadline".to_string(),
+        session_id: session.id(),
+        battle_id: None,
+        turn_number: Some(1),
+        due_at,
+        command_id: None,
+        cursor_json: None,
+    })
+    .expect("system job create should use typed IcyDB create");
+
+    let db = crate::db();
+    let raw_page = db
+        .load::<SystemJob>()
+        .filter(FieldRef::new("status").eq(system_jobs::STATUS_SCHEDULED))
+        .filter(FieldRef::new("due_at").lte(Timestamp::from_millis(1_940_001)))
+        .order_asc("id")
+        .limit(10)
+        .page()
+        .expect("raw due system job page builder should succeed");
+    let raw_page = raw_page
+        .execute()
+        .expect("raw due system job page should execute");
+    assert!(
+        raw_page
+            .into_items()
+            .iter()
+            .any(|item| item.id() == job.id())
+    );
+
+    let page = system_jobs::page_due_system_jobs(Timestamp::from_millis(1_940_001), 10, None)
+        .expect("due system job pagination should execute");
+    assert!(page.items.iter().any(|item| item.id() == job.id()));
+
+    assert_eq!(
+        cleanup::delete_row_by_id("tests.delete_job", job.id()).expect("job delete"),
+        1
+    );
+    assert_eq!(
+        cleanup::delete_row_by_id("tests.delete_job_session", session.id())
+            .expect("session delete"),
+        1
+    );
+    assert_eq!(
+        cleanup::delete_row_by_id("tests.delete_job_ruleset", ruleset.id())
+            .expect("ruleset delete"),
+        1
+    );
+    assert_eq!(
+        cleanup::delete_row_by_id("tests.delete_job_player", player.id()).expect("player delete"),
+        1
+    );
+}
+
+#[test]
 fn gameplay_repositories_do_not_use_generic_sql_or_core_db() {
     let repo_sources = [
         include_str!("aftermath_history.rs"),
@@ -451,7 +581,10 @@ fn gameplay_repositories_do_not_use_generic_sql_or_core_db() {
         include_str!("players.rs"),
         include_str!("scenario_progress.rs"),
         include_str!("sessions.rs"),
+        include_str!("system_jobs.rs"),
         include_str!("towns.rs"),
+        include_str!("turn_ready.rs"),
+        include_str!("battle_round_ready.rs"),
         include_str!("worldgen.rs"),
     ];
 

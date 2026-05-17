@@ -142,6 +142,34 @@ fn legal_moves_and_attacks_respect_obstacles_occupancy_and_range() {
     assert!(ranged.enabled);
     assert_eq!(ranged.targets.len(), 1);
     assert!(ranged.damage_preview.is_some());
+
+    let cast = actions
+        .iter()
+        .find(|action| action.action == "CastAbility")
+        .expect("cast metadata exists");
+    assert!(!cast.enabled);
+    assert_eq!(
+        cast.disabled_reason.as_deref(),
+        Some("no_learned_battle_spell")
+    );
+    let retreat = actions
+        .iter()
+        .find(|action| action.action == "Retreat")
+        .expect("retreat metadata exists");
+    assert!(!retreat.enabled);
+    assert_eq!(
+        retreat.disabled_reason.as_deref(),
+        Some("retreat_deferred_v1_no_rehire_flow")
+    );
+    let surrender = actions
+        .iter()
+        .find(|action| action.action == "Surrender")
+        .expect("surrender metadata exists");
+    assert!(!surrender.enabled);
+    assert_eq!(
+        surrender.disabled_reason.as_deref(),
+        Some("surrender_deferred_v1_no_payment_terms")
+    );
 }
 
 #[test]

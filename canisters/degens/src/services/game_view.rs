@@ -1,7 +1,7 @@
 use candid::Principal as CandidPrincipal;
 use domm_game::{
     ApiError, ApiEventView, ChampionView, EventPageInfo, GameView, GameViewRequest, MapChunkPage,
-    ObjectViewPage, PageInfo, ParticipantSummary, RenderTimeMeta, Viewport,
+    ObjectView, ObjectViewPage, PageInfo, ParticipantSummary, RenderTimeMeta, Viewport,
 };
 use icydb::{traits::EntityValue, types::Timestamp};
 
@@ -25,16 +25,15 @@ pub(crate) fn get_game_view(
     let towns = Vec::new();
     let events = opening_event_page(&context, request.events_after_seq, request.event_limit);
     let render_time = render_time_meta(&context.session);
-    let action_affordances =
-        render_projection::action_affordances(&champions, &towns, render_time.sync_required);
+    let action_affordances = render_projection::action_affordances(&champions, &towns);
     let map_page_info = PageInfo {
-        next_cursor: request.chunk_cursor,
-        has_more: request.chunk_limit > 0,
+        next_cursor: None,
+        has_more: false,
         limit: request.chunk_limit,
     };
     let object_page_info = PageInfo {
-        next_cursor: request.object_cursor,
-        has_more: request.object_limit > 0,
+        next_cursor: None,
+        has_more: false,
         limit: request.object_limit,
     };
 
@@ -57,6 +56,12 @@ pub(crate) fn get_game_view(
         content_manifest_hash: domm_game::first_playable_content_manifest().computed_content_hash(),
         render_time,
         action_affordances,
+        omitted_fields: vec![
+            "map_chunks".to_string(),
+            "objects".to_string(),
+            "champions".to_string(),
+            "towns".to_string(),
+        ],
     })
 }
 
@@ -82,6 +87,16 @@ pub(crate) fn get_visible_objects(
     validate_viewport(&viewport)?;
     let context = session_context::require_session_caller(caller, &session_id)?;
     render_projection::visible_objects(&context, &viewport, cursor, limit)
+}
+
+pub(crate) fn get_object_view(
+    caller: CandidPrincipal,
+    session_id: String,
+    subject_kind: String,
+    subject_id_text: String,
+) -> Result<ObjectView, ApiError> {
+    let context = session_context::require_session_caller(caller, &session_id)?;
+    render_projection::object_view_by_subject(&context, &subject_kind, &subject_id_text)
 }
 
 pub(crate) fn get_my_champions(

@@ -309,6 +309,7 @@ pub(crate) fn create_champion_spell(
     session_id: Id<GameSession>,
     champion_id: Id<Champion>,
     spell_id: Id<SpellDefinition>,
+    spell_slug: &str,
     learned_turn: u32,
     command_id: Id<GameCommand>,
 ) -> RepoResult<ChampionSpell> {
@@ -316,6 +317,7 @@ pub(crate) fn create_champion_spell(
         session_id: Some(session_id.key()),
         champion_id: Some(champion_id.key()),
         spell_id: Some(spell_id.key()),
+        spell_slug: Some(Some(spell_slug.to_string())),
         learned_turn: Some(learned_turn),
         last_command_id: Some(Some(command_id.key())),
     };

@@ -116,6 +116,12 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::get_visible_objects",
     },
     EndpointSpec {
+        name: "get_object_view",
+        kind: EndpointKind::Query,
+        group: "render_query",
+        fixture_mapping: "FixtureApiBackend::get_object_view",
+    },
+    EndpointSpec {
         name: "get_my_champions",
         kind: EndpointKind::Query,
         group: "render_query",
@@ -314,6 +320,12 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::get_command_status",
     },
     EndpointSpec {
+        name: "get_command_status_by_nonce",
+        kind: EndpointKind::Query,
+        group: "render_query",
+        fixture_mapping: "FixtureApiBackend::get_command_status_by_nonce",
+    },
+    EndpointSpec {
         name: "preview_move_path",
         kind: EndpointKind::Query,
         group: "preview_update",
@@ -338,6 +350,12 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::submit_move_intent",
     },
     EndpointSpec {
+        name: "end_turn",
+        kind: EndpointKind::Update,
+        group: "preview_update",
+        fixture_mapping: "FixtureApiBackend::end_turn",
+    },
+    EndpointSpec {
         name: "sync_session_turn",
         kind: EndpointKind::Update,
         group: "preview_update",
@@ -360,6 +378,12 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         kind: EndpointKind::Update,
         group: "preview_update",
         fixture_mapping: "FixtureApiBackend::sync_battle",
+    },
+    EndpointSpec {
+        name: "end_battle_turn",
+        kind: EndpointKind::Update,
+        group: "preview_update",
+        fixture_mapping: "FixtureApiBackend::end_battle_turn",
     },
     EndpointSpec {
         name: "submit_battle_action",

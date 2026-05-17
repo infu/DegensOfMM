@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 pub(crate) mod aftermath_history;
+pub(crate) mod battle_round_ready;
 pub(crate) mod battles;
 pub(crate) mod champions_artifacts;
 pub(crate) mod cleanup;
@@ -16,7 +17,9 @@ pub(crate) mod neutrals;
 pub(crate) mod players;
 pub(crate) mod scenario_progress;
 pub(crate) mod sessions;
+pub(crate) mod system_jobs;
 pub(crate) mod towns;
+pub(crate) mod turn_ready;
 pub(crate) mod worldgen;
 
 #[cfg(test)]

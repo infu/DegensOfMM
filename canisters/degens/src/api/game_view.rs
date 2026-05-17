@@ -1,7 +1,8 @@
 use canic_cdk::query;
 
 use crate::dto::public::{
-    ApiError, ChampionView, GameView, GameViewRequest, MapChunkPage, ObjectViewPage, Viewport,
+    ApiError, ChampionView, GameView, GameViewRequest, MapChunkPage, ObjectView, ObjectViewPage,
+    Viewport,
 };
 
 #[query]
@@ -38,6 +39,20 @@ fn get_visible_objects(
         viewport,
         cursor,
         limit,
+    )
+}
+
+#[query]
+fn get_object_view(
+    session_id: String,
+    subject_kind: String,
+    subject_id_text: String,
+) -> Result<ObjectView, ApiError> {
+    crate::services::game_view::get_object_view(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        subject_kind,
+        subject_id_text,
     )
 }
 

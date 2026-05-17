@@ -351,6 +351,7 @@ fn apply_spell_learning(
         context.session.id(),
         champion.id(),
         spell.id(),
+        &spell.slug,
         context.session.current_turn,
         command.id(),
     )?;
@@ -480,7 +481,11 @@ fn apply_adventure_cast(
     let event = command_response::append_public_event(
         &mut session,
         command.id(),
-        format!("adventure_spell:{}:{spell_slug}", champion.id()),
+        format!(
+            "adventure_spell:{}:{spell_slug}:{}",
+            champion.id(),
+            command.id()
+        ),
         "adventure_spell_cast".to_string(),
         Some("champion".to_string()),
         Some(champion.id().to_string()),
@@ -574,6 +579,10 @@ fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiErro
         champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?;
     let mut slugs = Vec::new();
     for known in page.items {
+        if let Some(slug) = known.spell_slug.as_deref().filter(|slug| !slug.is_empty()) {
+            slugs.push(slug.to_string());
+            continue;
+        }
         let spell = content::load_spell(Id::from_key(known.spell_id))?.ok_or_else(|| {
             public_error(
                 "spell_not_found",

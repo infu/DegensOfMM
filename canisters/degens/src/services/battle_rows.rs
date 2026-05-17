@@ -46,18 +46,15 @@ pub(crate) fn load_battle_state_from_row(
     battle: Battle,
 ) -> Result<BattleState, ApiError> {
     let battle_id = battle.id();
-    let stacks = battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?
-        .items
+    let stacks = battles::list_battle_stacks(battle_id, MAX_LIST_LIMIT)?
         .into_iter()
         .map(stack_record)
         .collect::<Vec<_>>();
-    let obstacles = battles::page_battle_obstacles(battle_id, MAX_LIST_LIMIT, None)?
-        .items
+    let obstacles = battles::list_battle_obstacles(battle_id, MAX_LIST_LIMIT)?
         .into_iter()
         .map(obstacle_record)
         .collect::<Vec<_>>();
-    let occupancy = battles::page_battle_occupancy(battle_id, MAX_LIST_LIMIT, None)?
-        .items
+    let occupancy = battles::list_battle_occupancy(battle_id, MAX_LIST_LIMIT)?
         .into_iter()
         .map(occupancy_record)
         .collect::<Vec<_>>();
@@ -157,8 +154,7 @@ fn persist_stacks(
     battle_id: Id<Battle>,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
-    let existing = battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?
-        .items
+    let existing = battles::list_battle_stacks(battle_id, MAX_LIST_LIMIT)?
         .into_iter()
         .map(|row| (row.id().to_string(), row))
         .collect::<BTreeMap<_, _>>();
@@ -195,7 +191,7 @@ fn persist_occupancy(
     battle_id: Id<Battle>,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
-    let existing = battles::page_battle_occupancy(battle_id, MAX_LIST_LIMIT, None)?.items;
+    let existing = battles::list_battle_occupancy(battle_id, MAX_LIST_LIMIT)?;
     let wanted = state
         .occupancy
         .iter()

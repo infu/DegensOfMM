@@ -16,10 +16,10 @@ use domm_game::{
     GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT,
     MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage,
     MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
-    OPENING_QUEST_KEY, ObjectViewPage, ObjectiveProgressView, PROCEDURAL_GENERATION_KEY,
-    ParticipantView, PlayerView, ProceduralMapView, QuestPreview, RecruitPreview, RecruitTarget,
-    ScenarioRulesView, SessionView, SiegeRulesView, SkirmishSettingsView, TavernOffersView,
-    WorldEventsView, opening_viewport_for_slot,
+    OPENING_QUEST_KEY, ObjectView, ObjectViewPage, ObjectiveProgressView,
+    PROCEDURAL_GENERATION_KEY, ParticipantView, PlayerView, ProceduralMapView, QuestPreview,
+    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
+    SkirmishSettingsView, TavernOffersView, WorldEventsView, opening_viewport_for_slot,
 };
 
 #[test]
@@ -277,6 +277,32 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("visible map chunks should load from IcyDB rows");
     assert_eq!(chunk_page.chunks.len(), 4);
     assert!(!chunk_page.has_more);
+    let remote_viewport = opening_viewport_for_slot(1);
+    let surveyed_remote_chunks = query_as::<MapChunkPage>(
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (
+            session_id.clone(),
+            remote_viewport.clone(),
+            None::<u32>,
+            8_u32,
+        ),
+    )
+    .expect("surveyed remote map chunks should decode")
+    .expect("surveyed base-map chunks should be public static data");
+    assert!(!surveyed_remote_chunks.chunks.is_empty());
+    assert!(surveyed_remote_chunks.chunks.iter().all(|chunk| {
+        !chunk.terrain_blob.is_empty()
+            && !chunk.movement_blob.is_empty()
+            && !chunk.flags_blob.is_empty()
+    }));
+    assert!(
+        surveyed_remote_chunks
+            .chunks
+            .iter()
+            .all(|chunk| chunk.visible_blob.iter().all(|byte| *byte == 0))
+    );
 
     let object_page = query_as::<ObjectViewPage>(
         &fixture,
@@ -317,6 +343,50 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .iter()
             .all(|object| object.subject_id_text != "champion:east")
     );
+    let hidden_remote_objects = query_as::<ObjectViewPage>(
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), remote_viewport, None::<u32>, 128_u32),
+    )
+    .expect("remote object page should decode")
+    .expect("remote dynamic object page should load without leaking hidden state");
+    assert!(
+        hidden_remote_objects
+            .objects
+            .iter()
+            .all(|object| object.subject_id_text != "champion:east"
+                && object.display_name.as_deref() != Some("East Woe"))
+    );
+
+    let object_view = query_as::<ObjectView>(
+        &fixture,
+        player_one,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+    )
+    .expect("get_object_view should decode")
+    .expect("known object detail should load");
+    assert_eq!(object_view.subject_id_text, "pile:west-wood-1");
+    assert_eq!(object_view.visibility, "visible");
+
+    let hidden_object = query_as::<ObjectView>(
+        &fixture,
+        player_one,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "champion".to_string(),
+            "champion:east".to_string(),
+        ),
+    )
+    .expect("hidden get_object_view should decode")
+    .expect_err("hidden object detail should fail without leaking state");
+    assert_eq!(hidden_object.code, "not_visible");
 
     let champions = query_as::<Vec<ChampionView>>(
         &fixture,
@@ -461,6 +531,60 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     );
     assert_eq!(progressed.mana, 8);
 
+    let champion_after_learning = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("champion view after learning should decode")
+    .expect("own champion after learning should be visible");
+    assert!(
+        champion_after_learning
+            .spell_slugs
+            .contains(&"hex-spark".to_string())
+    );
+    assert!(
+        champion_after_learning
+            .spell_slugs
+            .contains(&"spite-march".to_string())
+    );
+
+    let cast_march_again = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "cast_adventure_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "spite-march".to_string(),
+            "nonce:presence:cast:march:again".to_string(),
+        ),
+    )
+    .expect("second cast_adventure_spell should decode")
+    .expect("second spite-march cast should succeed");
+    assert_eq!(cast_march_again.status, CommandStatus::Applied);
+    let spell_event_page = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 50_u32),
+    )
+    .expect("events after repeated adventure casts should decode")
+    .expect("events after repeated adventure casts should load");
+    let adventure_casts = spell_event_page
+        .events
+        .iter()
+        .filter(|event| event.event_type == "adventure_spell_cast")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        adventure_casts.len(),
+        2,
+        "each adventure spell cast should append a distinct public event"
+    );
+    assert_ne!(adventure_casts[0].event_seq, adventure_casts[1].event_seq);
+    assert_ne!(adventure_casts[0].event_key, adventure_casts[1].event_key);
+
     let game_view = query_as::<GameView>(
         &fixture,
         player_one,
@@ -482,9 +606,20 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("get_game_view should decode")
     .expect("game view should load from IcyDB rows");
     assert!(game_view.map_chunks.is_empty());
-    assert!(game_view.map_page_info.has_more);
+    assert!(!game_view.map_page_info.has_more);
+    assert!(game_view.map_page_info.next_cursor.is_none());
     assert!(game_view.objects.is_empty());
-    assert!(game_view.object_page_info.has_more);
+    assert!(!game_view.object_page_info.has_more);
+    assert!(game_view.object_page_info.next_cursor.is_none());
+    assert!(game_view.omitted_fields.contains(&"map_chunks".to_string()));
+    assert!(game_view.omitted_fields.contains(&"objects".to_string()));
+    assert!(
+        !game_view
+            .action_affordances
+            .iter()
+            .any(|action| action.action == "sync_session_turn"
+                || action.action == "sync_world_generation")
+    );
     assert!(
         game_view
             .events
@@ -539,11 +674,26 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         &fixture,
         player_one,
         "get_command_status",
-        (session_id.clone(), active_start_nonce),
+        (session_id.clone(), active_start_nonce.clone()),
     )
     .expect("get_command_status by nonce should decode")
     .expect("start command status should be readable by nonce");
     assert_eq!(status_by_nonce.status, CommandStatus::Applied);
+
+    let status_by_typed_nonce = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "start_session".to_string(),
+            active_start_nonce,
+        ),
+    )
+    .expect("get_command_status_by_nonce should decode")
+    .expect("start command status should be readable by typed nonce");
+    assert_eq!(status_by_typed_nonce.status, CommandStatus::Applied);
+    assert_eq!(status_by_typed_nonce.command_id, active_start.command_id);
 
     let objectives = query_as::<ObjectiveProgressView>(
         &fixture,
@@ -625,6 +775,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("naval route rows should load from IcyDB rows");
     assert_eq!(naval_routes.routes.len(), 1);
     assert_eq!(naval_routes.routes[0].status, "disabled");
+    assert!(!naval_routes.routes[0].actionable);
     assert_eq!(
         naval_routes.routes[0].disabled_reason.as_deref(),
         Some("checkpoint_25_schema_only")
@@ -640,6 +791,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("siege rule rows should load from IcyDB rows");
     assert_eq!(siege_rules.rules.len(), 1);
     assert_eq!(siege_rules.rules[0].status, "disabled");
+    assert!(!siege_rules.rules[0].actionable);
     assert_eq!(
         siege_rules.rules[0].disabled_reason.as_deref(),
         Some("checkpoint_25_schema_only")
@@ -791,6 +943,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("sync_world_generation should decode")
     .expect("sync_world_generation should succeed");
     assert_eq!(synced_worldgen.status, CommandStatus::Applied);
+    assert!(synced_worldgen.events.is_empty());
     match &synced_worldgen.result {
         CommandResult::WorldGeneration(receipt) => {
             assert_eq!(receipt.action, "sync_world_generation");
@@ -816,6 +969,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         synced_worldgen_replay.command_id,
         synced_worldgen.command_id
     );
+    assert!(synced_worldgen_replay.events.is_empty());
 
     let claimed_quest = update_as::<CommandResponse>(
         &fixture,
@@ -861,6 +1015,29 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("quest preview after claim should load");
     assert_eq!(quest_after_claim.quest.status, "claimed");
     assert!(!quest_after_claim.can_claim);
+
+    let accept_claimed_quest = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "accept_quest",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:presence:quest:accept:claimed".to_string(),
+        ),
+    )
+    .expect("accept claimed quest should decode")
+    .expect("accept claimed quest should return a failed command response");
+    assert_eq!(accept_claimed_quest.status, CommandStatus::Failed);
+    assert!(!accept_claimed_quest.retryable);
+    assert!(accept_claimed_quest.events.is_empty());
+    assert_eq!(
+        accept_claimed_quest
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("quest_already_claimed")
+    );
 
     let movement_preview = query_as::<MovementPreview>(
         &fixture,
@@ -1091,6 +1268,21 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("move command should be readable by nonce");
     assert_eq!(move_status.status, CommandStatus::Applied);
 
+    let move_status_by_typed_nonce = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "submit_move_intent".to_string(),
+            "nonce:presence:move:wood".to_string(),
+        ),
+    )
+    .expect("move command typed nonce status should decode")
+    .expect("move command should be readable by typed nonce");
+    assert_eq!(move_status_by_typed_nonce.status, CommandStatus::Applied);
+    assert_eq!(move_status_by_typed_nonce.command_id, moved.command_id);
+
     let (synced, _) = sync_until_event(
         &fixture,
         player_one,
@@ -1287,6 +1479,69 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     assert!(dwelling_pool.available >= 4);
     let dwelling_object_id = dwelling_pool.object_id.clone();
 
+    let enemy_champions = query_as::<Vec<ChampionView>>(
+        &fixture,
+        player_two,
+        "get_my_champions",
+        (session_id.clone(),),
+    )
+    .expect("player two champions should decode")
+    .expect("player two champions should load from IcyDB rows");
+    let enemy_champion_id = enemy_champions
+        .first()
+        .expect("player two should have an opening champion")
+        .champion_id
+        .clone();
+    let enemy_dwelling_preview = query_as::<DwellingRecruitPreview>(
+        &fixture,
+        player_one,
+        "preview_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            enemy_champion_id.clone(),
+        ),
+    )
+    .expect("enemy dwelling recruit preview should decode")
+    .expect("enemy dwelling recruit preview should return a typed denial");
+    assert!(!enemy_dwelling_preview.allowed);
+    assert_eq!(
+        enemy_dwelling_preview.disabled_reason.as_deref(),
+        Some("champion_not_owned")
+    );
+    let enemy_dwelling_nonce = "nonce:presence:dwelling:enemy-target".to_string();
+    let enemy_dwelling_submit = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            enemy_champion_id,
+            enemy_dwelling_nonce.clone(),
+        ),
+    )
+    .expect("enemy dwelling recruit submit should decode")
+    .expect_err("enemy dwelling recruit should fail before command creation");
+    assert_eq!(enemy_dwelling_submit.code, "champion_not_owned");
+    let enemy_dwelling_status = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "submit_dwelling_recruit".to_string(),
+            enemy_dwelling_nonce,
+        ),
+    )
+    .expect("enemy dwelling recruit status lookup should decode")
+    .expect_err("pre-command dwelling denial should not leave a command row");
+    assert_eq!(enemy_dwelling_status.code, "command_status_not_found");
+
     let dwelling_preview = query_as::<DwellingRecruitPreview>(
         &fixture,
         player_one,
@@ -1356,7 +1611,7 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         &fixture,
         player_one,
         "get_dwelling_pool",
-        (session_id.clone(), dwelling_id),
+        (session_id.clone(), dwelling_id.clone()),
     )
     .expect("get_dwelling_pool after recruit should decode")
     .expect("dwelling pool after recruit should load");
@@ -1389,6 +1644,22 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("submit_build_town_structure should decode")
     .expect("submit_build_town_structure should succeed");
     assert_eq!(built.status, CommandStatus::Applied);
+    assert!(built.events.iter().any(|event| {
+        event.event_type == "town_building_built"
+            && event.audience_key.starts_with("participant:")
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("freehold-training-yard"))
+    }));
+    assert!(built.events.iter().any(|event| {
+        event.event_type == "town_building_built"
+            && event.audience_key == "public"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""redacted":true"#))
+    }));
 
     let town_after_build = query_as::<ApiTownView>(
         &fixture,
@@ -1427,6 +1698,22 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("submit_recruit_units should decode")
     .expect("submit_recruit_units should succeed");
     assert_eq!(recruited.status, CommandStatus::Applied);
+    assert!(recruited.events.iter().any(|event| {
+        event.event_type == "units_recruited"
+            && event.audience_key.starts_with("participant:")
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains("mudhook-levy"))
+    }));
+    assert!(recruited.events.iter().any(|event| {
+        event.event_type == "units_recruited"
+            && event.audience_key == "public"
+            && event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""redacted":true"#))
+    }));
 
     let town_after_recruit = query_as::<ApiTownView>(
         &fixture,
@@ -1534,6 +1821,56 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         .and_then(|payload| json_string_field(payload, "battle_id"))
         .expect("neutral encounter event should include battle_id");
 
+    let in_battle_dwelling_preview = query_as::<DwellingRecruitPreview>(
+        &fixture,
+        player_one,
+        "preview_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+        ),
+    )
+    .expect("in-battle dwelling recruit preview should decode")
+    .expect("in-battle dwelling recruit preview should return a typed denial");
+    assert!(!in_battle_dwelling_preview.allowed);
+    assert_eq!(
+        in_battle_dwelling_preview.disabled_reason.as_deref(),
+        Some("champion_in_battle")
+    );
+    let in_battle_dwelling_nonce = "nonce:presence:dwelling:in-battle".to_string();
+    let in_battle_dwelling_submit = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            in_battle_dwelling_nonce.clone(),
+        ),
+    )
+    .expect("in-battle dwelling recruit submit should decode")
+    .expect_err("in-battle dwelling recruit should fail before command creation");
+    assert_eq!(in_battle_dwelling_submit.code, "champion_in_battle");
+    let in_battle_dwelling_status = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "submit_dwelling_recruit".to_string(),
+            in_battle_dwelling_nonce,
+        ),
+    )
+    .expect("in-battle dwelling recruit status lookup should decode")
+    .expect_err("pre-command in-battle denial should not leave a command row");
+    assert_eq!(in_battle_dwelling_status.code, "command_status_not_found");
+
     let mut battle = query_as::<BattleView>(
         &fixture,
         player_one,
@@ -1587,6 +1924,31 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         .expect("battle spell should have an enemy target")
         .battle_stack_id
         .clone();
+    let cast_action = battle
+        .legal_actions_for_caller
+        .iter()
+        .find(|action| {
+            action.action == "CastAbility"
+                && action.ability_key.as_deref() == Some("spell:hex-spark")
+        })
+        .expect("learned battle spell should be exposed as CastAbility metadata");
+    assert!(cast_action.enabled);
+    assert!(
+        cast_action
+            .targets
+            .iter()
+            .any(|id| id == &spell_target_stack_id)
+    );
+    assert!(battle.legal_actions_for_caller.iter().any(|action| {
+        action.action == "Retreat"
+            && !action.enabled
+            && action.disabled_reason.as_deref() == Some("retreat_deferred_v1_no_rehire_flow")
+    }));
+    assert!(battle.legal_actions_for_caller.iter().any(|action| {
+        action.action == "Surrender"
+            && !action.enabled
+            && action.disabled_reason.as_deref() == Some("surrender_deferred_v1_no_payment_terms")
+    }));
     let battle_spell_input = BattleActionInput {
         battle_id: battle_id.clone(),
         battle_stack_id: active_stack_id,
@@ -1645,6 +2007,24 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     .expect("battle command should be readable by nonce");
     assert_eq!(battle_status.status, CommandStatus::Applied);
 
+    let battle_status_by_typed_nonce = query_as::<CommandStatusView>(
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "submit_battle_action".to_string(),
+            "nonce:presence:battle-action".to_string(),
+        ),
+    )
+    .expect("battle command typed nonce status should decode")
+    .expect("battle command should be readable by typed nonce");
+    assert_eq!(battle_status_by_typed_nonce.status, CommandStatus::Applied);
+    assert_eq!(
+        battle_status_by_typed_nonce.command_id,
+        submitted_battle.command_id
+    );
+
     let battle_events = query_as::<ApiEventPage>(
         &fixture,
         player_one,
@@ -1659,6 +2039,141 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
             .iter()
             .any(|event| event.event_type == "battle_spell_cast")
     );
+}
+
+#[test]
+fn pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-week-two-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-week-two-player-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "week-two-economy");
+    let town_id = "town:west".to_string();
+
+    let week_one = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("week-one tavern offers should decode")
+    .expect("week-one tavern offers should load");
+    assert_eq!(week_one.week_number, 1);
+    assert_eq!(week_one.offers.len(), domm_game::TAVERN_OFFERS_PER_WEEK);
+    let week_one_keys = week_one
+        .offers
+        .iter()
+        .map(|offer| offer.offer_key.clone())
+        .collect::<Vec<_>>();
+
+    let built = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:week-two:build:yard".to_string(),
+        ),
+    )
+    .expect("week-two build should decode")
+    .expect("week-two build should succeed");
+    assert_eq!(built.status, CommandStatus::Applied);
+
+    let town_after_build = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("town after week-two build should decode")
+    .expect("town after week-two build should load");
+    let initial_pool = town_after_build
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("training yard should create a mudhook pool");
+    assert_eq!(initial_pool.last_growth_week, 1);
+
+    for turn in 1..=7 {
+        advance_time_ms(&fixture, 61_000);
+        let synced = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "sync_session_turn",
+            (
+                session_id.clone(),
+                format!("nonce:week-two:sync-turn:{turn}"),
+            ),
+        )
+        .expect("week-two turn sync should decode")
+        .expect("week-two turn sync should succeed");
+        if synced.status == CommandStatus::Failed {
+            assert_eq!(
+                synced.error.as_ref().map(|error| error.code.as_str()),
+                Some("turn_not_due"),
+                "manual sync may be stale only when the timer already advanced the turn"
+            );
+        } else {
+            assert_eq!(synced.status, CommandStatus::Applied);
+        }
+    }
+
+    let week_two = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("week-two tavern offers should decode")
+    .expect("week-two tavern offers should load");
+    assert_eq!(week_two.week_number, 2);
+    assert_eq!(week_two.offers.len(), domm_game::TAVERN_OFFERS_PER_WEEK);
+    let week_two_keys = week_two
+        .offers
+        .iter()
+        .map(|offer| offer.offer_key.clone())
+        .collect::<Vec<_>>();
+    assert_ne!(week_two_keys, week_one_keys);
+    assert!(week_two_keys.iter().all(|key| key.contains("week:2")));
+    assert!(
+        week_two
+            .offers
+            .iter()
+            .all(|offer| offer.status == "available")
+    );
+
+    let week_two_repeat = query_as::<TavernOffersView>(
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .expect("repeated week-two tavern offers should decode")
+    .expect("repeated week-two tavern offers should load");
+    let week_two_repeat_keys = week_two_repeat
+        .offers
+        .iter()
+        .map(|offer| offer.offer_key.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(week_two_repeat_keys, week_two_keys);
+
+    let town_week_two = query_as::<ApiTownView>(
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id),
+    )
+    .expect("town week-two view should decode")
+    .expect("town week-two view should load");
+    let grown_pool = town_week_two
+        .recruit_pools
+        .iter()
+        .find(|pool| pool.unit_slug == "mudhook-levy")
+        .expect("week-two town view should include the mudhook pool");
+    assert_eq!(grown_pool.last_growth_week, 2);
+    assert!(grown_pool.available > initial_pool.available);
 }
 
 #[test]
@@ -2551,6 +3066,56 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         first_action_saw_sync || neutral_saw_battle_sync,
         "Gate L route should exercise sync_battle"
     );
+    let post_neutral_events = gate_query_as::<ApiEventPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_events_after",
+        (
+            session_id.clone(),
+            "public".to_string(),
+            mid_event_seq,
+            64_u32,
+        ),
+    )
+    .expect("post-neutral event feed should load");
+    metrics.observe_event_page(&post_neutral_events);
+    for expected in [
+        "mine_captured",
+        "neutral_defeated",
+        "battle_aftermath_applied",
+    ] {
+        assert_eq!(
+            post_neutral_events
+                .events
+                .iter()
+                .filter(|event| event.event_type == expected)
+                .count(),
+            1,
+            "expected exactly one {expected} event after guarded battle"
+        );
+    }
+    let resolved_sync = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            neutral_battle_id.clone(),
+            "nonce:gate-l:neutral-battle:resolved-noop".to_string(),
+        ),
+    )
+    .expect("resolved neutral sync_battle should no-op");
+    metrics.observe_command_response(&resolved_sync);
+    assert_eq!(resolved_sync.status, CommandStatus::Applied);
+    assert!(
+        !resolved_sync.events.iter().any(|event| matches!(
+            event.event_type.as_str(),
+            "mine_captured" | "neutral_defeated" | "battle_aftermath_applied"
+        )),
+        "resolved battle sync must not duplicate aftermath events"
+    );
 
     let west_after_neutral = gate_query_as::<ChampionView>(
         &mut metrics,
@@ -2574,7 +3139,22 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         guarded_mine_objects
             .objects
             .iter()
-            .any(|object| object.subject_id_text == "mine:west-gold")
+            .all(|object| object.subject_id_text != "neutral:west-mine"),
+        "defeated neutral guard must not render as active"
+    );
+    let guarded_mine = guarded_mine_objects
+        .objects
+        .iter()
+        .find(|object| object.subject_id_text == "mine:west-gold")
+        .expect("guarded mine should remain visible after capture");
+    assert_eq!(
+        guarded_mine.owner_participant_id.as_deref(),
+        Some(west_participant_id.as_str())
+    );
+    assert!(
+        guarded_mine.details_json.contains(r#""state":"captured""#),
+        "captured guarded mine should render captured details: {}",
+        guarded_mine.details_json
     );
 
     let first_east_stage = ((west_after_neutral.x + 1)..=22)
@@ -2765,6 +3345,8 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     metrics.observe_event_page(&final_refresh);
     for expected in [
         "battle_action_applied",
+        "mine_captured",
+        "income_materialized",
         "neutral_defeated",
         "champion_defeated",
         "town_captured",
@@ -3597,7 +4179,6 @@ fn gate_resolve_battle_to_end(
     battle_id: &str,
     nonce_prefix: &str,
 ) -> (BattleView, bool) {
-    let mut saw_sync_battle = false;
     for step in 0..96 {
         let view = gate_query_as::<BattleView>(
             metrics,
@@ -3608,7 +4189,42 @@ fn gate_resolve_battle_to_end(
         )
         .expect("battle view should load");
         if view.state == "resolved" {
-            return (view, saw_sync_battle);
+            let synced = gate_update_as::<CommandResponse>(
+                metrics,
+                fixture,
+                player,
+                "sync_battle",
+                (
+                    session_id.to_string(),
+                    battle_id.to_string(),
+                    format!("{nonce_prefix}:aftermath"),
+                ),
+            )
+            .expect("resolved battle aftermath sync should succeed");
+            metrics.observe_command_response(&synced);
+            assert_eq!(synced.status, CommandStatus::Applied);
+            let turn_synced = update_as::<CommandResponse>(
+                fixture,
+                player,
+                "sync_session_turn",
+                (
+                    session_id.to_string(),
+                    format!("{nonce_prefix}:post-battle-turn"),
+                ),
+            )
+            .unwrap_or_else(|error| panic!("post-battle sync_session_turn should decode: {error}"));
+            metrics.record_update("sync_session_turn", &turn_synced);
+            match turn_synced {
+                Ok(response) => {
+                    metrics.observe_command_response(&response);
+                    assert_eq!(response.status, CommandStatus::Applied);
+                }
+                Err(error) if error.code == "turn_not_due" => {}
+                Err(error) => {
+                    panic!("post-battle sync_session_turn should succeed or be not due: {error:?}")
+                }
+            }
+            return (view, true);
         }
         if view.legal_actions_for_caller.is_empty() {
             advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
@@ -3626,7 +4242,6 @@ fn gate_resolve_battle_to_end(
             .expect("sync_battle should succeed");
             metrics.observe_command_response(&synced);
             assert_eq!(synced.status, CommandStatus::Applied);
-            saw_sync_battle = true;
             continue;
         }
 
@@ -3649,6 +4264,20 @@ fn gate_resolve_battle_to_end(
             CommandStatus::Applied,
             "battle action response: {submitted:?}"
         );
+        let synced = gate_update_as::<CommandResponse>(
+            metrics,
+            fixture,
+            player,
+            "sync_battle",
+            (
+                session_id.to_string(),
+                battle_id.to_string(),
+                format!("{nonce_prefix}:after-action-sync:{step}"),
+            ),
+        )
+        .expect("post-action sync_battle should succeed");
+        metrics.observe_command_response(&synced);
+        assert_eq!(synced.status, CommandStatus::Applied);
     }
 
     panic!("battle {battle_id} did not resolve within the test budget");
@@ -3876,6 +4505,36 @@ fn resolve_battle_to_end(
         .expect("battle view should decode")
         .expect("battle view should load");
         if view.state == "resolved" {
+            let synced = update_as::<CommandResponse>(
+                fixture,
+                player,
+                "sync_battle",
+                (
+                    session_id.to_string(),
+                    battle_id.to_string(),
+                    format!("{nonce_prefix}:aftermath"),
+                ),
+            )
+            .expect("resolved battle aftermath sync should decode")
+            .expect("resolved battle aftermath sync should succeed");
+            assert_eq!(synced.status, CommandStatus::Applied);
+            let turn_synced = update_as::<CommandResponse>(
+                fixture,
+                player,
+                "sync_session_turn",
+                (
+                    session_id.to_string(),
+                    format!("{nonce_prefix}:post-battle-turn"),
+                ),
+            )
+            .expect("post-battle sync_session_turn should decode");
+            match turn_synced {
+                Ok(response) => assert_eq!(response.status, CommandStatus::Applied),
+                Err(error) if error.code == "turn_not_due" => {}
+                Err(error) => {
+                    panic!("post-battle sync_session_turn should succeed or be not due: {error:?}")
+                }
+            }
             return view;
         }
         if view.legal_actions_for_caller.is_empty() {
@@ -3914,6 +4573,19 @@ fn resolve_battle_to_end(
             CommandStatus::Applied,
             "battle action response: {submitted:?}"
         );
+        let synced = update_as::<CommandResponse>(
+            fixture,
+            player,
+            "sync_battle",
+            (
+                session_id.to_string(),
+                battle_id.to_string(),
+                format!("{nonce_prefix}:after-action-sync:{step}"),
+            ),
+        )
+        .expect("post-action sync_battle should decode")
+        .expect("post-action sync_battle should succeed");
+        assert_eq!(synced.status, CommandStatus::Applied);
     }
 
     panic!("battle {battle_id} did not resolve within the test budget");
@@ -3932,7 +4604,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
                 battle_id: view.battle_id.clone(),
                 battle_stack_id: active_stack_id,
                 action: action.action.clone(),
-                ability_key: None,
+                ability_key: action.ability_key.clone(),
                 target_stack_id: action.targets.first().cloned(),
                 destination: None,
             };
@@ -3961,7 +4633,7 @@ fn choose_battle_action(view: &BattleView) -> BattleActionInput {
         battle_id: view.battle_id.clone(),
         battle_stack_id: active_stack_id,
         action: action.action.clone(),
-        ability_key: None,
+        ability_key: action.ability_key.clone(),
         target_stack_id: action.targets.first().cloned(),
         destination: action.path.first().copied(),
     }

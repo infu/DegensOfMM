@@ -140,7 +140,7 @@ pub fn build_game_view(
     };
     let battle_summary = battle.as_ref().map(BattleSummary::from);
     let towns = town_views_for_visible_objects(strategic, &participant_id, &objects.objects)?;
-    let action_affordances = action_affordances(&champions, &towns, battle.as_ref(), &render_time);
+    let action_affordances = action_affordances(&champions, &towns, battle.as_ref());
 
     Ok(GameView {
         session: SessionSummary::from_session(session, strategic.current_turn()),
@@ -167,6 +167,7 @@ pub fn build_game_view(
         content_manifest_hash: content_manifest.computed_content_hash(),
         render_time,
         action_affordances,
+        omitted_fields: Vec::new(),
     })
 }
 
@@ -292,15 +293,8 @@ fn action_affordances(
     champions: &[crate::champion::ChampionView],
     towns: &[ApiTownView],
     battle: Option<&BattleView>,
-    render_time: &RenderTimeMeta,
 ) -> Vec<ActionAffordance> {
     let mut actions = Vec::new();
-    actions.push(ActionAffordance {
-        action: "sync_session_turn".to_string(),
-        enabled: render_time.sync_required,
-        target_id: None,
-        disabled_reason: (!render_time.sync_required).then(|| "turn_not_due".to_string()),
-    });
     actions.extend(champions.iter().map(|champion| ActionAffordance {
         action: "submit_move_intent".to_string(),
         enabled: champion.status == "active",

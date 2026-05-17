@@ -9,7 +9,7 @@ use icydb::{
 
 use crate::repos::{battles, champions_artifacts, content, towns};
 
-use super::{command_response, session_context::public_error};
+use super::{battle as battle_service, command_response, session_context::public_error};
 
 pub(crate) fn start_champion_battle(
     session: &GameSession,
@@ -53,7 +53,9 @@ pub(crate) fn start_champion_battle(
         domm_game::BATTLE_GRID_WIDTH - 2,
     )?);
     create_default_obstacles(command_id, battle.id())?;
-    set_initial_active_stack(session, &mut battle, &mut stacks)
+    let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
+    battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+    Ok(battle)
 }
 
 pub(crate) fn start_town_battle(
@@ -101,7 +103,9 @@ pub(crate) fn start_town_battle(
         battle.resolved_at = Some(Timestamp::now());
         battles::update_battle(battle)
     } else {
-        set_initial_active_stack(session, &mut battle, &mut stacks)
+        let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
+        battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+        Ok(battle)
     }
 }
 

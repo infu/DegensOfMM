@@ -1,4 +1,7 @@
-.PHONY: check-canister regression smoke smoke-e2e test test-generated test-pocket test-pure test-schema
+CANDID_EXTRACTOR ?= $(HOME)/.cargo/bin/candid-extractor
+IC_WASM ?= ic-wasm
+
+.PHONY: build-wasm check-canister dfx-deploy-local dfx-stop-local regression smoke smoke-e2e test test-generated test-pocket test-pure test-schema
 
 test: regression
 
@@ -25,3 +28,16 @@ test-pocket:
 
 check-canister:
 	cargo check -p domm-degens-canister
+
+build-wasm:
+	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --target wasm32-unknown-unknown --release -p domm-degens-canister
+	mkdir -p target/dfx/degens
+	$(CANDID_EXTRACTOR) target/wasm32-unknown-unknown/release/domm_degens_canister.wasm > target/dfx/degens/degens.did
+	$(IC_WASM) target/wasm32-unknown-unknown/release/domm_degens_canister.wasm -o target/dfx/degens/degens.wasm metadata candid:service -f target/dfx/degens/degens.did -v public
+
+dfx-deploy-local:
+	dfx start --background --clean
+	dfx deploy degens --network local
+
+dfx-stop-local:
+	dfx stop

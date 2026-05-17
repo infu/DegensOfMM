@@ -94,7 +94,7 @@ pub(crate) fn sync_world_generation(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = session_context::require_active_session_caller(caller, &session_id)?;
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -111,15 +111,6 @@ pub(crate) fn sync_world_generation(
     let receipt = receipt_from_map(command.id(), context.session.current_turn, &map);
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        format!("worldgen:sync:{}", command.id()),
-        "world_generation_synced".to_string(),
-        Some("procedural_map".to_string()),
-        Some(map.id().to_string()),
-        result_json.clone(),
-    )?;
     command_response::ensure_command_effect(
         context.session.id(),
         command.id(),
@@ -135,7 +126,7 @@ pub(crate) fn sync_world_generation(
         command,
         &client_nonce,
         result_json,
-        vec![event],
+        Vec::new(),
         vec![changed(
             "procedural_map",
             &map.id().to_string(),
@@ -250,6 +241,7 @@ fn naval_route_record(row: NavalRouteState) -> NavalRouteRecord {
     NavalRouteRecord {
         route_key: row.route_key,
         status: row.status,
+        actionable: false,
         from_x: row.from_x,
         from_y: row.from_y,
         to_x: row.to_x,
@@ -264,6 +256,7 @@ fn siege_rule_record(row: SiegeRuleState) -> SiegeRuleRecord {
     SiegeRuleRecord {
         rule_key: row.rule_key,
         status: row.status,
+        actionable: false,
         fortification_level: row.fortification_level,
         wall_segments: row.wall_segments,
         gate_count: row.gate_count,

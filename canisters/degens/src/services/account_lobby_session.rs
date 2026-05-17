@@ -1,7 +1,7 @@
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     FactionDefinition, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
-    PlayerAccount, RulesetDefinition,
+    PlayerAccount, RulesetDefinition, SystemJob,
 };
 use domm_game::{
     ACTIVE_SESSION_LIMIT, ApiError, ApiEventView, ChangedSubject, CommandPhase, CommandStatus,
@@ -19,9 +19,10 @@ use sha2::{Digest, Sha256};
 
 use crate::repos::{
     aftermath_history, commands_events_effects, content, foundation, players, sessions,
+    system_jobs as system_job_repo,
 };
 
-use super::first_playable_setup;
+use super::{first_playable_setup, system_jobs as system_job_service};
 
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
@@ -530,16 +531,76 @@ pub(crate) fn start_session(
                 );
             }
 
-            if session.state != "starting" {
+            let started_now = session.state != "starting";
+            if started_now {
                 session.state = "starting".to_string();
                 session = sessions::update_session(session)?;
             }
             let setup_command = ensure_setup_command(&session)?;
-            let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
-            if setup_complete {
-                session.state = "active".to_string();
-                session = sessions::update_session(session)?;
+            if started_now {
+                system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+                    job_key: setup_session_job_key(session.id()),
+                    job_kind: "setup_session".to_string(),
+                    session_id: session.id(),
+                    battle_id: None,
+                    turn_number: Some(session.current_turn),
+                    due_at: Timestamp::now(),
+                    command_id: Some(setup_command.id()),
+                    cursor_json: setup_command.result_json.clone(),
+                })?;
             }
+
+            #[cfg(target_arch = "wasm32")]
+            if !started_now {
+                let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+                if setup_complete {
+                    session.state = "active".to_string();
+                    session = sessions::update_session(session)?;
+                    if let Some(job) = system_job_repo::find_system_job_by_key(
+                        &setup_session_job_key(session.id()),
+                    )? {
+                        system_job_repo::complete_system_job(job)?;
+                    }
+                    system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+                        job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
+                        job_kind: "turn_deadline".to_string(),
+                        session_id: session.id(),
+                        battle_id: None,
+                        turn_number: Some(session.current_turn),
+                        due_at: session.turn_deadline_at,
+                        command_id: Some(setup_command.id()),
+                        cursor_json: None,
+                    })?;
+                }
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                for _ in 0..(SETUP_EFFECTS.len() + 2) {
+                    if let Some(job) = system_job_repo::find_system_job_by_key(
+                        &setup_session_job_key(session.id()),
+                    )? {
+                        process_setup_session_job(job)?;
+                    } else {
+                        let setup_complete =
+                            run_setup(&mut session, &setup_command, &participants)?;
+                        if setup_complete {
+                            session.state = "active".to_string();
+                            session = sessions::update_session(session)?;
+                        }
+                    }
+                    if let Some(updated) = sessions::load_session(session.id())? {
+                        session = updated;
+                    }
+                    if session.state == "active" {
+                        break;
+                    }
+                }
+                if let Some(updated) = sessions::load_session(session.id())? {
+                    session = updated;
+                }
+            }
+            let setup_complete = session.state == "active";
             let session_view = session_view(&session)?;
             apply_lobby_command(
                 command,
@@ -972,12 +1033,67 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
     .map_err(Into::into)
 }
 
+pub(crate) fn process_setup_session_job(job: SystemJob) -> Result<(), ApiError> {
+    let fallback = job.clone();
+    if let Err(error) = process_setup_session_job_inner(job) {
+        system_job_repo::fail_system_job(fallback, error.retryable, error.message.clone())?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let session_id = Id::<GameSession>::from_key(job.session_id);
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(job, false, "setup session row not found".to_string())?;
+        return Ok(());
+    };
+
+    if session.state == "active" {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+    if session.state != "starting" {
+        system_job_repo::fail_system_job(job, false, "session is not starting".to_string())?;
+        return Ok(());
+    }
+
+    let participants = participants_for_session(session.id())?;
+    let setup_command = ensure_setup_command(&session)?;
+    let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+    if setup_complete {
+        session.state = "active".to_string();
+        session = sessions::update_session(session)?;
+        system_job_repo::complete_system_job(job)?;
+        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
+            job_kind: "turn_deadline".to_string(),
+            session_id: session.id(),
+            battle_id: None,
+            turn_number: Some(session.current_turn),
+            due_at: session.turn_deadline_at,
+            command_id: Some(setup_command.id()),
+            cursor_json: None,
+        })?;
+    } else {
+        system_job_repo::reschedule_system_job(
+            job,
+            Timestamp::now(),
+            setup_command.result_json.clone(),
+        )?;
+    }
+    Ok(())
+}
+
 fn run_setup(
     session: &mut GameSession,
     setup_command: &GameCommand,
     participants: &[GameParticipant],
 ) -> Result<bool, ApiError> {
-    for effect in SETUP_EFFECTS {
+    for effect in SETUP_EFFECTS
+        .iter()
+        .skip(next_setup_effect_index(setup_command))
+    {
         if commands_events_effects::find_command_effect(setup_command.id(), effect.key)?.is_none() {
             apply_setup_effect(session, participants, effect)?;
             ensure_setup_effects(session.id(), setup_command.id(), effect)?;
@@ -1004,6 +1120,24 @@ fn run_setup(
     command.applied_at = Some(Timestamp::now());
     commands_events_effects::update_game_command(command)?;
     Ok(true)
+}
+
+fn next_setup_effect_index(setup_command: &GameCommand) -> usize {
+    if setup_command.status == "applied" {
+        return SETUP_EFFECTS.len();
+    }
+    let Some(last_effect) = json_string_field(setup_command.result_json.as_deref(), "last_effect")
+    else {
+        return 0;
+    };
+    SETUP_EFFECTS
+        .iter()
+        .position(|effect| effect.key == last_effect)
+        .map_or(0, |index| index.saturating_add(1))
+}
+
+fn setup_session_job_key(session_id: Id<GameSession>) -> String {
+    format!("setup_session:{session_id}")
 }
 
 fn apply_setup_effect(

@@ -306,6 +306,7 @@ pub struct DamagePreview {
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct LegalBattleAction {
     pub action: String,
+    pub ability_key: Option<String>,
     pub enabled: bool,
     pub disabled_reason: Option<String>,
     pub targets: Vec<String>,

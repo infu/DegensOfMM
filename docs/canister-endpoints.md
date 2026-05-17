@@ -113,11 +113,12 @@ objective/rule/event/quest reads are query-only projections over IcyDB rows.
 
 Checkpoint 25 world-generation updates use the same `GameCommand`
 idempotency. `sync_world_generation` refreshes the deterministic procedural
-preview metadata and exact retries replay the original `CommandResponse`;
-skirmish settings, procedural map state, naval routes, and siege rules are
-query-only projections over IcyDB rows. Naval movement, siege actions, and
-larger-map gameplay remain disabled by persisted rows with explicit disabled
-reasons until a later bounded spec expands them.
+preview metadata without appending public gameplay events, and exact retries
+replay the original `CommandResponse`; skirmish settings, procedural map state,
+naval routes, and siege rules are query-only projections over IcyDB rows. Naval
+movement, siege actions, and larger-map gameplay remain disabled by persisted
+rows with explicit disabled reasons and `actionable = false` until a later
+bounded spec expands them.
 
 Checkpoint 26 keeps late `submit_move_intent` hard rejection out of the v1
 release contract. The canister route is sync-driven: render/query DTOs expose

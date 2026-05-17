@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{GameParticipant, GameSession, Town};
+use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, Town};
 use domm_game::{
     ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
 };
@@ -163,6 +163,8 @@ pub(crate) fn preview_recruit_units(
     };
     let disabled_reason = if town.owner_participant_id != Some(context.participant.id().key()) {
         Some("not_owner".to_string())
+    } else if matches!(target, RecruitTarget::Champion { .. }) {
+        Some("unsupported_recruit_target".to_string())
     } else if quantity == 0 {
         Some("invalid_quantity".to_string())
     } else if available < quantity {
@@ -315,13 +317,13 @@ pub(crate) fn submit_build_town_structure(
         format!(r#"{{"building_slug":"{}"}}"#, building_slug),
     )?;
     let mut session = context.session.clone();
-    let event = command_response::append_public_event(
+    let events = append_town_command_events(
         &mut session,
         command.id(),
         format!("town_build:{}:{building_slug}", town.id()),
-        "town_building_built".to_string(),
-        Some("town".to_string()),
-        Some(town.id().to_string()),
+        "town_building_built",
+        &town.id().to_string(),
+        &context.participant.id().to_string(),
         format!(r#"{{"building_slug":"{}"}}"#, building_slug),
     )?;
     context.session = session;
@@ -332,7 +334,7 @@ pub(crate) fn submit_build_town_structure(
         command,
         &client_nonce,
         command_response::result_json("submit_build_town_structure", context.session.current_turn),
-        vec![event],
+        events,
         vec![
             command_response::changed("town", &town.id().to_string(), "update"),
             command_response::changed("town_building", &building_row.id().to_string(), "create"),
@@ -357,11 +359,19 @@ pub(crate) fn submit_recruit_units(
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let unit_slug = slug_from_public_id(&unit_id, "unit:");
+    if matches!(target, RecruitTarget::Champion { .. }) {
+        return Err(ApiError::new(
+            "unsupported_recruit_target",
+            "town recruitment to champions is reserved for v2",
+            false,
+        ));
+    }
     let payload_json = format!(
-        r#"{{"town_id":"{}","unit_slug":"{}","quantity":{}}}"#,
+        r#"{{"town_id":"{}","unit_slug":"{}","quantity":{},"target":{}}}"#,
         command_response::escape_json(&town_id),
         command_response::escape_json(&unit_slug),
-        quantity
+        quantity,
+        recruit_target_json(&target)
     );
     let command = match command_response::begin_participant_command(
         caller,
@@ -453,13 +463,13 @@ pub(crate) fn submit_recruit_units(
         format!(r#"{{"unit_slug":"{}","quantity":{}}}"#, unit_slug, quantity),
     )?;
     let mut session = context.session.clone();
-    let event = command_response::append_public_event(
+    let events = append_town_command_events(
         &mut session,
         command.id(),
         format!("town_recruit:{}:{unit_slug}:{}", town.id(), command.id()),
-        "units_recruited".to_string(),
-        Some("town".to_string()),
-        Some(town.id().to_string()),
+        "units_recruited",
+        &town.id().to_string(),
+        &context.participant.id().to_string(),
         format!(r#"{{"unit_slug":"{}","quantity":{}}}"#, unit_slug, quantity),
     )?;
     context.session = session;
@@ -470,7 +480,7 @@ pub(crate) fn submit_recruit_units(
         command,
         &client_nonce,
         command_response::result_json("submit_recruit_units", context.session.current_turn),
-        vec![event],
+        events,
         vec![
             command_response::changed("town", &town.id().to_string(), "update"),
             command_response::changed("town_recruit_pool", &pool.id().to_string(), "update"),
@@ -575,6 +585,27 @@ fn recruit_to_garrison(
         }
     };
     Ok(stack)
+}
+
+fn recruit_target_json(target: &RecruitTarget) -> String {
+    match target {
+        RecruitTarget::TownGarrison { slot_index } => format!(
+            r#"{{"kind":"town_garrison","slot_index":{}}}"#,
+            slot_index
+                .map(|slot| slot.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        ),
+        RecruitTarget::Champion {
+            champion_id,
+            slot_index,
+        } => format!(
+            r#"{{"kind":"champion","champion_id":"{}","slot_index":{}}}"#,
+            command_response::escape_json(champion_id),
+            slot_index
+                .map(|slot| slot.to_string())
+                .unwrap_or_else(|| "null".to_string())
+        ),
+    }
 }
 
 fn spend_resources(
@@ -693,6 +724,42 @@ fn apply_u32_delta(value: u32, delta: i64) -> Result<u32, ApiError> {
     let value = apply_u64_delta(u64::from(value), delta)?;
     u32::try_from(value)
         .map_err(|_| ApiError::new("resource_cap_exceeded", "resource cap exceeded", false))
+}
+
+fn append_town_command_events(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    event_type: &str,
+    town_id: &str,
+    participant_id: &str,
+    detailed_payload: String,
+) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
+    let audience_key = format!("participant:{participant_id}");
+    let private_event = command_response::append_event_for_audience(
+        session,
+        command_id,
+        format!("{event_key}:{audience_key}"),
+        audience_key,
+        event_type.to_string(),
+        Some("town".to_string()),
+        Some(town_id.to_string()),
+        detailed_payload,
+    )?;
+    let public_event = command_response::append_public_event(
+        session,
+        command_id,
+        format!("{event_key}:public"),
+        event_type.to_string(),
+        Some("town".to_string()),
+        Some(town_id.to_string()),
+        format!(
+            r#"{{"town_id":"{}","event_type":"{}","redacted":true}}"#,
+            command_response::escape_json(town_id),
+            command_response::escape_json(event_type)
+        ),
+    )?;
+    Ok(vec![private_event, public_event])
 }
 
 fn ruleset_id() -> Result<Id<domm_degens_schema::schema::RulesetDefinition>, ApiError> {

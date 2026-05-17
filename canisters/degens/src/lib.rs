@@ -18,7 +18,7 @@ use crate::dto::public::{
     ChampionHirePreview, ChampionMagicReceipt, ChampionProgressionView, ChampionView,
     CommandResponse, CommandStatusView, ContentManifestResponse, DwellingPoolView,
     DwellingRecruitPreview, GameView, GameViewRequest, LobbyCommandResponse, MapChunkPage,
-    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
+    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView, ObjectView,
     ObjectViewPage, ObjectiveProgressView, ParticipantView, PlayerView, ProceduralMapView,
     QuestPreview, RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
     SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
@@ -31,6 +31,20 @@ pub use contract::{
 };
 
 icydb::start!();
+
+#[canic_cdk::init]
+fn init() {
+    if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
+        canic_cdk::eprintln!("system job init repair failed: {}", error.message);
+    }
+}
+
+#[canic_cdk::post_upgrade]
+fn post_upgrade() {
+    if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
+        canic_cdk::eprintln!("system job post-upgrade repair failed: {}", error.message);
+    }
+}
 
 #[allow(dead_code)]
 fn icydb_admin_sql_load_default() -> Result<(), icydb::Error> {

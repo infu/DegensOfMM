@@ -29,3 +29,17 @@ fn get_command_status(
         command_id_or_client_nonce,
     )
 }
+
+#[query]
+fn get_command_status_by_nonce(
+    session_id: String,
+    command_type: String,
+    client_nonce: String,
+) -> Result<CommandStatusView, ApiError> {
+    crate::services::events::get_command_status_by_nonce(
+        canic_cdk::api::msg_caller(),
+        session_id,
+        command_type,
+        client_nonce,
+    )
+}

@@ -55,11 +55,30 @@ pub(crate) const KNOWN_OBJECT_CHUNK_LOOKUP: IndexedQueryPlan = IndexedQueryPlan 
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const KNOWN_OBJECT_SUBJECT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "map.known_object_by_subject",
+    entity: "ParticipantKnownObject",
+    indexed_fields: &["participant_id", "subject_kind", "subject_id_text"],
+    bounded_limit: Some(1),
+};
+
 pub(crate) const WORLD_OBJECT_COORD_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "map.world_object_by_session_xy",
     entity: "WorldObject",
     indexed_fields: &["session_id", "x", "y"],
     bounded_limit: Some(1),
+};
+
+pub(crate) const WORLD_OBJECT_OWNER_SCORING_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "map.world_objects_by_owner_scoring",
+    entity: "WorldObject",
+    indexed_fields: &[
+        "session_id",
+        "scoring_kind",
+        "owner_participant_id",
+        "state",
+    ],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
 pub(crate) fn create_map_chunk(
@@ -339,7 +358,7 @@ pub(crate) fn find_known_object(
     subject_id_text: &str,
 ) -> RepoResult<Option<ParticipantKnownObject>> {
     foundation::storage_result(
-        "map.known_object_by_subject",
+        KNOWN_OBJECT_SUBJECT_LOOKUP.name,
         crate::db()
             .load::<ParticipantKnownObject>()
             .filter(FieldRef::new("participant_id").eq(participant_id.key()))
@@ -379,6 +398,12 @@ pub(crate) fn create_known_object(
     };
 
     foundation::create("map.create_known_object", input)
+}
+
+pub(crate) fn update_known_object(
+    object: ParticipantKnownObject,
+) -> RepoResult<ParticipantKnownObject> {
+    foundation::update("map.update_known_object", object)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -458,6 +483,29 @@ pub(crate) fn page_world_objects_by_session(
             .filter(FieldRef::new("session_id").eq(session_id.key()))
             .order_asc("chunk_y")
             .order_asc("chunk_x")
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_world_objects_by_owner_scoring_state(
+    session_id: Id<GameSession>,
+    owner_participant_id: Id<GameParticipant>,
+    scoring_kind: &str,
+    state: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<WorldObject>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        WORLD_OBJECT_OWNER_SCORING_LOOKUP.name,
+        crate::db()
+            .load::<WorldObject>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("scoring_kind").eq(scoring_kind))
+            .filter(FieldRef::new("owner_participant_id").eq(owner_participant_id.key()))
+            .filter(FieldRef::new("state").eq(state))
             .order_asc("id"),
         limit,
         cursor,

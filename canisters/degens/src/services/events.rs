@@ -23,6 +23,7 @@ const LOBBY_COMMAND_TYPES: &[&str] = &[
 ];
 const GAME_COMMAND_TYPES: &[&str] = &[
     "submit_move_intent",
+    "end_turn",
     "sync_session_turn",
     "submit_build_town_structure",
     "submit_recruit_units",
@@ -39,6 +40,7 @@ const GAME_COMMAND_TYPES: &[&str] = &[
     "sync_advanced_victory",
     "sync_world_generation",
     "sync_battle",
+    "end_battle_turn",
     "submit_battle_action",
 ];
 
@@ -142,6 +144,48 @@ pub(crate) fn get_command_status(
     ))
 }
 
+pub(crate) fn get_command_status_by_nonce(
+    caller: CandidPrincipal,
+    session_id: String,
+    command_type: String,
+    client_nonce: String,
+) -> Result<CommandStatusView, ApiError> {
+    let context = session_context::require_session_caller(caller, &session_id)?;
+    let actor_principal = Principal::from(caller);
+    if LOBBY_COMMAND_TYPES.contains(&command_type.as_str()) {
+        let command = find_lobby_command_by_nonce(
+            actor_principal,
+            &context,
+            &client_nonce,
+            &[command_type.as_str()],
+        )?;
+        return command.map(lobby_status_view).ok_or_else(|| {
+            public_error(
+                "command_status_not_found",
+                "lobby command status was not found for this caller and nonce",
+                false,
+            )
+        });
+    }
+
+    if !GAME_COMMAND_TYPES.contains(&command_type.as_str()) {
+        return Err(public_error(
+            "unknown_command_type",
+            "command_type is not part of the v1.1 command status contract",
+            false,
+        ));
+    }
+
+    let command = find_game_command_by_nonce(&context, &client_nonce, &[command_type.as_str()])?;
+    command.map(game_status_view).ok_or_else(|| {
+        public_error(
+            "command_status_not_found",
+            "game command status was not found for this participant and nonce",
+            false,
+        )
+    })
+}
+
 fn find_game_command_by_nonce(
     context: &session_context::SessionCallerContext,
     client_nonce: &str,
@@ -166,6 +210,8 @@ fn find_game_command_by_nonce(
 fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
     if client_nonce.contains("move") {
         &["submit_move_intent"]
+    } else if client_nonce.contains("end-turn") {
+        &["end_turn"]
     } else if client_nonce.contains("sync-turn") || client_nonce.contains("income") {
         &["sync_session_turn"]
     } else if client_nonce.contains("build") {
@@ -198,6 +244,8 @@ fn game_command_type_candidates(client_nonce: &str) -> &'static [&'static str] {
         &["sync_advanced_victory"]
     } else if client_nonce.contains("battle-action") {
         &["submit_battle_action"]
+    } else if client_nonce.contains("end-battle") {
+        &["end_battle_turn"]
     } else if client_nonce.contains("sync-battle") {
         &["sync_battle"]
     } else if lobby_command_type_candidates(client_nonce).is_empty() {
@@ -230,6 +278,8 @@ fn game_command_type_candidates_without_lobby_fallback(
 ) -> &'static [&'static str] {
     if client_nonce.contains("move") {
         &["submit_move_intent"]
+    } else if client_nonce.contains("end-turn") {
+        &["end_turn"]
     } else if client_nonce.contains("sync-turn") || client_nonce.contains("income") {
         &["sync_session_turn"]
     } else if client_nonce.contains("build") {
@@ -260,6 +310,8 @@ fn game_command_type_candidates_without_lobby_fallback(
         &["sync_advanced_victory"]
     } else if client_nonce.contains("battle-action") {
         &["submit_battle_action"]
+    } else if client_nonce.contains("end-battle") {
+        &["end_battle_turn"]
     } else if client_nonce.contains("sync-battle") {
         &["sync_battle"]
     } else {

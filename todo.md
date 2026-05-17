@@ -326,7 +326,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
 - [x] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
 - [x] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
-- [x] Decide and document whether out-of-route session actions are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
+- [x] Document whether out-of-route session actions are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
 - [x] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
 - [x] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
 - [x] Add a Pocket-IC endpoint-presence test that calls every required method at least once and proves missing methods fail the test as method-not-found/trap rather than being silently skipped.
@@ -511,9 +511,116 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 
 - [x] Re-read `spec.md` end to end and produce a v1 implementation coverage table: implemented, intentionally disabled in v1, or removed from v1 scope.
 - [x] Verify V2-only features live in `spec.v2.md` and are not listed as active v1 implementation tasks.
-- [x] Decide the late `submit_move_intent` contract cleanup: fix it for v1 or explicitly document it as a v2/non-blocking contract cleanup.
+- [x] Document the late `submit_move_intent` contract cleanup: fix it for v1 or explicitly document it as a v2/non-blocking contract cleanup.
 - [x] Re-run the full regression suite, all playability gates, all schema/migration tests, and all client contract tests.
 - [x] Verify `DoMM/notes.md` contains actionable IcyDB ergonomics, blocker, performance, and limitation notes discovered during the full implementation.
 - [x] Fix every v1 audit finding or update `spec.md` and this todo to make the intended scope explicit.
 - [x] Gate O: the v1 release audit passes and V2-only backlog is isolated in `spec.v2.md`.
 - [x] Commit the full-spec audit fixes.
+
+## 27. Spec 1.1 Decision Lock-In
+
+- [x] Enforce the locked late-submit contract: once a durable turn-resolution
+  job is accepted for the current turn, old-turn commands fail before command
+  creation with `backend_work_pending` or `turn_expired`; exact retries replay
+  stored status.
+- [x] Keep `get_session` as a lobby/setup shell and make active gameplay
+  metadata come from `get_game_view`, `get_content_manifest`, and dedicated
+  bounded render endpoints.
+- [x] Add `GameView.omitted_fields`; omitted collections must report
+  `has_more = false` and `next_cursor = None`.
+- [x] Treat static map terrain/movement/flags as public surveyed-base-map data
+  while keeping dynamic objects, owners, occupants, battle details, and events
+  visibility-gated.
+- [x] Reject `RecruitTarget::Champion` for town recruitment before command
+  creation, resource spending, pool decrement, or stack mutation; reserve it
+  for v2.
+- [x] Document and test remote direct dwelling recruitment into owned active
+  world-map champions; reject inactive, defeated, garrisoned, in-battle, or
+  enemy champions before mutation.
+- [x] Implement week-two tavern offers and recruit growth
+  projection/materialization; keep town hall income, unrest/pacification,
+  recruit-pool halving, and desperation income deferred to v2.
+- [x] Make neutral battle tactical detail private to involved participants.
+- [x] Make hidden town build/recruit events audience-scoped or redacted.
+- [x] Keep battle spellcasting for learned v1.1 spells; expose retreat and
+  surrender only as disabled/deferred action metadata.
+- [x] Keep disabled/future systems out of enabled action affordances and prevent
+  disabled-only sync/update paths from appending public gameplay events.
+- [x] Return a claimed-specific non-retryable error for `accept_quest` on
+  claimed quests.
+
+## 28. Local DFX Deploy And Agent-Run `blast` Gates
+
+- [x] Add the local deployment design first: generate the canister Candid from
+  the Rust canister export, configure local DFX deploy so the installed wasm has
+  public `candid:service` metadata, and document the exact fresh-replica deploy
+  command.
+- [x] Put a hard gate before any `blast` gameplay testing: deploy a fresh local
+  canister with DFX, then run `blast scan <canister_id> --host
+  http://127.0.0.1:$(dfx info webserver-port)` directly from the agent shell
+  and compare it with the generated Candid plus
+  `get_canister_endpoint_inventory`.
+- [x] Use direct `blast call` commands with multiple identities, not committed
+  scripts: at minimum `--id 1`, `--id 2`, and a third identity when validating
+  3-player turn behavior.
+- [x] Record the direct command lines, canister id, principals, endpoint scan
+  result, session ids, and IcyDB diagnostic outputs in `spec.missing.md` during
+  playability audits.
+- [ ] Only after the deploy and direct `blast scan` gates pass, run deeper
+  agent-driven gameplay checks for register/create/join/ready/start, active
+  gameplay inspection, map movement, battles, economy, events, and
+  `icydb_snapshot`/`icydb_metrics` corruption evidence.
+  - Earlier 2026-05-17 direct `blast` runs passed fresh deploy/scan, lobby/setup,
+    movement preview, pickup/render projection, build/recruit economy, battle
+    trigger, event feed, snapshot, metrics, and small diagnostic batches.
+    At that point this item stayed open because `get_battle_state` still
+    returned IC0522 on the fresh local canister after the guarded-mine battle
+    was created.
+  - Follow-up work removed internal battle-state pagination, added all-ready
+    direct turn sync, and added delayed partial-job retries. The fresh local
+    route now proves all-ready pickup sync and build/recruit, but the local
+    replica still terminates before the final guarded-object battle trigger can
+    return; keep this item open.
+  - Follow-up manual-sync hardening now delays overlapping current-turn jobs
+    after partial manual sync, completes them after manual turn advancement,
+    schedules the next deadline, and prevents turn advancement while pending
+    movement intents remain. Fresh DFX evidence still leaves the gate open:
+    scan/setup/pickup/build/recruit/guarded-intent all pass, but local timer
+    processing still terminates PocketIC before the guarded battle id can be
+    read through `get_battle_state`.
+  - Follow-up delayed partial retries removed the final-player `end_turn` race:
+    scan/setup/pickup/build/recruit/guarded intent and both turn-ending calls now
+    apply through public `blast`. The guarded route still stays open because the
+    final guarded manual sync hits the local 50B update instruction limit before
+    returning `neutral_encounter_pending` or a battle id.
+  - Follow-up guarded battle phase slicing clears the trigger/read blocker for
+    the direct local route: fresh scan exposed 63 methods, setup reached
+    `active` at `start:9`, guarded preview returned cost `30` with
+    `guarded_object`, sync slices `0..8` returned
+    `movement_sync_incomplete`, sync `9` returned `neutral_encounter_pending`
+    plus `session_turn_synced`, `get_battle_state` returned an `active` neutral
+    battle with enabled legal actions, and `icydb_snapshot` reported
+    `corrupted_entries=0` and `corrupted_keys=0`. Keep this item open for guard
+    defeat, mine capture, later income, full diagnostics, one-call setup, and
+    regression/PocketIC evidence.
+  - Follow-up guarded battle/capture/income smoke on direct local session
+    `01KRTT8MHY0000000000000008` resolved battle
+    `01KRTTH6XV0000000000000004`, emitted `mine_captured`,
+    `neutral_defeated`, `battle_aftermath_applied`, and later
+    `income_materialized` with `{"gold":250}`, rendered the mine as
+    owned/captured with the defeated neutral absent, and kept
+    `icydb_snapshot` corruption counts at zero. Keep this item open for the
+    full collect/build/recruit walkthrough, diagnostics/metrics batches, and
+    automated PocketIC/regression evidence.
+  - Follow-up PocketIC work added and passed guarded-route assertions for
+    capture, aftermath idempotency, stale neutral render absence, captured mine
+    owner/state, income, champion battle, town capture, victory, and final
+    diagnostics. The passing command was
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`.
+    Keep this broader local-DFX item open for the remaining full direct
+    collect/build/recruit walkthrough and diagnostics/metrics batches, not for
+    the automated Gate L guarded-route assertion blocker.
+- [x] Do not add committed `blast` scripts or blast-based automated tests unless
+  explicitly requested later; PocketIC remains the automated IC e2e test layer.

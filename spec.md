@@ -232,7 +232,11 @@ visible_tiles: tiles currently visible this turn
 
 Rules:
 
-* Undiscovered tiles are hidden.
+* Undiscovered tiles render as hidden/fogged. In v1.1 the canister may still
+  return static base-map `terrain_blob`, `movement_blob`, and `flags_blob` for
+  undiscovered chunks so clients can page and cache the surveyed map; those
+  bytes are not visibility. Dynamic objects, owners, occupants, battle details,
+  and events remain hidden unless visibility rules allow them.
 * Discovered but non-visible tiles show terrain but not current enemy positions.
 * A champion reveals tiles within their scouting radius.
 * Towns and owned structures reveal nearby tiles.
@@ -823,6 +827,11 @@ Some dwellings allow direct recruitment on the map.
 Some dwellings send growth to nearest owned town.
 ```
 
+For v1.1, external dwellings with `direct_recruit = true` are remote rally
+points. Once owned, they may recruit into any owned active world-map champion in
+the same session; the champion does not need to stand on or near the dwelling.
+Local/same-tile dwelling recruitment variants are v2.
+
 ---
 
 # 14. Artifacts
@@ -1411,6 +1420,10 @@ Removed by scenario rule
 ```
 
 ## 18.17 Retreat and Surrender
+
+Retreat and surrender are disabled/deferred in v1.1 and tracked in
+`spec.v2.md`. The notes below describe the future design direction, not active
+v1.1 behavior.
 
 A champion may retreat if allowed.
 
@@ -2302,7 +2315,7 @@ That would give us enough to begin building the actual game prototype.
 
 Great name. **Degens of Misery & Mayhem** should use a **simultaneous timed-turn model**:
 
-> Every match has a 60-second turn window. Players submit replaceable movement intents and other commands during that window. When the window expires, movement intents resolve in deterministic turn-end order. The turn advances on the next update call; query calls may return time metadata and `sync_required`, but must not return speculative movement, battle, victory, resource, visibility, or event results. Anyone who did nothing simply skips that turn.
+> Every match has a 60-second maximum turn window. Players submit replaceable movement intents and other commands during that window. Players may also end their map turn early. Ending turn is a readiness signal, not a lock: an ended player may still submit map commands while the same turn remains open. The turn closes when either every active map participant has ended the current turn or the 60-second deadline expires. When the turn closes, movement intents resolve in deterministic turn-end order. The turn advances through a canister-owned update context: the final `end_turn` call, an IC timer callback, a zero-delay continuation, or an admin/debug recovery call. Normal clients do not call `sync_session_turn`, `sync_battle`, or `process_next_turn` to keep the game alive. Query calls may return time metadata and pending-backend-work metadata, but must not return speculative movement, battle, victory, resource, visibility, or event results. Anyone who did nothing simply skips that turn.
 
 Because IcyDB does **not** provide multi-entity transactions, the architecture should avoid “one huge game state row” but also avoid fragile multi-row transitions. The best pattern is:
 
@@ -2336,7 +2349,7 @@ expansion is tracked in `spec.v2.md`, not in this v1 implementation contract.
 4. Retried commands do not duplicate movement, rewards, spending, recruitment, or battle results.
 5. A skipped 60-second turn requires no per-champion or per-town writes.
 6. Recovery from an applying command reaches exactly one final outcome.
-7. Frontend view endpoints return render-ready state without forcing N+1 raw-row fetches.
+7. Frontend view endpoints collectively return render-ready state through bounded aggregate/detail queries without forcing clients to fetch raw IcyDB rows.
 ```
 
 Enum-like fields such as `state`, `status`, `command_type`, `battle_type`, and `object_type` should be stored as short `Text` values and validated in game logic.
@@ -2668,6 +2681,35 @@ pub struct ResourceLedgerTurnSummary {}
 ```
 
 `ResourceLedgerTurnSummary` is written only by cleanup/compaction sagas after the raw ledger entries for that turn are no longer needed for active recovery.
+
+`GameParticipant.ready_turn` is lobby readiness only. Active map-turn early
+end state is stored in `ParticipantTurnReady`, not on the participant row,
+because it is per-turn, idempotent, and must not lock the participant out of
+later commands while the turn remains open.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "session_id, participant_id, turn_number", unique),
+    index(fields = "session_id, turn_number"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "turn_number", value(item(prim = "Nat32"))),
+        field(ident = "command_id", value(item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "ended_at", value(item(prim = "Timestamp")), default = "Timestamp::now")
+    )
+)]
+pub struct ParticipantTurnReady {}
+```
 
 ```rust
 #[entity(
@@ -3810,11 +3852,57 @@ pub struct BattleOccupancy {}
 
 `BattleOccupancy` is the authoritative tactical occupancy table. `BattleStack.battle_x` and `battle_y` are cache fields for fast DTO assembly and must be updated in the same command/effect flow as the matching `BattleOccupancy` row.
 
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "battle_id, participant_id, round_number", unique),
+    index(fields = "battle_id, round_number"),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "battle_id", value(item(rel = "Battle", prim = "Ulid", strong))),
+        field(ident = "participant_id", value(item(rel = "GameParticipant", prim = "Ulid", strong))),
+        field(ident = "round_number", value(item(prim = "Nat16"))),
+        field(ident = "command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "ready_reason", value(item(prim = "Text", max_len = 32))),
+        field(
+            ident = "ended_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct BattleParticipantRoundReady {}
+```
+
 Battle UI and action rules:
 
 ```text
 Battle action timeout: 30 seconds per active stack.
 If a player times out, the active stack auto-defends.
+Battle round end-turn is separate from world-map end_turn. A participant may
+end their current battle round for a specific battle. This writes durable
+BattleParticipantRoundReady state for battle_id + participant_id + current_round.
+Battle end-turn is a commitment for that battle round: any still-unacted stacks
+owned by that participant are resolved through deterministic system skip/defend
+commands and cannot later submit old-round actions.
+If every alive battle participant has ended the current battle round, advance
+the battle round immediately without waiting for active-stack deadlines.
+If a participant has no living stack with an enabled meaningful action this
+round, the canister marks that participant battle-ready automatically.
+Meaningful actions are movement, attack, enabled spell/cast actions, enabled
+wait actions, or other non-passive tactical actions. Disabled retreat/surrender
+metadata does not prevent auto-ready in v1.1.
+Passive Defend and EndBattleTurn affordances do not prevent auto-ready.
 If a battle reaches max_rounds, resolve by remaining combat power.
 Battle movement/pathfinding treats active BattleObstacle footprints as blocked unless the acting stack has an explicit bypass rule.
 For v1, BattleStack.readiness is unused and must remain 0.
@@ -3822,6 +3910,9 @@ Active stack selection is round-based: unacted non-waiting stacks by initiative,
 Before accepting submit_battle_action, process due battle timeout effects for that battle within budget.
 If now >= action_deadline_at, a deterministic system auto-defend command wins unless a valid player action was already applied before the deadline.
 Every battle update starts by recovering applying commands for that battle, resolving due battle timeout system commands within budget, then validating the caller command.
+Every battle update also recomputes participant auto-ready state and may enqueue
+or run battle_round_advance:{battle_id}:{round_number} when all alive
+participants are ready.
 Resolved battle rows are compacted after cleanup_after_turn once GameEvent summaries exist.
 Strategic turns continue for uninvolved champions; champions in active battles cannot move.
 ```
@@ -3832,9 +3923,72 @@ Strategic turns continue for uninvolved champions; champions in active battles c
 
 This is the most important part for IcyDB.
 
-Commands let us make game actions durable and idempotent. Events are for history/UI. Pending effects are for deferred rewards, delayed income, battle aftermath, or repairable multi-step transitions.
+Commands let us make game actions durable and idempotent. Events are for history/UI. Pending effects are for deferred rewards, delayed income, battle aftermath, or repairable multi-step transitions. System jobs are durable scheduler rows; IC timers and awaited self-calls are wakeups only.
 
 Hot-path command payloads should be typed Rust/Candid structs at the API boundary. JSON fields are durable audit/debug envelopes and must stay bounded; they must not contain full view snapshots.
+
+```rust
+#[entity(
+    store = "DegensStore",
+    pk(field = "id"),
+    index(fields = "job_key", unique),
+    index(fields = "status, due_at"),
+    index(fields = "session_id, status, due_at"),
+    index(fields = "battle_id, status, due_at"),
+    index(fields = "command_id"),
+    fields(
+        field(
+            ident = "id",
+            value(item(prim = "Ulid")),
+            default = "Ulid::generate",
+            generated(insert = "Ulid::generate")
+        ),
+
+        field(ident = "job_key", value(item(prim = "Text", max_len = 128))),
+        field(ident = "job_kind", value(item(prim = "Text", max_len = 40))),
+        field(ident = "session_id", value(item(rel = "GameSession", prim = "Ulid", strong))),
+        field(ident = "battle_id", value(opt, item(rel = "Battle", prim = "Ulid", weak))),
+        field(ident = "turn_number", value(opt, item(prim = "Nat32"))),
+        field(ident = "due_at", value(item(prim = "Timestamp"))),
+        field(ident = "status", value(item(prim = "Text", max_len = 24)), default = "scheduled"),
+        field(ident = "lease_owner", value(opt, item(prim = "Text", max_len = 64))),
+        field(ident = "lease_expires_at", value(opt, item(prim = "Timestamp"))),
+        field(ident = "attempt_count", value(item(prim = "Nat32")), default = 0u32),
+        field(ident = "generation", value(item(prim = "Nat64")), default = 0u64),
+        field(ident = "command_id", value(opt, item(rel = "GameCommand", prim = "Ulid", weak))),
+        field(ident = "cursor_json", value(opt, item(prim = "Text", max_len = 4096))),
+        field(ident = "last_error", value(opt, item(prim = "Text", max_len = 512))),
+        field(
+            ident = "created_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        ),
+        field(
+            ident = "updated_at",
+            value(item(prim = "Timestamp")),
+            default = "Timestamp::now",
+            generated(insert = "Timestamp::now")
+        )
+    )
+)]
+pub struct SystemJob {}
+```
+
+Canonical system job keys:
+
+```text
+setup_session:{session_id}
+turn_deadline:{session_id}:{turn_number}
+turn_resolution:{session_id}:{turn_number}
+turn_resolution_continue:{command_id}
+battle_timeout:{battle_id}:{deadline_ms}
+battle_round_ready:{battle_id}:{participant_id}:{round_number}
+battle_round_advance:{battle_id}:{round_number}
+repair_after_upgrade:{generation}:{cursor}
+```
+
+`SystemJob` rows are the source of truth. In-memory `TimerId` values are best-effort wakeups only and are lost on upgrade. Every timer callback, awaited self-call continuation, and manual recovery driver reloads IcyDB state, verifies the job is still due for the current session turn or battle deadline, claims a durable lease, runs one bounded slice, persists cursor/status, and then schedules or awaits the next fresh-message continuation if needed.
 
 ```rust
 #[entity(
@@ -4250,17 +4404,42 @@ ensure_session_turn_is_current(session_id)?;
 recover_pending_commands(session_id, remaining_budget)?;
 ```
 
-Run app-command recovery before turn advancement so a prior half-finished command cannot be overtaken by turn-final movement resolution. Before resolving a closing turn, recover pending/applying commands for that turn whose effects can affect turn closure, especially `submit_move_intent`. Pure query methods cannot persist turn advancement, income, growth, movement resets, battle timeouts, victory checks, events, visibility writes, resource ledger writes, or game-command recovery. Query methods return time metadata with `server_now` and persisted projections at `as_of_turn`; update methods materialize durable lazy state. IcyDB may still run its internal commit-marker recovery before guarded reads and writes.
+Run app-command recovery before turn advancement so a prior half-finished command cannot be overtaken by turn-final movement resolution. Before resolving a closing turn, recover pending/applying commands for that turn whose effects can affect turn closure, especially `submit_move_intent`. Pure query methods cannot persist turn advancement, income, growth, movement resets, battle timeouts, victory checks, events, visibility writes, resource ledger writes, or game-command recovery. Query methods return time metadata with `server_now` and persisted projections at `as_of_turn`; canister-owned system jobs, timer callbacks, awaited self-call continuations, player update calls, and admin/debug recovery calls materialize durable lazy state. Normal clients do not drive backend progression through sync calls. IcyDB may still run its internal commit-marker recovery before guarded reads and writes.
+
+Turn deadline processing is a `SystemJob`, not a client responsibility:
+
+```text
+On session activation and every new turn:
+  upsert turn_deadline:{session_id}:{current_turn}
+  schedule the nearest due system job timer
+
+When the deadline timer fires:
+  reload SystemJob and GameSession
+  no-op if the session has already advanced or the job is stale
+  claim a durable lease
+  run process_turn_resolution_slice
+  if incomplete, persist cursor_json and schedule a zero-delay continuation
+```
 
 Turn advancement rule:
 
 ```text
-If now < turn_deadline_at:
+If now < turn_deadline_at and not all active map participants have ended turn:
   stay in current turn
 
-If now >= turn_deadline_at:
+If all active map participants have ended turn:
+  windows_to_advance = 1
+  closing_reason = "all_players_ended"
+  create/load deterministic system GameCommand for turn_resolution(closing_turn)
+  resolve movement intents for the closing turn window through that command/effects
+  current_turn += 1
+  turn_started_at = now
+  turn_deadline_at = now + turn_duration_ms
+
+If now >= turn_deadline_at or a due turn_deadline SystemJob is claimed:
   missed_windows = 1 + ((now - turn_deadline_at) / turn_duration_ms)
   windows_to_advance = min(missed_windows, GameSession.turn_catchup_cap)
+  closing_reason = "deadline"
   create/load deterministic system GameCommand for turn_resolution(closing_turn)
   resolve movement intents for the closing turn window through that command/effects
   current_turn += windows_to_advance
@@ -4272,6 +4451,43 @@ If missed_windows > turn_catchup_cap:
 ```
 
 Never loop over every skipped turn. Weekly and monthly effects are derived from turn numbers and lazy fields.
+
+`end_turn` is an update command that writes one `ParticipantTurnReady` row for
+the caller and current turn using the same command/idempotency envelope as other
+player actions:
+
+```text
+end_turn(session_id, client_nonce)
+
+load or insert command by session_id + actor_kind + actor_id_text + client_nonce
+validate session active and caller participant active
+upsert ParticipantTurnReady(session_id, participant_id, current_turn)
+if all active map participants now have ParticipantTurnReady for current_turn:
+  close the current map turn immediately through the normal turn-resolution path
+else:
+  return EndTurn { ended = true, turn_closed = false }
+```
+
+Ending turn does not lock the player. While the same map turn remains open, the
+participant may still submit movement intents, build, recruit, trade, cast
+adventure spells, or take other map commands. Those commands do not clear the
+`ParticipantTurnReady` row. If all other active map participants have also
+ended and the turn has already closed, later commands based on the old turn must
+fail with stale/turn-expired behavior or be resubmitted against the new turn
+after the client refreshes state.
+
+Active map participants are session participants whose status still allows map
+play, normally `active`. Eliminated, surrendered, or disconnected participants
+do not block early turn closure unless a scenario explicitly marks them as
+autopilot-controlled active participants. The same rule works for the first
+playable 2-player match and for later 3+ player sessions.
+
+Battle timing is separate from map-turn readiness. A participant with one or
+more champions in active battles may still call `end_turn` for the world map
+turn. Battle actions continue to use battle action deadlines, battle
+`end_battle_turn`, battle timeout `SystemJob` rows, and battle-round advance
+jobs. `sync_battle` is only a manual/admin recovery driver over the same
+internal battle job runner.
 
 Each turn-final resolution is represented by one deterministic system `GameCommand`:
 
@@ -4343,12 +4559,12 @@ Movement validation:
 1. Caller owns the participant.
 2. Participant owns the champion.
 3. Session is active.
-4. V1 clients submit while the render-time DTO reports `turn_expired = false`.
-   If `sync_required = true`, clients call `sync_session_turn` before relying on
-   turn-sensitive state. Hard canister-side rejection of a late
-   `submit_move_intent` after `turn_deadline_at` is a non-blocking contract
-   cleanup tracked in `spec.v2.md`; turn-final resolution remains
-   authoritative in v1.
+4. V1 clients submit while the render-time DTO reports the current turn as
+   open. If backend work is due or a turn-resolution job is already accepted,
+   clients wait/poll for persisted state to catch up or submit a normal update
+   that may cheaply drive due work; they do not call `sync_session_turn` as the
+   normal flow. Once turn resolution is accepted for the old turn,
+   `submit_move_intent` fails stale/turn-expired and the client refreshes.
 5. Champion is active and not in battle.
 6. Path starts adjacent to champion position.
 7. Path does not pass through impassable terrain.
@@ -4402,7 +4618,7 @@ If a champ moves onto a resource/object:
 
 Map occupancy must be updated through `MapOccupancy` as part of the movement resolution command/effects, not by trusting coordinate indexes on individual entity tables.
 
-When movement starts a battle, involved champions get `status = "in_battle"` and retain their last legal strategic tile unless the battle type explicitly defines an attack tile. Their champion-layer `MapOccupancy` remains blocking while the battle is active. After victory, the battle aftermath saga moves the winner onto the defender/object/town tile if legal; retreat or surrender places the champion at the last legal owned town tile, or marks the champion defeated if no legal retreat tile exists.
+When movement starts a battle, involved champions get `status = "in_battle"` and retain their last legal strategic tile unless the battle type explicitly defines an attack tile. Their champion-layer `MapOccupancy` remains blocking while the battle is active. After victory, the battle aftermath saga moves the winner onto the defender/object/town tile if legal. Retreat/surrender placement is v2 because those actions are disabled in v1.1.
 
 ---
 
@@ -4597,7 +4813,7 @@ Gameplay code must not use `insert_many_non_atomic`, `update_many_non_atomic`, o
 
 # 15. Public API Shape
 
-Recommended update calls:
+Recommended gameplay update calls:
 
 ```rust
 register_player(username: Option<String>, display_name: Option<String>)
@@ -4608,9 +4824,9 @@ join_session(session_id: Id<GameSession>, faction_id: Id<FactionDefinition>, cli
 
 start_session(session_id: Id<GameSession>, client_nonce: u64)
 
-sync_session_turn(session_id: Id<GameSession>)
+end_turn(session_id: Id<GameSession>, client_nonce: u64)
 
-sync_battle(session_id: Id<GameSession>, battle_id: Id<Battle>)
+end_battle_turn(session_id: Id<GameSession>, battle_id: Id<Battle>, client_nonce: u64)
 
 submit_move_intent(
     session_id: Id<GameSession>,
@@ -4646,6 +4862,16 @@ submit_battle_action(
 mark_ready(session_id: Id<GameSession>)
 ```
 
+`mark_ready` is lobby-only. `end_turn` is the active map-turn readiness command.
+
+Manual recovery/admin update calls:
+
+```rust
+sync_session_turn(session_id: Id<GameSession>)
+
+sync_battle(session_id: Id<GameSession>, battle_id: Id<Battle>)
+```
+
 `RecruitTarget` is a typed enum:
 
 ```text
@@ -4653,9 +4879,15 @@ TownGarrison { slot_index: Option<u8> }
 Champion { champion_id: Id<Champion>, slot_index: Option<u8> }
 ```
 
-Recruiting into a champion requires the champion to be active, owned by the participant, and on the same tile as the owned town. Recruitment can merge into a compatible existing stack or create a stack in an empty slot. If no legal slot exists, return `recruit_target_full`.
+V1.1 canister town recruitment supports `TownGarrison` only. The
+`RecruitTarget::Champion` DTO variant is reserved for v2 and must return
+`unsupported_recruit_target` before command creation, resource spending, pool
+decrement, or stack mutation. When promoted in v2, recruiting into a champion
+requires the champion to be active, owned by the participant, and on the same
+tile as the owned town; compatible stacks merge, empty legal slots create a
+stack, and no legal slot returns `recruit_target_full`.
 
-`sync_session_turn` is an update call. It can advance stale turns, resolve movement intents, materialize bounded lazy state, and recover commands. `sync_battle` is an update call. It recovers commands for that battle and materializes due battle timeouts within budget. Query calls must not persist those changes.
+`sync_session_turn` and `sync_battle` are admin/debug/manual recovery update calls. They call the same internal `SystemJob` runners used by timers, zero-delay continuations, and awaited self-call continuations. Normal clients must not need these methods to keep the match alive. Query calls must not persist turn advancement, battle timeout, command recovery, or other lazy-state changes.
 
 Entity view queries return `not_visible` when an object exists but is hidden from the caller. They return not-found only when the row does not exist or is outside the session scope.
 
@@ -4674,6 +4906,8 @@ get_visible_map_chunks(session_id, cursor, limit)
 
 get_visible_objects(session_id, viewport, cursor, limit)
 
+get_object_view(session_id, subject_kind, subject_id_text)
+
 get_my_champions(session_id)
 
 get_champion_view(session_id, champion_id)
@@ -4685,6 +4919,8 @@ get_battle_state(session_id, battle_id, events_after_seq, limit)
 get_content_manifest(ruleset_id, version)
 
 get_command_status(session_id, command_id_or_client_nonce)
+
+get_command_status_by_nonce(session_id, command_type, client_nonce)
 
 get_events_after(session_id, audience_key, events_after_seq, limit)
 
@@ -4731,13 +4967,26 @@ turn_started_at
 turn_deadline_at
 remaining_ms
 turn_expired: bool
-sync_required: bool
+backend_work_pending: bool
 as_of_turn
 ```
 
-`turn_expired` means `server_now >= turn_deadline_at`. `sync_required` means an update is needed before turn-sensitive state can be trusted. The client should call `sync_session_turn` or submit an update command to materialize that state.
+`turn_expired` means `server_now >= turn_deadline_at`. `backend_work_pending`
+means a durable system job is due, leased, or queued for this session or battle
+and persisted projections may still be behind the wall clock. The client should
+wait, poll, subscribe to events, or submit ordinary user updates that can
+cheaply drive due work. It should not call `sync_session_turn` or `sync_battle`
+as normal gameplay.
 
-Query methods may derive time metadata only: `remaining_ms`, `turn_expired`, and `sync_required`. Resource, recruit, movement, visibility, battle, victory, and event values come from persisted rows at `as_of_turn`. Query methods must not simulate or return speculative results for movement-intent resolution, battle timeouts, battle auto-defend, victory finalization, town capture, resource ledger writes, recruitment growth writes, visibility writes, command recovery, or event creation. If `turn_deadline_at` has passed and unresolved `MovementIntent` rows exist for the current turn, `get_game_view` returns `sync_required = true` and does not advance positions.
+Query methods may derive time metadata only: `remaining_ms`, `turn_expired`, and
+`backend_work_pending`. Resource, recruit, movement, visibility, battle,
+victory, and event values come from persisted rows at `as_of_turn`. Query
+methods must not simulate or return speculative results for movement-intent
+resolution, battle timeouts, battle auto-defend, victory finalization, town
+capture, resource ledger writes, recruitment growth writes, visibility writes,
+command recovery, or event creation. If `turn_deadline_at` has passed and
+unresolved `MovementIntent` rows exist for the current turn, render queries
+return `backend_work_pending = true` and do not advance positions.
 
 Command update calls return:
 
@@ -4770,14 +5019,21 @@ CommandResponse {
 CreateSession { session_id }
 JoinSession { session_id, participant_id }
 StartSession { session_id, setup_complete: bool, next_phase: Option<Text> }
+EndTurn { turn_number, ended: bool, turn_closed: bool, closing_reason: Option<Text> }
 SyncSessionTurn { advanced_turns, sync_incomplete: bool }
 MoveIntent { movement_intent_id, superseded_by_command_id: Option<Id<GameCommand>> }
 BuildTownStructure { town_id, building_def_id }
 RecruitUnits { town_id, target, stack_changes[] }
 BattleAction { battle_id, active_stack_id, battle_state }
 SyncBattle { battle_id, timeout_actions_applied, battle_sync_incomplete: bool }
+EndBattleTurn { battle_id, round_number, ended: bool, round_advanced: bool, ready_reason: Text }
 Noop { reason }
 ```
+
+`SyncSessionTurn` and `SyncBattle` are returned only by manual recovery/admin
+calls. Normal gameplay calls should surface `backend_work_pending`, command
+status, or job/progress metadata instead of asking clients to drive progression
+through sync commands.
 
 `ChangedSubject` includes `subject_kind`, `subject_id_text`, `change_kind`, and optional `visibility_hint`.
 
@@ -4807,21 +5063,34 @@ unit_not_unlocked
 value_cap_exceeded
 battle_not_active
 not_active_stack
+battle_round_already_ended
+stale_battle_round
+quest_already_claimed
+quest_reward_already_claimed
 duplicate_nonce_payload_mismatch
 recovery_budget_exhausted
-stale_session_requires_sync
+backend_work_pending
+system_job_pending
 sync_incomplete
 battle_sync_incomplete
 canister_active_session_limit_reached
 ```
 
-`get_game_view` returns a render-ready DTO, not raw IcyDB rows:
+`sync_incomplete` and `battle_sync_incomplete` are manual recovery/admin
+outcomes. Normal client-facing flows should use `backend_work_pending`,
+`turn_expired`, `stale_battle_round`, command status, or render metadata as
+appropriate.
+
+The canister render contract is composed from bounded render endpoints, not raw
+IcyDB rows. `get_game_view` is a gameplay metadata shell unless the canister can
+assemble the full view within query budgets:
 
 ```text
 GameView {
   session_summary: SessionSummary
   my_participant: ParticipantSummary
   participants: ParticipantSummary[]
+  omitted_fields: Text[]
   visible_map_chunks: MapChunkView[]
   visible_objects: ObjectView[]
   my_champions: ChampionView[]
@@ -4835,13 +5104,15 @@ GameView {
 
 The pure backend can assemble content names, asset keys, ownership, effective
 movement, visible object state, and action affordances into one render-ready
-view. The canister backend keeps `get_game_view` as a lightweight session shell
-and exposes the same detail through dedicated bounded endpoints
+view. The canister backend exposes render-ready state through dedicated bounded
+endpoints
 (`get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`,
 `get_champion_view`, `get_town_view`, `get_events_after`, and
 `get_battle_state`) because combining the full render view in one canister query
 exceeds the IC single-message instruction budget after the durable schema
-expansion.
+expansion. If `get_game_view` omits collections, it must list them in
+`omitted_fields` and return `has_more = false` plus `next_cursor = None` for
+the omitted arrays.
 
 Core DTO names and required fields:
 
@@ -4874,7 +5145,8 @@ ArmyStackView:
   stack_id, unit_id, slot_index, quantity, front_hp, status
 
 BattleSummary:
-  battle_id, state, battle_type, active_stack_id, action_deadline_at, remaining_ms
+  battle_id, state, battle_type, active_stack_id, action_deadline_at, remaining_ms,
+  current_round, ready_participant_ids
 
 ActionAffordance:
   action_key, subject_kind, subject_id_text, enabled, disabled_reason_code
@@ -4931,6 +5203,17 @@ ObjectDetails variants:
 
 Hidden rows are never returned. Last-known enemy champions return only kind, last_seen_turn, and last-known position. Visible enemy champions may return name, class, and strength label, but exact stack counts require a scouting rule.
 
+Town build/recruit events are audience-scoped. The owner receives exact payloads.
+Other participants receive exact town activity only when `get_town_view` would
+be visible for them at that turn. Any public summary must be redacted and omit
+town id, coordinates, building slug, unit slug, and quantities.
+
+Neutral battle tactical detail is private to involved participants in v1.1.
+`get_battle_state` returns full active or resolved `BattleView` only to
+participants that owned a stack or initiating/defending subject in that battle.
+Uninvolved participants receive `battle_not_visible`; public state is limited
+to redacted summaries and visibility-revealed map/object outcomes.
+
 Battle state DTO:
 
 ```text
@@ -4943,6 +5226,8 @@ BattleView {
   active_participant_id
   action_deadline_at
   remaining_ms
+  ready_participant_ids
+  my_round_ready
   grid { width, height }
   obstacles: BattleObstacleView[]
   deployment_zones[]
@@ -4986,6 +5271,11 @@ Retreat
 Surrender
 ```
 
+`CastAbility` is active for learned v1.1 battle spells. `Retreat` and
+`Surrender` remain enum variants for compatibility and v2, but in v1.1 they may
+appear only as disabled legal-action metadata and submit rejects them before
+command creation.
+
 Pagination contract:
 
 ```text
@@ -5012,9 +5302,14 @@ Client retry/sync contract:
 The client generates one client_nonce per user intent and reuses it for retries of the exact same typed payload.
 If a retry returns the same command_id and payload_hash, the client treats the response as authoritative.
 If the same nonce returns duplicate_nonce_payload_mismatch, the client discards that nonce and creates a new user intent.
-If any render response has sync_required = true, the client should call sync_session_turn or sync_battle before submitting turn-sensitive commands.
-If a command returns recovery_budget_exhausted or status = applying with retryable = true, the client polls get_command_status or calls sync_session_turn/sync_battle, then refreshes events after latest_event_seq.
-After any applied command, the client applies returned EventView/changed_subjects, then refreshes get_game_view using the latest per-list cursors.
+If any render response has backend_work_pending = true, the client waits/polls,
+subscribes to events, or submits ordinary user commands that are legal for the
+current persisted state. It does not call sync_session_turn or sync_battle as
+normal gameplay.
+If a command returns recovery_budget_exhausted, system_job_pending, or status =
+applying with retryable = true, the client polls get_command_status and render
+views until the durable state changes.
+After any applied command, the client applies returned EventView/changed_subjects, then refreshes composed render state using the latest per-list cursors.
 ```
 
 Content manifest contract:
@@ -5042,8 +5337,8 @@ Use lazy updates aggressively. This avoids unnecessary writes and works well wit
 Lazy state rules:
 
 ```text
-Update calls may materialize lazy state.
-Query calls return persisted projections at `as_of_turn` plus time metadata and `sync_required`.
+Canister-owned system jobs, timer callbacks, awaited self-call continuations, and update calls may materialize lazy state.
+Query calls return persisted projections at `as_of_turn` plus time metadata and `backend_work_pending`.
 All lazy arithmetic uses saturating math.
 Max lazy accrual window in v1: 14 turns.
 Resource and recruit caps are enforced before writing materialized values.
@@ -5251,7 +5546,7 @@ AI failure behavior:
 ```text
 If budget is exhausted, save cursor_json and stop.
 If no legal candidate exists, emit no-op or defend.
-If a stale AI command is retried, payload_hash/idempotency rules decide the outcome.
+If a stale AI command is retried, payload_hash/idempotency rules determine the outcome.
 If AI state is corrupt or missing, recreate minimal AiActorState from session/actor facts.
 ```
 
@@ -5285,7 +5580,7 @@ max commands retained per active session: 2000
 max events retained per active session: 5000
 max resource ledger rows retained per active session: 3000
 max unresolved MovementIntent rows resolved per session turn: 6
-max movement microsteps per sync_session_turn: 384
+max movement microsteps per turn-resolution slice: 384
 max battle starts from movement resolution per update: 2
 max object interactions from movement resolution per update: 6
 max timed-out battle actions applied per update: 2
@@ -5339,9 +5634,9 @@ If budget is exhausted, return recovery_budget_exhausted or ask caller to retry/
 No update may scan all commands, all events, all champions, all towns, or all chunks for a session.
 ```
 
-Turn-final movement resolution is sliced. If any movement cap would be exceeded, resolve deterministically up to the cap, persist the partial resolution cursor in the turn-resolution system command/effects, and return `sync_incomplete`. A later `sync_session_turn` continues from the stored cursor.
+Turn-final movement resolution is sliced. If any movement cap would be exceeded, resolve deterministically up to the cap, persist the partial resolution cursor in the turn-resolution system command/effects, and schedule a zero-delay continuation job. Manual `sync_session_turn` may drive the same continuation for admin/debug recovery, but normal clients do not call it.
 
-Battle timeout processing is sliced. No update may auto-resolve an entire stale battle unless the battle fits within the timeout caps; otherwise return `battle_sync_incomplete`.
+Battle timeout processing is sliced. No update may auto-resolve an entire stale battle unless the battle fits within the timeout caps; otherwise persist cursor state and schedule a zero-delay continuation job. Manual `sync_battle` may drive the same continuation for admin/debug recovery, but normal clients do not call it.
 
 Active-session limit:
 
@@ -5406,8 +5701,27 @@ Session setup is resumable:
 GameSession.state transitions:
   lobby -> starting -> active
 
-start_session may write at most 50 durable rows or 12 KiB of command/effect/event JSON per update call.
-If setup is incomplete, return setup_in_progress with the next phase.
+start_session is one client call. The host must not need to call start_session
+repeatedly with fresh nonces to advance setup phases.
+
+The first valid start_session call:
+  creates or loads the deterministic setup command/job setup_session:{session_id}
+  moves GameSession.state to starting
+  persists the first setup phase/cursor
+  starts fresh-message continuation work
+
+Fresh-message continuation work may use either:
+  zero-delay timers, preferred when setup should continue after the client response
+  awaited self-calls/inter-canister calls, acceptable when start_session should await completion
+
+Plain local async functions that do not cross a real IC call/timer boundary do
+not reset the instruction limit. Before every await/timer boundary, persist the
+setup phase, command/effect status, and cursor. After every continuation, reload
+IcyDB state and no-op if setup has already advanced or completed.
+
+Each setup continuation may write at most 50 durable rows or 12 KiB of
+command/effect/event JSON.
+If setup is incomplete, the canister schedules or awaits the next continuation.
 Only after all required parent rows, child rows, occupancy rows, visibility seeds, and setup events are committed may the session become active.
 
 Setup phases:
@@ -5487,7 +5801,7 @@ Product target:
 ```text
 mode: 1v1 PvP
 target session length: 20-30 minutes
-turn duration: 60 seconds
+turn duration: 60 seconds maximum, with early closure when all active map participants have ended turn
 max turns: 30
 map: hand-authored 48 x 48 square grid
 players: 2
@@ -5548,13 +5862,19 @@ V1 battle contract:
 ```text
 grid: 12 x 10
 turn order: round-based initiative descending, tie by speed, then seeded hash
-actions: move, melee, ranged, defend, wait, retreat, surrender
+actions: move, melee, ranged, defend, wait, cast enabled v1.1 spells
 damage formula: Part 1 section 18.7 unless replaced by a balance table
 morale/luck: disabled in v1 or capped to +/-10% equivalent effect
 ranged: limited shots, blocked by adjacency unless Close Shot
-retreat: allowed after round 2 unless scenario blocks it
-surrender: preserves surviving units if cost can be paid
+retreat: disabled/deferred in v1.1; may appear only as disabled action metadata
+surrender: disabled/deferred in v1.1; may appear only as disabled action metadata
 battle timeout: active stack auto-defends after 30 seconds
+battle early end-turn: each battle participant may end the current battle round
+for that battle; once all alive participants are ready, advance to the next
+round immediately
+battle auto-ready: if all living stacks for a participant have acted, are
+disabled, or have no enabled meaningful action, that participant is marked ready
+for the round automatically
 auto-resolve: deferred
 ```
 
@@ -5570,15 +5890,11 @@ Neutral-army and champion battles write survivors back through origin_stack_id_t
 Loss mitigation and anti-snowball:
 
 ```text
-Captured towns enter unrest for 2 turns:
-  income reduced by 50%
-  recruitment disabled
-  one building action skipped unless pacification cost is paid
-  existing recruit pools reduced by 50%
-
-A participant with no town but at least one active champion receives desperation income:
-  +500 gold per turn for up to 5 turns
-  ends when they capture or rebuild a town
+Town hall income, captured-town unrest mechanics, pacification, recruit-pool
+halving, and desperation income are deferred to v2. In v1.1,
+`unrest_until_turn` may be stored as non-mechanical capture metadata only and
+must not reduce income, disable recruitment, skip builds, or alter recruit
+pools.
 
 Champion level cap in v1: 10
 Champion Might/Guard damage impact cap: +/-30% before other effects
@@ -5685,7 +6001,7 @@ The only remaining v1 work should be release hardening:
 ```text
 produce the final implementation coverage table
 run the full regression and playability gates
-resolve or explicitly defer the late submit_move_intent contract cleanup
+enforce the locked late submit_move_intent closure contract
 verify docs/todo/spec agree on v1 scope
 keep v2 features represented as content omissions, typed disabled responses, or spec.v2.md backlog items
 ```

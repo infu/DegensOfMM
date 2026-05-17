@@ -1,7 +1,8 @@
 CANDID_EXTRACTOR ?= $(HOME)/.cargo/bin/candid-extractor
 IC_WASM ?= ic-wasm
+TEST_JOBS ?= 8
 
-.PHONY: build-wasm check-canister dfx-deploy-local dfx-stop-local regression smoke smoke-e2e test test-generated test-pocket test-pure test-schema
+.PHONY: build-wasm check-canister dfx-deploy-local dfx-stop-local regression smoke smoke-e2e test test-fast test-generated test-groups test-groups-list test-pocket test-pure test-schema
 
 test: regression
 
@@ -22,6 +23,15 @@ test-schema:
 
 test-generated:
 	cargo test -p domm-generated-session-tests
+
+test-fast:
+	DOMM_TEST_JOBS=$(TEST_JOBS) scripts/run-test-groups.sh fast
+
+test-groups:
+	DOMM_TEST_JOBS=$(TEST_JOBS) scripts/run-test-groups.sh $(GROUPS)
+
+test-groups-list:
+	scripts/run-test-groups.sh list
 
 test-pocket:
 	cargo test -p domm-pocket-ic-tests

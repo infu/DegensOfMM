@@ -11,18 +11,18 @@ use domm_degens_canister::{
     DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind, REQUIRED_GAME_ENDPOINTS,
 };
 use domm_game::{
-    ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
-    ChampionHirePreview, ChampionProgressionView, ChampionView, CommandResponse, CommandResult,
-    CommandStatus, CommandStatusView, ContentManifestResponse, DwellingPoolView,
-    DwellingRecruitPreview, FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView,
-    GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT,
-    MAX_CHUNK_LIMIT, MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage,
-    MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
-    OPENING_QUEST_KEY, ObjectView, ObjectViewPage, ObjectiveProgressView,
-    PROCEDURAL_GENERATION_KEY, ParticipantView, PlayerView, ProceduralMapView, QuestPreview,
-    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SetupProgressView,
-    SiegeRulesView, SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
-    opening_viewport_for_slot,
+    ApiError, ApiEventPage, ApiTownView, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BattleActionInput,
+    BattleView, BuildPreview, ChampionHirePreview, ChampionProgressionView, ChampionView,
+    CommandResponse, CommandResult, CommandStatus, CommandStatusView, ContentManifestResponse,
+    DwellingPoolView, DwellingRecruitPreview, FIRST_PLAYABLE_MAP_HEIGHT, FIRST_PLAYABLE_MAP_WIDTH,
+    FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, GameView, GameViewRequest,
+    LobbyCommandResponse, LobbyCommandResult, MARKET_TRADE_MAX_INPUT, MAX_CHUNK_LIMIT,
+    MAX_LIST_LIMIT, MAX_MOVE_PATH_STEPS_LIMIT, MAX_OBJECT_LIMIT, MapChunkPage, MarketTradePreview,
+    MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView, OPENING_QUEST_KEY, ObjectView,
+    ObjectViewPage, ObjectiveProgressView, PROCEDURAL_GENERATION_KEY, ParticipantView, PlayerView,
+    ProceduralMapView, QuestPreview, RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView,
+    SetupProgressView, SiegeRulesView, SkirmishSettingsView, TavernOffersView, Viewport,
+    WorldEventsView, opening_viewport_for_slot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -7043,9 +7043,10 @@ fn scenario_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkScenarioSum
         .map(|(id, calls)| {
             let first = calls.first().expect("scenario group should not be empty");
             let last = calls.last().expect("scenario group should not be empty");
+            let description = scenario_description(&id, &calls);
             BenchmarkScenarioSummary {
                 label: scenario_label(&id).to_string(),
-                description: scenario_description(&id).to_string(),
+                description,
                 players: 2,
                 call_count: u64::try_from(calls.len()).unwrap_or(u64::MAX),
                 query_count: count_kind(&calls, "query"),
@@ -7187,6 +7188,10 @@ fn count_kind(calls: &[&BenchmarkCallRecord], kind: &str) -> u64 {
     u64::try_from(calls.iter().filter(|call| call.kind == kind).count()).unwrap_or(u64::MAX)
 }
 
+fn count_method(calls: &[&BenchmarkCallRecord], method: &str) -> u64 {
+    u64::try_from(calls.iter().filter(|call| call.method == method).count()).unwrap_or(u64::MAX)
+}
+
 fn average_u64(values: &[u64]) -> Option<f64> {
     if values.is_empty() {
         return None;
@@ -7302,7 +7307,7 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
     for scenario in &summary.scenarios {
         out.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} |\n",
-            scenario.label,
+            scenario_summary_label(scenario),
             scenario.call_count,
             format_mb_from_bytes_i128(scenario.memory_delta_bytes),
             format_pct(scenario.memory_change_pct),
@@ -7335,6 +7340,14 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
         out.push('\n');
     }
     out
+}
+
+fn scenario_summary_label(scenario: &BenchmarkScenarioSummary) -> String {
+    if scenario.description.is_empty() {
+        scenario.label.clone()
+    } else {
+        format!("{}: {}", scenario.label, scenario.description)
+    }
 }
 
 fn format_pct(value: Option<f64>) -> String {
@@ -7391,24 +7404,64 @@ fn scenario_label(id: &str) -> &str {
     }
 }
 
-fn scenario_description(id: &str) -> &str {
-    match id {
-        "game_start" => {
-            "Two players register, create, join, ready, and activate first-playable setup."
-        }
-        "opening_views" => {
-            "One player loads opening game state, chunks, objects, participant, and champions."
-        }
-        "resource_town" => {
-            "One champion moves to a resource, syncs pickup, builds a town structure, and recruits."
-        }
-        "guarded_mine_battle" => {
-            "One champion captures a mine, triggers a neutral battle, resolves it, and checks aftermath."
-        }
-        "aftermath_victory" => {
-            "Late route crosses the map, defeats the opponent, captures town, finalizes victory, and reads history."
-        }
-        _ => "Benchmark scenario.",
+fn scenario_description(id: &str, calls: &[&BenchmarkCallRecord]) -> String {
+    let movement_paths = count_method(calls, "submit_move_intent");
+    let battle_actions = count_method(calls, "submit_battle_action");
+    let battle_syncs = count_method(calls, "sync_battle");
+    let battle_reads = count_method(calls, "get_battle_state");
+    let history_reads = count_method(calls, "get_match_history");
+    let event_reads = count_method(calls, "get_events_after");
+    let town_reads = count_method(calls, "get_town_view");
+    let battle_activity = battle_actions + battle_syncs + battle_reads;
+
+    let mut facts = vec![
+        "2 players".to_string(),
+        format!(
+            "map {}x{}",
+            FIRST_PLAYABLE_MAP_WIDTH, FIRST_PLAYABLE_MAP_HEIGHT
+        ),
+    ];
+    if battle_activity > 0 {
+        facts.push(format!(
+            "battle grid {}x{}",
+            BATTLE_GRID_WIDTH, BATTLE_GRID_HEIGHT
+        ));
+    }
+    facts.push(count_label(movement_paths, "movement path"));
+    facts.push(count_label(battle_actions, "battle action"));
+    if battle_syncs > 0 {
+        facts.push(count_label(battle_syncs, "battle sync"));
+    }
+    if battle_reads > 0 {
+        facts.push(count_label(battle_reads, "battle read"));
+    }
+    if town_reads > 0 {
+        facts.push(count_label(town_reads, "town read"));
+    }
+    if history_reads > 0 {
+        facts.push(count_label(history_reads, "history read"));
+    }
+    if event_reads > 0 {
+        facts.push(count_label(event_reads, "event read"));
+    }
+
+    let focus = match id {
+        "game_start" => "register/create/join/ready/start active session",
+        "opening_views" => "opening viewport, chunks, objects, participant, champions",
+        "resource_town" => "resource pickup, town build, recruitment",
+        "guarded_mine_battle" => "guarded mine fight, capture, aftermath checks",
+        "aftermath_victory" => "cross-map route, champion fight, town capture, victory history",
+        _ => "benchmark route",
+    };
+
+    format!("{}; {}", facts.join("; "), focus)
+}
+
+fn count_label(count: u64, label: &str) -> String {
+    if count == 1 {
+        format!("1 {label}")
+    } else {
+        format!("{count} {label}s")
     }
 }
 
@@ -7520,6 +7573,31 @@ fn benchmark_summary_excludes_internal_methods_and_tracks_coverage() {
             .iter()
             .any(|method| method.method == "get_diagnostic_storage_snapshot")
     );
+}
+
+#[test]
+fn benchmark_summary_renders_scenario_workload_context() {
+    let calls = vec![
+        benchmark_test_call("aftermath_victory", "submit_move_intent", "update"),
+        benchmark_test_call("aftermath_victory", "submit_move_intent", "update"),
+        benchmark_test_call("aftermath_victory", "submit_battle_action", "update"),
+        benchmark_test_call("aftermath_victory", "sync_battle", "update"),
+        benchmark_test_call("aftermath_victory", "get_battle_state", "query"),
+        benchmark_test_call("aftermath_victory", "get_match_history", "query"),
+    ];
+
+    let scenarios = scenario_summaries(&calls);
+    let label = scenario_summary_label(&scenarios[0]);
+
+    assert!(label.contains("Aftermath and victory: 2 players"));
+    assert!(label.contains("map 48x48"));
+    assert!(label.contains("battle grid 12x10"));
+    assert!(label.contains("2 movement paths"));
+    assert!(label.contains("1 battle action"));
+    assert!(label.contains("1 battle sync"));
+    assert!(label.contains("1 battle read"));
+    assert!(label.contains("1 history read"));
+    assert!(label.contains("cross-map route"));
 }
 
 #[test]

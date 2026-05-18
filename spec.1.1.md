@@ -42,27 +42,27 @@ Checkpoint rules:
   explains what was accomplished. Each checkpoint commit should include the
   relevant `spec.1.1.md` checkbox/evidence update.
 
-Current timing notes from 2026-05-17:
+Current timing notes from 2026-05-18 full regression:
 
 | Test group | Last observed result/time | Parallel status / next action |
 | --- | --- | --- |
-| PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Revalidated in the 2026-05-18 `pocket-parallel` phase: `pocket-lock` 1.343s and `pocket-smoke` 0.592s |
+| PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Revalidated in the 2026-05-18 full-regression `pocket-parallel` phase: `pocket-lock` 1.997s and `pocket-smoke` 1.116s |
 | Fast timing harness | Added 2026-05-17: `scripts/run-test-groups.sh`, `make test-fast`, `make test-groups`, and `make test-groups-list` | `make test-fast` passed after prebuild; group wall times: pure 2.277s, schema 0.482s, generated 0.521s, canister-check 0.500s, pocket-lock 1.373s |
-| Endpoint inventory/public surface | Revalidated 2026-05-18 in 148.950s during the 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4`; no longer fully serial in `make test-pocket` |
-| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 112.163s during the 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Gate K battle/victory/history | Revalidated 2026-05-18 in 282.342s during the 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Gate L first-playable route | Revalidated 2026-05-18 in 326.891s during the 4-worker `pocket-long` phase after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=4`; still a long smoke and out of the fast inner loop |
-| Movement crossing conflict | Revalidated 2026-05-18 in 84.479s during the 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Stationary enemy blocker | Revalidated 2026-05-18 in 90.791s during the 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 83.024s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Gate M web client probe | Revalidated 2026-05-18 in 354.612s in the isolated `pocket-gate-m` phase after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
-| Timer jobs PocketIC group | Revalidated 2026-05-18 in 65.290s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| End-turn PocketIC group | Revalidated 2026-05-18 in 62.934s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 93.199s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Render projection PocketIC group | Revalidated 2026-05-18 in 159.264s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`; still a long focused route |
-| Query budget PocketIC group | Revalidated 2026-05-18 in 55.916s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Command recovery PocketIC group | Revalidated 2026-05-18 in 144.632s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`, but still not an inner-loop test |
-| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 76.676s during the 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Endpoint inventory/public surface | Revalidated 2026-05-18 in 147.512s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4`; no longer fully serial in `make test-pocket` |
+| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 111.473s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
+| Gate K battle/victory/history | Revalidated 2026-05-18 in 282.888s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
+| Gate L first-playable route | Revalidated 2026-05-18 in 322.933s during the full-regression 4-worker `pocket-long` phase after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=4`; still a long smoke and out of the fast inner loop |
+| Movement crossing conflict | Revalidated 2026-05-18 in 84.788s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
+| Stationary enemy blocker | Revalidated 2026-05-18 in 90.571s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
+| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 195.508s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Gate M web client probe | Revalidated 2026-05-18 in 460.601s in the full-regression isolated `pocket-gate-m` phase after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
+| Timer jobs PocketIC group | Revalidated 2026-05-18 in 178.582s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| End-turn PocketIC group | Revalidated 2026-05-18 in 176.090s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 207.284s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Render projection PocketIC group | Revalidated 2026-05-18 in 274.274s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`; still a long focused route |
+| Query budget PocketIC group | Revalidated 2026-05-18 in 169.144s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Command recovery PocketIC group | Revalidated 2026-05-18 in 259.327s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`, but still not an inner-loop test |
+| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 188.763s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
 | Local DFX/blast smoke group | Passed manual direct smoke 2026-05-17: release deploy build finished in 2m27s, `blast scan` exposed 63 methods, setup reached `active` at `start:6`, direct movement/build/recruit/collect calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because `sync_session_turn` waits on the local replica deadline |
 
 Testing-first todo:
@@ -89,16 +89,19 @@ Testing-first todo:
   after movement event yielding, explicit post-capture income sync coverage,
   and row-local battle spell metadata kept `get_battle_state` under the query
   instruction limit. Evidence also included `cargo check -p
-  domm-degens-canister`.
+  domm-degens-canister`. Revalidated 2026-05-18 in the full-regression
+  `pocket-long` phase, passing in 147.512s.
 - [x] Gate J strategic loop/IcyDB persistence group:
   `pocket_ic_gate_j_strategic_loop_persists_icydb_rows`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-j`
   passing in 219.521s after prebuild. Revalidated 2026-05-17 in 110.259s
   after movement event yielding and explicit follow-up income sync coverage.
-  Evidence also included `cargo check -p domm-degens-canister`.
+  Evidence also included `cargo check -p domm-degens-canister`. Revalidated
+  2026-05-18 in the full-regression `pocket-long` phase, passing in 111.473s.
 - [x] Gate K battle aftermath/victory/history group:
   `pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows`
-  currently passes; retime after the shared PocketIC lock is fixed.
+  revalidated 2026-05-18 in the full-regression `pocket-long` phase, passing in
+  282.888s.
 - [x] Gate L first-playable canister route group:
   `pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`
   passed cleanly in about 7.2 minutes. Revalidated 2026-05-18 with
@@ -108,25 +111,28 @@ Testing-first todo:
   amplification, correct defender-side battle winners, and a two-caller
   champion battle resolver that keeps the scripted Gate L route deterministic.
   Evidence also included `cargo check -p domm-degens-canister` and `cargo test
-  -p domm-game`.
+  -p domm-game`. Revalidated 2026-05-18 in the full-regression `pocket-long`
+  phase, passing in 322.933s.
 - [x] Movement crossing conflict group:
   `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh movement`
   passing in 181.928s after prebuild. Revalidated 2026-05-17 in 202.583s
   after phased champion battle setup removed the crossing sync instruction
   trap. Evidence also included `cargo check -p domm-degens-canister`.
+  Revalidated 2026-05-18 in the full-regression `pocket-long` phase, passing in
+  84.788s.
 - [x] Stationary enemy blocker group:
   `pocket_ic_stationary_enemy_blocker_starts_champion_encounter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh movement
   stationary` passing the stationary group in 194.921s after prebuild.
   Revalidated 2026-05-17 in 237.215s after phased champion battle setup and
   the one-step blocker stop-coordinate fix. Evidence also included `cargo
-  check -p domm-degens-canister`.
+  check -p domm-degens-canister`. Revalidated 2026-05-18 in the full-regression
+  `pocket-long` phase, passing in 90.571s.
 - [x] Week-two tavern/recruit growth group:
   `pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance`
-  currently passes; revalidated 2026-05-18 in the `pocket-parallel` phase with
-  `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pocket-parallel`, passing in
-  78.726s.
+  currently passes; revalidated 2026-05-18 in the full-regression
+  `pocket-parallel` phase, passing in 195.508s.
 - [x] Gate M web client probe group:
   `gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-m`
@@ -141,28 +147,32 @@ Testing-first todo:
   errors. Evidence also included `cargo check -p domm-degens-canister`,
   `cargo test -p domm-degens-canister
   repository_hot_path_plans_are_indexed_and_bounded -- --nocapture`, and a
-  Gate M compile-only build.
+  Gate M compile-only build. Revalidated 2026-05-18 in the full-regression
+  isolated `pocket-gate-m` phase, passing in 460.601s.
 - [x] Timer jobs PocketIC group: scheduling, duplicate timer no-op, expired
   lease recovery, post-upgrade repair, and deadline progression. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh timer-jobs`
   passing in 59.586s after prebuild. Evidence also included `cargo check -p
   domm-degens-canister` and a focused no-run build for
   `pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases`.
-  Revalidated 2026-05-18 in the `pocket-parallel` phase, passing in 61.842s.
+  Revalidated 2026-05-18 in the full-regression `pocket-parallel` phase,
+  passing in 178.582s.
 - [x] End-turn PocketIC group: ended-player-still-acts, final participant
   closes the turn, stale turn commands, and replay semantics. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh end-turn`
   passing in 59.621s after prebuild. Evidence also included `cargo check -p
   domm-degens-canister` and a focused no-run build for
   `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions`. Revalidated
-  2026-05-18 in the `pocket-parallel` phase, passing in 58.724s.
+  2026-05-18 in the full-regression `pocket-parallel` phase, passing in
+  176.090s.
 - [x] Battle-round readiness PocketIC group: timer auto-defend,
   `end_battle_turn`, auto-ready stacks, and replay semantics. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh
   battle-round` passing in 89.423s after prebuild. Evidence also included
   `cargo check -p domm-degens-canister` and a focused no-run build for
   `pocket_ic_battle_round_readiness_advances_and_replays`. Revalidated
-  2026-05-18 in the `pocket-parallel` phase, passing in 88.849s.
+  2026-05-18 in the full-regression `pocket-parallel` phase, passing in
+  207.284s.
 - [x] Render projection PocketIC group: live object hydration, consumed piles,
   defeated neutrals, captured mines, champion coordinates, fog, and cursors.
   Completed 2026-05-17 with `DOMM_TEST_JOBS=1
@@ -174,7 +184,7 @@ Testing-first todo:
   champion coordinates; consumed-pile disappearance remains covered by the
   already-passing Gate J route while the pickup sync path is tracked under the
   query budget/test-speed work. Revalidated 2026-05-18 in the
-  `pocket-parallel` phase, passing in 155.529s.
+  full-regression `pocket-parallel` phase, passing in 274.274s.
 - [x] Query budget group: representative preview/submit movement paths,
   bounded render reads, and query instruction ceilings. Completed 2026-05-17
   with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh query-budget` passing in
@@ -184,8 +194,8 @@ Testing-first todo:
   covers bounded `preview_move_path`, `submit_move_intent`, cursor-paged
   `get_visible_objects`, compact `get_game_view`, and a 64 KiB max Candid
   response-size ceiling while verifying the queries execute below PocketIC
-  instruction limits. Revalidated 2026-05-18 in the `pocket-parallel` phase,
-  passing in 52.978s.
+  instruction limits. Revalidated 2026-05-18 in the full-regression
+  `pocket-parallel` phase, passing in 169.144s.
 - [x] Command recovery group: build, recruit, tavern hire, dwelling recruit,
   ledger effects, and battle aftermath retry/idempotency. Completed 2026-05-17
   with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh command-recovery` passing
@@ -196,7 +206,8 @@ Testing-first todo:
   stability for build, town recruit, tavern hire, and dwelling recruit;
   resource ledgers and command effects do not duplicate on replay, and resolved
   battle aftermath exact/fresh retries remain no-ops for event/effect rows.
-  Revalidated 2026-05-18 in the `pocket-parallel` phase, passing in 140.395s.
+  Revalidated 2026-05-18 in the full-regression `pocket-parallel` phase,
+  passing in 259.327s.
 - [x] Visibility/redaction group: opponent events, neutral battle details,
   town build/recruit visibility, and public/private payload separation.
   Completed 2026-05-17 with `DOMM_TEST_JOBS=1
@@ -208,7 +219,7 @@ Testing-first todo:
   public redacted town build/recruit payloads, owner private payloads, hidden
   town internals staying hidden, and neutral battle state/details staying
   inaccessible to an uninvolved opponent. Revalidated 2026-05-18 in the
-  `pocket-parallel` phase, passing in 72.574s.
+  full-regression `pocket-parallel` phase, passing in 188.763s.
 - [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17
   with `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pure schema generated
   canister-check` passing the pure group in 2.018s after prebuild.
@@ -217,7 +228,10 @@ Testing-first todo:
   domm-degens-canister`, focused `repository_hot_path_plans_are_indexed_and_bounded`,
   focused `lobby_session_setup_recovers_from_starting_state_and_replays_nonce`
   passing in 288.42s, and full `cargo test -p domm-degens-canister` passing
-  14 tests in 288.02s.
+  14 tests in 288.02s. Revalidated 2026-05-18 after live battle-state learned
+  spell hydration was fixed: focused
+  `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` passed in
+  282.07s and `make check-canister` passed.
 - [x] Generated-session/schema group: `make test-generated` and repository
   inventory coverage. Completed 2026-05-17 with `DOMM_TEST_JOBS=4
   scripts/run-test-groups.sh pure schema generated canister-check` passing
@@ -240,20 +254,24 @@ Testing-first todo:
   `ParticipantKnownObject=13`, `ParticipantObjectVisit=1`,
   `ResourceLedgerEntry=5`, `MovementSnapshot=2`, `TownBuilding=3`, and
   `TownGarrisonStack=1`.
-- [ ] Full regression orchestration group: `make regression`,
+- [x] Full regression orchestration group: `make regression`,
   `make check-canister`, and `make test-pocket` with a final timing table and
-  parallel-safe command recipe. In progress 2026-05-18: `make test-pocket`
-  now runs `pocket-parallel` with `TEST_JOBS`, `pocket-long` with
-  `LONG_TEST_JOBS`, and isolated `pocket-gate-m` with `GATE_M_TEST_JOBS`.
+  parallel-safe command recipe. Completed 2026-05-18: `make test-pocket` now
+  runs `pocket-parallel` with `TEST_JOBS`, `pocket-long` with `LONG_TEST_JOBS`,
+  and isolated `pocket-gate-m` with `GATE_M_TEST_JOBS`.
   Evidence: `bash -n scripts/run-test-groups.sh`, `scripts/run-test-groups.sh
   list`, `make -n test-pocket`, `make check-canister`, a 4-worker trial of
   `endpoint gate-j gate-k gate-l movement stationary` passing, and
-  `make test-pocket` passing on 2026-05-18. Final `make test-pocket` phase
-  timings: `pocket-parallel` at 8 workers passed all 10 groups with max group
-  time 159.264s, `pocket-long` at 4 workers passed all 6 long endpoint groups
-  with max group time 326.891s, and isolated `pocket-gate-m` passed in
-  354.612s. `make regression` still needs the final non-PocketIC workspace run
-  plus this optimized PocketIC recipe before this checkbox is closed.
+  `make test-pocket` passing on 2026-05-18. Final full-regression evidence:
+  `make regression` passed in 1389.54s real time, including the non-PocketIC
+  workspace tests and the optimized PocketIC recipe. Final PocketIC phase
+  timings from `target/test-groups/20260518-051001`,
+  `target/test-groups/20260518-051458`, and `target/test-groups/20260518-052022`:
+  `pocket-parallel` at 8 workers passed all 10 groups with max group time
+  274.274s, `pocket-long` at 4 workers passed all 6 long endpoint groups with
+  max group time 322.933s, and isolated `pocket-gate-m` passed in 460.601s.
+  After the run, one leftover PocketIC server from Gate M was terminated and the
+  process check was clean.
 
 ## Five-Agent Investigation Synthesis
 
@@ -1657,12 +1675,16 @@ income, and full regression/PocketIC evidence.
   are active only where implemented.
 - [x] Audit `spec.1.1.md`: Topics 10, 11, and 14 match the locked v1.1
   decisions and any deferred mechanics are in `spec.v2.md`.
-- [ ] Gate tests: focused pure/canister tests plus `make regression`.
+- [x] Gate tests: focused pure/canister tests plus `make regression`. Completed
+  2026-05-18 with the focused canister service spell test passing in 282.07s,
+  `make check-canister`, and `make regression` passing in 1389.54s real time.
 
 ### Gate 14. Final Spec And Playability Audit
 
-- [ ] Run `make regression`, `make check-canister`, `make test-pocket`,
+- [x] Run `make regression`, `make check-canister`, `make test-pocket`,
   generated-session tests, and the agent-run local `blast` smoke checklist.
+  Completed with the 2026-05-18 full regression/check-canister/test-pocket run
+  plus the 2026-05-17 local `blast` smoke evidence.
 - [ ] Audit every active `spec.md` v1.1 rule against implementation and tests.
 - [ ] Audit every topic in `spec.1.1.md` and mark remaining work as fixed,
   deferred to `spec.v2.md`, or still blocking in `spec.missing.md`.

@@ -206,29 +206,9 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
         "not_session_creator"
     );
 
-    let mut active_start = None;
-    for step in 0..18 {
-        let nonce = format!("nonce:presence:start:{step}");
-        let started = update_as::<LobbyCommandResponse>(
-            &fixture,
-            player_one,
-            "start_session",
-            (session_id.clone(), nonce.clone()),
-        )
-        .unwrap_or_else(|error| panic!("start_session step {step} should decode: {error:?}"))
-        .unwrap_or_else(|error| panic!("start_session step {step} should succeed: {error:?}"));
-        assert_eq!(started.status, CommandStatus::Applied);
-        let state = match &started.result {
-            LobbyCommandResult::Session(session) => session.state.as_str(),
-            other => panic!("start_session returned unexpected result: {other:?}"),
-        };
-        if state == "active" {
-            active_start = Some((started, nonce));
-            break;
-        }
-    }
-    let (active_start, active_start_nonce) =
-        active_start.expect("phased start_session should finish setup");
+    let active_start_nonce = "nonce:presence:start".to_string();
+    let active_start =
+        start_session_once_and_wait_active(&fixture, player_one, &session_id, &active_start_nonce);
 
     let participant_one = query_as::<ParticipantView>(
         &fixture,
@@ -5170,28 +5150,74 @@ fn start_active_two_player_session(
     .expect("player two ready should decode")
     .expect("player two ready should succeed");
 
-    for step in 0..18 {
-        let started = update_as::<LobbyCommandResponse>(
-            fixture,
-            player_one,
-            "start_session",
-            (
-                session_id.clone(),
-                format!("nonce:{nonce_stem}:start:{step}"),
-            ),
-        )
-        .expect("start_session should decode")
-        .expect("start_session should succeed");
-        assert_eq!(started.status, CommandStatus::Applied);
-        if matches!(
-            started.result,
-            LobbyCommandResult::Session(ref session) if session.state == "active"
-        ) {
-            return session_id;
-        }
-    }
+    start_session_once_and_wait_active(
+        fixture,
+        player_one,
+        &session_id,
+        &format!("nonce:{nonce_stem}:start"),
+    );
+    session_id
+}
 
-    panic!("phased start_session should finish setup");
+fn start_session_once_and_wait_active(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    client_nonce: &str,
+) -> LobbyCommandResponse {
+    let started = update_as::<LobbyCommandResponse>(
+        fixture,
+        player,
+        "start_session",
+        (session_id.to_string(), client_nonce.to_string()),
+    )
+    .expect("start_session should decode")
+    .expect("start_session should succeed");
+    assert_eq!(started.status, CommandStatus::Applied);
+    match &started.result {
+        LobbyCommandResult::Session(session) => {
+            assert!(
+                matches!(session.state.as_str(), "starting" | "active"),
+                "one-call start_session should return starting or active, got {}",
+                session.state
+            );
+        }
+        other => panic!("start_session returned unexpected result: {other:?}"),
+    }
+    wait_for_session_active(fixture, player, session_id);
+    started
+}
+
+fn wait_for_session_active(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+) -> SessionView {
+    let mut last_state = String::new();
+    for _ in 0..80 {
+        let session =
+            query_as::<SessionView>(fixture, player, "get_session", (session_id.to_string(),))
+                .expect("started session should decode")
+                .expect("started session should load");
+        if session.state == "active" {
+            return session;
+        }
+        last_state = session.state;
+        advance_time_for_timers(fixture, 5);
+    }
+    let jobs = diagnostic_system_jobs(fixture, Some(session_id.to_string()), None);
+    panic!(
+        "one-call start_session timer continuation should activate session, last state {last_state}, jobs {:?}",
+        jobs.jobs
+            .iter()
+            .map(|job| (
+                job.job_key.as_str(),
+                job.job_kind.as_str(),
+                job.status.as_str(),
+                job.attempt_count
+            ))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[derive(Default)]
@@ -5487,29 +5513,63 @@ fn gate_start_active_two_player_session(
     .expect("player two ready should succeed");
     metrics.observe_lobby_response(&ready_two);
 
-    for step in 0..18 {
-        let started = gate_update_as::<LobbyCommandResponse>(
-            metrics,
-            fixture,
-            player_one,
-            "start_session",
-            (
-                session_id.clone(),
-                format!("nonce:{nonce_stem}:start:{step}"),
-            ),
-        )
-        .expect("start_session should succeed");
-        metrics.observe_lobby_response(&started);
-        assert_eq!(started.status, CommandStatus::Applied);
-        if matches!(
-            started.result,
-            LobbyCommandResult::Session(ref session) if session.state == "active"
-        ) {
-            return session_id;
+    gate_start_session_once_and_wait_active(
+        metrics,
+        fixture,
+        player_one,
+        &session_id,
+        &format!("nonce:{nonce_stem}:start"),
+    );
+    session_id
+}
+
+fn gate_start_session_once_and_wait_active(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+    client_nonce: &str,
+) -> LobbyCommandResponse {
+    let started = gate_update_as::<LobbyCommandResponse>(
+        metrics,
+        fixture,
+        player,
+        "start_session",
+        (session_id.to_string(), client_nonce.to_string()),
+    )
+    .expect("start_session should succeed");
+    metrics.observe_lobby_response(&started);
+    assert_eq!(started.status, CommandStatus::Applied);
+    match &started.result {
+        LobbyCommandResult::Session(session) => {
+            assert!(
+                matches!(session.state.as_str(), "starting" | "active"),
+                "one-call start_session should return starting or active, got {}",
+                session.state
+            );
         }
+        other => panic!("start_session returned unexpected result: {other:?}"),
     }
 
-    panic!("phased start_session should finish setup");
+    let mut last_state = String::new();
+    for _ in 0..80 {
+        let session = gate_query_as::<SessionView>(
+            metrics,
+            fixture,
+            player,
+            "get_session",
+            (session_id.to_string(),),
+        )
+        .expect("started session should load");
+        if session.state == "active" {
+            return started;
+        }
+        last_state = session.state;
+        advance_time_for_timers(fixture, 5);
+    }
+    panic!(
+        "one-call start_session timer continuation should activate session, last state {last_state}"
+    );
 }
 
 fn gate_owned_champion_id(

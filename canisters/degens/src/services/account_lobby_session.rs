@@ -550,30 +550,6 @@ pub(crate) fn start_session(
                 })?;
             }
 
-            #[cfg(target_arch = "wasm32")]
-            if !started_now {
-                let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
-                if setup_complete {
-                    session.state = "active".to_string();
-                    session = sessions::update_session(session)?;
-                    if let Some(job) = system_job_repo::find_system_job_by_key(
-                        &setup_session_job_key(session.id()),
-                    )? {
-                        system_job_repo::complete_system_job(job)?;
-                    }
-                    system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-                        job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
-                        job_kind: "turn_deadline".to_string(),
-                        session_id: session.id(),
-                        battle_id: None,
-                        turn_number: Some(session.current_turn),
-                        due_at: session.turn_deadline_at,
-                        command_id: Some(setup_command.id()),
-                        cursor_json: None,
-                    })?;
-                }
-            }
-
             #[cfg(not(target_arch = "wasm32"))]
             {
                 if let Some(job) =

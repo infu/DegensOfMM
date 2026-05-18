@@ -1405,10 +1405,23 @@ income, and full regression/PocketIC evidence.
 
 ### Gate 3. One-Call `start_session`
 
-- [ ] Change `start_session` so the host calls it once. It moves the session to
+- [x] Change `start_session` so the host calls it once. It moves the session to
   `starting`, creates/loads `setup_session:{session_id}`, persists cursor state,
   and starts fresh-message continuation work.
+  - Completed 2026-05-18 by removing the WASM repeated-call setup fallback from
+    `start_session` and updating the PocketIC endpoint and Gate M helpers to
+    issue one `start_session` update, then wait for the persisted
+    `setup_session:{session_id}` job to advance the session through fresh timer
+    messages. Focused evidence:
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture`
+    passed in 149.12s, `cargo test -p domm-pocket-ic-tests --test
+    client_probe_canister --no-run` passed, and `make check-canister` passed.
 - [ ] Support zero-delay timer continuation as the default.
+  - Note from 2026-05-18 implementation: PocketIC did not execute
+    `set_timer(Duration::from_millis(0), ...)` reliably for setup continuation;
+    the production path still uses due-now durable jobs with the existing 1ms
+    timer minimum. Keep this item open for a dedicated zero-delay timer fix.
 - [ ] Allow awaited self-call/inter-canister continuation only if every phase is
   a real IC message boundary and persists cursor/effect state before awaiting.
 - [ ] Ensure replaying the original `start_session` nonce while setup is
@@ -1418,6 +1431,10 @@ income, and full regression/PocketIC evidence.
 - [ ] Add PocketIC tests proving one call reaches `active`, artificial phase
   caps continue through fresh messages, replay is idempotent, and upgrade during
   `starting` resumes.
+  - Partial evidence 2026-05-18: the endpoint route now proves one
+    `start_session` call reaches `active` through the durable setup job. Replay
+    and upgrade-during-starting coverage still need a targeted setup test before
+    this checkbox closes.
 - [ ] Audit `spec.md`: session setup saga, setup phase list, row caps, and
   public API contract all describe one client call.
 - [ ] Audit `spec.1.1.md`: Topic 13 and first-gate criteria no longer mention

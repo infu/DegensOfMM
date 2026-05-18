@@ -871,24 +871,29 @@ impl WebClientBackend for CanisterWebClientBackend {
         session_id: &str,
         client_nonce: &str,
     ) -> LobbyCommandResponse {
-        let mut last = None;
-        for step in 0..18 {
-            let response = self
-                .update_lobby_response(
-                    caller,
-                    "start_session",
-                    (
-                        session_id.to_string(),
-                        format!("{client_nonce}:phase:{step}"),
-                    ),
-                )
-                .expect("start_session should succeed through canister");
-            let active = matches!(
-                response.result,
-                LobbyCommandResult::Session(ref session) if session.state == "active"
-            );
-            last = Some(response);
-            if active {
+        let mut response = self
+            .update_lobby_response(
+                caller,
+                "start_session",
+                (session_id.to_string(), client_nonce.to_string()),
+            )
+            .expect("start_session should succeed through canister");
+        match &response.result {
+            LobbyCommandResult::Session(session) => {
+                assert!(
+                    matches!(session.state.as_str(), "starting" | "active"),
+                    "one-call start_session should return starting or active, got {}",
+                    session.state
+                );
+            }
+            other => panic!("start_session returned unexpected result: {other:?}"),
+        }
+
+        for _ in 0..80 {
+            let session = self
+                .query_result::<SessionView>(caller, "get_session", (session_id.to_string(),))
+                .expect("started session should load after start");
+            if session.state == "active" {
                 self.session_id = Some(session_id.to_string());
                 let participant = self
                     .query_result::<ParticipantView>(
@@ -898,10 +903,12 @@ impl WebClientBackend for CanisterWebClientBackend {
                     )
                     .expect("west participant should load after start");
                 self.player_one_participant_id = Some(participant.participant_id);
-                return last.expect("active response should be present");
+                response.result = LobbyCommandResult::Session(session);
+                return response;
             }
+            self.advance_time_ms(5);
         }
-        last.expect("start_session should return at least one response")
+        panic!("one-call start_session timer continuation should activate session");
     }
 
     fn default_game_view(

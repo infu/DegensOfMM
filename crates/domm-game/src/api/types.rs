@@ -220,6 +220,21 @@ pub enum LobbyCommandResult {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct SetupProgressView {
+    pub session_id: String,
+    pub session_state: String,
+    pub setup_complete: bool,
+    pub completed_effect_count: u32,
+    pub total_effect_count: u32,
+    pub last_effect_key: Option<String>,
+    pub next_effect_key: Option<String>,
+    pub setup_command_id: Option<String>,
+    pub setup_command_status: Option<String>,
+    pub setup_job_status: Option<String>,
+    pub setup_job_attempt_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub enum CommandResult {
     None,
     StrategicReceipt(StrategicCommandReceipt),

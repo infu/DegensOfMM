@@ -1443,8 +1443,21 @@ income, and full regression/PocketIC evidence.
     which starts a ready lobby once, proves the session parks in `starting`,
     replays the same start nonce, and verifies the setup command, setup job, and
     next setup effect are not duplicated or advanced by the replay.
-- [ ] Add setup progress to the lobby response or a dedicated setup progress
+- [x] Add setup progress to the lobby response or a dedicated setup progress
   query.
+  - Completed 2026-05-18 by adding the public
+    `get_setup_progress(session_id) -> SetupProgressView` query with session
+    state, completion count, last/next setup effect, setup command status, and
+    setup job status/attempts. Focused evidence:
+    `cargo test -p domm-degens-canister
+    services::tests::start_session_replay_while_starting_reuses_original_nonce_and_cursor
+    -- --nocapture` passed with parked setup progress assertions,
+    `cargo test -p domm-degens-canister
+    endpoint_inventory_has_required_groups_without_duplicates -- --nocapture`
+    passed, `cargo test -p domm-degens-canister
+    exported_candid_contains_every_required_game_endpoint -- --nocapture`
+    passed, `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    --no-run` passed, and `make check-canister` passed.
 - [ ] Add PocketIC tests proving one call reaches `active`, artificial phase
   caps continue through fresh messages, replay is idempotent, and upgrade during
   `starting` resumes.

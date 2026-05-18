@@ -8,8 +8,8 @@ use domm_game::{
     FIRST_PLAYABLE_MAP_HEIGHT, FIRST_PLAYABLE_MAP_WIDTH, FIRST_PLAYABLE_PLAYER_COUNT,
     FIRST_PLAYABLE_RULESET_ID, FIRST_PLAYABLE_RULESET_SLUG, FIRST_PLAYABLE_RULESET_VERSION,
     LobbyCommandResponse, LobbyCommandResult, MAX_LIST_LIMIT, ParticipantView, PlayerView,
-    ResourceCost, SessionView, TURN_DURATION_MS, first_playable_content_manifest,
-    first_playable_scenario,
+    ResourceCost, SessionView, SetupProgressView, TURN_DURATION_MS,
+    first_playable_content_manifest, first_playable_scenario,
 };
 use icydb::{
     traits::EntityValue,
@@ -589,6 +589,57 @@ pub(crate) fn start_session(
 pub(crate) fn get_session(session_id: String) -> Result<SessionView, ApiError> {
     let session = load_session_from_text(&session_id)?;
     session_view(&session)
+}
+
+pub(crate) fn get_setup_progress(session_id: String) -> Result<SetupProgressView, ApiError> {
+    let session = load_session_from_text(&session_id)?;
+    setup_progress_view(&session)
+}
+
+fn setup_progress_view(session: &GameSession) -> Result<SetupProgressView, ApiError> {
+    let setup_command = commands_events_effects::find_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        nonce_u64("setup_session", &session.id().to_string()),
+    )?;
+    let setup_job = system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?;
+    let total_effect_count = u32::try_from(SETUP_EFFECTS.len()).unwrap_or(u32::MAX);
+    let setup_complete = session.state == "active"
+        || setup_command
+            .as_ref()
+            .is_some_and(|command| command.status == "applied");
+    let completed_index = if setup_complete {
+        SETUP_EFFECTS.len()
+    } else {
+        setup_command
+            .as_ref()
+            .map_or(0, next_setup_effect_index)
+            .min(SETUP_EFFECTS.len())
+    };
+    let completed_effect_count = u32::try_from(completed_index).unwrap_or(u32::MAX);
+    let last_effect_key = setup_command
+        .as_ref()
+        .and_then(|command| json_string_field(command.result_json.as_deref(), "last_effect"));
+    let next_effect_key = SETUP_EFFECTS
+        .get(completed_index)
+        .map(|effect| effect.key.to_string());
+
+    Ok(SetupProgressView {
+        session_id: session.id().to_string(),
+        session_state: session.state.clone(),
+        setup_complete,
+        completed_effect_count,
+        total_effect_count,
+        last_effect_key,
+        next_effect_key,
+        setup_command_id: setup_command
+            .as_ref()
+            .map(|command| command.id().to_string()),
+        setup_command_status: setup_command.as_ref().map(|command| command.status.clone()),
+        setup_job_status: setup_job.as_ref().map(|job| job.status.clone()),
+        setup_job_attempt_count: setup_job.as_ref().map_or(0, |job| job.attempt_count),
+    })
 }
 
 pub(crate) fn get_my_participant(

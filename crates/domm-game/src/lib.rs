@@ -51,7 +51,7 @@ pub use api::{
     EventPageInfo, FixtureApiBackend, GameView, GameViewRequest, LobbyCommandResponse,
     LobbyCommandResult, MAX_CHUNK_LIMIT, MAX_EVENT_LIMIT, MAX_OBJECT_LIMIT, MAX_VIEWPORT_TILES,
     MatchHistoryPage, PageInfo, ParticipantSummary, RenderTimeMeta, SessionSummary,
-    opening_viewport_for_slot,
+    SetupProgressView, opening_viewport_for_slot,
 };
 pub use battle::{
     BATTLE_ACTION_DEADLINE_MS, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BATTLE_MAX_ROUNDS,

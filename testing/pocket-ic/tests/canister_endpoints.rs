@@ -19,8 +19,9 @@ use domm_game::{
     MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView,
     OPENING_QUEST_KEY, ObjectView, ObjectViewPage, ObjectiveProgressView,
     PROCEDURAL_GENERATION_KEY, ParticipantView, PlayerView, ProceduralMapView, QuestPreview,
-    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
-    SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView, opening_viewport_for_slot,
+    RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SetupProgressView,
+    SiegeRulesView, SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
+    opening_viewport_for_slot,
 };
 
 #[test]
@@ -209,6 +210,26 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
     let active_start_nonce = "nonce:presence:start".to_string();
     let active_start =
         start_session_once_and_wait_active(&fixture, player_one, &session_id, &active_start_nonce);
+    let setup_progress = query_as::<SetupProgressView>(
+        &fixture,
+        player_one,
+        "get_setup_progress",
+        (session_id.clone(),),
+    )
+    .expect("get_setup_progress should decode")
+    .expect("setup progress should be readable");
+    assert_eq!(setup_progress.session_id, session_id);
+    assert_eq!(setup_progress.session_state, "active");
+    assert!(setup_progress.setup_complete);
+    assert_eq!(
+        setup_progress.completed_effect_count,
+        setup_progress.total_effect_count
+    );
+    assert!(setup_progress.next_effect_key.is_none());
+    assert_eq!(
+        setup_progress.setup_command_status.as_deref(),
+        Some("applied")
+    );
 
     let participant_one = query_as::<ParticipantView>(
         &fixture,

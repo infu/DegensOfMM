@@ -11,7 +11,7 @@ pub use types::{
     BattleActionInput, BattleSummary, ChangedSubject, CommandResponse, CommandResult,
     ContentManifestResponse, EventPageInfo, GameView, GameViewRequest, LobbyCommandResponse,
     LobbyCommandResult, MatchHistoryPage, PageInfo, ParticipantSummary, RenderTimeMeta,
-    SessionSummary,
+    SessionSummary, SetupProgressView,
 };
 pub use view::{
     DEFAULT_CHUNK_LIMIT, DEFAULT_EVENT_LIMIT, DEFAULT_OBJECT_LIMIT, MAX_CHUNK_LIMIT,

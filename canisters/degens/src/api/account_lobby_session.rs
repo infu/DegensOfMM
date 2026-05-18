@@ -1,7 +1,7 @@
 use canic_cdk::{query, update};
 
 use crate::dto::public::{
-    ApiError, LobbyCommandResponse, ParticipantView, PlayerView, SessionView,
+    ApiError, LobbyCommandResponse, ParticipantView, PlayerView, SessionView, SetupProgressView,
 };
 
 #[update]
@@ -77,6 +77,11 @@ fn start_session(
 #[query]
 fn get_session(session_id: String) -> Result<SessionView, ApiError> {
     crate::services::account_lobby_session::get_session(session_id)
+}
+
+#[query]
+fn get_setup_progress(session_id: String) -> Result<SetupProgressView, ApiError> {
+    crate::services::account_lobby_session::get_setup_progress(session_id)
 }
 
 #[query]

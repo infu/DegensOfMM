@@ -25,7 +25,7 @@ use super::types::{
     ApiError, ApiEventPage, ApiEventView, ApiMetrics, ApiTownView, BattleActionInput,
     ChangedSubject, CommandResponse, CommandResult, ContentManifestResponse, EventPageInfo,
     GameView, GameViewRequest, LobbyCommandResponse, LobbyCommandResult, MatchHistoryPage,
-    PageInfo,
+    PageInfo, SetupProgressView,
 };
 use super::view::{
     MAX_CHUNK_LIMIT, MAX_OBJECT_LIMIT, api_event_from_command_event, build_game_view,
@@ -540,6 +540,24 @@ impl FixtureApiBackend {
         self.strategic
             .get_session_public(session_id)
             .map_err(|error| map_api_error("get_session_failed", error))
+    }
+
+    pub fn get_setup_progress(&self, session_id: &str) -> Result<SetupProgressView, ApiError> {
+        let session = self.get_session(session_id)?;
+        let setup_complete = session.state == "active";
+        Ok(SetupProgressView {
+            session_id: session.session_id,
+            session_state: session.state,
+            setup_complete,
+            completed_effect_count: u32::from(setup_complete),
+            total_effect_count: 1,
+            last_effect_key: setup_complete.then(|| "fixture_setup_complete".to_string()),
+            next_effect_key: (!setup_complete).then(|| "fixture_setup".to_string()),
+            setup_command_id: None,
+            setup_command_status: None,
+            setup_job_status: None,
+            setup_job_attempt_count: 0,
+        })
     }
 
     pub fn get_my_participant(

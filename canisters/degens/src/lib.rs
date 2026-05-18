@@ -20,8 +20,8 @@ use crate::dto::public::{
     DwellingRecruitPreview, GameView, GameViewRequest, LobbyCommandResponse, MapChunkPage,
     MarketTradePreview, MatchHistoryPage, MoveCoord, MovementPreview, NavalRoutesView, ObjectView,
     ObjectViewPage, ObjectiveProgressView, ParticipantView, PlayerView, ProceduralMapView,
-    QuestPreview, RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SiegeRulesView,
-    SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
+    QuestPreview, RecruitPreview, RecruitTarget, ScenarioRulesView, SessionView, SetupProgressView,
+    SiegeRulesView, SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
 };
 
 pub use contract::{

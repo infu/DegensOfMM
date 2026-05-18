@@ -121,6 +121,21 @@ fn start_session_replay_while_starting_reuses_original_nonce_and_cursor() {
             .expect("second setup effect lookup should not fail")
             .is_none()
     );
+    let progress = account_lobby_session::get_setup_progress(session_id.clone())
+        .expect("setup progress should be readable while starting");
+    assert_eq!(progress.session_id, session_id);
+    assert_eq!(progress.session_state, "starting");
+    assert!(!progress.setup_complete);
+    assert_eq!(progress.completed_effect_count, 1);
+    assert_eq!(
+        progress.last_effect_key.as_deref(),
+        Some("seed_ruleset_content")
+    );
+    assert_eq!(
+        progress.next_effect_key.as_deref(),
+        Some("seed_participants")
+    );
+    assert_eq!(progress.setup_command_status.as_deref(), Some("applying"));
 
     let setup_job_key = format!("setup_session:{session_id}");
     let setup_job = system_job_repo::find_system_job_by_key(&setup_job_key)
@@ -163,6 +178,13 @@ fn start_session_replay_while_starting_reuses_original_nonce_and_cursor() {
     .expect("setup command replay lookup should not fail")
     .expect("setup command should still exist after replay");
     assert_eq!(replayed_setup_command.id(), setup_command.id());
+    let replayed_progress = account_lobby_session::get_setup_progress(session_id.clone())
+        .expect("setup progress should still be readable after replay");
+    assert_eq!(
+        replayed_progress.completed_effect_count,
+        progress.completed_effect_count
+    );
+    assert_eq!(replayed_progress.next_effect_key, progress.next_effect_key);
     assert!(
         commands_events_effects::find_command_effect(setup_command.id(), "seed_participants")
             .expect("second setup effect replay lookup should not fail")

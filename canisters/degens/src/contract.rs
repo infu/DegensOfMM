@@ -110,6 +110,12 @@ pub const REQUIRED_GAME_ENDPOINTS: &[EndpointSpec] = &[
         fixture_mapping: "FixtureApiBackend::get_session",
     },
     EndpointSpec {
+        name: "get_setup_progress",
+        kind: EndpointKind::Query,
+        group: "account_lobby_session",
+        fixture_mapping: "FixtureApiBackend::get_setup_progress",
+    },
+    EndpointSpec {
         name: "get_my_participant",
         kind: EndpointKind::Query,
         group: "account_lobby_session",

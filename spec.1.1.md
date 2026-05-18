@@ -63,7 +63,7 @@ Current timing notes from 2026-05-18 full regression:
 | Query budget PocketIC group | Revalidated 2026-05-18 in 169.144s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
 | Command recovery PocketIC group | Revalidated 2026-05-18 in 259.327s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`, but still not an inner-loop test |
 | Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 188.763s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Local DFX/blast smoke group | Passed manual direct smoke 2026-05-17: release deploy build finished in 2m27s, `blast scan` exposed 63 methods, setup reached `active` at `start:6`, direct movement/build/recruit/collect calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because `sync_session_turn` waits on the local replica deadline |
+| Local DFX/blast smoke group | Revalidated 2026-05-18 on fresh local DFX: release deploy build finished in 2m13s, `blast scan` exposed 68 methods, setup reached `active` at `start:9`, direct movement/build/recruit/guarded battle/capture/income calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because local DFX uses real 60s turn/battle deadlines |
 
 Testing-first todo:
 
@@ -1682,7 +1682,7 @@ income, and full regression/PocketIC evidence.
 - [x] Compare the direct `blast scan` output with generated Candid and
   `get_canister_endpoint_inventory`; record any missing endpoint in
   `spec.missing.md`.
-- [ ] Use direct `blast call ... --id 1`, `--id 2`, and when needed `--id 3`
+- [x] Use direct `blast call ... --id 1`, `--id 2`, and when needed `--id 3`
   commands to register, create, join, ready, start once, wait for active, move,
   collect, build, recruit, fight guarded mine, capture, income, and read
   diagnostics.
@@ -1697,15 +1697,26 @@ income, and full regression/PocketIC evidence.
     `neutral_defeated`, `battle_aftermath_applied`, and later
     `income_materialized` with `{"gold":250}`, rendered `mine:west-gold` as
     owned/captured, and reported `icydb_snapshot` corruption counts at zero.
-    Keep this item open because this route still skips the full
-    collect/build/recruit walkthrough and one-call setup contract.
+  - Completed 2026-05-18 on fresh local DFX with canister
+    `uxrrr-q7777-77774-qaaaq-cai` and session
+    `01KRXZK5EN0000000000000008`: `blast scan` exposed 68 methods, setup
+    reached `active` at `start:9`, `blast` identities `--id 1` and `--id 2`
+    registered/created/joined/readied, pickup moved champion
+    `01KRXZMXB30000000000000001` to `(9,23)` and emitted
+    `resource_picked_up`, `freehold-training-yard` built, one
+    `mudhook-levy` recruited into town garrison, guarded-mine movement emitted
+    `neutral_encounter_pending` for battle `01KRY0814K0000000000000008`,
+    `get_battle_state` read the active battle, direct battle actions resolved
+    it, `sync_battle` applied aftermath, champion returned active at `(12,22)`,
+    `mine:west-gold` rendered owned/captured, and later public events included
+    `income_materialized` with `{"gold":250}`.
 - [x] Do not create committed `blast` scripts unless explicitly requested; keep
   the `blast` evidence as copied command lines and observed outputs.
 - [x] Audit `spec.md`: public API shape and endpoint inventory agree with
   `blast scan`.
 - [x] Audit `spec.1.1.md`: Topic 1 and test classes point to the real local
   deploy path and agent-run `blast` command checklist.
-- [ ] Gate evidence: direct local `blast` smoke plus `icydb_snapshot`
+- [x] Gate evidence: direct local `blast` smoke plus `icydb_snapshot`
   corruption checks.
   - 2026-05-17 smoke evidence: local DFX deploy with public Candid metadata
     succeeded, `blast scan` exposed 63 methods, direct calls registered two
@@ -1715,6 +1726,15 @@ income, and full regression/PocketIC evidence.
     `corrupted_keys = 0`. Keep this item open until the lower Gate 8 full
     route covers the remaining guarded-mine/capture/income path in the same
     fresh local smoke.
+  - Completed 2026-05-18 on the full fresh local smoke above:
+    `icydb_snapshot` returned `corrupted_entries = 0` and
+    `corrupted_keys = 0`. Small-batch `get_diagnostic_storage_snapshot`
+    returned `GameSession=1`, `GameCommand=146`, `SystemJob=101`,
+    `ParticipantTurnReady=19`, `WorldObject=19`, `Champion=2`,
+    `ParticipantKnownObject=13`, `Battle=1`, `BattleStack=3`,
+    `BattleOccupancy=2`, `BattleObstacle=2`, `ParticipantObjectVisit=1`,
+    `ResourceLedgerEntry=6`, `ResourceLedgerTurnSummary=3`,
+    `MovementSnapshot=3`, `TownBuilding=3`, and `TownGarrisonStack=1`.
 
 ### Gate 9. Render Projection Truth
 

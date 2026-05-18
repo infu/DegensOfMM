@@ -3119,6 +3119,348 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
 }
 
 #[test]
+fn pocket_ic_battle_round_timer_auto_defends_without_sync_battle_and_replays_noop() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-battle-timer-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-battle-timer-player-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "battle-timer");
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+
+    let (neutral_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:battle-timer:move:neutral",
+        "nonce:battle-timer:sync:neutral:",
+        61_000,
+        "neutral_encounter_pending",
+    );
+    let battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let opening_view = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("timer battle state should decode")
+    .expect("timer battle state should load");
+    assert_eq!(opening_view.state, "active");
+
+    let timeout_job = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    )
+    .jobs
+    .into_iter()
+    .find(|job| {
+        job.job_kind == "battle_timeout" && job.battle_id.as_deref() == Some(battle_id.as_str())
+    })
+    .expect("battle start should schedule a battle_timeout system job");
+    let before_timeout_view = compact_game_view(&fixture, player_one, &session_id);
+    advance_time_for_timers(
+        &fixture,
+        millis_until_due(
+            before_timeout_view.render_time.server_now_ms,
+            timeout_job.due_at_ms,
+        ),
+    );
+
+    let mut after_timer = opening_view.clone();
+    let mut timeout_event_seen = false;
+    let mut timeout_job_completed = false;
+    for _ in 0..12 {
+        after_timer = query_as::<BattleView>(
+            &fixture,
+            player_one,
+            "get_battle_state",
+            (session_id.clone(), battle_id.clone()),
+        )
+        .expect("post-timer battle state should decode")
+        .expect("post-timer battle state should load");
+        timeout_event_seen = public_event_seen(
+            &fixture,
+            player_one,
+            &session_id,
+            "battle_timeout_auto_defend",
+        );
+        timeout_job_completed = diagnostic_system_jobs(
+            &fixture,
+            Some(session_id.clone()),
+            Some("completed".to_string()),
+        )
+        .jobs
+        .iter()
+        .any(|job| job.job_key == timeout_job.job_key);
+        if timeout_event_seen && timeout_job_completed {
+            break;
+        }
+        advance_time_for_timers(&fixture, 1_000);
+    }
+    assert!(
+        after_timer.active_stack_id != opening_view.active_stack_id
+            || after_timer.current_round != opening_view.current_round
+            || after_timer.state != opening_view.state,
+        "battle_timeout timer should apply auto-defend without sync_battle"
+    );
+
+    assert!(
+        timeout_event_seen,
+        "timer path should emit battle_timeout_auto_defend without client sync_battle"
+    );
+    assert!(
+        timeout_job_completed,
+        "timer-claimed battle_timeout job should complete"
+    );
+
+    resolve_battle_to_end(
+        &fixture,
+        player_one,
+        &session_id,
+        &battle_id,
+        "nonce:battle-timer:resolve",
+    );
+    let events_before_noop = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("pre-noop public events should decode")
+    .expect("pre-noop public events should load");
+    let noop_sync = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:battle-timer:resolved-noop".to_string(),
+        ),
+    )
+    .expect("resolved sync_battle should decode")
+    .expect("resolved sync_battle should succeed");
+    assert_eq!(noop_sync.status, CommandStatus::Applied);
+    assert!(noop_sync.events.is_empty());
+    let noop_replay = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:battle-timer:resolved-noop".to_string(),
+        ),
+    )
+    .expect("resolved sync_battle replay should decode")
+    .expect("resolved sync_battle replay should succeed");
+    assert_eq!(noop_replay.command_id, noop_sync.command_id);
+    let events_after_noop = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("post-noop public events should decode")
+    .expect("post-noop public events should load");
+    assert_eq!(
+        events_after_noop.events.len(),
+        events_before_noop.events.len(),
+        "resolved sync_battle no-op replay should not duplicate public events"
+    );
+}
+
+#[test]
+fn pocket_ic_battle_round_both_players_end_round_and_timer_catches_up() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-battle-end-round-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-battle-end-round-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "battle-end-round");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let east_champion_id = owned_champion_id(&fixture, player_two, &session_id);
+
+    let west_preposition_path = (9_u16..=18)
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    let east_preposition_path = (29_u16..=38)
+        .rev()
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        west_preposition_path,
+        "nonce:battle-end-round:move:west-preposition",
+        "nonce:battle-end-round:sync:west-preposition:",
+        1_000_u64,
+        "session_turn_synced",
+    );
+    submit_move_and_sync_until_event(
+        &fixture,
+        player_two,
+        &session_id,
+        &east_champion_id,
+        east_preposition_path,
+        "nonce:battle-end-round:move:east-preposition",
+        "nonce:battle-end-round:sync:east-preposition:",
+        61_000_u64,
+        "session_turn_synced",
+    );
+
+    let west_path = (19_u16..=24)
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    let east_path = (23_u16..=28)
+        .rev()
+        .map(|x| MoveCoord::new(x, 24))
+        .collect::<Vec<_>>();
+    submit_move_intent(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        west_path,
+        "nonce:battle-end-round:move:west",
+        122_000_u64,
+    );
+    submit_move_intent(
+        &fixture,
+        player_two,
+        &session_id,
+        &east_champion_id,
+        east_path,
+        "nonce:battle-end-round:move:east",
+        122_000_u64,
+    );
+    let (synced, _) = sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        "nonce:battle-end-round:sync:",
+        183_000_u64,
+        "champion_encounter_pending",
+        12,
+        61_000,
+    );
+    let battle_id = battle_id_from_events(&synced, "champion_encounter_pending");
+    let opening_view = query_as::<BattleView>(
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("champion battle state should decode")
+    .expect("champion battle state should load");
+    assert_eq!(opening_view.state, "active");
+    let opening_round = opening_view.current_round;
+
+    let player_one_ready = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "end_battle_turn",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:battle-end-round:end:one".to_string(),
+        ),
+    )
+    .expect("player one end_battle_turn should decode")
+    .expect("player one end_battle_turn should succeed");
+    assert_eq!(player_one_ready.status, CommandStatus::Applied);
+    let player_two_ready = update_as::<CommandResponse>(
+        &fixture,
+        player_two,
+        "end_battle_turn",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:battle-end-round:end:two".to_string(),
+        ),
+    )
+    .expect("player two end_battle_turn should decode")
+    .expect("player two end_battle_turn should succeed");
+    assert_eq!(player_two_ready.status, CommandStatus::Applied);
+    assert!(
+        player_two_ready
+            .changed_subjects
+            .iter()
+            .any(|subject| subject.subject_kind == "system_job"),
+        "second participant ending should enqueue an immediate battle_round_advance job"
+    );
+
+    let round_job_key = format!("battle_round_advance:{battle_id}:{opening_round}");
+    let scheduled_round_job = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    );
+    assert!(
+        scheduled_round_job
+            .jobs
+            .iter()
+            .any(|job| job.job_key == round_job_key),
+        "all-ready battle round should schedule zero-delay battle_round_advance"
+    );
+    let mut after_round_advance = opening_view;
+    let mut round_job_completed = false;
+    for _ in 0..40 {
+        advance_time_for_timers(&fixture, 1_000);
+        after_round_advance = query_as::<BattleView>(
+            &fixture,
+            player_one,
+            "get_battle_state",
+            (session_id.clone(), battle_id.clone()),
+        )
+        .expect("post-round-advance battle state should decode")
+        .expect("post-round-advance battle state should load");
+        round_job_completed = diagnostic_system_jobs(
+            &fixture,
+            Some(session_id.clone()),
+            Some("completed".to_string()),
+        )
+        .jobs
+        .iter()
+        .any(|job| job.job_key == round_job_key);
+        if round_job_completed
+            && (after_round_advance.current_round > opening_round
+                || after_round_advance.state != "active")
+        {
+            break;
+        }
+    }
+    let final_view = compact_game_view(&fixture, player_one, &session_id);
+    let final_round_jobs = diagnostic_system_jobs(&fixture, Some(session_id.clone()), None)
+        .jobs
+        .into_iter()
+        .filter(|job| job.job_key == round_job_key)
+        .collect::<Vec<_>>();
+    assert!(
+        after_round_advance.current_round > opening_round || after_round_advance.state != "active",
+        "zero-delay battle_round_advance timer should catch up immediately; completed={round_job_completed}, now={}, round_jobs={final_round_jobs:?}, state={}, round={}",
+        final_view.render_time.server_now_ms,
+        after_round_advance.state,
+        after_round_advance.current_round
+    );
+    assert!(
+        round_job_completed,
+        "battle_round_advance job should complete after zero-delay timer catchup"
+    );
+}
+
+#[test]
 fn pocket_ic_render_projection_tracks_live_objects_and_fog() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-render-one");

@@ -28,6 +28,7 @@ use super::{
 
 const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
 const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = 1;
+const CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE: u32 = 1;
 const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
 const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
     (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
@@ -1034,7 +1035,13 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
     let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
+    let mut auto_defends = 0_u32;
+    let mut round_incomplete = false;
     loop {
+        if auto_defends >= CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE {
+            round_incomplete = true;
+            break;
+        }
         let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
             public_error(
                 "battle_not_found",
@@ -1068,6 +1075,13 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
             &mut events,
             &mut changed_subjects,
         )?;
+        auto_defends = auto_defends.saturating_add(1);
+    }
+
+    if round_incomplete {
+        system_job_repo::reschedule_system_job(job, Timestamp::now(), None)?;
+        system_job_service::schedule_nearest_due_job()?;
+        return Ok(());
     }
 
     system_job_repo::complete_system_job(job)?;

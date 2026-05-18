@@ -24,6 +24,8 @@ const MAX_JOBS_PER_TICK: u32 = 8;
 
 thread_local! {
     static NEAREST_TIMER: RefCell<Option<ScheduledWakeup>> = const { RefCell::new(None) };
+    #[cfg(target_arch = "wasm32")]
+    static DUE_SCAN_REQUESTED: RefCell<bool> = const { RefCell::new(false) };
 }
 
 struct ScheduledWakeup {
@@ -37,7 +39,7 @@ struct ScheduledWakeup {
 pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError> {
     let job = system_jobs::upsert_system_job(draft)?;
     #[cfg(target_arch = "wasm32")]
-    schedule_nearest_due_job()?;
+    schedule_wakeup_for_upserted_job(&job)?;
     Ok(job)
 }
 
@@ -81,7 +83,7 @@ pub(crate) fn run_due_job_by_key(job_key: &str) -> Result<u32, ApiError> {
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn heartbeat_tick() {
-    if !nearest_timer_is_due() {
+    if !nearest_timer_is_due() && !take_due_scan_requested() {
         return;
     }
     if let Err(error) = run_due_jobs_now() {
@@ -198,6 +200,43 @@ fn replace_timer(job_key: String, due_at: Timestamp) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn replace_timer(_job_key: String, _due_at: Timestamp) {}
+
+#[cfg(target_arch = "wasm32")]
+fn schedule_wakeup_for_upserted_job(job: &SystemJob) -> Result<(), ApiError> {
+    let had_timer = NEAREST_TIMER.with_borrow(|slot| slot.is_some());
+    if !had_timer {
+        schedule_nearest_due_job()?;
+    }
+
+    let due_at_ms = job.due_at.as_millis();
+    if due_at_ms <= Timestamp::now().as_millis() {
+        request_due_scan();
+    }
+    let should_replace = NEAREST_TIMER.with_borrow(|slot| {
+        slot.as_ref()
+            .is_none_or(|wakeup| wakeup.job_key == job.job_key || due_at_ms <= wakeup.due_at_ms)
+    });
+    if should_replace {
+        replace_timer(job.job_key.clone(), job.due_at);
+    }
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn request_due_scan() {
+    DUE_SCAN_REQUESTED.with_borrow_mut(|requested| {
+        *requested = true;
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+fn take_due_scan_requested() -> bool {
+    DUE_SCAN_REQUESTED.with_borrow_mut(|requested| {
+        let was_requested = *requested;
+        *requested = false;
+        was_requested
+    })
+}
 
 fn clear_nearest_timer() {
     NEAREST_TIMER.with_borrow_mut(|slot| {

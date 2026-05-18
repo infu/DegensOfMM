@@ -1620,14 +1620,26 @@ income, and full regression/PocketIC evidence.
   `battle_round_advance:{battle_id}:{round_number}` immediately.
 - [x] Ensure battle `end_battle_turn` is a commitment: remaining eligible stacks
   are deterministically skipped/defended and old-round actions fail stale.
-- [ ] Add PocketIC tests for timer auto-defend without `sync_battle`,
+- [x] Add PocketIC tests for timer auto-defend without `sync_battle`,
   zero-delay timeout catchup, both players ending battle round, auto-ready, and
   resolved battle no-op replay.
+  - Completed 2026-05-18 with focused PocketIC coverage for timer-driven
+    `battle_timeout` auto-defend without client `sync_battle`, resolved
+    `sync_battle` no-op replay idempotency, both players ending a battle round,
+    and zero-delay `battle_round_advance` catchup. The implementation also
+    bounded battle-round auto-defend work per timer message and made due-now
+    system jobs replace stale later wakeups.
 - [x] Audit `spec.md`: `BattleParticipantRoundReady`, `end_battle_turn`,
   `EndBattleTurn`, battle DTO readiness fields, and battle timeout rules match.
 - [x] Audit `spec.1.1.md`: Topic 8 and first-gate criteria match code.
-- [ ] Gate tests: `timer_jobs`, `battle_round_readiness`, battle service tests,
+- [x] Gate tests: `timer_jobs`, `battle_round_readiness`, battle service tests,
   `make check-canister`.
+  - Completed 2026-05-18 with `DOMM_TEST_JOBS=1
+    scripts/run-test-groups.sh battle-round` passing in 381.138s,
+    `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh timer-jobs` passing in
+    175.659s, `cargo test -p domm-degens-canister` passing in 300.20s,
+    `cargo test -p domm-game battle` passing in 18.71s, `make
+    check-canister` passing in 19.44s, and `git diff --check` passing.
 
 ### Gate 7. Command Recovery Hardening
 

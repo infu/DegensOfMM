@@ -446,6 +446,35 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
             .all(|object| object.subject_id_text != "pile:west-wood-1"),
         "collected resource piles must not render as available objects"
     );
+    let session_row = sessions::load_session(session_id)
+        .expect("session reload should not fail")
+        .expect("session should exist for spell setup");
+    let hex_spark =
+        content::find_spell_by_ruleset_slug(Id::from_key(session_row.ruleset_id), "hex-spark")
+            .expect("spell lookup should not fail")
+            .expect("hex spark should be seeded");
+    let mut spell_champion = champion.clone();
+    if !spell_champion
+        .skill_keys
+        .iter()
+        .any(|key| key == "sour_sorcery")
+    {
+        spell_champion.skill_keys.push("sour_sorcery".to_string());
+        spell_champion.skill_keys.sort();
+        spell_champion.skill_keys.dedup();
+        spell_champion.last_command_id = Some(seeded_sync_command.id().key());
+        champions_artifacts::update_champion(spell_champion)
+            .expect("battle spell skill should persist before battle stack creation");
+    }
+    champions_artifacts::create_champion_spell(
+        session_id,
+        champion.id(),
+        hex_spark.id(),
+        "hex-spark",
+        session_row.current_turn,
+        seeded_sync_command.id(),
+    )
+    .expect("learned battle spell should persist before battle stack creation");
     let snapshots = movement_repo::page_movement_snapshots_for_champion_turn(
         session_id,
         1,
@@ -545,27 +574,6 @@ fn lobby_session_setup_recovers_from_starting_state_and_replays_nonce() {
             .items
             .is_empty()
     );
-
-    let session_row = sessions::load_session(session_id)
-        .expect("session reload should not fail")
-        .expect("session should exist for spell setup");
-    let hex_spark =
-        content::find_spell_by_ruleset_slug(Id::from_key(session_row.ruleset_id), "hex-spark")
-            .expect("spell lookup should not fail")
-            .expect("hex spark should be seeded");
-    champions_artifacts::create_champion_spell(
-        session_id,
-        champion.id(),
-        hex_spark.id(),
-        "hex-spark",
-        session_row.current_turn,
-        Id::from_key(
-            battle
-                .last_command_id
-                .expect("battle should carry the setup command id"),
-        ),
-    )
-    .expect("learned battle spell should persist");
 
     let battle_id_text = battle_id.to_string();
     let own_battle = battle_service::get_battle_state(

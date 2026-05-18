@@ -92,7 +92,7 @@ add_group "end-turn" \
 add_group "battle-round" \
     "battle-round readiness, auto-defend, end-turn, and replay PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
-    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture"
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round -- --test-threads=1 --nocapture"
 add_group "render-projection" \
     "render projection live objects, fog, cursors, and aftermath PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \

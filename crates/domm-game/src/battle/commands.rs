@@ -435,15 +435,11 @@ fn resolve_if_winner(state: &mut BattleState, battle_id: &str) -> Result<bool, B
     if attacker_alive && defender_alive {
         return Ok(false);
     }
-    let winner_participant_id = if attacker_alive {
-        state
-            .stacks
-            .iter()
-            .find(|stack| stack.battle_id == battle_id && stack.side == BATTLE_SIDE_ATTACKER)
-            .and_then(|stack| stack.owner_participant_id.clone())
-    } else {
-        None
-    };
+    let winner_participant_id = state
+        .stacks
+        .iter()
+        .find(|stack| stack.battle_id == battle_id && stack.is_living())
+        .and_then(|stack| stack.owner_participant_id.clone());
     let battle = state.battle_mut(battle_id)?;
     battle.state = "resolved".to_string();
     battle.active_stack_id = None;

@@ -167,6 +167,9 @@ fn persist_stacks(
         let Some(mut row) = existing.get(&stack.battle_stack_id).cloned() else {
             continue;
         };
+        if battle_stack_row_matches_record(&row, stack) {
+            continue;
+        }
         row.quantity = stack.quantity;
         row.front_hp = stack.front_hp;
         row.shots_remaining = stack.shots_remaining;
@@ -184,6 +187,22 @@ fn persist_stacks(
         battles::update_battle_stack(row)?;
     }
     Ok(())
+}
+
+fn battle_stack_row_matches_record(row: &BattleStack, stack: &BattleStackRecord) -> bool {
+    row.quantity == stack.quantity
+        && row.front_hp == stack.front_hp
+        && row.shots_remaining == stack.shots_remaining
+        && row.battle_x == stack.battle_x
+        && row.battle_y == stack.battle_y
+        && row.readiness == stack.readiness
+        && row.acted_round == stack.acted_round
+        && row.retaliated_round == stack.retaliated_round
+        && row.defended_round == stack.defended_round
+        && row.waited_round == stack.waited_round
+        && row.cast_round == stack.cast_round
+        && row.status == stack.status
+        && row.status_keys == stack.status_keys
 }
 
 fn persist_occupancy(
@@ -213,6 +232,9 @@ fn persist_occupancy(
         let wanted = wanted
             .get(&row_id)
             .expect("wanted id should be present after contains check");
+        if row.battle_x == wanted.battle_x && row.battle_y == wanted.battle_y {
+            continue;
+        }
         row.battle_x = wanted.battle_x;
         row.battle_y = wanted.battle_y;
         row.last_command_id = Some(command_id.key());

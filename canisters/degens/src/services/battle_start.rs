@@ -19,10 +19,10 @@ pub(crate) fn start_champion_battle(
     defender: &Champion,
     coord: MoveCoord,
 ) -> Result<Option<Battle>, ApiError> {
-    if let Some(existing) = battles::find_battle_by_attacker(attacker.id())? {
-        if (existing.state == "active" || existing.state.starts_with("starting"))
-            && existing.defender_champion_id == Some(defender.id().key())
-        {
+    if let Some(existing) =
+        battles::find_champion_battle_by_attacker_defender(attacker.id(), defender.id())?
+    {
+        if existing.state == "active" || existing.state.starts_with("starting") {
             if existing.state.starts_with("starting") {
                 return continue_champion_battle_start(
                     session, command_id, existing, attacker, defender,
@@ -105,6 +105,7 @@ fn continue_champion_battle_start(
         "starting_obstacles" => {
             let mut stacks = attacker_stacks.items;
             stacks.extend(defender_stacks.items);
+            battle.state = "active".to_string();
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
             battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
             Ok(Some(battle))

@@ -4693,10 +4693,10 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         "champion_encounter_pending",
     );
     let champion_battle_id = battle_id_from_events(&champion_sync, "champion_encounter_pending");
-    gate_resolve_battle_to_end(
+    gate_resolve_battle_to_end_for_callers(
         &mut metrics,
         &fixture,
-        player_one,
+        &[player_one, player_two],
         &session_id,
         &champion_battle_id,
         "nonce:gate-l:champion-battle",
@@ -5738,55 +5738,118 @@ fn gate_resolve_battle_to_end(
     battle_id: &str,
     nonce_prefix: &str,
 ) -> (BattleView, bool) {
-    for step in 0..96 {
-        let view = gate_query_as::<BattleView>(
-            metrics,
-            fixture,
-            player,
-            "get_battle_state",
-            (session_id.to_string(), battle_id.to_string()),
-        )
-        .expect("battle view should load");
-        if view.state == "resolved" {
-            let synced = gate_update_as::<CommandResponse>(
+    gate_resolve_battle_to_end_for_callers(
+        metrics,
+        fixture,
+        &[player],
+        session_id,
+        battle_id,
+        nonce_prefix,
+    )
+}
+
+fn gate_resolve_battle_to_end_for_callers(
+    metrics: &mut GateJMetrics,
+    fixture: &StandaloneCanisterFixture,
+    players: &[candid::Principal],
+    session_id: &str,
+    battle_id: &str,
+    nonce_prefix: &str,
+) -> (BattleView, bool) {
+    assert!(
+        !players.is_empty(),
+        "battle resolver needs at least one caller"
+    );
+    let mut saw_battle_sync = false;
+    let mut last_views = String::new();
+    for step in 0..160 {
+        let mut actionable_view: Option<(candid::Principal, BattleView)> = None;
+        let mut summaries = Vec::new();
+
+        for player in players.iter().copied() {
+            let view = gate_query_as::<BattleView>(
                 metrics,
                 fixture,
                 player,
-                "sync_battle",
-                (
-                    session_id.to_string(),
-                    battle_id.to_string(),
-                    format!("{nonce_prefix}:aftermath"),
-                ),
+                "get_battle_state",
+                (session_id.to_string(), battle_id.to_string()),
             )
-            .expect("resolved battle aftermath sync should succeed");
-            metrics.observe_command_response(&synced);
-            assert_eq!(synced.status, CommandStatus::Applied);
-            let turn_synced = update_as::<CommandResponse>(
-                fixture,
-                player,
-                "sync_session_turn",
-                (
-                    session_id.to_string(),
-                    format!("{nonce_prefix}:post-battle-turn"),
-                ),
-            )
-            .unwrap_or_else(|error| panic!("post-battle sync_session_turn should decode: {error}"));
-            metrics.record_update("sync_session_turn", &turn_synced);
-            match turn_synced {
-                Ok(response) => {
-                    metrics.observe_command_response(&response);
-                    assert_eq!(response.status, CommandStatus::Applied);
+            .expect("battle view should load");
+            summaries.push(format!(
+                "{}:state={}:active={}:legal={}",
+                player.to_text(),
+                view.state,
+                view.active_stack_id.as_deref().unwrap_or("-"),
+                view.legal_actions_for_caller.len()
+            ));
+            if view.state == "resolved" {
+                let synced = gate_update_as::<CommandResponse>(
+                    metrics,
+                    fixture,
+                    player,
+                    "sync_battle",
+                    (
+                        session_id.to_string(),
+                        battle_id.to_string(),
+                        format!("{nonce_prefix}:aftermath"),
+                    ),
+                )
+                .expect("resolved battle aftermath sync should succeed");
+                metrics.observe_command_response(&synced);
+                assert_eq!(synced.status, CommandStatus::Applied);
+                let turn_synced = update_as::<CommandResponse>(
+                    fixture,
+                    player,
+                    "sync_session_turn",
+                    (
+                        session_id.to_string(),
+                        format!("{nonce_prefix}:post-battle-turn"),
+                    ),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("post-battle sync_session_turn should decode: {error}")
+                });
+                metrics.record_update("sync_session_turn", &turn_synced);
+                match turn_synced {
+                    Ok(response) => {
+                        metrics.observe_command_response(&response);
+                        assert_eq!(response.status, CommandStatus::Applied);
+                    }
+                    Err(error) if error.code == "turn_not_due" => {}
+                    Err(error) => {
+                        panic!(
+                            "post-battle sync_session_turn should succeed or be not due: {error:?}"
+                        )
+                    }
                 }
-                Err(error) if error.code == "turn_not_due" => {}
-                Err(error) => {
-                    panic!("post-battle sync_session_turn should succeed or be not due: {error:?}")
-                }
+                return (view, true);
             }
-            return (view, true);
+            if actionable_view.is_none() && !view.legal_actions_for_caller.is_empty() {
+                actionable_view = Some((player, view));
+            }
         }
-        if view.legal_actions_for_caller.is_empty() {
-            advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
+
+        last_views = summaries.join(" | ");
+        if let Some((player, view)) = actionable_view {
+            let input = choose_battle_action_for_goal(&view, player == players[0]);
+            let submitted = gate_update_as::<CommandResponse>(
+                metrics,
+                fixture,
+                player,
+                "submit_battle_action",
+                (
+                    session_id.to_string(),
+                    input,
+                    format!("{nonce_prefix}:action:{step}"),
+                ),
+            )
+            .expect("submit_battle_action should succeed");
+            metrics.observe_command_response(&submitted);
+            assert_eq!(
+                submitted.status,
+                CommandStatus::Applied,
+                "battle action response: {submitted:?}"
+            );
             let synced = gate_update_as::<CommandResponse>(
                 metrics,
                 fixture,
@@ -5795,51 +5858,37 @@ fn gate_resolve_battle_to_end(
                 (
                     session_id.to_string(),
                     battle_id.to_string(),
-                    format!("{nonce_prefix}:sync:{step}"),
+                    format!("{nonce_prefix}:after-action-sync:{step}"),
                 ),
             )
-            .expect("sync_battle should succeed");
+            .expect("post-action sync_battle should succeed");
             metrics.observe_command_response(&synced);
             assert_eq!(synced.status, CommandStatus::Applied);
+            saw_battle_sync = true;
             continue;
         }
 
-        let input = choose_battle_action(&view);
-        let submitted = gate_update_as::<CommandResponse>(
-            metrics,
-            fixture,
-            player,
-            "submit_battle_action",
-            (
-                session_id.to_string(),
-                input,
-                format!("{nonce_prefix}:action:{step}"),
-            ),
-        )
-        .expect("submit_battle_action should succeed");
-        metrics.observe_command_response(&submitted);
-        assert_eq!(
-            submitted.status,
-            CommandStatus::Applied,
-            "battle action response: {submitted:?}"
-        );
+        advance_time_ms(fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
         let synced = gate_update_as::<CommandResponse>(
             metrics,
             fixture,
-            player,
+            players[0],
             "sync_battle",
             (
                 session_id.to_string(),
                 battle_id.to_string(),
-                format!("{nonce_prefix}:after-action-sync:{step}"),
+                format!("{nonce_prefix}:sync:{step}"),
             ),
         )
-        .expect("post-action sync_battle should succeed");
+        .expect("sync_battle should succeed");
         metrics.observe_command_response(&synced);
         assert_eq!(synced.status, CommandStatus::Applied);
+        saw_battle_sync = true;
     }
 
-    panic!("battle {battle_id} did not resolve within the test budget");
+    panic!(
+        "battle {battle_id} did not resolve within the test budget; sync={saw_battle_sync}; last views: {last_views}"
+    );
 }
 
 fn gate_diagnostic_snapshot(
@@ -6315,7 +6364,7 @@ fn resolve_battle_to_end(
     battle_id: &str,
     nonce_prefix: &str,
 ) -> BattleView {
-    for step in 0..96 {
+    for step in 0..160 {
         let view = query_as::<BattleView>(
             fixture,
             player,
@@ -6412,6 +6461,32 @@ fn resolve_battle_to_end(
 }
 
 fn choose_battle_action(view: &BattleView) -> BattleActionInput {
+    choose_battle_action_for_goal(view, true)
+}
+
+fn choose_battle_action_for_goal(view: &BattleView, aggressive: bool) -> BattleActionInput {
+    if !aggressive {
+        for preferred in ["Defend", "Wait"] {
+            if let Some(action) = view
+                .legal_actions_for_caller
+                .iter()
+                .find(|action| action.enabled && action.action == preferred)
+            {
+                return BattleActionInput {
+                    battle_id: view.battle_id.clone(),
+                    battle_stack_id: view
+                        .active_stack_id
+                        .clone()
+                        .expect("active battle should have an active stack"),
+                    action: action.action.clone(),
+                    ability_key: action.ability_key.clone(),
+                    target_stack_id: None,
+                    destination: None,
+                };
+            }
+        }
+    }
+
     let active_stack_id = view
         .active_stack_id
         .clone()
@@ -6510,6 +6585,7 @@ where
         .map_err(|error| format!("{error:?}"))
 }
 
+#[track_caller]
 fn gate_query_as<T>(
     metrics: &mut GateJMetrics,
     fixture: &StandaloneCanisterFixture,
@@ -6520,8 +6596,13 @@ fn gate_query_as<T>(
 where
     T: candid::CandidType + for<'de> serde::Deserialize<'de>,
 {
-    let response = query_as::<T>(fixture, caller, method, args)
-        .unwrap_or_else(|error| panic!("{method} should decode from query call: {error}"));
+    let response = match query_as::<T>(fixture, caller, method, args) {
+        Ok(response) => response,
+        Err(error) => panic!(
+            "{method} should decode from query call for caller {}: {error}",
+            caller.to_text()
+        ),
+    };
     metrics.record_query(method, &response);
     response
 }

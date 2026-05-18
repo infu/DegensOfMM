@@ -29,6 +29,8 @@ use super::{
 const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
 const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = 1;
 const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
+const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
+    (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
 const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
 
 pub(crate) fn schedule_battle_timeout_job(
@@ -63,16 +65,16 @@ pub(crate) fn get_battle_state(
     let context = session_context::require_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let participant_id = context.participant.id().to_string();
-    if !battle_visible_to_participant(&battle, context.participant.id())? {
+    let stacks = battles::list_battle_stacks(battle.id(), CANISTER_MAX_BATTLE_STACKS_PER_BATTLE)?;
+    if !battle_visible_to_participant_from_stacks(&stacks, context.participant.id()) {
         return Err(public_error(
             "battle_not_visible",
             "caller is not a participant in this battle",
             false,
         ));
     }
-    let suppress_actions =
-        should_suppress_battle_actions(&battle, context.participant.id(), now_ms)?;
-    let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?.items;
+    let suppress_actions = battle.state != "active"
+        || should_suppress_battle_actions(&battle, context.participant.id(), now_ms)?;
     let mut view =
         canister_battle_view_from_rows(&battle, &stacks, &participant_id, now_ms, suppress_actions);
     if !suppress_actions {
@@ -87,24 +89,13 @@ pub(crate) fn get_battle_state(
     Ok(view)
 }
 
-fn battle_visible_to_participant(
-    battle: &Battle,
+fn battle_visible_to_participant_from_stacks(
+    stacks: &[BattleStack],
     participant_id: Id<GameParticipant>,
-) -> Result<bool, ApiError> {
-    for champion_id in [battle.attacker_champion_id, battle.defender_champion_id]
-        .into_iter()
-        .flatten()
-    {
-        let Some(champion) =
-            champions_artifacts::load_champion(Id::<Champion>::from_key(champion_id))?
-        else {
-            continue;
-        };
-        if champion.participant_id == participant_id.key() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+) -> bool {
+    stacks
+        .iter()
+        .any(|stack| stack.owner_participant_id == Some(participant_id.key()))
 }
 
 fn should_suppress_battle_actions(
@@ -268,6 +259,7 @@ fn cheap_legal_actions_for_stack_rows(
 ) -> Vec<LegalBattleAction> {
     let can_act =
         stack.status == "active" && stack.quantity > 0 && stack.acted_round < current_round;
+    let move_path = cheap_move_candidates_for_stack_rows(stacks, stack, can_act);
     let enemies = stacks
         .iter()
         .filter(|target| {
@@ -295,10 +287,12 @@ fn cheap_legal_actions_for_stack_rows(
         LegalBattleAction {
             action: "Move".to_string(),
             ability_key: None,
-            enabled: false,
-            disabled_reason: Some("query_budget_move_preview_deferred".to_string()),
+            enabled: !move_path.is_empty(),
+            disabled_reason: move_path
+                .is_empty()
+                .then(|| "no_reachable_tile".to_string()),
             targets: Vec::new(),
-            path: Vec::new(),
+            path: move_path,
             damage_preview: None,
         },
         LegalBattleAction {
@@ -373,6 +367,93 @@ fn cheap_legal_actions_for_stack_rows(
             damage_preview: None,
         },
     ]
+}
+
+fn cheap_move_candidates_for_stack_rows(
+    stacks: &[BattleStack],
+    stack: &BattleStack,
+    can_act: bool,
+) -> Vec<BattleCoord> {
+    if !can_act || stack.speed == 0 {
+        return Vec::new();
+    }
+    let Some(target) = stacks
+        .iter()
+        .filter(|target| {
+            target.side != stack.side && target.status == "active" && target.quantity > 0
+        })
+        .min_by_key(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y)
+        })
+    else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    push_straight_line_move_candidates(
+        stacks,
+        stack,
+        &mut candidates,
+        target.battle_x.cmp(&stack.battle_x),
+        std::cmp::Ordering::Equal,
+    );
+    if candidates.is_empty() {
+        push_straight_line_move_candidates(
+            stacks,
+            stack,
+            &mut candidates,
+            std::cmp::Ordering::Equal,
+            target.battle_y.cmp(&stack.battle_y),
+        );
+    }
+    candidates
+}
+
+fn push_straight_line_move_candidates(
+    stacks: &[BattleStack],
+    stack: &BattleStack,
+    candidates: &mut Vec<BattleCoord>,
+    x_order: std::cmp::Ordering,
+    y_order: std::cmp::Ordering,
+) {
+    let dx = match x_order {
+        std::cmp::Ordering::Greater => 1_i16,
+        std::cmp::Ordering::Less => -1_i16,
+        std::cmp::Ordering::Equal => 0_i16,
+    };
+    let dy = match y_order {
+        std::cmp::Ordering::Greater => 1_i16,
+        std::cmp::Ordering::Less => -1_i16,
+        std::cmp::Ordering::Equal => 0_i16,
+    };
+    if dx == 0 && dy == 0 {
+        return;
+    }
+
+    let mut x = i16::from(stack.battle_x);
+    let mut y = i16::from(stack.battle_y);
+    for _ in 0..stack.speed {
+        x = x.saturating_add(dx);
+        y = y.saturating_add(dy);
+        if x < 0
+            || y < 0
+            || x >= i16::from(domm_game::BATTLE_GRID_WIDTH)
+            || y >= i16::from(domm_game::BATTLE_GRID_HEIGHT)
+        {
+            break;
+        }
+        let coord = BattleCoord::new(x as u8, y as u8);
+        if stacks.iter().any(|other| {
+            other.id() != stack.id()
+                && other.status == "active"
+                && other.quantity > 0
+                && other.battle_x == coord.x
+                && other.battle_y == coord.y
+        }) {
+            break;
+        }
+        candidates.push(coord);
+    }
 }
 
 #[allow(dead_code)]

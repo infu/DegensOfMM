@@ -51,7 +51,7 @@ Current timing notes from 2026-05-17:
 | Endpoint inventory/public surface | Revalidated 2026-05-17 in 260.541s after turn-sync event yielding, explicit follow-up income sync coverage, and row-local battle spell metadata | Still too slow for an inner loop; keep serial until the older full-route sync path is split further |
 | Gate J strategic loop/IcyDB rows | Revalidated 2026-05-17 in 110.259s after movement event yielding and explicit follow-up income sync coverage | Improved but still a long route; keep serial until the remaining full-route groups are retimed |
 | Gate K battle/victory/history | Passed in 549.3s observed | Retime after PocketIC parallelism fix |
-| Gate L first-playable route | Passed clean in 433.1s | Long smoke remains valid; keep out of fast inner loop |
+| Gate L first-playable route | Revalidated 2026-05-18 in 434.014s after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Long smoke remains valid; keep serial and out of the fast inner loop |
 | Movement crossing conflict | Revalidated 2026-05-17 in 202.583s after phased champion battle setup removed the crossing sync instruction trap | Slow full-route group; keep serial while battle setup is split further |
 | Stationary enemy blocker | Revalidated 2026-05-17 in 237.215s after phased champion battle setup and one-step blocker stop-coordinate fix | Slow full-route group; keep serial while champion battle setup is split further |
 | Week-two tavern/recruit growth | Passed in 269.5s observed | Retime after PocketIC parallelism fix |
@@ -101,7 +101,14 @@ Testing-first todo:
   currently passes; retime after the shared PocketIC lock is fixed.
 - [x] Gate L first-playable canister route group:
   `pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`
-  passed cleanly in about 7.2 minutes.
+  passed cleanly in about 7.2 minutes. Revalidated 2026-05-18 with
+  `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-l` passing in 434.014s
+  after active-state champion battle setup, stack-based battle visibility,
+  bounded `get_battle_state` stack reads, reduced battle stack/occupancy write
+  amplification, correct defender-side battle winners, and a two-caller
+  champion battle resolver that keeps the scripted Gate L route deterministic.
+  Evidence also included `cargo check -p domm-degens-canister` and `cargo test
+  -p domm-game`.
 - [x] Movement crossing conflict group:
   `pocket_ic_movement_crossing_conflict_uses_persisted_sync_cursor`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh movement`

@@ -143,6 +143,22 @@ pub(crate) fn find_battle_by_attacker(champion_id: Id<Champion>) -> RepoResult<O
     )
 }
 
+pub(crate) fn find_champion_battle_by_attacker_defender(
+    attacker_champion_id: Id<Champion>,
+    defender_champion_id: Id<Champion>,
+) -> RepoResult<Option<Battle>> {
+    foundation::storage_result(
+        "battles.by_attacker_defender_champion",
+        crate::db()
+            .load::<Battle>()
+            .filter(FieldRef::new("attacker_champion_id").eq(attacker_champion_id.key()))
+            .filter(FieldRef::new("defender_champion_id").eq(defender_champion_id.key()))
+            .order_asc("id")
+            .limit(1)
+            .try_entity(),
+    )
+}
+
 pub(crate) fn page_battle_stacks(
     battle_id: Id<Battle>,
     limit: u32,

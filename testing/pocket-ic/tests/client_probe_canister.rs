@@ -319,6 +319,25 @@ impl CanisterWebClientBackend {
         self.metrics.borrow_mut().observe_event_page(page);
     }
 
+    fn capture_first_battle_id_from_public_events(
+        &mut self,
+        caller: Principal,
+        session_id: &str,
+    ) -> Result<(), ProbeError> {
+        if self.first_battle_id.is_some() {
+            return Ok(());
+        }
+        let page = self.query_result::<ApiEventPage>(
+            caller,
+            "get_events_after",
+            (session_id.to_string(), "public".to_string(), 0_u64, 200_u32),
+        )?;
+        self.observe_event_page(&page);
+        self.first_battle_id =
+            battle_id_from_event_views(&page.events, "neutral_encounter_pending");
+        Ok(())
+    }
+
     fn player_one_or_anonymous(&self) -> Principal {
         self.player_one.unwrap_or_else(Principal::anonymous)
     }
@@ -1102,16 +1121,25 @@ impl WebClientBackend for CanisterWebClientBackend {
         &mut self,
         caller: Principal,
         session_id: &str,
-        _now_ms: u64,
+        now_ms: u64,
         client_nonce: &str,
     ) -> CommandResponse {
-        self.advance_once_for_nonce_by_ms("sync_session_turn", client_nonce, 61_000);
-        self.update_command_response(
-            caller,
-            "sync_session_turn",
-            (session_id.to_string(), client_nonce.to_string()),
-        )
-        .expect("sync_session_turn should succeed through canister")
+        if self
+            .advanced_time_nonces
+            .insert(format!("sync_session_turn:{client_nonce}"))
+        {
+            self.advance_to_time_ms(now_ms.max(self.server_now_ms.saturating_add(61_000)));
+        }
+        let response = self
+            .update_command_response(
+                caller,
+                "sync_session_turn",
+                (session_id.to_string(), client_nonce.to_string()),
+            )
+            .expect("sync_session_turn should succeed through canister");
+        self.capture_first_battle_id_from_public_events(caller, session_id)
+            .expect("public events should be readable after sync_session_turn");
+        response
     }
 
     fn preview_build_town_structure(
@@ -1729,19 +1757,24 @@ fn battle_id_from_events(
     response: &CommandResponse,
     event_type: &str,
 ) -> Result<String, ProbeError> {
-    response
-        .events
+    battle_id_from_event_views(&response.events, event_type).ok_or_else(|| {
+        ProbeError::Api(ApiError::new(
+            "missing_battle_id",
+            format!("{event_type} event should include battle_id"),
+            false,
+        ))
+    })
+}
+
+fn battle_id_from_event_views(
+    events: &[domm_game::ApiEventView],
+    event_type: &str,
+) -> Option<String> {
+    events
         .iter()
         .find(|event| event.event_type == event_type)
         .and_then(|event| event.payload.as_deref())
         .and_then(|payload| json_string_field(payload, "battle_id"))
-        .ok_or_else(|| {
-            ProbeError::Api(ApiError::new(
-                "missing_battle_id",
-                format!("{event_type} event should include battle_id"),
-                false,
-            ))
-        })
 }
 
 fn json_string_field(json: &str, field: &str) -> Option<String> {

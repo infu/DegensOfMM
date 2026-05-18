@@ -153,26 +153,126 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
             false,
         )?;
         let mut triggered = false;
-        for attempt in 0_u64..6 {
+        let mut observed = Vec::new();
+        for attempt in 0_u64..24 {
             let response = self.sync_turn_with_retry(
                 TURN_DURATION_MS
                     .saturating_mul(8)
                     .saturating_add(attempt.saturating_mul(1_000)),
                 &format!("battle-trigger-{attempt}"),
             )?;
-            if response
+            let events = response
                 .events
                 .iter()
-                .any(|event| event.event_type == "neutral_encounter_pending")
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            let error = response
+                .error
+                .as_ref()
+                .map(|error| error.code.as_str())
+                .unwrap_or("-");
+            observed.push(format!(
+                "#{attempt}:status={:?}:turn={}:events=[{}]:error={}",
+                response.status, response.effective_turn, events, error
+            ));
+            if self.backend.has_first_fixture_battle_id()
+                || response
+                    .events
+                    .iter()
+                    .any(|event| event.event_type == "neutral_encounter_pending")
             {
                 triggered = true;
                 break;
             }
         }
         if !triggered && !self.backend.has_first_fixture_battle_id() {
+            self.refresh()?;
+            let game_view = self.state.game_view.as_ref();
+            let champion = game_view.and_then(|view| view.champions.first());
+            if let Some(champion) = champion {
+                let followup_path = path_to_west_mine_neutral(champion.x, champion.y);
+                observed.push(format!(
+                    "followup_from=({},{}):path_len={}",
+                    champion.x,
+                    champion.y,
+                    followup_path.len()
+                ));
+                if !followup_path.is_empty() {
+                    let followup_nonce = self.nonces.next("move-neutral-followup");
+                    self.submit_move(
+                        "champion:west",
+                        followup_path,
+                        &followup_nonce,
+                        TURN_DURATION_MS
+                            .saturating_mul(u64::from(self.current_turn()?))
+                            .saturating_add(1_000),
+                        false,
+                    )?;
+                    for attempt in 0_u64..24 {
+                        let response = self.sync_turn_with_retry(
+                            TURN_DURATION_MS
+                                .saturating_mul(u64::from(self.current_turn()?))
+                                .saturating_add(attempt.saturating_mul(1_000)),
+                            &format!("battle-trigger-followup-{attempt}"),
+                        )?;
+                        let events = response
+                            .events
+                            .iter()
+                            .map(|event| event.event_type.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        let error = response
+                            .error
+                            .as_ref()
+                            .map(|error| error.code.as_str())
+                            .unwrap_or("-");
+                        observed.push(format!(
+                            "#followup-{attempt}:status={:?}:turn={}:events=[{}]:error={}",
+                            response.status, response.effective_turn, events, error
+                        ));
+                        if self.backend.has_first_fixture_battle_id()
+                            || response
+                                .events
+                                .iter()
+                                .any(|event| event.event_type == "neutral_encounter_pending")
+                        {
+                            triggered = true;
+                            break;
+                        }
+                    }
+                }
+            } else if let Some(view) = game_view {
+                let mine_objects = view
+                    .objects
+                    .iter()
+                    .filter(|object| object.x == 12 && object.y == 22)
+                    .map(|object| {
+                        format!(
+                            "{}:{}:{}",
+                            object.subject_kind, object.subject_id_text, object.details_json
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                observed.push(format!(
+                    "followup_no_champion:champions={}:objects={}:turn={}:mine=[{}]",
+                    view.champions.len(),
+                    view.objects.len(),
+                    view.session.current_turn,
+                    mine_objects
+                ));
+            } else {
+                observed.push("followup_no_game_view".to_string());
+            }
+        }
+        if !triggered && !self.backend.has_first_fixture_battle_id() {
             return Err(ProbeError::Api(ApiError::new(
                 "neutral_encounter_missing",
-                "movement sync did not emit a neutral encounter event",
+                format!(
+                    "movement sync did not emit a neutral encounter event: {}",
+                    observed.join(" | ")
+                ),
                 false,
             )));
         }
@@ -550,6 +650,29 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
             .session
             .current_turn)
     }
+}
+
+fn path_to_west_mine_neutral(x: u16, y: u16) -> Vec<MoveCoord> {
+    let mut path = Vec::new();
+    let mut current_x = x;
+    let mut current_y = y;
+    while current_x < 12 {
+        current_x += 1;
+        path.push(MoveCoord::new(current_x, current_y));
+    }
+    while current_x > 12 {
+        current_x -= 1;
+        path.push(MoveCoord::new(current_x, current_y));
+    }
+    while current_y > 22 {
+        current_y -= 1;
+        path.push(MoveCoord::new(current_x, current_y));
+    }
+    while current_y < 22 {
+        current_y += 1;
+        path.push(MoveCoord::new(current_x, current_y));
+    }
+    path
 }
 
 fn render_game_view(game_view: &GameView) -> Result<RenderedViewport, ProbeError> {

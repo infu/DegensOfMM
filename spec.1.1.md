@@ -1660,8 +1660,15 @@ income, and full regression/PocketIC evidence.
   idempotency rules are fully implemented or explicitly deferred.
 - [x] Audit `spec.1.1.md`: Topic 9 no longer lists already-fixed P0 recovery
   gaps.
-- [ ] Gate tests: `command_recovery`, town/economy service tests,
+- [x] Gate tests: `command_recovery`, town/economy service tests,
   `make regression`.
+  - Completed 2026-05-18 with focused `command-recovery` passing in
+    199.071s, `cargo test -p domm-game town` passing 11 tests,
+    `cargo test -p domm-game economy` passing 12 tests,
+    `cargo test -p domm-degens-canister` passing 15 tests, and full
+    `TEST_JOBS=12 LONG_TEST_JOBS=4 GATE_M_TEST_JOBS=1 make regression`
+    passing. Regression covered workspace tests, `pocket-parallel` 11/11,
+    `pocket-long` 6/6, and `pocket-gate-m` passing in 487.863s.
 
 ### Gate 8. Local Deploy And `blast` Smoke
 

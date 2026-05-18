@@ -94,6 +94,15 @@ fn exported_candid_contains_every_required_game_endpoint() {
     assert!(candid.contains("get_diagnostic_storage_snapshot :"));
 }
 
+#[cfg(feature = "benchmark")]
+#[test]
+fn benchmark_feature_exports_diagnostic_benchmark_endpoints() {
+    let candid = exported_candid_text_for_tests();
+
+    assert!(candid.contains("get_diagnostic_benchmark_metrics :"));
+    assert!(candid.contains("reset_diagnostic_benchmark_metrics :"));
+}
+
 #[test]
 fn public_time_sensitive_endpoints_derive_canister_time() {
     let movement_api = include_str!("api/movement.rs");

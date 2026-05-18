@@ -7,8 +7,32 @@ cd "$workspace_root"
 git_sha="$(git rev-parse --short HEAD 2>/dev/null || printf unknown)"
 run_id="$(date +%Y%m%d-%H%M%S)-${git_sha}"
 output_dir="${DOMM_BENCH_OUTPUT_DIR:-target/benchmarks/$run_id}"
+case "$output_dir" in
+    /*) ;;
+    *) output_dir="$workspace_root/$output_dir" ;;
+esac
 
 mkdir -p "$output_dir"
+
+readarray -t preexisting_pocket_ic_pids < <(pgrep -f '/tmp/pocket-ic-server.*/pocket-ic' || true)
+
+cleanup_pocket_ic() {
+    local pid existing
+    while IFS= read -r pid; do
+        [[ -z "$pid" ]] && continue
+        existing=0
+        for before in "${preexisting_pocket_ic_pids[@]}"; do
+            if [[ "$pid" == "$before" ]]; then
+                existing=1
+                break
+            fi
+        done
+        if ((existing == 0)); then
+            kill "$pid" 2>/dev/null || true
+        fi
+    done < <(pgrep -f '/tmp/pocket-ic-server.*/pocket-ic' || true)
+}
+trap cleanup_pocket_ic EXIT
 
 printf "Running DoMM benchmark suite\n"
 printf "Output: %s\n" "$output_dir"

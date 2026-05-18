@@ -6629,6 +6629,7 @@ struct BenchmarkStatusSample {
     memory_size_bytes: u128,
     wasm_memory_size_bytes: u128,
     stable_memory_size_bytes: u128,
+    query_calls_total: u128,
     query_instructions_total: u128,
 }
 
@@ -6736,6 +6737,7 @@ impl BenchmarkRecorder {
             memory_size_bytes: nat_to_u128(&status.memory_size),
             wasm_memory_size_bytes: nat_to_u128(&status.memory_metrics.wasm_memory_size),
             stable_memory_size_bytes: nat_to_u128(&status.memory_metrics.stable_memory_size),
+            query_calls_total: nat_to_u128(&status.query_stats.num_calls_total),
             query_instructions_total: nat_to_u128(&status.query_stats.num_instructions_total),
         }
     }
@@ -6752,11 +6754,17 @@ impl BenchmarkRecorder {
         update_instruction_delta: Option<u64>,
     ) {
         let instruction_delta = if kind == "query" {
-            Some(u128_to_u64_saturating(
-                after
-                    .query_instructions_total
-                    .saturating_sub(before.query_instructions_total),
-            ))
+            let query_count_delta = after
+                .query_calls_total
+                .saturating_sub(before.query_calls_total);
+            let query_instruction_delta = after
+                .query_instructions_total
+                .saturating_sub(before.query_instructions_total);
+            if query_count_delta == 1 && query_instruction_delta > 0 {
+                Some(u128_to_u64_saturating(query_instruction_delta))
+            } else {
+                None
+            }
         } else {
             update_instruction_delta
         };
@@ -7299,6 +7307,113 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
         .unwrap_or(0)
+}
+
+#[test]
+fn benchmark_summary_deltas_compare_previous_run() {
+    let mut scenarios = vec![BenchmarkScenarioSummary {
+        id: "game_start".to_string(),
+        label: "Game start".to_string(),
+        description: "test".to_string(),
+        players: 2,
+        call_count: 1,
+        query_count: 0,
+        update_count: 1,
+        response_bytes_total: 10,
+        instruction_total: 150,
+        instruction_change_pct: None,
+        cycle_cost_total: 20,
+        memory_delta_bytes: 130,
+        memory_change_pct: None,
+    }];
+    let mut methods = vec![BenchmarkMethodSummary {
+        method: "register_player".to_string(),
+        kind: "update".to_string(),
+        call_count: 1,
+        error_count: 0,
+        avg_instruction_delta: Some(75.0),
+        p95_instruction_delta: Some(75),
+        instruction_change_pct: None,
+        avg_memory_delta_bytes: 60.0,
+        memory_change_pct: None,
+        avg_cycle_cost: 10.0,
+        avg_response_bytes: 5.0,
+    }];
+    let previous = BenchmarkSummaryArtifact {
+        run_id: "previous".to_string(),
+        git_sha: "abc1234".to_string(),
+        generated_at_ms: 1,
+        benchmark_name: "test".to_string(),
+        scenario_count: 1,
+        call_count: 1,
+        required_game_endpoint_count: REQUIRED_GAME_ENDPOINTS.len(),
+        covered_required_endpoint_count: 1,
+        missing_required_endpoints: Vec::new(),
+        total_row_growth: 1,
+        stable_memory_pages_start: 0,
+        stable_memory_pages_final: 1,
+        scenarios: vec![BenchmarkScenarioSummary {
+            instruction_total: 100,
+            memory_delta_bytes: 100,
+            ..scenarios[0].clone()
+        }],
+        methods: vec![BenchmarkMethodSummary {
+            avg_instruction_delta: Some(100.0),
+            avg_memory_delta_bytes: 50.0,
+            ..methods[0].clone()
+        }],
+    };
+
+    apply_previous_deltas(&mut scenarios, &mut methods, Some(&previous));
+
+    assert_eq!(scenarios[0].instruction_change_pct, Some(50.0));
+    assert_eq!(scenarios[0].memory_change_pct, Some(30.0));
+    assert_eq!(methods[0].instruction_change_pct, Some(-25.0));
+    assert_eq!(methods[0].memory_change_pct, Some(20.0));
+}
+
+#[test]
+fn benchmark_summary_excludes_internal_methods_and_tracks_coverage() {
+    let calls = vec![
+        benchmark_test_call("diagnostics", "get_diagnostic_storage_snapshot", "query"),
+        benchmark_test_call("game_start", "register_player", "update"),
+        benchmark_test_call("game_start", "create_session", "update"),
+    ];
+
+    let scenarios = scenario_summaries(&calls);
+    let methods = method_summaries(&calls);
+    let covered = covered_required_endpoints(&calls);
+
+    assert_eq!(scenarios.len(), 1);
+    assert_eq!(scenarios[0].id, "game_start");
+    assert_eq!(methods.len(), 2);
+    assert!(covered.contains("register_player"));
+    assert!(covered.contains("create_session"));
+    assert!(
+        !methods
+            .iter()
+            .any(|method| method.method == "get_diagnostic_storage_snapshot")
+    );
+}
+
+fn benchmark_test_call(scenario_id: &str, method: &str, kind: &str) -> BenchmarkCallRecord {
+    BenchmarkCallRecord {
+        sequence: 1,
+        scenario_id: scenario_id.to_string(),
+        method: method.to_string(),
+        kind: kind.to_string(),
+        ok: true,
+        error_code: None,
+        response_bytes: 100,
+        wall_time_micros: 50,
+        instruction_delta: Some(1_000),
+        cycle_cost: 10,
+        memory_delta_bytes: 20,
+        wasm_memory_delta_bytes: 20,
+        stable_memory_delta_bytes: 0,
+        memory_size_before_bytes: 1_000,
+        memory_size_after_bytes: 1_020,
+    }
 }
 
 const GATE_J_PROGRESS_ENTITIES: &[&str] = &[

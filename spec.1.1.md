@@ -1485,8 +1485,17 @@ income, and full regression/PocketIC evidence.
     expectations. The first-gate criteria still mention repeated calls only as a
     prohibited regression: one `start_session` call must reach `active` without
     repeated client calls.
-- [ ] Gate tests: targeted setup tests, `make test-pocket`,
+- [x] Gate tests: targeted setup tests, `make test-pocket`,
   `make check-canister`.
+  - Completed 2026-05-18 with `make check-canister`, the targeted setup
+    service/PocketIC tests above, and all `make test-pocket` groups. Evidence:
+    the `pocket-parallel` phase passed with the new `setup` group included
+    (`setup` 183.688s, `end-turn` 195.128s, `render-projection` 300.246s,
+    `command-recovery` 271.478s); `pocket-long` passed after resuming the
+    interrupted groups (`endpoint` 158.028s, `gate-j` 121.052s, `movement`
+    94.342s, `gate-k` 287.531s, `gate-l` 322.052s, `stationary` 99.967s);
+    and `pocket-gate-m` passed after the overdue zero-delay timer clamp in
+    480.75s.
 
 ### Gate 4. Map `end_turn` And Early Turn Closure
 

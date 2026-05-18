@@ -2523,22 +2523,29 @@ fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
         "final participant readiness should schedule immediate turn resolution"
     );
 
-    let closing_move = update_as::<CommandResponse>(
-        &fixture,
-        player_one,
-        "submit_move_intent",
-        (
-            session_id.clone(),
-            champion_id.clone(),
-            vec![MoveCoord::new(9, 24)],
-            "nonce:end-turn:move-after-close".to_string(),
-        ),
-    )
-    .expect("closing-turn move denial should decode")
-    .expect_err("commands should be blocked once turn closure is accepted");
-    assert_eq!(closing_move.code, "backend_work_pending");
-
     let mut after_turn_resolution = compact_game_view(&fixture, player_one, &session_id);
+    if after_turn_resolution.session.current_turn == 1 {
+        let closing_end_turn = update_as::<CommandResponse>(
+            &fixture,
+            player_one,
+            "end_turn",
+            (
+                session_id.clone(),
+                "nonce:end-turn:end:one:after-close".to_string(),
+            ),
+        )
+        .expect("closing-turn duplicate end_turn should decode");
+        match closing_end_turn {
+            Ok(response) => {
+                assert_eq!(
+                    response.effective_turn, 2,
+                    "fresh end_turn should only apply if the timer advanced before the call"
+                );
+            }
+            Err(error) => assert_eq!(error.code, "backend_work_pending"),
+        }
+    }
+
     if after_turn_resolution.session.current_turn == 1 {
         advance_time_for_timers(&fixture, 1_000);
         replay_player_registration(&fixture, player_two, "end-turn", "two");

@@ -73,6 +73,10 @@ add_group "week-two" \
     "week-two tavern and recruit growth PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance -- --nocapture"
+add_group "setup" \
+    "one-call setup progress, replay, and post-upgrade resume PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_one_call_setup_progress_replay_and_upgrade_resume -- --nocapture"
 add_group "gate-m" \
     "Gate M canister-backed web client probe" \
     "cargo test -p domm-pocket-ic-tests --test client_probe_canister --no-run" \
@@ -111,6 +115,7 @@ POCKET_PARALLEL_GROUPS=(
     "pocket-lock"
     "pocket-smoke"
     "week-two"
+    "setup"
     "timer-jobs"
     "end-turn"
     "battle-round"

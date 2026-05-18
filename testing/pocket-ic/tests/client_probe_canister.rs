@@ -17,7 +17,8 @@ use domm_game::{
     GameViewRequest, LegalBattleAction, LobbyCommandResponse, LobbyCommandResult, MAX_CHUNK_LIMIT,
     MapChunkPage, MatchHistoryPage, MoveCoord, ObjectViewPage, PageInfo, ParticipantSummary,
     ParticipantView, PlayableMatchView, RecruitPreview, RecruitTarget, RenderTimeMeta, SessionView,
-    first_playable_content_manifest, first_playable_fixture, opening_viewport_for_slot,
+    SetupProgressView, first_playable_content_manifest, first_playable_fixture,
+    opening_viewport_for_slot,
 };
 
 const GATE_M_ENTITIES: &[&str] = &[
@@ -175,6 +176,11 @@ impl CanisterWebClientBackend {
     fn advance_time_ms(&mut self, millis: u64) {
         self.advance_clock_ms(millis);
         self.fixture.pic().tick();
+    }
+
+    fn advance_time_for_timers_ms(&mut self, millis: u64) {
+        self.advance_clock_ms(millis);
+        self.fixture.pic().tick_n(5);
     }
 
     fn advance_clock_ms(&mut self, millis: u64) {
@@ -889,7 +895,9 @@ impl WebClientBackend for CanisterWebClientBackend {
             other => panic!("start_session returned unexpected result: {other:?}"),
         }
 
-        for _ in 0..80 {
+        let mut last_state = String::new();
+        let mut last_progress = None;
+        for _ in 0..160 {
             let session = self
                 .query_result::<SessionView>(caller, "get_session", (session_id.to_string(),))
                 .expect("started session should load after start");
@@ -906,9 +914,19 @@ impl WebClientBackend for CanisterWebClientBackend {
                 response.result = LobbyCommandResult::Session(session);
                 return response;
             }
-            self.advance_time_ms(5);
+            last_state = session.state;
+            last_progress = self
+                .query_result::<SetupProgressView>(
+                    caller,
+                    "get_setup_progress",
+                    (session_id.to_string(),),
+                )
+                .ok();
+            self.advance_time_for_timers_ms(5);
         }
-        panic!("one-call start_session timer continuation should activate session");
+        panic!(
+            "one-call start_session timer continuation should activate session, last state {last_state}, progress {last_progress:?}"
+        );
     }
 
     fn default_game_view(

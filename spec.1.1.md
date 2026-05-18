@@ -1793,7 +1793,11 @@ income, and full regression/PocketIC evidence.
 - [x] Audit `spec.md`: movement rules, query-budget expectations, and error
   codes match implementation.
 - [x] Audit `spec.1.1.md`: Topic 7 reflects the final late-submit contract.
-- [ ] Gate tests: `query_budgets`, movement service tests, pure movement tests.
+- [x] Gate tests: `query_budgets`, movement service tests, pure movement tests.
+  - Completed 2026-05-18: the full `TEST_JOBS=12 LONG_TEST_JOBS=6
+    GATE_M_TEST_JOBS=1 make test-pocket` run passed `query-budget` in 67.356s
+    and the PocketIC `movement` group in 103.238s. `cargo test -p domm-game
+    movement` passed 17 pure movement-related tests.
 
 ### Gate 11. Guarded Mine And First-Playable Battle Route
 

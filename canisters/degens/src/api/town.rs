@@ -6,7 +6,9 @@ use crate::dto::public::{
 
 #[query]
 fn get_town_view(session_id: String, town_id: String) -> Result<ApiTownView, ApiError> {
-    crate::services::town::get_town_view(canic_cdk::api::msg_caller(), session_id, town_id)
+    crate::metrics::benchmark_query("get_town_view", || {
+        crate::services::town::get_town_view(canic_cdk::api::msg_caller(), session_id, town_id)
+    })
 }
 
 #[query]
@@ -15,12 +17,14 @@ fn preview_build_town_structure(
     town_id: String,
     building_def_id: String,
 ) -> Result<BuildPreview, ApiError> {
-    crate::services::town::preview_build_town_structure(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        town_id,
-        building_def_id,
-    )
+    crate::metrics::benchmark_query("preview_build_town_structure", || {
+        crate::services::town::preview_build_town_structure(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            town_id,
+            building_def_id,
+        )
+    })
 }
 
 #[query]
@@ -31,14 +35,16 @@ fn preview_recruit_units(
     quantity: u32,
     target: RecruitTarget,
 ) -> Result<RecruitPreview, ApiError> {
-    crate::services::town::preview_recruit_units(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        town_id,
-        unit_id,
-        quantity,
-        target,
-    )
+    crate::metrics::benchmark_query("preview_recruit_units", || {
+        crate::services::town::preview_recruit_units(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            town_id,
+            unit_id,
+            quantity,
+            target,
+        )
+    })
 }
 
 #[update]

@@ -7,5 +7,7 @@ fn get_content_manifest(
     ruleset_id: String,
     version: u32,
 ) -> Result<ContentManifestResponse, ApiError> {
-    crate::services::content::get_content_manifest(ruleset_id, version)
+    crate::metrics::benchmark_query("get_content_manifest", || {
+        crate::services::content::get_content_manifest(ruleset_id, version)
+    })
 }

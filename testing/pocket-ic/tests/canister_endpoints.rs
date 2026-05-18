@@ -6708,22 +6708,37 @@ struct BenchmarkRunArtifact {
     calls: Vec<BenchmarkCallRecord>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkQueryLog {
+    method: String,
+    instruction_delta: u64,
+    stable_pages_before: u64,
+    stable_pages_after: u64,
+}
+
 #[derive(Debug)]
 struct BenchmarkRecorder {
     output_dir: PathBuf,
     calls: Vec<BenchmarkCallRecord>,
     next_sequence: u64,
     canister_call_cursor: u64,
+    canister_log_cursor: u64,
+    query_log_path: Option<PathBuf>,
+    query_log_entry_cursor: usize,
 }
 
 impl BenchmarkRecorder {
     fn from_env() -> Option<Self> {
         let output_dir = env::var_os("DOMM_BENCH_OUTPUT_DIR").map(PathBuf::from)?;
+        let query_log_path = env::var_os("DOMM_BENCH_QUERY_LOG_PATH").map(PathBuf::from);
         Some(Self {
             output_dir,
             calls: Vec::new(),
             next_sequence: 1,
             canister_call_cursor: 0,
+            canister_log_cursor: 0,
+            query_log_path,
+            query_log_entry_cursor: 0,
         })
     }
 
@@ -6751,9 +6766,11 @@ impl BenchmarkRecorder {
         elapsed: Duration,
         before: &BenchmarkStatusSample,
         after: &BenchmarkStatusSample,
-        update_instruction_delta: Option<u64>,
+        measured_instruction_delta: Option<u64>,
     ) {
-        let instruction_delta = if kind == "query" {
+        let instruction_delta = if measured_instruction_delta.is_some() {
+            measured_instruction_delta
+        } else if kind == "query" {
             let query_count_delta = after
                 .query_calls_total
                 .saturating_sub(before.query_calls_total);
@@ -6766,7 +6783,7 @@ impl BenchmarkRecorder {
                 None
             }
         } else {
-            update_instruction_delta
+            None
         };
         let cycle_cost = before.cycles.saturating_sub(after.cycles);
         let response_bytes = candid::encode_one(response)
@@ -6809,6 +6826,8 @@ impl BenchmarkRecorder {
         .expect("benchmark reset should decode")
         .expect("benchmark reset should succeed");
         self.canister_call_cursor = 0;
+        self.canister_log_cursor = 0;
+        self.query_log_entry_cursor = 0;
     }
 
     fn pull_update_instruction(
@@ -6833,6 +6852,60 @@ impl BenchmarkRecorder {
             .rev()
             .find(|call| call.method == method && call.kind == EndpointKind::Update)
             .map(|call| call.instruction_delta)
+    }
+
+    fn pull_query_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        if let Some(instruction_delta) = self.pull_query_instruction_from_log_file(method) {
+            return Some(instruction_delta);
+        }
+
+        let records = fixture
+            .pic()
+            .fetch_canister_logs(fixture.canister_id(), candid::Principal::anonymous())
+            .ok()?;
+        let mut matched = None;
+        for record in &records {
+            if record.idx <= self.canister_log_cursor {
+                continue;
+            }
+            self.canister_log_cursor = self.canister_log_cursor.max(record.idx);
+            if let Some(log) = parse_benchmark_query_log(&record.content)
+                && log.method == method
+            {
+                matched = Some(log.instruction_delta);
+            }
+        }
+        matched
+    }
+
+    fn pull_query_instruction_from_log_file(&mut self, method: &str) -> Option<u64> {
+        let path = self.query_log_path.as_ref()?;
+        let started = Instant::now();
+
+        loop {
+            if let Ok(text) = fs::read_to_string(path) {
+                let logs = text
+                    .lines()
+                    .filter_map(|line| parse_benchmark_query_log(line.as_bytes()))
+                    .collect::<Vec<_>>();
+                while self.query_log_entry_cursor < logs.len() {
+                    let log = &logs[self.query_log_entry_cursor];
+                    self.query_log_entry_cursor = self.query_log_entry_cursor.saturating_add(1);
+                    if log.method == method {
+                        return Some(log.instruction_delta);
+                    }
+                }
+            }
+
+            if started.elapsed() >= Duration::from_secs(2) {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn write_artifacts(
@@ -6931,6 +7004,25 @@ fn unsigned_delta(after: u128, before: u128) -> i128 {
     } else {
         -i128::try_from(before - after).unwrap_or(i128::MAX)
     }
+}
+
+fn parse_benchmark_query_log(content: &[u8]) -> Option<BenchmarkQueryLog> {
+    let text = String::from_utf8_lossy(content);
+    if !text.contains("DOMM_BENCH_QUERY") {
+        return None;
+    }
+
+    let fields = text
+        .split_whitespace()
+        .filter_map(|token| token.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+
+    Some(BenchmarkQueryLog {
+        method: fields.get("method")?.to_string(),
+        instruction_delta: fields.get("instruction_delta")?.parse().ok()?,
+        stable_pages_before: fields.get("stable_pages_before")?.parse().ok()?,
+        stable_pages_after: fields.get("stable_pages_after")?.parse().ok()?,
+    })
 }
 
 fn scenario_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkScenarioSummary> {
@@ -7205,37 +7297,34 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
         summary.stable_memory_pages_final
     ));
     out.push_str("## Scenarios\n\n");
-    out.push_str("| Scenario | Calls | Memory MB | Memory change | Instructions | Instruction change | Cycles |\n");
+    out.push_str("| Scenario | Calls | Memory MB | Memory change | Instructions B | Instruction change | Cycles T |\n");
     out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for scenario in &summary.scenarios {
         out.push_str(&format!(
-            "| {} | {} | {:.3} | {} | {} | {} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
             scenario.label,
             scenario.call_count,
-            scenario.memory_delta_bytes as f64 / 1_048_576.0,
+            format_mb_from_bytes_i128(scenario.memory_delta_bytes),
             format_pct(scenario.memory_change_pct),
-            scenario.instruction_total,
+            format_billions_u128(scenario.instruction_total),
             format_pct(scenario.instruction_change_pct),
-            scenario.cycle_cost_total
+            format_trillions_u128(scenario.cycle_cost_total)
         ));
     }
     out.push_str("\n## Public Methods\n\n");
-    out.push_str("| Method | Kind | Calls | Avg inst | Inst change | Avg mem bytes | Mem change | Avg cycles | Avg bytes | Errors |\n");
+    out.push_str("| Method | Kind | Calls | Avg inst B | Inst change | Avg mem MB | Mem change | Avg cycles T | Avg bytes | Errors |\n");
     out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
     for method in &summary.methods {
         out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {:.1} | {} | {:.1} | {:.1} | {} |\n",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |\n",
             method.method,
             method.kind,
             method.call_count,
-            method
-                .avg_instruction_delta
-                .map(|value| format!("{value:.1}"))
-                .unwrap_or_else(|| "n/a".to_string()),
+            format_billions_option(method.avg_instruction_delta),
             format_pct(method.instruction_change_pct),
-            method.avg_memory_delta_bytes,
+            format_mb_from_bytes_f64(method.avg_memory_delta_bytes),
             format_pct(method.memory_change_pct),
-            method.avg_cycle_cost,
+            format_trillions_f64(method.avg_cycle_cost),
             method.avg_response_bytes,
             method.error_count
         ));
@@ -7252,6 +7341,43 @@ fn format_pct(value: Option<f64>) -> String {
     value
         .map(|value| format!("{value:+.1}%"))
         .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_billions_u128(value: u128) -> String {
+    format_scaled(value as f64 / 1_000_000_000.0)
+}
+
+fn format_billions_option(value: Option<f64>) -> String {
+    value
+        .map(|value| format_scaled(value / 1_000_000_000.0))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_trillions_u128(value: u128) -> String {
+    format_scaled(value as f64 / 1_000_000_000_000.0)
+}
+
+fn format_trillions_f64(value: f64) -> String {
+    format_scaled(value / 1_000_000_000_000.0)
+}
+
+fn format_mb_from_bytes_i128(value: i128) -> String {
+    format_scaled(value as f64 / 1_048_576.0)
+}
+
+fn format_mb_from_bytes_f64(value: f64) -> String {
+    format_scaled(value / 1_048_576.0)
+}
+
+fn format_scaled(value: f64) -> String {
+    let mut text = format!("{value:.4}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" { "0".to_string() } else { text }
 }
 
 fn scenario_label(id: &str) -> &str {
@@ -7394,6 +7520,58 @@ fn benchmark_summary_excludes_internal_methods_and_tracks_coverage() {
             .iter()
             .any(|method| method.method == "get_diagnostic_storage_snapshot")
     );
+}
+
+#[test]
+fn benchmark_summary_formats_scaled_instruction_cycle_and_memory_values() {
+    assert_eq!(format_billions_u128(1_423_456_789), "1.4235");
+    assert_eq!(format_billions_option(Some(1_423_400_000.0)), "1.4234");
+    assert_eq!(format_trillions_u128(1_123_200_000_000), "1.1232");
+    assert_eq!(format_trillions_f64(1_500_000_000_000.0), "1.5");
+    assert_eq!(format_mb_from_bytes_i128(1_572_864), "1.5");
+    assert_eq!(format_mb_from_bytes_f64(524_288.0), "0.5");
+}
+
+#[test]
+fn benchmark_query_log_parser_reads_instruction_and_memory_fields() {
+    let log = parse_benchmark_query_log(
+        b"DOMM_BENCH_QUERY method=get_game_view ok=true error_code=- instruction_delta=1423456789 stable_pages_before=12 stable_pages_after=13",
+    )
+    .expect("query benchmark log should parse");
+
+    assert_eq!(log.method, "get_game_view");
+    assert_eq!(log.instruction_delta, 1_423_456_789);
+    assert_eq!(log.stable_pages_before, 12);
+    assert_eq!(log.stable_pages_after, 13);
+}
+
+#[test]
+fn benchmark_recorder_reads_query_instruction_from_output_log_file() {
+    let path = env::temp_dir().join(format!(
+        "domm-query-benchmark-log-{}-{}.log",
+        std::process::id(),
+        now_millis()
+    ));
+    fs::write(
+        &path,
+        "noise\n2021-05-06 19:17:10 UTC: [Canister test] DOMM_BENCH_QUERY method=get_game_view ok=true error_code=- instruction_delta=3526922932 stable_pages_before=64641 stable_pages_after=64641\n",
+    )
+    .expect("query benchmark test log should write");
+    let mut recorder = BenchmarkRecorder {
+        output_dir: env::temp_dir(),
+        calls: Vec::new(),
+        next_sequence: 1,
+        canister_call_cursor: 0,
+        canister_log_cursor: 0,
+        query_log_path: Some(path.clone()),
+        query_log_entry_cursor: 0,
+    };
+
+    assert_eq!(
+        recorder.pull_query_instruction_from_log_file("get_game_view"),
+        Some(3_526_922_932)
+    );
+    fs::remove_file(path).ok();
 }
 
 fn benchmark_test_call(scenario_id: &str, method: &str, kind: &str) -> BenchmarkCallRecord {
@@ -7550,6 +7728,16 @@ impl GateJMetrics {
             .and_then(|benchmark| benchmark.pull_update_instruction(fixture, method))
     }
 
+    fn pull_query_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        self.benchmark
+            .as_mut()
+            .and_then(|benchmark| benchmark.pull_query_instruction(fixture, method))
+    }
+
     fn record_benchmark_call<T: candid::CandidType>(
         &mut self,
         method: &str,
@@ -7558,7 +7746,7 @@ impl GateJMetrics {
         elapsed: Duration,
         before: Option<BenchmarkStatusSample>,
         after: Option<BenchmarkStatusSample>,
-        update_instruction_delta: Option<u64>,
+        measured_instruction_delta: Option<u64>,
     ) {
         let Some(benchmark) = &mut self.benchmark else {
             return;
@@ -7574,7 +7762,7 @@ impl GateJMetrics {
             elapsed,
             &before,
             &after,
-            update_instruction_delta,
+            measured_instruction_delta,
         );
     }
 
@@ -9086,7 +9274,16 @@ where
     let elapsed = started.elapsed();
     let after = metrics.benchmark_sample(fixture);
     metrics.record_query(method, &response);
-    metrics.record_benchmark_call(method, "query", &response, elapsed, before, after, None);
+    let query_instruction_delta = metrics.pull_query_instruction(fixture, method);
+    metrics.record_benchmark_call(
+        method,
+        "query",
+        &response,
+        elapsed,
+        before,
+        after,
+        query_instruction_delta,
+    );
     response
 }
 

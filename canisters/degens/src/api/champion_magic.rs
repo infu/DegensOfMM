@@ -7,11 +7,13 @@ fn preview_champion_progression(
     session_id: String,
     champion_id: String,
 ) -> Result<ChampionProgressionView, ApiError> {
-    crate::services::champion_magic::preview_champion_progression(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        champion_id,
-    )
+    crate::metrics::benchmark_query("preview_champion_progression", || {
+        crate::services::champion_magic::preview_champion_progression(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            champion_id,
+        )
+    })
 }
 
 #[update]

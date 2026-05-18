@@ -7,12 +7,14 @@ use crate::{
 
 #[query]
 fn get_battle_state(session_id: String, battle_id: String) -> Result<BattleView, ApiError> {
-    crate::services::battle::get_battle_state(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        battle_id,
-        clock::now_ms(),
-    )
+    crate::metrics::benchmark_query("get_battle_state", || {
+        crate::services::battle::get_battle_state(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            battle_id,
+            clock::now_ms(),
+        )
+    })
 }
 
 #[update]

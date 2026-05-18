@@ -8,13 +8,15 @@ fn preview_move_path(
     champion_id: String,
     path: Vec<MoveCoord>,
 ) -> Result<MovementPreview, ApiError> {
-    crate::services::movement::preview_move_path(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        champion_id,
-        path,
-        crate::services::clock::now_ms(),
-    )
+    crate::metrics::benchmark_query("preview_move_path", || {
+        crate::services::movement::preview_move_path(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            champion_id,
+            path,
+            crate::services::clock::now_ms(),
+        )
+    })
 }
 
 #[update]

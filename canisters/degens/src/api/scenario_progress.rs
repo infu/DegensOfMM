@@ -7,29 +7,43 @@ use crate::dto::public::{
 
 #[query]
 fn get_objective_progress(session_id: String) -> Result<ObjectiveProgressView, ApiError> {
-    crate::services::scenario_progress::get_objective_progress(
-        canic_cdk::api::msg_caller(),
-        session_id,
-    )
+    crate::metrics::benchmark_query("get_objective_progress", || {
+        crate::services::scenario_progress::get_objective_progress(
+            canic_cdk::api::msg_caller(),
+            session_id,
+        )
+    })
 }
 
 #[query]
 fn get_scenario_rules(session_id: String) -> Result<ScenarioRulesView, ApiError> {
-    crate::services::scenario_progress::get_scenario_rules(canic_cdk::api::msg_caller(), session_id)
+    crate::metrics::benchmark_query("get_scenario_rules", || {
+        crate::services::scenario_progress::get_scenario_rules(
+            canic_cdk::api::msg_caller(),
+            session_id,
+        )
+    })
 }
 
 #[query]
 fn get_world_events(session_id: String) -> Result<WorldEventsView, ApiError> {
-    crate::services::scenario_progress::get_world_events(canic_cdk::api::msg_caller(), session_id)
+    crate::metrics::benchmark_query("get_world_events", || {
+        crate::services::scenario_progress::get_world_events(
+            canic_cdk::api::msg_caller(),
+            session_id,
+        )
+    })
 }
 
 #[query]
 fn preview_quest(session_id: String, quest_key: String) -> Result<QuestPreview, ApiError> {
-    crate::services::scenario_progress::preview_quest(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        quest_key,
-    )
+    crate::metrics::benchmark_query("preview_quest", || {
+        crate::services::scenario_progress::preview_quest(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            quest_key,
+        )
+    })
 }
 
 #[update]

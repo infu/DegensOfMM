@@ -13,6 +13,8 @@ case "$output_dir" in
 esac
 
 mkdir -p "$output_dir"
+test_output="$output_dir/test-output.log"
+: > "$test_output"
 
 readarray -t preexisting_pocket_ic_pids < <(pgrep -f '/tmp/pocket-ic-server.*/pocket-ic' || true)
 
@@ -39,12 +41,14 @@ printf "Output: %s\n" "$output_dir"
 
 DOMM_CANISTER_FEATURES=benchmark \
 DOMM_BENCH_OUTPUT_DIR="$output_dir" \
+DOMM_BENCH_QUERY_LOG_PATH="$test_output" \
 CANIC_POCKET_IC_LOCK_NAMESPACE="domm-bench-$run_id" \
 cargo test -p domm-pocket-ic-tests --test canister_endpoints \
     pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state \
-    -- --nocapture
+    -- --nocapture 2>&1 | tee -a "$test_output"
 
 printf "\nBenchmark artifacts:\n"
 printf "  %s\n" "$output_dir/run.json"
 printf "  %s\n" "$output_dir/summary.json"
 printf "  %s\n" "$output_dir/summary.md"
+printf "  %s\n" "$test_output"

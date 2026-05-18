@@ -47,8 +47,45 @@ pub(crate) fn benchmark_update<T>(
     result
 }
 
+#[cfg(feature = "benchmark")]
+pub(crate) fn benchmark_query<T>(
+    method: &'static str,
+    body: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    let stable_memory_pages_before = canic_cdk::api::stable_size();
+    let instruction_before = canic_cdk::api::instruction_counter();
+    let result = body();
+    let instruction_after = canic_cdk::api::instruction_counter();
+    let stable_memory_pages_after = canic_cdk::api::stable_size();
+    let error_code = result
+        .as_ref()
+        .err()
+        .map(|error| error.code.as_str())
+        .unwrap_or("-");
+
+    canic_cdk::eprintln!(
+        "DOMM_BENCH_QUERY method={} ok={} error_code={} instruction_delta={} stable_pages_before={} stable_pages_after={}",
+        method,
+        result.is_ok(),
+        error_code,
+        instruction_after.saturating_sub(instruction_before),
+        stable_memory_pages_before,
+        stable_memory_pages_after
+    );
+
+    result
+}
+
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn benchmark_update<T>(
+    _method: &'static str,
+    body: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    body()
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn benchmark_query<T>(
     _method: &'static str,
     body: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {

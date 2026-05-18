@@ -9,13 +9,15 @@ fn get_events_after(
     events_after_seq: u64,
     limit: u32,
 ) -> Result<ApiEventPage, ApiError> {
-    crate::services::events::get_events_after(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        audience_key,
-        events_after_seq,
-        limit,
-    )
+    crate::metrics::benchmark_query("get_events_after", || {
+        crate::services::events::get_events_after(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            audience_key,
+            events_after_seq,
+            limit,
+        )
+    })
 }
 
 #[query]
@@ -23,11 +25,13 @@ fn get_command_status(
     session_id: String,
     command_id_or_client_nonce: String,
 ) -> Result<CommandStatusView, ApiError> {
-    crate::services::events::get_command_status(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        command_id_or_client_nonce,
-    )
+    crate::metrics::benchmark_query("get_command_status", || {
+        crate::services::events::get_command_status(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            command_id_or_client_nonce,
+        )
+    })
 }
 
 #[query]
@@ -36,10 +40,12 @@ fn get_command_status_by_nonce(
     command_type: String,
     client_nonce: String,
 ) -> Result<CommandStatusView, ApiError> {
-    crate::services::events::get_command_status_by_nonce(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        command_type,
-        client_nonce,
-    )
+    crate::metrics::benchmark_query("get_command_status_by_nonce", || {
+        crate::services::events::get_command_status_by_nonce(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            command_type,
+            client_nonce,
+        )
+    })
 }

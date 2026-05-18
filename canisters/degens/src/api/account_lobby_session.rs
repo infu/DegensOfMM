@@ -22,7 +22,9 @@ fn register_player(
 
 #[query]
 fn get_my_player() -> Result<PlayerView, ApiError> {
-    crate::services::account_lobby_session::get_my_player(canic_cdk::api::msg_caller())
+    crate::metrics::benchmark_query("get_my_player", || {
+        crate::services::account_lobby_session::get_my_player(canic_cdk::api::msg_caller())
+    })
 }
 
 #[update]
@@ -86,18 +88,24 @@ fn start_session(
 
 #[query]
 fn get_session(session_id: String) -> Result<SessionView, ApiError> {
-    crate::services::account_lobby_session::get_session(session_id)
+    crate::metrics::benchmark_query("get_session", || {
+        crate::services::account_lobby_session::get_session(session_id)
+    })
 }
 
 #[query]
 fn get_setup_progress(session_id: String) -> Result<SetupProgressView, ApiError> {
-    crate::services::account_lobby_session::get_setup_progress(session_id)
+    crate::metrics::benchmark_query("get_setup_progress", || {
+        crate::services::account_lobby_session::get_setup_progress(session_id)
+    })
 }
 
 #[query]
 fn get_my_participant(session_id: String) -> Result<ParticipantView, ApiError> {
-    crate::services::account_lobby_session::get_my_participant(
-        canic_cdk::api::msg_caller(),
-        session_id,
-    )
+    crate::metrics::benchmark_query("get_my_participant", || {
+        crate::services::account_lobby_session::get_my_participant(
+            canic_cdk::api::msg_caller(),
+            session_id,
+        )
+    })
 }

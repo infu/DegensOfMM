@@ -38,12 +38,14 @@ fn accept_quest(
     quest_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::scenario_progress::accept_quest(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        quest_key,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("accept_quest", || {
+        crate::services::scenario_progress::accept_quest(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            quest_key,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -52,21 +54,25 @@ fn claim_quest_reward(
     quest_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::scenario_progress::claim_quest_reward(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        quest_key,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("claim_quest_reward", || {
+        crate::services::scenario_progress::claim_quest_reward(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            quest_key,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
 fn sync_objectives(session_id: String, client_nonce: String) -> Result<CommandResponse, ApiError> {
-    crate::services::scenario_progress::sync_objectives(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("sync_objectives", || {
+        crate::services::scenario_progress::sync_objectives(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -74,11 +80,13 @@ fn sync_world_events(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::scenario_progress::sync_world_events(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("sync_world_events", || {
+        crate::services::scenario_progress::sync_world_events(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -86,9 +94,11 @@ fn sync_advanced_victory(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::scenario_progress::sync_advanced_victory(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("sync_advanced_victory", || {
+        crate::services::scenario_progress::sync_advanced_victory(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }

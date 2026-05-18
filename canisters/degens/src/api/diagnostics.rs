@@ -7,6 +7,9 @@ use crate::contract::{
     DiagnosticStorageSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView,
 };
 
+#[cfg(feature = "benchmark")]
+use crate::contract::DiagnosticBenchmarkCallPage;
+
 #[query]
 fn get_diagnostic_storage_snapshot(
     entity_names: Vec<String>,
@@ -22,6 +25,21 @@ fn get_diagnostic_system_jobs(
     cursor: Option<String>,
 ) -> Result<DiagnosticSystemJobPage, ApiError> {
     crate::services::diagnostics::get_diagnostic_system_jobs(session_id, status, limit, cursor)
+}
+
+#[cfg(feature = "benchmark")]
+#[query]
+fn get_diagnostic_benchmark_metrics(
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DiagnosticBenchmarkCallPage, ApiError> {
+    crate::services::diagnostics::get_diagnostic_benchmark_metrics(cursor, limit)
+}
+
+#[cfg(feature = "benchmark")]
+#[update]
+fn reset_diagnostic_benchmark_metrics() -> Result<(), ApiError> {
+    crate::services::diagnostics::reset_diagnostic_benchmark_metrics()
 }
 
 #[update]

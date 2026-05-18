@@ -48,13 +48,15 @@ fn submit_build_town_structure(
     building_def_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::town::submit_build_town_structure(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        town_id,
-        building_def_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("submit_build_town_structure", || {
+        crate::services::town::submit_build_town_structure(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            town_id,
+            building_def_id,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -66,13 +68,15 @@ fn submit_recruit_units(
     target: RecruitTarget,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::town::submit_recruit_units(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        town_id,
-        unit_id,
-        quantity,
-        target,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("submit_recruit_units", || {
+        crate::services::town::submit_recruit_units(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            town_id,
+            unit_id,
+            quantity,
+            target,
+            client_nonce,
+        )
+    })
 }

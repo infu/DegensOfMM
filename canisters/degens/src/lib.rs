@@ -25,7 +25,8 @@ use crate::dto::public::{
 };
 
 pub use contract::{
-    CanisterEndpointView, DeferredEndpointDecision, DiagnosticRowCount, DiagnosticStorageSnapshot,
+    CanisterEndpointView, DeferredEndpointDecision, DiagnosticBenchmarkCallPage,
+    DiagnosticBenchmarkCallView, DiagnosticRowCount, DiagnosticStorageSnapshot,
     DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind, EndpointSpec,
     REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions, required_endpoint_views,
 };

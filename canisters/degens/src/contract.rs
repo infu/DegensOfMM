@@ -37,6 +37,25 @@ pub struct DiagnosticStorageSnapshot {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticBenchmarkCallView {
+    pub sequence: u64,
+    pub method: String,
+    pub kind: EndpointKind,
+    pub ok: bool,
+    pub error_code: Option<String>,
+    pub instruction_delta: u64,
+    pub stable_memory_pages_before: u64,
+    pub stable_memory_pages_after: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticBenchmarkCallPage {
+    pub calls: Vec<DiagnosticBenchmarkCallView>,
+    pub next_cursor: Option<u64>,
+    pub total_recorded: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct DiagnosticSystemJobView {
     pub job_key: String,
     pub job_kind: String,

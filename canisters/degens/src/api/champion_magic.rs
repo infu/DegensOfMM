@@ -21,13 +21,15 @@ fn select_champion_level_up(
     skill_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::champion_magic::select_champion_level_up(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        champion_id,
-        skill_key,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("select_champion_level_up", || {
+        crate::services::champion_magic::select_champion_level_up(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            champion_id,
+            skill_key,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -37,13 +39,15 @@ fn learn_champion_spell(
     spell_slug: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::champion_magic::learn_champion_spell(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        champion_id,
-        spell_slug,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("learn_champion_spell", || {
+        crate::services::champion_magic::learn_champion_spell(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            champion_id,
+            spell_slug,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -53,11 +57,13 @@ fn cast_adventure_spell(
     spell_slug: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::champion_magic::cast_adventure_spell(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        champion_id,
-        spell_slug,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("cast_adventure_spell", || {
+        crate::services::champion_magic::cast_adventure_spell(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            champion_id,
+            spell_slug,
+            client_nonce,
+        )
+    })
 }

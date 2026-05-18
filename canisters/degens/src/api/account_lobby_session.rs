@@ -10,12 +10,14 @@ fn register_player(
     display_name: Option<String>,
     client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::register_player(
-        canic_cdk::api::msg_caller(),
-        username,
-        display_name,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("register_player", || {
+        crate::services::account_lobby_session::register_player(
+            canic_cdk::api::msg_caller(),
+            username,
+            display_name,
+            client_nonce,
+        )
+    })
 }
 
 #[query]
@@ -30,13 +32,15 @@ fn create_session(
     seed: u64,
     client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::create_session(
-        canic_cdk::api::msg_caller(),
-        name,
-        ruleset_id,
-        seed,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("create_session", || {
+        crate::services::account_lobby_session::create_session(
+            canic_cdk::api::msg_caller(),
+            name,
+            ruleset_id,
+            seed,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -45,21 +49,25 @@ fn join_session(
     faction_id: String,
     client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::join_session(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        faction_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("join_session", || {
+        crate::services::account_lobby_session::join_session(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            faction_id,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
 fn mark_ready(session_id: String, client_nonce: String) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::mark_ready(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("mark_ready", || {
+        crate::services::account_lobby_session::mark_ready(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }
 
 #[update]
@@ -67,11 +75,13 @@ fn start_session(
     session_id: String,
     client_nonce: String,
 ) -> Result<LobbyCommandResponse, ApiError> {
-    crate::services::account_lobby_session::start_session(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("start_session", || {
+        crate::services::account_lobby_session::start_session(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }
 
 #[query]

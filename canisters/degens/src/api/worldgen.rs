@@ -30,9 +30,11 @@ fn sync_world_generation(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::worldgen::sync_world_generation(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("sync_world_generation", || {
+        crate::services::worldgen::sync_world_generation(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            client_nonce,
+        )
+    })
 }

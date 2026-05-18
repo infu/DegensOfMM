@@ -35,13 +35,15 @@ fn hire_tavern_champion(
     offer_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::economy_expansion::hire_tavern_champion(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        town_id,
-        offer_key,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("hire_tavern_champion", || {
+        crate::services::economy_expansion::hire_tavern_champion(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            town_id,
+            offer_key,
+            client_nonce,
+        )
+    })
 }
 
 #[query]
@@ -68,14 +70,16 @@ fn submit_market_trade(
     amount_in: u64,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::economy_expansion::submit_market_trade(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        from_resource,
-        to_resource,
-        amount_in,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("submit_market_trade", || {
+        crate::services::economy_expansion::submit_market_trade(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            from_resource,
+            to_resource,
+            amount_in,
+            client_nonce,
+        )
+    })
 }
 
 #[query]
@@ -114,13 +118,15 @@ fn submit_dwelling_recruit(
     champion_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    crate::services::economy_expansion::submit_dwelling_recruit(
-        canic_cdk::api::msg_caller(),
-        session_id,
-        object_id,
-        unit_slug,
-        quantity,
-        champion_id,
-        client_nonce,
-    )
+    crate::metrics::benchmark_update("submit_dwelling_recruit", || {
+        crate::services::economy_expansion::submit_dwelling_recruit(
+            canic_cdk::api::msg_caller(),
+            session_id,
+            object_id,
+            unit_slug,
+            quantity,
+            champion_id,
+            client_nonce,
+        )
+    })
 }

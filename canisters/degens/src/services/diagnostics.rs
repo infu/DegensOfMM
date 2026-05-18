@@ -30,6 +30,9 @@ use crate::{
     services::system_jobs as system_job_service,
 };
 
+#[cfg(feature = "benchmark")]
+use crate::contract::DiagnosticBenchmarkCallPage;
+
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
 const MAX_DIAGNOSTIC_ROWS_PER_ENTITY: u32 = 512;
 
@@ -93,6 +96,30 @@ pub(crate) fn get_diagnostic_system_jobs(
         next_cursor: page.next_cursor,
         limit: page.limit,
     })
+}
+
+#[cfg(feature = "benchmark")]
+pub(crate) fn reset_diagnostic_benchmark_metrics() -> Result<(), ApiError> {
+    crate::auth::require_controller("reset_diagnostic_benchmark_metrics")?;
+    crate::metrics::reset_benchmark_metrics();
+    Ok(())
+}
+
+#[cfg(feature = "benchmark")]
+pub(crate) fn get_diagnostic_benchmark_metrics(
+    cursor: Option<u64>,
+    limit: u32,
+) -> Result<DiagnosticBenchmarkCallPage, ApiError> {
+    crate::auth::require_controller("get_diagnostic_benchmark_metrics")?;
+    if limit == 0 || limit > 1024 {
+        return Err(ApiError::new(
+            "diagnostic_benchmark_limit_invalid",
+            "diagnostic benchmark pages require a limit between 1 and 1024",
+            false,
+        ));
+    }
+
+    Ok(crate::metrics::benchmark_metrics_page(cursor, limit))
 }
 
 pub(crate) fn force_diagnostic_system_job_running(

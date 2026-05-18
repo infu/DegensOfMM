@@ -225,17 +225,39 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
         key: &str,
     ) -> Result<CommandResponse, ProbeError> {
         let session_id = self.session_id()?;
-        let nonce = self.nonces.next(&format!("sync-{key}"));
-        let first = self
-            .backend
-            .sync_session_turn(self.caller, &session_id, now_ms, &nonce);
-        self.record_command(&first, false)?;
-        let retry = self
-            .backend
-            .sync_session_turn(self.caller, &session_id, now_ms, &nonce);
-        self.record_command(&retry, true)?;
-        self.record_retry(&first, &retry)?;
-        Ok(first)
+        for attempt in 0..8_u64 {
+            let nonce = self.nonces.next(&format!("sync-{key}-{attempt}"));
+            let sync_now_ms =
+                now_ms.saturating_add(attempt.saturating_mul(TURN_DURATION_MS + 1_000));
+            let first =
+                self.backend
+                    .sync_session_turn(self.caller, &session_id, sync_now_ms, &nonce);
+            if first
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "turn_not_due")
+            {
+                let retry =
+                    self.backend
+                        .sync_session_turn(self.caller, &session_id, sync_now_ms, &nonce);
+                self.record_retry(&first, &retry)?;
+                return Ok(first);
+            }
+            self.record_command(&first, false)?;
+
+            let retry =
+                self.backend
+                    .sync_session_turn(self.caller, &session_id, sync_now_ms, &nonce);
+            self.record_command(&retry, true)?;
+            self.record_retry(&first, &retry)?;
+            return Ok(first);
+        }
+
+        Err(ProbeError::Api(domm_game::ApiError::new(
+            "sync_session_turn_not_applied",
+            "sync_session_turn retry loop did not apply or no-op",
+            false,
+        )))
     }
 
     fn build_training_yard(&mut self) -> Result<(), ProbeError> {
@@ -324,41 +346,74 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
     }
 
     fn submit_defend_and_sync_battle(&mut self) -> Result<(), ProbeError> {
-        let battle = self
-            .state
-            .game_view
-            .as_ref()
-            .and_then(|view| view.battle.as_ref())
-            .ok_or(ProbeError::MissingGameView)?;
-        let battle_id = battle.battle_id.clone();
-        let active_stack_id = battle
-            .active_stack_id
-            .clone()
-            .ok_or(ProbeError::MissingActiveBattleStack)?;
-        let nonce = self.nonces.next("battle-defend");
-        let input = BattleActionInput {
-            battle_id: battle_id.clone(),
-            battle_stack_id: active_stack_id,
-            action: "Defend".to_string(),
-            ability_key: None,
-            target_stack_id: None,
-            destination: None,
-        };
-        let first = self.backend.submit_battle_action(
-            self.caller,
-            input.clone(),
-            &nonce,
-            TURN_DURATION_MS.saturating_mul(8),
-        );
-        self.record_command(&first, false)?;
-        let retry = self.backend.submit_battle_action(
-            self.caller,
-            input,
-            &nonce,
-            TURN_DURATION_MS.saturating_mul(8),
-        );
-        self.record_command(&retry, true)?;
-        self.record_retry(&first, &retry)?;
+        let mut battle_id = String::new();
+        let mut submitted = false;
+        for attempt in 0..6_u64 {
+            let battle = self
+                .state
+                .game_view
+                .as_ref()
+                .and_then(|view| view.battle.as_ref())
+                .ok_or(ProbeError::MissingGameView)?;
+            battle_id = battle.battle_id.clone();
+            let active_stack_id = battle
+                .active_stack_id
+                .clone()
+                .ok_or(ProbeError::MissingActiveBattleStack)?;
+            let nonce = self.nonces.next(&format!("battle-defend-{attempt}"));
+            let input = BattleActionInput {
+                battle_id: battle_id.clone(),
+                battle_stack_id: active_stack_id,
+                action: "Defend".to_string(),
+                ability_key: None,
+                target_stack_id: None,
+                destination: None,
+            };
+            let action_now_ms = TURN_DURATION_MS
+                .saturating_mul(8)
+                .saturating_add(attempt.saturating_mul(domm_game::BATTLE_ACTION_DEADLINE_MS + 1));
+            let first = self.backend.submit_battle_action(
+                self.caller,
+                input.clone(),
+                &nonce,
+                action_now_ms,
+            );
+            if first.error.as_ref().is_some_and(|error| {
+                matches!(
+                    error.code.as_str(),
+                    "battle_processing" | "battle_stack_not_active"
+                )
+            }) {
+                let sync_nonce = self
+                    .nonces
+                    .next(&format!("sync-battle-processing-{attempt}"));
+                let sync = self.backend.sync_battle(
+                    self.caller,
+                    &battle_id,
+                    action_now_ms.saturating_add(domm_game::BATTLE_ACTION_DEADLINE_MS + 1),
+                    &sync_nonce,
+                );
+                self.record_command(&sync, false)?;
+                self.refresh()?;
+                continue;
+            }
+            self.record_command(&first, false)?;
+
+            let retry =
+                self.backend
+                    .submit_battle_action(self.caller, input, &nonce, action_now_ms);
+            self.record_command(&retry, true)?;
+            self.record_retry(&first, &retry)?;
+            submitted = true;
+            break;
+        }
+        if !submitted {
+            return Err(ProbeError::Api(domm_game::ApiError::new(
+                "battle_action_not_submitted",
+                "battle action remained blocked by battle processing",
+                false,
+            )));
+        }
 
         let sync_nonce = self.nonces.next("sync-battle");
         let sync = self.backend.sync_battle(

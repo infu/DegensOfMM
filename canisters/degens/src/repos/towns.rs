@@ -4,7 +4,7 @@ use domm_degens_schema::schema::{
     BuildingDefinition, FactionDefinition, GameParticipant, GameSession, Town, TownBuilding,
     TownGarrisonStack, TownRecruitPool, UnitDefinition,
 };
-use icydb::{Create, db::query::FieldRef, types::Id};
+use icydb::{Create, db::query::FieldRef, traits::EntityValue, types::Id};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -22,6 +22,13 @@ pub(crate) const TOWN_BUILDINGS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const TOWN_BUILDING_DEFINITION_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "towns.building_by_town_definition",
+    entity: "TownBuilding",
+    indexed_fields: &["town_id", "building_def_id"],
+    bounded_limit: Some(1),
+};
+
 pub(crate) const TOWN_RECRUIT_POOLS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "towns.recruit_pools_by_town",
     entity: "TownRecruitPool",
@@ -29,11 +36,25 @@ pub(crate) const TOWN_RECRUIT_POOLS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan 
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const TOWN_RECRUIT_POOL_UNIT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "towns.recruit_pool_by_town_unit",
+    entity: "TownRecruitPool",
+    indexed_fields: &["town_id", "unit_id"],
+    bounded_limit: Some(1),
+};
+
 pub(crate) const TOWN_GARRISON_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "towns.garrison_by_town",
     entity: "TownGarrisonStack",
     indexed_fields: &["town_id"],
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
+pub(crate) const TOWN_GARRISON_SLOT_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "towns.garrison_by_town_slot",
+    entity: "TownGarrisonStack",
+    indexed_fields: &["town_id", "slot_index"],
+    bounded_limit: Some(1),
 };
 
 pub(crate) const TOWN_COORD_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
@@ -139,6 +160,7 @@ pub(crate) fn page_town_buildings(
         crate::db()
             .load::<TownBuilding>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
             .order_asc("building_def_id")
             .order_asc("id"),
         limit,
@@ -146,17 +168,37 @@ pub(crate) fn page_town_buildings(
     )
 }
 
+pub(crate) fn list_town_buildings(town_id: Id<Town>, limit: u32) -> RepoResult<Vec<TownBuilding>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    let mut rows = foundation::storage_result(
+        TOWN_BUILDINGS_LOOKUP.name,
+        crate::db()
+            .load::<TownBuilding>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit)
+            .entities(),
+    )?;
+    rows.sort_by(|left, right| {
+        left.building_def_id
+            .cmp(&right.building_def_id)
+            .then_with(|| left.id().cmp(&right.id()))
+    });
+    Ok(rows)
+}
+
 pub(crate) fn find_town_building(
     town_id: Id<Town>,
     building_def_id: Id<BuildingDefinition>,
 ) -> RepoResult<Option<TownBuilding>> {
     foundation::storage_result(
-        "towns.building_by_town_definition",
+        TOWN_BUILDING_DEFINITION_LOOKUP.name,
         crate::db()
             .load::<TownBuilding>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
             .filter(FieldRef::new("building_def_id").eq(building_def_id.key()))
-            .order_asc("id")
+            .order_asc("town_id")
+            .order_asc("building_def_id")
             .limit(1)
             .try_entity(),
     )
@@ -191,6 +233,7 @@ pub(crate) fn page_town_recruit_pools(
         crate::db()
             .load::<TownRecruitPool>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
             .order_asc("unit_id")
             .order_asc("id"),
         limit,
@@ -198,17 +241,40 @@ pub(crate) fn page_town_recruit_pools(
     )
 }
 
+pub(crate) fn list_town_recruit_pools(
+    town_id: Id<Town>,
+    limit: u32,
+) -> RepoResult<Vec<TownRecruitPool>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    let mut rows = foundation::storage_result(
+        TOWN_RECRUIT_POOLS_LOOKUP.name,
+        crate::db()
+            .load::<TownRecruitPool>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit)
+            .entities(),
+    )?;
+    rows.sort_by(|left, right| {
+        left.unit_id
+            .cmp(&right.unit_id)
+            .then_with(|| left.id().cmp(&right.id()))
+    });
+    Ok(rows)
+}
+
 pub(crate) fn find_town_recruit_pool(
     town_id: Id<Town>,
     unit_id: Id<UnitDefinition>,
 ) -> RepoResult<Option<TownRecruitPool>> {
     foundation::storage_result(
-        "towns.recruit_pool_by_town_unit",
+        TOWN_RECRUIT_POOL_UNIT_LOOKUP.name,
         crate::db()
             .load::<TownRecruitPool>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
             .filter(FieldRef::new("unit_id").eq(unit_id.key()))
-            .order_asc("id")
+            .order_asc("town_id")
+            .order_asc("unit_id")
             .limit(1)
             .try_entity(),
     )
@@ -250,6 +316,7 @@ pub(crate) fn page_town_garrison(
         crate::db()
             .load::<TownGarrisonStack>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
             .order_asc("slot_index")
             .order_asc("id"),
         limit,
@@ -257,17 +324,40 @@ pub(crate) fn page_town_garrison(
     )
 }
 
+pub(crate) fn list_town_garrison(
+    town_id: Id<Town>,
+    limit: u32,
+) -> RepoResult<Vec<TownGarrisonStack>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    let mut rows = foundation::storage_result(
+        TOWN_GARRISON_LOOKUP.name,
+        crate::db()
+            .load::<TownGarrisonStack>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit)
+            .entities(),
+    )?;
+    rows.sort_by(|left, right| {
+        left.slot_index
+            .cmp(&right.slot_index)
+            .then_with(|| left.id().cmp(&right.id()))
+    });
+    Ok(rows)
+}
+
 pub(crate) fn find_town_garrison_stack(
     town_id: Id<Town>,
     slot_index: u8,
 ) -> RepoResult<Option<TownGarrisonStack>> {
     foundation::storage_result(
-        "towns.garrison_by_town_slot",
+        TOWN_GARRISON_SLOT_LOOKUP.name,
         crate::db()
             .load::<TownGarrisonStack>()
             .filter(FieldRef::new("town_id").eq(town_id.key()))
             .filter(FieldRef::new("slot_index").eq(slot_index))
-            .order_asc("id")
+            .order_asc("town_id")
+            .order_asc("slot_index")
             .limit(1)
             .try_entity(),
     )
@@ -320,5 +410,92 @@ pub(crate) fn towns_by_owner_plan_text(
             .filter(FieldRef::new("owner_participant_id").eq(owner_participant_id.key()))
             .order_asc("id")
             .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_buildings_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_BUILDINGS_LOOKUP.name,
+        crate::db()
+            .load::<TownBuilding>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_recruit_pools_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_RECRUIT_POOLS_LOOKUP.name,
+        crate::db()
+            .load::<TownRecruitPool>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_garrison_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_GARRISON_LOOKUP.name,
+        crate::db()
+            .load::<TownGarrisonStack>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .order_asc("town_id")
+            .limit(limit),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_building_definition_plan_text(
+    town_id: Id<Town>,
+    building_def_id: Id<BuildingDefinition>,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_BUILDING_DEFINITION_LOOKUP.name,
+        crate::db()
+            .load::<TownBuilding>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("building_def_id").eq(building_def_id.key()))
+            .order_asc("town_id")
+            .order_asc("building_def_id")
+            .limit(1),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_recruit_pool_unit_plan_text(
+    town_id: Id<Town>,
+    unit_id: Id<UnitDefinition>,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_RECRUIT_POOL_UNIT_LOOKUP.name,
+        crate::db()
+            .load::<TownRecruitPool>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("unit_id").eq(unit_id.key()))
+            .order_asc("town_id")
+            .order_asc("unit_id")
+            .limit(1),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn town_garrison_slot_plan_text(
+    town_id: Id<Town>,
+    slot_index: u8,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        TOWN_GARRISON_SLOT_LOOKUP.name,
+        crate::db()
+            .load::<TownGarrisonStack>()
+            .filter(FieldRef::new("town_id").eq(town_id.key()))
+            .filter(FieldRef::new("slot_index").eq(slot_index))
+            .order_asc("town_id")
+            .order_asc("slot_index")
+            .limit(1),
     )
 }

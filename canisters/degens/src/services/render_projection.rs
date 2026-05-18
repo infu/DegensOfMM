@@ -422,8 +422,7 @@ fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiErro
 
 pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
     let faction_slug = town_faction_slug(town);
-    let buildings = towns::page_town_buildings(town.id(), 16, None)?
-        .items
+    let buildings = towns::list_town_buildings(town.id(), 16)?
         .into_iter()
         .map(|row| {
             Ok(TownBuildingRecord {
@@ -435,8 +434,7 @@ pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let recruit_pools = towns::page_town_recruit_pools(town.id(), 16, None)?
-        .items
+    let recruit_pools = towns::list_town_recruit_pools(town.id(), 16)?
         .into_iter()
         .map(|row| {
             Ok(TownRecruitPoolRecord {
@@ -453,8 +451,7 @@ pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
     let garrison_stacks =
-        towns::page_town_garrison(town.id(), u32::from(domm_game::MAX_ARMY_SLOTS), None)?
-            .items
+        towns::list_town_garrison(town.id(), u32::from(domm_game::MAX_ARMY_SLOTS))?
             .into_iter()
             .map(|row| {
                 Ok(domm_game::ArmyStackRecord {

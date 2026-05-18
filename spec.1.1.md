@@ -55,7 +55,7 @@ Current timing notes from 2026-05-17:
 | Movement crossing conflict | Revalidated 2026-05-17 in 202.583s after phased champion battle setup removed the crossing sync instruction trap | Slow full-route group; keep serial while battle setup is split further |
 | Stationary enemy blocker | Revalidated 2026-05-17 in 237.215s after phased champion battle setup and one-step blocker stop-coordinate fix | Slow full-route group; keep serial while champion battle setup is split further |
 | Week-two tavern/recruit growth | Revalidated 2026-05-18 in 78.726s during `pocket-parallel` | Parallel-safe under 4 PocketIC workers |
-| Gate M web client probe | Passed 2026-05-17 in 345.324s after render-query, PocketIC clock, battle-view, and aftermath-sync fixes | Still too slow for an inner loop; keep optimizing with the remaining PocketIC groups |
+| Gate M web client probe | Revalidated 2026-05-18 in 542.369s after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Correctness restored, but still too slow for an inner loop; keep optimizing with the remaining serial routes |
 | Timer jobs PocketIC group | Revalidated 2026-05-18 in 61.842s during `pocket-parallel` | Parallel-safe under 4 PocketIC workers |
 | End-turn PocketIC group | Revalidated 2026-05-18 in 58.724s during `pocket-parallel` | Parallel-safe under 4 PocketIC workers |
 | Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 88.849s during `pocket-parallel` | Parallel-safe under 4 PocketIC workers |
@@ -131,7 +131,17 @@ Testing-first todo:
   `gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter`. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh gate-m`
   passing in 345.324s after prebuild. Evidence also included `cargo check -p
-  domm-degens-canister`.
+  domm-degens-canister`. Revalidated 2026-05-18 with `DOMM_TEST_JOBS=1
+  scripts/run-test-groups.sh gate-m` passing in 542.369s after `get_town_view`
+  was restored to persisted `TownBuilding`, `TownRecruitPool`, and
+  multi-slot `TownGarrisonStack` rows, the Gate M game-view path stopped
+  fabricating town DTOs and queries `get_town_view`, staged champion/neutral
+  battle deadlines reset when setup reaches `active`, and handled
+  `turn_not_due` no-op retries no longer appear as final web-client command
+  errors. Evidence also included `cargo check -p domm-degens-canister`,
+  `cargo test -p domm-degens-canister
+  repository_hot_path_plans_are_indexed_and_bounded -- --nocapture`, and a
+  Gate M compile-only build.
 - [x] Timer jobs PocketIC group: scheduling, duplicate timer no-op, expired
   lease recovery, post-upgrade repair, and deadline progression. Completed
   2026-05-17 with `DOMM_TEST_JOBS=1 scripts/run-test-groups.sh timer-jobs`

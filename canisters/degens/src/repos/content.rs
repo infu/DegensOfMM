@@ -317,7 +317,8 @@ pub(crate) fn find_unit_by_ruleset_slug(
             .load::<UnitDefinition>()
             .filter(FieldRef::new("ruleset_id").eq(ruleset_id.key()))
             .filter(FieldRef::new("slug").eq(slug))
-            .order_asc("id")
+            .order_asc("ruleset_id")
+            .order_asc("slug")
             .limit(1)
             .try_entity(),
     )
@@ -379,7 +380,8 @@ pub(crate) fn find_building_by_ruleset_slug(
             .load::<BuildingDefinition>()
             .filter(FieldRef::new("ruleset_id").eq(ruleset_id.key()))
             .filter(FieldRef::new("slug").eq(slug))
-            .order_asc("id")
+            .order_asc("ruleset_id")
+            .order_asc("slug")
             .limit(1)
             .try_entity(),
     )
@@ -605,6 +607,40 @@ pub(crate) fn ruleset_lookup_plan_text(slug: &str, version: u32) -> RepoResult<S
             .filter(FieldRef::new("slug").eq(slug))
             .filter(FieldRef::new("version").eq(version))
             .order_asc("id")
+            .limit(1),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn unit_slug_plan_text(
+    ruleset_id: Id<RulesetDefinition>,
+    slug: &str,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        UNIT_SLUG_LOOKUP.name,
+        crate::db()
+            .load::<UnitDefinition>()
+            .filter(FieldRef::new("ruleset_id").eq(ruleset_id.key()))
+            .filter(FieldRef::new("slug").eq(slug))
+            .order_asc("ruleset_id")
+            .order_asc("slug")
+            .limit(1),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn building_slug_plan_text(
+    ruleset_id: Id<RulesetDefinition>,
+    slug: &str,
+) -> RepoResult<String> {
+    foundation::explain_text(
+        BUILDING_SLUG_LOOKUP.name,
+        crate::db()
+            .load::<BuildingDefinition>()
+            .filter(FieldRef::new("ruleset_id").eq(ruleset_id.key()))
+            .filter(FieldRef::new("slug").eq(slug))
+            .order_asc("ruleset_id")
+            .order_asc("slug")
             .limit(1),
     )
 }

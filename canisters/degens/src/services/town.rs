@@ -1,13 +1,16 @@
 use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, Town};
+use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, PlayerAccount, Town};
 use domm_game::{
     ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
 };
-use icydb::{traits::EntityValue, types::Id};
+use icydb::{
+    traits::EntityValue,
+    types::{Id, Principal},
+};
 
-use crate::repos::{content, economy, sessions, towns};
+use crate::repos::{content, economy, players, sessions, towns};
 
 use super::{
     command_response::{self, GameCommandAction},
@@ -19,25 +22,27 @@ pub(crate) fn get_town_view(
     session_id: String,
     town_id: String,
 ) -> Result<ApiTownView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
-    let town = resolve_town(&context.session, &town_id)?;
-    if town.owner_participant_id == Some(context.participant.id().key()) {
-        render_projection::town_view(&town)
-    } else {
-        if !render_projection::is_visible_at(
-            &context.session,
-            context.participant.id(),
-            town.x,
-            town.y,
-        )? {
-            return Err(session_context::public_error(
-                "not_visible",
-                "town is not visible",
-                false,
-            ));
-        }
-        render_projection::town_view(&town)
+    session_context::reject_anonymous(caller)?;
+    let parsed_session_id = session_context::parse_id::<GameSession>(&session_id, "session_id")?;
+    let town = resolve_town_by_session_id(parsed_session_id, &town_id)?;
+    if caller_owns_town(caller, &town)? {
+        return render_projection::town_view(&town);
     }
+
+    let context = session_context::require_session_caller(caller, &session_id)?;
+    if !render_projection::is_visible_at(
+        &context.session,
+        context.participant.id(),
+        town.x,
+        town.y,
+    )? {
+        return Err(session_context::public_error(
+            "not_visible",
+            "town is not visible",
+            false,
+        ));
+    }
+    render_projection::town_view(&town)
 }
 
 pub(crate) fn preview_build_town_structure(
@@ -495,6 +500,13 @@ pub(crate) fn submit_recruit_units(
 }
 
 fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
+    resolve_town_by_session_id(session.id(), town_id)
+}
+
+fn resolve_town_by_session_id(
+    session_id: Id<GameSession>,
+    town_id: &str,
+) -> Result<Town, ApiError> {
     if let Ok(id) = session_context::parse_id::<Town>(town_id, "town_id") {
         return towns::load_town(id)?
             .ok_or_else(|| session_context::public_error("not_found", "town not found", false));
@@ -505,8 +517,25 @@ fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> 
         .iter()
         .find(|start| start.town_key == town_id)
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))?;
-    towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+    towns::find_town_by_session_xy(session_id, start.town_x, start.town_y)?
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))
+}
+
+fn caller_owns_town(caller: CandidPrincipal, town: &Town) -> Result<bool, ApiError> {
+    let Some(owner_participant_id) = town.owner_participant_id else {
+        return Ok(false);
+    };
+    let Some(participant) =
+        sessions::load_participant(Id::<GameParticipant>::from_key(owner_participant_id))?
+    else {
+        return Ok(false);
+    };
+    let Some(player) =
+        players::load_player_account(Id::<PlayerAccount>::from_key(participant.player_id))?
+    else {
+        return Ok(false);
+    };
+    Ok(player.account_principal == Principal::from(caller))
 }
 
 fn built_building_ids(

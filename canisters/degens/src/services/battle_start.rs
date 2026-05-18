@@ -106,6 +106,7 @@ fn continue_champion_battle_start(
             let mut stacks = attacker_stacks.items;
             stacks.extend(defender_stacks.items);
             battle.state = "active".to_string();
+            battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
             battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
             Ok(Some(battle))
@@ -176,10 +177,6 @@ fn create_battle(
     defender_neutral_army_id: Option<Id<domm_degens_schema::schema::NeutralArmy>>,
     seed: u64,
 ) -> Result<Battle, ApiError> {
-    let action_deadline_at =
-        Timestamp::from_millis(Timestamp::now().as_millis().saturating_add(
-            i64::try_from(domm_game::BATTLE_ACTION_DEADLINE_MS).unwrap_or(i64::MAX),
-        ));
     battles::create_battle(
         session.id(),
         "active".to_string(),
@@ -194,8 +191,16 @@ fn create_battle(
         domm_game::BATTLE_MAX_ROUNDS,
         seed,
         session.current_turn,
-        Some(action_deadline_at),
+        Some(fresh_action_deadline_at()),
         command_id,
+    )
+}
+
+pub(crate) fn fresh_action_deadline_at() -> Timestamp {
+    Timestamp::from_millis(
+        Timestamp::now().as_millis().saturating_add(
+            i64::try_from(domm_game::BATTLE_ACTION_DEADLINE_MS).unwrap_or(i64::MAX),
+        ),
     )
 }
 

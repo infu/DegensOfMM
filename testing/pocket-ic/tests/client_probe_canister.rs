@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -145,6 +145,7 @@ struct CanisterWebClientBackend {
     current_turn: u32,
     server_now_ms: u64,
     advanced_time_nonces: BTreeSet<String>,
+    town_view_cache: BTreeMap<String, ApiTownView>,
     metrics: RefCell<CanisterProbeMetrics>,
 }
 
@@ -162,6 +163,7 @@ impl CanisterWebClientBackend {
             current_turn: 1,
             server_now_ms: 0,
             advanced_time_nonces: BTreeSet::new(),
+            town_view_cache: BTreeMap::new(),
             metrics: RefCell::new(CanisterProbeMetrics::default()),
         }
     }
@@ -189,12 +191,12 @@ impl CanisterWebClientBackend {
         }
     }
 
-    fn advance_once_for_nonce_at_time(&mut self, method: &str, client_nonce: &str, now_ms: u64) {
+    fn advance_once_for_nonce_by_ms(&mut self, method: &str, client_nonce: &str, millis: u64) {
         if self
             .advanced_time_nonces
             .insert(format!("{method}:{client_nonce}"))
         {
-            self.advance_to_time_ms(now_ms);
+            self.advance_clock_ms(millis);
         }
     }
 
@@ -211,6 +213,7 @@ impl CanisterWebClientBackend {
         }
     }
 
+    #[track_caller]
     fn query_result<T>(
         &self,
         caller: Principal,
@@ -220,6 +223,7 @@ impl CanisterWebClientBackend {
     where
         T: CandidType + for<'de> serde::Deserialize<'de>,
     {
+        let callsite = std::panic::Location::caller();
         let response = self
             .fixture
             .pic()
@@ -227,7 +231,7 @@ impl CanisterWebClientBackend {
             .map_err(|error| {
                 ProbeError::Api(ApiError::new(
                     "pocket_ic_query_failed",
-                    format!("{method} query failed: {error:?}"),
+                    format!("{method} query failed at {callsite}: {error:?}"),
                     false,
                 ))
             })?;
@@ -287,6 +291,7 @@ impl CanisterWebClientBackend {
             .max(response.effective_turn)
             .max(response.durable_turn)
             .max(1);
+        self.town_view_cache.clear();
         self.observe_command_response(&response);
         Ok(response)
     }
@@ -405,8 +410,9 @@ impl CanisterWebClientBackend {
         max_sync_calls: usize,
     ) -> Result<(CommandResponse, bool), ProbeError> {
         let mut saw_partial_sync = false;
+        self.advance_to_time_ms(now_ms);
         for attempt in 0..max_sync_calls {
-            self.advance_to_time_ms(now_ms.saturating_add((attempt as u64).saturating_mul(61_000)));
+            self.advance_clock_ms(61_000);
             let synced = self.update_command_response(
                 caller,
                 "sync_session_turn",
@@ -415,6 +421,13 @@ impl CanisterWebClientBackend {
                     format!("{sync_nonce_prefix}{attempt}"),
                 ),
             )?;
+            if synced
+                .error
+                .as_ref()
+                .is_some_and(|error| error.code == "turn_not_due")
+            {
+                continue;
+            }
             Self::assert_applied(&synced)?;
             saw_partial_sync |= synced
                 .events
@@ -464,33 +477,107 @@ impl CanisterWebClientBackend {
         battle_id: &str,
         nonce_prefix: &str,
     ) -> Result<BattleView, ProbeError> {
-        for step in 0..96 {
-            let view = self.query_result::<BattleView>(
-                caller,
-                "get_battle_state",
-                (session_id.to_string(), battle_id.to_string()),
-            )?;
-            if view.state == "resolved" {
-                let synced = self.update_command_response(
-                    caller,
-                    "sync_battle",
-                    (
-                        session_id.to_string(),
-                        battle_id.to_string(),
-                        format!("{nonce_prefix}:aftermath:{step}"),
-                    ),
-                )?;
-                Self::assert_applied(&synced)?;
-                return self.query_result::<BattleView>(
+        self.resolve_battle_to_end_for_callers(
+            caller,
+            &[caller],
+            session_id,
+            battle_id,
+            nonce_prefix,
+        )
+    }
+
+    fn resolve_battle_to_end_for_callers(
+        &mut self,
+        sync_caller: Principal,
+        callers: &[Principal],
+        session_id: &str,
+        battle_id: &str,
+        nonce_prefix: &str,
+    ) -> Result<BattleView, ProbeError> {
+        for step in 0..160 {
+            let mut actionable_view: Option<(Principal, BattleView)> = None;
+            let mut fallback_view = None;
+            for caller in callers.iter().copied() {
+                let view = self.query_result::<BattleView>(
                     caller,
                     "get_battle_state",
                     (session_id.to_string(), battle_id.to_string()),
-                );
+                )?;
+                if view.state == "resolved" {
+                    let synced = self.update_command_response(
+                        sync_caller,
+                        "sync_battle",
+                        (
+                            session_id.to_string(),
+                            battle_id.to_string(),
+                            format!("{nonce_prefix}:aftermath:{step}"),
+                        ),
+                    )?;
+                    Self::assert_applied(&synced)?;
+                    let turn_synced = self.update_command_response(
+                        sync_caller,
+                        "sync_session_turn",
+                        (
+                            session_id.to_string(),
+                            format!("{nonce_prefix}:post-battle-turn:{step}"),
+                        ),
+                    )?;
+                    if !turn_synced
+                        .error
+                        .as_ref()
+                        .is_some_and(|error| error.code == "turn_not_due")
+                    {
+                        Self::assert_applied(&turn_synced)?;
+                    }
+                    return self.query_result::<BattleView>(
+                        sync_caller,
+                        "get_battle_state",
+                        (session_id.to_string(), battle_id.to_string()),
+                    );
+                }
+                if actionable_view.is_none() && !view.legal_actions_for_caller.is_empty() {
+                    actionable_view = Some((caller, view));
+                } else if fallback_view.is_none() {
+                    fallback_view = Some(view);
+                }
             }
-            if view.legal_actions_for_caller.is_empty() {
+
+            if let Some((caller, view)) = actionable_view {
+                let input = choose_battle_action_for_goal(&view, caller == callers[0]);
+                let submitted = self.update_command_response(
+                    caller,
+                    "submit_battle_action",
+                    (
+                        session_id.to_string(),
+                        input,
+                        format!("{nonce_prefix}:action:{step}"),
+                    ),
+                )?;
+                if submitted
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.code == "battle_processing")
+                {
+                    let synced = self.update_command_response(
+                        sync_caller,
+                        "sync_battle",
+                        (
+                            session_id.to_string(),
+                            battle_id.to_string(),
+                            format!("{nonce_prefix}:processing-sync:{step}"),
+                        ),
+                    )?;
+                    Self::assert_applied(&synced)?;
+                    continue;
+                }
+                Self::assert_applied(&submitted)?;
+                continue;
+            }
+
+            if fallback_view.is_some() {
                 self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
                 let synced = self.update_command_response(
-                    caller,
+                    sync_caller,
                     "sync_battle",
                     (
                         session_id.to_string(),
@@ -499,20 +586,7 @@ impl CanisterWebClientBackend {
                     ),
                 )?;
                 Self::assert_applied(&synced)?;
-                continue;
             }
-
-            let input = choose_battle_action(&view);
-            let submitted = self.update_command_response(
-                caller,
-                "submit_battle_action",
-                (
-                    session_id.to_string(),
-                    input,
-                    format!("{nonce_prefix}:action:{step}"),
-                ),
-            )?;
-            Self::assert_applied(&submitted)?;
         }
 
         Err(ProbeError::Api(ApiError::new(
@@ -597,8 +671,9 @@ impl CanisterWebClientBackend {
         )?;
         let champion_battle_id =
             battle_id_from_events(&champion_sync, "champion_encounter_pending")?;
-        self.resolve_battle_to_end(
+        self.resolve_battle_to_end_for_callers(
             caller,
+            &[caller, player_two],
             session_id,
             &champion_battle_id,
             "nonce:gate-m:champion-battle",
@@ -879,7 +954,9 @@ impl WebClientBackend for CanisterWebClientBackend {
             "get_my_champions",
             (session_id.to_string(),),
         )?;
-        let towns = town_views_for_objects(self, caller, session_id, &objects)?;
+        let owner_participant_id = participant.participant_id.clone();
+        let towns =
+            town_views_for_objects(self, caller, session_id, &owner_participant_id, &objects)?;
         let event_page = self.query_result::<ApiEventPage>(
             caller,
             "get_events_after",
@@ -973,10 +1050,10 @@ impl WebClientBackend for CanisterWebClientBackend {
         &mut self,
         caller: Principal,
         session_id: &str,
-        now_ms: u64,
+        _now_ms: u64,
         client_nonce: &str,
     ) -> CommandResponse {
-        self.advance_once_for_nonce_at_time("sync_session_turn", client_nonce, now_ms);
+        self.advance_once_for_nonce_by_ms("sync_session_turn", client_nonce, 61_000);
         self.update_command_response(
             caller,
             "sync_session_turn",
@@ -1081,11 +1158,14 @@ impl WebClientBackend for CanisterWebClientBackend {
         session_id: &str,
         town_id: &str,
     ) -> Result<ApiTownView, ProbeError> {
-        self.query_result::<ApiTownView>(
+        let view = self.query_result::<ApiTownView>(
             caller,
             "get_town_view",
             (session_id.to_string(), town_id.to_string()),
-        )
+        )?;
+        self.town_view_cache
+            .insert(town_id.to_string(), view.clone());
+        Ok(view)
     }
 
     fn get_battle_state(
@@ -1130,10 +1210,14 @@ impl WebClientBackend for CanisterWebClientBackend {
         &mut self,
         caller: Principal,
         battle_id: &str,
-        now_ms: u64,
+        _now_ms: u64,
         client_nonce: &str,
     ) -> CommandResponse {
-        self.advance_once_for_nonce_at_time("sync_battle", client_nonce, now_ms);
+        self.advance_once_for_nonce_by_ms(
+            "sync_battle",
+            client_nonce,
+            domm_game::BATTLE_ACTION_DEADLINE_MS + 1,
+        );
         let session_id = self
             .session_id
             .clone()
@@ -1286,27 +1370,33 @@ impl WebClientBackend for CanisterWebClientBackend {
 }
 
 fn town_views_for_objects(
-    backend: &CanisterWebClientBackend,
+    backend: &mut CanisterWebClientBackend,
     caller: Principal,
     session_id: &str,
+    owner_participant_id: &str,
     objects: &ObjectViewPage,
 ) -> Result<Vec<ApiTownView>, ProbeError> {
     let mut towns = Vec::new();
+    let mut seen_subject_ids = BTreeSet::new();
     for object in objects
         .objects
         .iter()
         .filter(|object| object.subject_kind == "town" && object.visibility == "visible")
     {
-        let town = backend.query_result::<ApiTownView>(
-            caller,
-            "get_town_view",
-            (session_id.to_string(), object.subject_id_text.clone()),
-        )?;
-        if !towns
-            .iter()
-            .any(|existing: &ApiTownView| existing.town.town_id == town.town.town_id)
+        if object.owner_participant_id.as_deref() != Some(owner_participant_id) {
+            continue;
+        }
+        if !seen_subject_ids.insert(object.subject_id_text.clone()) {
+            continue;
+        }
+        if let Some(town) = backend
+            .town_view_cache
+            .get(&object.subject_id_text)
+            .cloned()
         {
             towns.push(town);
+        } else {
+            towns.push(backend.get_town_view(caller, session_id, &object.subject_id_text)?);
         }
     }
     Ok(towns)
@@ -1392,11 +1482,14 @@ fn assert_canister_client_state(state: &WebClientState) {
     assert!(state.retry_replays >= 3);
     assert!(state.match_result.is_some());
     assert!(state.match_history.entries_returned >= 1);
+    let command_errors = state
+        .command_log
+        .iter()
+        .filter(|entry| entry.error_code.is_some())
+        .collect::<Vec<_>>();
     assert!(
-        state
-            .command_log
-            .iter()
-            .all(|entry| entry.error_code.is_none())
+        command_errors.is_empty(),
+        "unexpected command errors: {command_errors:?}"
     );
     assert_replayed(state, "submit_move_intent");
     assert_replayed(state, "sync_session_turn");
@@ -1482,11 +1575,30 @@ fn assert_replayed(state: &WebClientState, command_type: &str) {
     );
 }
 
-fn choose_battle_action(view: &BattleView) -> BattleActionInput {
+fn choose_battle_action_for_goal(view: &BattleView, aggressive: bool) -> BattleActionInput {
     let active_stack_id = view
         .active_stack_id
         .clone()
         .expect("active battle should have an active stack");
+    if !aggressive {
+        for preferred in ["Defend", "Wait"] {
+            if let Some(action) = view
+                .legal_actions_for_caller
+                .iter()
+                .find(|action| action.enabled && action.action == preferred)
+            {
+                return BattleActionInput {
+                    battle_id: view.battle_id.clone(),
+                    battle_stack_id: active_stack_id,
+                    action: action.action.clone(),
+                    ability_key: action.ability_key.clone(),
+                    target_stack_id: None,
+                    destination: None,
+                };
+            }
+        }
+    }
+
     for preferred in ["RangedAttack", "MeleeAttack", "Attack"] {
         if let Some(action) = view.legal_actions_for_caller.iter().find(|action| {
             action.enabled && action.action == preferred && !action.targets.is_empty()

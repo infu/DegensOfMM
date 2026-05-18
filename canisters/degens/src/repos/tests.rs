@@ -1,4 +1,7 @@
-use domm_degens_schema::schema::{Battle, Champion, GameSession, PlayerAccount, SystemJob};
+use domm_degens_schema::schema::{
+    Battle, BuildingDefinition, Champion, GameSession, PlayerAccount, RulesetDefinition, SystemJob,
+    Town, UnitDefinition,
+};
 use icydb::{
     db::query::FieldRef,
     traits::EntityValue,
@@ -231,6 +234,10 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
         Id::<domm_degens_schema::schema::GameParticipant>::from_key(Ulid::from_u128(19_202));
     let champion_id = Id::<Champion>::from_key(Ulid::from_u128(19_203));
     let _battle_id = Id::<Battle>::from_key(Ulid::from_u128(19_204));
+    let town_id = Id::<Town>::from_key(Ulid::from_u128(19_205));
+    let ruleset_id = Id::<RulesetDefinition>::from_key(Ulid::from_u128(19_206));
+    let building_def_id = Id::<BuildingDefinition>::from_key(Ulid::from_u128(19_207));
+    let unit_id = Id::<UnitDefinition>::from_key(Ulid::from_u128(19_208));
 
     let plans = [
         (
@@ -242,6 +249,16 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
             "ruleset lookup",
             content::ruleset_lookup_plan_text("repo19c_rules", 1)
                 .expect("ruleset plan should build"),
+        ),
+        (
+            "building slug lookup",
+            content::building_slug_plan_text(ruleset_id, "freehold-training-yard")
+                .expect("building slug plan should build"),
+        ),
+        (
+            "unit slug lookup",
+            content::unit_slug_plan_text(ruleset_id, "mudhook-levy")
+                .expect("unit slug plan should build"),
         ),
         (
             "participant lookup",
@@ -277,6 +294,35 @@ fn repository_hot_path_plans_are_indexed_and_bounded() {
             "town owner",
             towns::towns_by_owner_plan_text(session_id, participant_id, 50)
                 .expect("town plan should build"),
+        ),
+        (
+            "town buildings",
+            towns::town_buildings_plan_text(town_id, 16).expect("town buildings plan should build"),
+        ),
+        (
+            "town building definition",
+            towns::town_building_definition_plan_text(town_id, building_def_id)
+                .expect("town building definition plan should build"),
+        ),
+        (
+            "town recruit pools",
+            towns::town_recruit_pools_plan_text(town_id, 16)
+                .expect("town recruit pools plan should build"),
+        ),
+        (
+            "town recruit pool unit",
+            towns::town_recruit_pool_unit_plan_text(town_id, unit_id)
+                .expect("town recruit pool unit plan should build"),
+        ),
+        (
+            "town garrison",
+            towns::town_garrison_plan_text(town_id, u32::from(domm_game::MAX_ARMY_SLOTS))
+                .expect("town garrison plan should build"),
+        ),
+        (
+            "town garrison slot",
+            towns::town_garrison_slot_plan_text(town_id, 0)
+                .expect("town garrison slot plan should build"),
         ),
         (
             "champion owner",
@@ -418,6 +464,12 @@ fn repository_query_inventory_covers_required_hot_paths() {
         map_visibility_occupancy::KNOWN_OBJECT_SUBJECT_LOOKUP,
         map_visibility_occupancy::WORLD_OBJECT_OWNER_SCORING_LOOKUP,
         towns::TOWNS_BY_OWNER_LOOKUP,
+        towns::TOWN_BUILDINGS_LOOKUP,
+        towns::TOWN_BUILDING_DEFINITION_LOOKUP,
+        towns::TOWN_RECRUIT_POOLS_LOOKUP,
+        towns::TOWN_RECRUIT_POOL_UNIT_LOOKUP,
+        towns::TOWN_GARRISON_LOOKUP,
+        towns::TOWN_GARRISON_SLOT_LOOKUP,
         champions_artifacts::CHAMPIONS_BY_SESSION_OWNER_LOOKUP,
         economy_expansion::TAVERN_OFFERS_LOOKUP,
         economy_expansion::TAVERN_OFFER_KEY_LOOKUP,

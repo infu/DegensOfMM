@@ -2653,6 +2653,7 @@ fn continue_neutral_battle_start(
                 battle.active_side = active_stack.side.clone();
             }
             battle.state = "active".to_string();
+            battle.action_deadline_at = Some(battle_start::fresh_action_deadline_at());
             battle = battles::update_battle(battle)?;
             battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
 

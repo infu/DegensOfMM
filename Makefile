@@ -7,7 +7,8 @@ TEST_JOBS ?= 8
 test: regression
 
 regression:
-	cargo test --workspace
+	cargo test --workspace --exclude domm-pocket-ic-tests
+	$(MAKE) test-pocket
 
 smoke:
 	cargo test -p domm-game driver_create_join_start_inspect_smoke
@@ -34,7 +35,8 @@ test-groups-list:
 	scripts/run-test-groups.sh list
 
 test-pocket:
-	cargo test -p domm-pocket-ic-tests
+	DOMM_TEST_JOBS=$(TEST_JOBS) scripts/run-test-groups.sh pocket-parallel
+	DOMM_TEST_JOBS=1 scripts/run-test-groups.sh pocket-serial
 
 check-canister:
 	cargo check -p domm-degens-canister

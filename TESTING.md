@@ -21,7 +21,7 @@ make test-generated  # generated-session harness surface
 make test-fast       # prebuild selected stable groups and run them in parallel
 make test-groups-list
 make test-groups GROUPS="gate-k week-two" TEST_JOBS=4
-make test-pocket     # Pocket-IC public canister route tests
+make test-pocket     # safe parallel Pocket-IC phase, then serial long routes
 make smoke-e2e       # checkpoint 19 first-playable e2e fixture with metrics
 make build-wasm      # release wasm plus extracted Candid for local dfx
 make regression      # all workspace tests
@@ -31,8 +31,11 @@ make check-canister  # canister crate build check
 `scripts/run-test-groups.sh` is the timing harness for spec 1.1 test work. It
 prebuilds the selected test binaries once, runs named groups with bounded
 parallelism, writes logs under `target/test-groups/`, and prints a Markdown
-timing table. `DOMM_TEST_JOBS` defaults to `min(nproc, 8)`; raise it only after
-Pocket-IC memory, port, and temp directory behavior stays stable.
+timing table. `make test-pocket` runs `pocket-parallel` with `TEST_JOBS`, then
+runs the long full-route `pocket-serial` groups with one worker. `make
+regression` runs non-PocketIC workspace tests before invoking the same phased
+PocketIC target. `DOMM_TEST_JOBS` defaults to `min(nproc, 8)`; raise it only
+for groups that are isolated and stable under concurrent Pocket-IC instances.
 
 Pocket-IC tests now exercise meaningful canister routes. New v1.1 suites should stay split
 by failure mode (`timer_jobs`, `end_turn`, `battle_round_readiness`,

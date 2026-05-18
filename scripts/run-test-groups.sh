@@ -107,17 +107,10 @@ add_group "visibility-redaction" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_visibility_redaction_keeps_private_payloads_private -- --nocapture"
 
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
-POCKET_GROUPS=(
+POCKET_PARALLEL_GROUPS=(
     "pocket-lock"
     "pocket-smoke"
-    "endpoint"
-    "gate-j"
-    "gate-k"
-    "gate-l"
-    "movement"
-    "stationary"
     "week-two"
-    "gate-m"
     "timer-jobs"
     "end-turn"
     "battle-round"
@@ -126,12 +119,25 @@ POCKET_GROUPS=(
     "command-recovery"
     "visibility-redaction"
 )
+POCKET_SERIAL_GROUPS=(
+    "endpoint"
+    "gate-j"
+    "gate-k"
+    "gate-l"
+    "movement"
+    "stationary"
+    "gate-m"
+)
+POCKET_GROUPS=(
+    "${POCKET_PARALLEL_GROUPS[@]}"
+    "${POCKET_SERIAL_GROUPS[@]}"
+)
 
 usage() {
     cat <<'USAGE'
 Usage:
   scripts/run-test-groups.sh list
-  scripts/run-test-groups.sh [fast|pocket|all-existing|GROUP...]
+  scripts/run-test-groups.sh [fast|pocket|pocket-parallel|pocket-serial|all-existing|GROUP...]
 
 Environment:
   DOMM_TEST_JOBS      Parallel group limit. Defaults to min(nproc, 8).
@@ -163,6 +169,14 @@ selected_groups() {
             ;;
         pocket)
             printf "%s\n" "${POCKET_GROUPS[@]}"
+            return
+            ;;
+        pocket-parallel)
+            printf "%s\n" "${POCKET_PARALLEL_GROUPS[@]}"
+            return
+            ;;
+        pocket-serial)
+            printf "%s\n" "${POCKET_SERIAL_GROUPS[@]}"
             return
             ;;
         all-existing)

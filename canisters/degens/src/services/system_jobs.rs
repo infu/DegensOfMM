@@ -227,7 +227,7 @@ fn nearest_timer_is_due() -> bool {
 #[cfg(target_arch = "wasm32")]
 fn timer_delay(due_at: Timestamp) -> Duration {
     let now_ms = Timestamp::now().as_millis();
-    let delay_ms = due_at.as_millis().saturating_sub(now_ms).max(1);
+    let delay_ms = due_at.as_millis().saturating_sub(now_ms);
     Duration::from_millis(u64::try_from(delay_ms).unwrap_or(u64::MAX))
 }
 

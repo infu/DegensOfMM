@@ -1417,11 +1417,15 @@ income, and full regression/PocketIC evidence.
     pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture`
     passed in 149.12s, `cargo test -p domm-pocket-ic-tests --test
     client_probe_canister --no-run` passed, and `make check-canister` passed.
-- [ ] Support zero-delay timer continuation as the default.
-  - Note from 2026-05-18 implementation: PocketIC did not execute
-    `set_timer(Duration::from_millis(0), ...)` reliably for setup continuation;
-    the production path still uses due-now durable jobs with the existing 1ms
-    timer minimum. Keep this item open for a dedicated zero-delay timer fix.
+- [x] Support zero-delay timer continuation as the default.
+  - Completed 2026-05-18 by allowing due-now durable jobs to arm
+    `set_timer(Duration::from_millis(0), ...)` instead of forcing a 1ms timer
+    floor. Focused evidence:
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture`
+    passed in 303.28s with the zero-delay path, `cargo test -p
+    domm-pocket-ic-tests --test client_probe_canister --no-run` passed, and
+    `make check-canister` passed.
 - [ ] Allow awaited self-call/inter-canister continuation only if every phase is
   a real IC message boundary and persists cursor/effect state before awaiting.
 - [ ] Ensure replaying the original `start_session` nonce while setup is

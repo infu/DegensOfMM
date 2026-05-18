@@ -685,9 +685,6 @@ fn object_view_from_known_fast(
         }
         "champion" => {
             if viewport.is_some() {
-                if !scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
-                    return Ok(None);
-                }
                 if let Some(champion) = fast_champion_for_known(context, subject)? {
                     if !matches!(champion.status.as_str(), "active" | "in_battle") {
                         return Ok(None);
@@ -732,7 +729,11 @@ fn object_view_from_known_fast(
                     last_seen_turn: Some(context.session.current_turn),
                     display_name: Some(details.display_name),
                     asset_key: details.asset_key,
-                    owner_participant_id: Some(context.participant.id().to_string()),
+                    owner_participant_id: scenario_champion_belongs_to_participant(
+                        context,
+                        &subject.subject_id_text,
+                    )
+                    .then(|| context.participant.id().to_string()),
                     details_json: format!(
                         "{{\"type\":\"champion\",\"scenario_key\":\"{}\",\"status\":\"active\"}}",
                         escape_json(&subject.subject_id_text)
@@ -772,30 +773,63 @@ fn object_view_from_known_fast(
         }
         "town" => {
             if viewport.is_some() {
-                if !scenario_town_belongs_to_participant(context, &subject.subject_id_text) {
-                    return Ok(None);
+                if scenario_town_belongs_to_participant(context, &subject.subject_id_text) {
+                    let details = scenario_subject_details(
+                        &subject.subject_kind,
+                        &subject.subject_id_text,
+                        &BTreeMap::new(),
+                    );
+                    return Ok(Some(ObjectView {
+                        subject_kind: subject.subject_kind.clone(),
+                        subject_id_text: subject.subject_id_text.clone(),
+                        visibility: "visible".to_string(),
+                        redaction_level: "none".to_string(),
+                        x: subject.x,
+                        y: subject.y,
+                        last_seen_turn: Some(context.session.current_turn),
+                        display_name: Some(details.display_name),
+                        asset_key: details.asset_key,
+                        owner_participant_id: Some(context.participant.id().to_string()),
+                        details_json: format!(
+                            "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"status\":\"active\"}}",
+                            escape_json(&subject.subject_id_text)
+                        ),
+                    }));
                 }
-                let details = scenario_subject_details(
-                    &subject.subject_kind,
-                    &subject.subject_id_text,
-                    &BTreeMap::new(),
-                );
-                return Ok(Some(ObjectView {
-                    subject_kind: subject.subject_kind.clone(),
-                    subject_id_text: subject.subject_id_text.clone(),
-                    visibility: "visible".to_string(),
-                    redaction_level: "none".to_string(),
-                    x: subject.x,
-                    y: subject.y,
-                    last_seen_turn: Some(context.session.current_turn),
-                    display_name: Some(details.display_name),
-                    asset_key: details.asset_key,
-                    owner_participant_id: Some(context.participant.id().to_string()),
-                    details_json: format!(
-                        "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"status\":\"active\"}}",
-                        escape_json(&subject.subject_id_text)
-                    ),
-                }));
+                if let Some(town) = live_town_for_known(context.session.id(), subject)? {
+                    if town.status != "active" {
+                        return Ok(None);
+                    }
+                    if viewport.is_some_and(|viewport| !viewport.contains(town.x, town.y)) {
+                        return Ok(None);
+                    }
+                    let details = scenario_subject_details(
+                        &subject.subject_kind,
+                        &subject.subject_id_text,
+                        &BTreeMap::new(),
+                    );
+                    return Ok(Some(ObjectView {
+                        subject_kind: subject.subject_kind.clone(),
+                        subject_id_text: subject.subject_id_text.clone(),
+                        visibility: "visible".to_string(),
+                        redaction_level: "none".to_string(),
+                        x: town.x,
+                        y: town.y,
+                        last_seen_turn: Some(context.session.current_turn),
+                        display_name: Some(town.name.clone()),
+                        asset_key: details.asset_key,
+                        owner_participant_id: town
+                            .owner_participant_id
+                            .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
+                        details_json: format!(
+                            "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"town_id\":\"{}\",\"status\":\"{}\"}}",
+                            escape_json(&subject.subject_id_text),
+                            town.id(),
+                            escape_json(&town.status)
+                        ),
+                    }));
+                }
+                return Ok(last_known_object_view_fast(subject, viewport));
             }
             let Some(town) = live_town_for_known(context.session.id(), subject)? else {
                 return Ok(last_known_object_view_fast(subject, viewport));

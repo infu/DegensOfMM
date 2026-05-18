@@ -1989,10 +1989,23 @@ fn commit_candidate_move(
 }
 
 fn update_known_champion_projection(
-    _session: &GameSession,
-    _participant: &GameParticipant,
-    _champion: &Champion,
+    session: &GameSession,
+    participant: &GameParticipant,
+    champion: &Champion,
 ) -> Result<(), ApiError> {
+    let subject_id_text = scenario_champion_key_for_row(participant, champion)
+        .unwrap_or_else(|| champion.id().to_string());
+    upsert_known_object(
+        session,
+        participant.id(),
+        "champion",
+        &subject_id_text,
+        champion.x,
+        champion.y,
+        champion.chunk_x,
+        champion.chunk_y,
+        known_redacted_json("champion", &subject_id_text),
+    )?;
     Ok(())
 }
 
@@ -2174,6 +2187,7 @@ fn refresh_champion_visibility(
     pending_move: &PendingMovement,
 ) -> Result<u32, ApiError> {
     let mut by_chunk: BTreeMap<(u16, u16), Vec<(u16, u16)>> = BTreeMap::new();
+    let mut visible_tiles = BTreeSet::new();
     let radius = i32::from(pending_move.champion.vision_radius);
     let center_x = i32::from(pending_move.champion.x);
     let center_y = i32::from(pending_move.champion.y);
@@ -2193,6 +2207,7 @@ fn refresh_champion_visibility(
             }
             let x = u16::try_from(x).unwrap_or(0);
             let y = u16::try_from(y).unwrap_or(0);
+            visible_tiles.insert((x, y));
             by_chunk
                 .entry((chunk_coord(session, x), chunk_coord(session, y)))
                 .or_default()
@@ -2227,6 +2242,11 @@ fn refresh_champion_visibility(
         map_visibility_occupancy::update_visibility_chunk(visibility)?;
         updated_rows = updated_rows.saturating_add(1);
     }
+    updated_rows = updated_rows.saturating_add(materialize_known_objects_for_visible_tiles(
+        session,
+        &pending_move.participant,
+        &visible_tiles,
+    )?);
 
     if updated_rows > 0 {
         command_response::ensure_command_effect(
@@ -2244,6 +2264,237 @@ fn refresh_champion_visibility(
         )?;
     }
     Ok(updated_rows)
+}
+
+fn materialize_known_objects_for_visible_tiles(
+    session: &GameSession,
+    participant: &GameParticipant,
+    visible_tiles: &BTreeSet<(u16, u16)>,
+) -> Result<u32, ApiError> {
+    let mut changed = 0_u32;
+    let scenario = domm_game::first_playable_scenario();
+
+    for start in &scenario.starts {
+        if visible_tiles.contains(&(start.champion_x, start.champion_y))
+            && let Some(champion) = champions_artifacts::find_champion_by_session_xy(
+                session.id(),
+                start.champion_x,
+                start.champion_y,
+            )?
+            && create_known_object_if_missing(
+                session,
+                participant.id(),
+                "champion",
+                &start.champion_key,
+                champion.x,
+                champion.y,
+                champion.chunk_x,
+                champion.chunk_y,
+                known_redacted_json("champion", &start.champion_key),
+            )?
+        {
+            changed = changed.saturating_add(1);
+        }
+        if visible_tiles.contains(&(start.town_x, start.town_y))
+            && let Some(town) =
+                towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+            && create_known_object_if_missing(
+                session,
+                participant.id(),
+                "town",
+                &start.town_key,
+                town.x,
+                town.y,
+                town.chunk_x,
+                town.chunk_y,
+                known_redacted_json("town", &start.town_key),
+            )?
+        {
+            changed = changed.saturating_add(1);
+        }
+    }
+
+    for neutral in &scenario.neutral_armies {
+        if visible_tiles.contains(&(neutral.x, neutral.y))
+            && let Some(row) =
+                neutrals::find_neutral_army_by_session_xy(session.id(), neutral.x, neutral.y)?
+            && create_known_object_if_missing(
+                session,
+                participant.id(),
+                "neutral_army",
+                &neutral.key,
+                row.x,
+                row.y,
+                row.chunk_x,
+                row.chunk_y,
+                known_redacted_json("neutral_army", &neutral.key),
+            )?
+        {
+            changed = changed.saturating_add(1);
+        }
+    }
+
+    for object in scenario
+        .mines
+        .iter()
+        .chain(scenario.external_dwellings.iter())
+        .chain(scenario.central_objectives.iter())
+    {
+        if visible_tiles.contains(&(object.x, object.y))
+            && materialize_known_world_object(
+                session,
+                participant,
+                &object.key,
+                object.x,
+                object.y,
+            )?
+        {
+            changed = changed.saturating_add(1);
+        }
+    }
+    for pile in &scenario.resource_piles {
+        if visible_tiles.contains(&(pile.x, pile.y))
+            && materialize_known_world_object(session, participant, &pile.key, pile.x, pile.y)?
+        {
+            changed = changed.saturating_add(1);
+        }
+    }
+
+    Ok(changed)
+}
+
+fn materialize_known_world_object(
+    session: &GameSession,
+    participant: &GameParticipant,
+    subject_id_text: &str,
+    x: u16,
+    y: u16,
+) -> Result<bool, ApiError> {
+    let Some(row) = map_visibility_occupancy::find_world_object_by_session_xy(session.id(), x, y)?
+    else {
+        return Ok(false);
+    };
+    if row.state == "collected" {
+        return Ok(false);
+    }
+    create_known_object_if_missing(
+        session,
+        participant.id(),
+        "world_object",
+        subject_id_text,
+        row.x,
+        row.y,
+        row.chunk_x,
+        row.chunk_y,
+        known_redacted_json("world_object", subject_id_text),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_known_object_if_missing(
+    session: &GameSession,
+    participant_id: Id<GameParticipant>,
+    subject_kind: &str,
+    subject_id_text: &str,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    redacted_json: String,
+) -> Result<bool, ApiError> {
+    if map_visibility_occupancy::find_known_object(participant_id, subject_kind, subject_id_text)?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    map_visibility_occupancy::create_known_object(
+        session.id(),
+        participant_id,
+        subject_kind.to_string(),
+        subject_id_text.to_string(),
+        x,
+        y,
+        chunk_x,
+        chunk_y,
+        "visible".to_string(),
+        session.current_turn,
+        Some(redacted_json),
+    )?;
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upsert_known_object(
+    session: &GameSession,
+    participant_id: Id<GameParticipant>,
+    subject_kind: &str,
+    subject_id_text: &str,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    redacted_json: String,
+) -> Result<bool, ApiError> {
+    if let Some(mut known) =
+        map_visibility_occupancy::find_known_object(participant_id, subject_kind, subject_id_text)?
+    {
+        let changed = known.x != x
+            || known.y != y
+            || known.chunk_x != chunk_x
+            || known.chunk_y != chunk_y
+            || known.visibility != "visible"
+            || known.last_seen_turn != session.current_turn
+            || known.redacted_json.as_deref() != Some(redacted_json.as_str());
+        if changed {
+            known.x = x;
+            known.y = y;
+            known.chunk_x = chunk_x;
+            known.chunk_y = chunk_y;
+            known.visibility = "visible".to_string();
+            known.last_seen_turn = session.current_turn;
+            known.redacted_json = Some(redacted_json);
+            map_visibility_occupancy::update_known_object(known)?;
+        }
+        return Ok(changed);
+    }
+
+    map_visibility_occupancy::create_known_object(
+        session.id(),
+        participant_id,
+        subject_kind.to_string(),
+        subject_id_text.to_string(),
+        x,
+        y,
+        chunk_x,
+        chunk_y,
+        "visible".to_string(),
+        session.current_turn,
+        Some(redacted_json),
+    )?;
+    Ok(true)
+}
+
+fn scenario_champion_key_for_row(
+    participant: &GameParticipant,
+    champion: &Champion,
+) -> Option<String> {
+    domm_game::first_playable_scenario()
+        .starts
+        .iter()
+        .find(|start| {
+            start.slot_index == participant.slot_index
+                && start.champion_name == champion.name
+                && start.champion_class_slug == champion.class_key
+        })
+        .map(|start| start.champion_key.clone())
+}
+
+fn known_redacted_json(subject_kind: &str, subject_id_text: &str) -> String {
+    format!(
+        r#"{{"type":"{}","scenario_key":"{}","state":"last_known"}}"#,
+        command_response::escape_json(subject_kind),
+        command_response::escape_json(subject_id_text)
+    )
 }
 
 fn update_champion_occupancy(
@@ -3003,6 +3254,25 @@ fn apply_world_object_at(
     } else {
         "world_object_visited"
     };
+
+    if event_type != "resource_picked_up"
+        && let Some(subject_id_text) = object
+            .instance_json
+            .as_deref()
+            .and_then(|json| json_string_field(json, "scenario_key"))
+    {
+        create_known_object_if_missing(
+            session,
+            participant.id(),
+            "world_object",
+            &subject_id_text,
+            object.x,
+            object.y,
+            object.chunk_x,
+            object.chunk_y,
+            known_redacted_json("world_object", &subject_id_text),
+        )?;
+    }
 
     map_visibility_occupancy::create_participant_object_visit(
         session.id(),

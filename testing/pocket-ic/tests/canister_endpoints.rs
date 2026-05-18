@@ -3467,8 +3467,18 @@ fn pocket_ic_render_projection_tracks_live_objects_and_fog() {
     let player_two = candid::Principal::self_authenticating(b"domm-pocket-render-two");
     let viewport = opening_viewport_for_slot(0);
     let remote_viewport = opening_viewport_for_slot(1);
+    let crystal_viewport = Viewport::new(10, 26, 8, 8);
     let session_id =
         start_active_two_player_session(&fixture, player_one, player_two, "render-projection");
+    let west_participant = query_as::<ParticipantView>(
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("render participant query should decode")
+    .expect("render participant should load");
+    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
 
     let first_page = visible_objects_page(&fixture, player_one, &session_id, &viewport, None, 3);
     assert_eq!(first_page.objects.len(), 3);
@@ -3532,6 +3542,159 @@ fn pocket_ic_render_projection_tracks_live_objects_and_fog() {
     assert!(
         remote_objects.objects.is_empty(),
         "remote fog should not leak dynamic objects: {remote_subjects:?}"
+    );
+
+    let crystal_before_move = visible_objects_page(
+        &fixture,
+        player_one,
+        &session_id,
+        &crystal_viewport,
+        None,
+        128,
+    );
+    assert!(
+        crystal_before_move
+            .objects
+            .iter()
+            .all(|object| object.subject_id_text != "mine:west-crystal"),
+        "undiscovered crystal mine should not render before movement"
+    );
+
+    let (pickup_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![MoveCoord::new(9, 24), MoveCoord::new(9, 23)],
+        "nonce:render-live:move:wood",
+        "nonce:render-live:sync:wood:",
+        61_000_u64,
+        "resource_picked_up",
+    );
+    assert_eq!(pickup_sync.status, CommandStatus::Applied);
+    let after_pickup =
+        visible_objects_page(&fixture, player_one, &session_id, &viewport, None, 128);
+    let champion_after_pickup = visible_object(&after_pickup, "champion:west");
+    let champion_view_after_pickup = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), west_champion_id.clone()),
+    )
+    .expect("render champion after pickup should decode")
+    .expect("render champion after pickup should load");
+    assert_eq!(
+        (champion_after_pickup.x, champion_after_pickup.y),
+        (champion_view_after_pickup.x, champion_view_after_pickup.y)
+    );
+    assert_eq!((champion_after_pickup.x, champion_after_pickup.y), (9, 23));
+    assert!(
+        after_pickup
+            .objects
+            .iter()
+            .all(|object| object.subject_id_text != "pile:west-wood-1"),
+        "collected pile should disappear from object pagination"
+    );
+    let collected_pile = query_as::<ObjectView>(
+        &fixture,
+        player_one,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+    )
+    .expect("collected pile get_object_view should decode")
+    .expect_err("collected pile detail should not render as visible");
+    assert_eq!(collected_pile.code, "not_visible");
+
+    let (crystal_sync, _) = submit_move_and_sync_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        &west_champion_id,
+        vec![
+            MoveCoord::new(10, 23),
+            MoveCoord::new(11, 23),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(13, 23),
+            MoveCoord::new(14, 23),
+            MoveCoord::new(14, 24),
+            MoveCoord::new(14, 25),
+            MoveCoord::new(14, 26),
+            MoveCoord::new(14, 27),
+            MoveCoord::new(14, 28),
+            MoveCoord::new(14, 29),
+            MoveCoord::new(14, 30),
+        ],
+        "nonce:render-live:move:crystal",
+        "nonce:render-live:sync:crystal:",
+        244_000_u64,
+        "mine_captured",
+    );
+    assert_eq!(crystal_sync.status, CommandStatus::Applied);
+    let after_crystal = visible_objects_page(
+        &fixture,
+        player_one,
+        &session_id,
+        &crystal_viewport,
+        None,
+        128,
+    );
+    let crystal_mine = visible_object(&after_crystal, "mine:west-crystal");
+    assert_eq!(
+        crystal_mine.owner_participant_id.as_deref(),
+        Some(west_participant.participant_id.as_str())
+    );
+    assert!(
+        crystal_mine.details_json.contains(r#""state":"captured""#),
+        "discovered captured crystal mine should render live details: {}",
+        crystal_mine.details_json
+    );
+    let crystal_detail = query_as::<ObjectView>(
+        &fixture,
+        player_one,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "mine:west-crystal".to_string(),
+        ),
+    )
+    .expect("crystal get_object_view should decode")
+    .expect("discovered crystal mine detail should load");
+    assert!(
+        crystal_detail
+            .details_json
+            .contains(r#""state":"captured""#),
+        "get_object_view should hydrate discovered mine from live state: {}",
+        crystal_detail.details_json
+    );
+
+    let _income_sync = sync_turn_until_event(
+        &fixture,
+        player_one,
+        &session_id,
+        "nonce:render-live:sync:income:",
+        "income_materialized",
+        4,
+    );
+    let after_income = visible_objects_page(
+        &fixture,
+        player_one,
+        &session_id,
+        &crystal_viewport,
+        None,
+        128,
+    );
+    let crystal_after_income = visible_object(&after_income, "mine:west-crystal");
+    assert!(
+        crystal_after_income
+            .details_json
+            .contains(r#""state":"captured""#),
+        "income turn should not regress captured mine projection: {}",
+        crystal_after_income.details_json
     );
 }
 

@@ -59,7 +59,7 @@ Current timing notes from 2026-05-18 full regression:
 | Timer jobs PocketIC group | Revalidated 2026-05-18 in 178.582s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
 | End-turn PocketIC group | Revalidated 2026-05-18 in 176.090s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
 | Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 207.284s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Render projection PocketIC group | Revalidated 2026-05-18 in 274.274s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`; still a long focused route |
+| Render projection PocketIC group | Revalidated 2026-05-18 in 230.591s after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=8`; still a long focused route |
 | Query budget PocketIC group | Revalidated 2026-05-18 in 169.144s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
 | Command recovery PocketIC group | Revalidated 2026-05-18 in 259.327s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`, but still not an inner-loop test |
 | Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 188.763s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
@@ -1753,8 +1753,17 @@ income, and full regression/PocketIC evidence.
   not render active, captured mines render owned/captured, and champion
   coordinates match `get_champion_view`.
 - [x] Return stable page metadata and compatible cursor behavior.
-- [ ] Add PocketIC tests after movement, pickup, battle victory, mine capture,
+- [x] Add PocketIC tests after movement, pickup, battle victory, mine capture,
   income, and discovery.
+  - Completed 2026-05-18: `pocket_ic_render_projection_tracks_live_objects_and_fog`
+    now moves to a wood pickup, verifies `get_visible_objects` agrees with
+    `get_champion_view`, confirms the collected pile no longer renders, moves
+    into newly discovered crystal-mine territory, verifies the captured mine via
+    both object pagination and `get_object_view`, then verifies the captured
+    projection still holds after `income_materialized`. The existing
+    `pocket_ic_render_projection_tracks_battle_aftermath_objects` route
+    continues to cover battle victory, defeated neutral removal, and guarded
+    mine ownership/capture projection.
 - [x] Audit `spec.md`: bounded render endpoint contract, fog/redaction, object
   details, and pagination match code.
 - [x] Audit `spec.1.1.md`: Topic 6 is reduced to remaining non-P0 work.

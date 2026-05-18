@@ -558,6 +558,7 @@ dependencies = [
  "domm-degens-canister",
  "domm-game",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

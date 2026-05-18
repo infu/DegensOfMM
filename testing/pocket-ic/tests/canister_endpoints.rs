@@ -1,13 +1,14 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_degens_canister::{
-    CanisterEndpointView, DiagnosticStorageSnapshot, DiagnosticSystemJobPage,
-    DiagnosticSystemJobView, REQUIRED_GAME_ENDPOINTS,
+    CanisterEndpointView, DiagnosticBenchmarkCallPage, DiagnosticStorageSnapshot,
+    DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind, REQUIRED_GAME_ENDPOINTS,
 };
 use domm_game::{
     ApiError, ApiEventPage, ApiTownView, BattleActionInput, BattleView, BuildPreview,
@@ -23,6 +24,7 @@ use domm_game::{
     SiegeRulesView, SkirmishSettingsView, TavernOffersView, Viewport, WorldEventsView,
     opening_viewport_for_slot,
 };
+use serde::{Deserialize, Serialize};
 
 #[test]
 fn pocket_ic_canister_exposes_every_required_game_endpoint() {
@@ -5621,9 +5623,12 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     let viewport = opening_viewport_for_slot(0);
     let mut metrics = GateJMetrics::default();
 
+    metrics.reset_benchmark_canister(&fixture);
+    metrics.set_benchmark_scenario("diagnostics");
     let initial_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
     assert_eq!(initial_storage.total_rows, 0);
 
+    metrics.set_benchmark_scenario("game_start");
     let session_id = gate_start_active_two_player_session(
         &mut metrics,
         &fixture,
@@ -5643,6 +5648,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     let west_champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_one, &session_id);
     let east_champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_two, &session_id);
 
+    metrics.set_benchmark_scenario("opening_views");
     let opening_view = gate_query_as::<GameView>(
         &mut metrics,
         &fixture,
@@ -5702,6 +5708,8 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         (session_id.clone(),),
     )
     .expect("participant before pickup should load");
+
+    metrics.set_benchmark_scenario("resource_town");
     let moved_to_wood = gate_submit_move_intent(
         &mut metrics,
         &fixture,
@@ -5833,6 +5841,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         4,
     );
 
+    metrics.set_benchmark_scenario("guarded_mine_battle");
     let (neutral_sync, neutral_saw_partial_sync) = gate_submit_move_and_sync_until_event(
         &mut metrics,
         &fixture,
@@ -6004,6 +6013,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         guarded_mine.details_json
     );
 
+    metrics.set_benchmark_scenario("aftermath_victory");
     let first_east_stage = ((west_after_neutral.x + 1)..=22)
         .map(|x| MoveCoord::new(x, west_after_neutral.y))
         .collect::<Vec<_>>();
@@ -6208,6 +6218,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
         );
     }
 
+    metrics.set_benchmark_scenario("diagnostics");
     let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
     assert_eq!(row_count(&final_storage, "GameSession"), 1);
     assert_eq!(row_count(&final_storage, "GameParticipant"), 2);
@@ -6238,6 +6249,7 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert!(row_count(&final_storage, "WorldObject") > 0);
     assert!(row_count(&final_storage, "NeutralArmy") > 0);
     metrics.print_named_report("Gate L", &initial_storage, &final_storage, &final_storage);
+    metrics.write_benchmark_artifacts("gate_l_first_playable", &initial_storage, &final_storage);
 }
 
 #[test]
@@ -6585,7 +6597,6 @@ fn wait_for_session_active(
     );
 }
 
-#[derive(Default)]
 struct GateJMetrics {
     update_calls: u32,
     query_calls: u32,
@@ -6593,6 +6604,701 @@ struct GateJMetrics {
     total_response_bytes: usize,
     max_response_bytes: usize,
     max_response_method: String,
+    benchmark: Option<BenchmarkRecorder>,
+    benchmark_scenario_id: String,
+}
+
+impl Default for GateJMetrics {
+    fn default() -> Self {
+        Self {
+            update_calls: 0,
+            query_calls: 0,
+            observed_event_count: 0,
+            total_response_bytes: 0,
+            max_response_bytes: 0,
+            max_response_method: String::new(),
+            benchmark: BenchmarkRecorder::from_env(),
+            benchmark_scenario_id: "diagnostics".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct BenchmarkStatusSample {
+    cycles: u128,
+    memory_size_bytes: u128,
+    wasm_memory_size_bytes: u128,
+    stable_memory_size_bytes: u128,
+    query_instructions_total: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkCallRecord {
+    sequence: u64,
+    scenario_id: String,
+    method: String,
+    kind: String,
+    ok: bool,
+    error_code: Option<String>,
+    response_bytes: u64,
+    wall_time_micros: u64,
+    instruction_delta: Option<u64>,
+    cycle_cost: u128,
+    memory_delta_bytes: i128,
+    wasm_memory_delta_bytes: i128,
+    stable_memory_delta_bytes: i128,
+    memory_size_before_bytes: u128,
+    memory_size_after_bytes: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkScenarioSummary {
+    id: String,
+    label: String,
+    description: String,
+    players: u32,
+    call_count: u64,
+    query_count: u64,
+    update_count: u64,
+    response_bytes_total: u64,
+    instruction_total: u128,
+    instruction_change_pct: Option<f64>,
+    cycle_cost_total: u128,
+    memory_delta_bytes: i128,
+    memory_change_pct: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkMethodSummary {
+    method: String,
+    kind: String,
+    call_count: u64,
+    error_count: u64,
+    avg_instruction_delta: Option<f64>,
+    p95_instruction_delta: Option<u64>,
+    instruction_change_pct: Option<f64>,
+    avg_memory_delta_bytes: f64,
+    memory_change_pct: Option<f64>,
+    avg_cycle_cost: f64,
+    avg_response_bytes: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkSummaryArtifact {
+    run_id: String,
+    git_sha: String,
+    generated_at_ms: u64,
+    benchmark_name: String,
+    scenario_count: usize,
+    call_count: usize,
+    required_game_endpoint_count: usize,
+    covered_required_endpoint_count: usize,
+    missing_required_endpoints: Vec<String>,
+    total_row_growth: u32,
+    stable_memory_pages_start: u64,
+    stable_memory_pages_final: u64,
+    scenarios: Vec<BenchmarkScenarioSummary>,
+    methods: Vec<BenchmarkMethodSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BenchmarkRunArtifact {
+    summary: BenchmarkSummaryArtifact,
+    calls: Vec<BenchmarkCallRecord>,
+}
+
+#[derive(Debug)]
+struct BenchmarkRecorder {
+    output_dir: PathBuf,
+    calls: Vec<BenchmarkCallRecord>,
+    next_sequence: u64,
+    canister_call_cursor: u64,
+}
+
+impl BenchmarkRecorder {
+    fn from_env() -> Option<Self> {
+        let output_dir = env::var_os("DOMM_BENCH_OUTPUT_DIR").map(PathBuf::from)?;
+        Some(Self {
+            output_dir,
+            calls: Vec::new(),
+            next_sequence: 1,
+            canister_call_cursor: 0,
+        })
+    }
+
+    fn capture_status(fixture: &StandaloneCanisterFixture) -> BenchmarkStatusSample {
+        let status = fixture
+            .pic()
+            .canister_status(fixture.canister_id(), None)
+            .expect("benchmark canister_status should load");
+        BenchmarkStatusSample {
+            cycles: nat_to_u128(&status.cycles),
+            memory_size_bytes: nat_to_u128(&status.memory_size),
+            wasm_memory_size_bytes: nat_to_u128(&status.memory_metrics.wasm_memory_size),
+            stable_memory_size_bytes: nat_to_u128(&status.memory_metrics.stable_memory_size),
+            query_instructions_total: nat_to_u128(&status.query_stats.num_instructions_total),
+        }
+    }
+
+    fn record_call<T: candid::CandidType>(
+        &mut self,
+        scenario_id: &str,
+        method: &str,
+        kind: &str,
+        response: &Result<T, ApiError>,
+        elapsed: Duration,
+        before: &BenchmarkStatusSample,
+        after: &BenchmarkStatusSample,
+        update_instruction_delta: Option<u64>,
+    ) {
+        let instruction_delta = if kind == "query" {
+            Some(u128_to_u64_saturating(
+                after
+                    .query_instructions_total
+                    .saturating_sub(before.query_instructions_total),
+            ))
+        } else {
+            update_instruction_delta
+        };
+        let cycle_cost = before.cycles.saturating_sub(after.cycles);
+        let response_bytes = candid::encode_one(response)
+            .unwrap_or_else(|error| panic!("{method} response should Candid encode: {error}"))
+            .len();
+
+        self.calls.push(BenchmarkCallRecord {
+            sequence: self.next_sequence,
+            scenario_id: scenario_id.to_string(),
+            method: method.to_string(),
+            kind: kind.to_string(),
+            ok: response.is_ok(),
+            error_code: response.as_ref().err().map(|error| error.code.clone()),
+            response_bytes: u64::try_from(response_bytes).unwrap_or(u64::MAX),
+            wall_time_micros: u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
+            instruction_delta,
+            cycle_cost,
+            memory_delta_bytes: unsigned_delta(after.memory_size_bytes, before.memory_size_bytes),
+            wasm_memory_delta_bytes: unsigned_delta(
+                after.wasm_memory_size_bytes,
+                before.wasm_memory_size_bytes,
+            ),
+            stable_memory_delta_bytes: unsigned_delta(
+                after.stable_memory_size_bytes,
+                before.stable_memory_size_bytes,
+            ),
+            memory_size_before_bytes: before.memory_size_bytes,
+            memory_size_after_bytes: after.memory_size_bytes,
+        });
+        self.next_sequence = self.next_sequence.saturating_add(1);
+    }
+
+    fn reset_canister_metrics(&mut self, fixture: &StandaloneCanisterFixture) {
+        update_as::<()>(
+            fixture,
+            candid::Principal::anonymous(),
+            "reset_diagnostic_benchmark_metrics",
+            (),
+        )
+        .expect("benchmark reset should decode")
+        .expect("benchmark reset should succeed");
+        self.canister_call_cursor = 0;
+    }
+
+    fn pull_update_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        let page = query_as::<DiagnosticBenchmarkCallPage>(
+            fixture,
+            candid::Principal::anonymous(),
+            "get_diagnostic_benchmark_metrics",
+            (Some(self.canister_call_cursor), 1024_u32),
+        )
+        .ok()?
+        .ok()?;
+        if let Some(last) = page.calls.last() {
+            self.canister_call_cursor = last.sequence;
+        }
+
+        page.calls
+            .iter()
+            .rev()
+            .find(|call| call.method == method && call.kind == EndpointKind::Update)
+            .map(|call| call.instruction_delta)
+    }
+
+    fn write_artifacts(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) {
+        if self.calls.is_empty() {
+            return;
+        }
+
+        fs::create_dir_all(&self.output_dir).unwrap_or_else(|error| {
+            panic!(
+                "failed to create benchmark output dir {}: {error}",
+                self.output_dir.display()
+            )
+        });
+
+        let previous = previous_summary(&self.output_dir);
+        let summary = self.build_summary(
+            benchmark_name,
+            initial_storage,
+            final_storage,
+            previous.as_ref(),
+        );
+        let run = BenchmarkRunArtifact {
+            summary: summary.clone(),
+            calls: self.calls.clone(),
+        };
+
+        write_json_file(&self.output_dir.join("run.json"), &run);
+        write_json_file(&self.output_dir.join("summary.json"), &summary);
+        fs::write(
+            self.output_dir.join("summary.md"),
+            render_summary_markdown(&summary),
+        )
+        .unwrap_or_else(|error| panic!("failed to write benchmark summary.md: {error}"));
+    }
+
+    fn build_summary(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+        previous: Option<&BenchmarkSummaryArtifact>,
+    ) -> BenchmarkSummaryArtifact {
+        let mut scenarios = scenario_summaries(&self.calls);
+        let mut methods = method_summaries(&self.calls);
+        apply_previous_deltas(&mut scenarios, &mut methods, previous);
+
+        let covered_required = covered_required_endpoints(&self.calls);
+        let missing_required_endpoints = REQUIRED_GAME_ENDPOINTS
+            .iter()
+            .filter(|endpoint| !covered_required.contains(endpoint.name))
+            .map(|endpoint| endpoint.name.to_string())
+            .collect::<Vec<_>>();
+
+        BenchmarkSummaryArtifact {
+            run_id: self
+                .output_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("benchmark-run")
+                .to_string(),
+            git_sha: git_sha(),
+            generated_at_ms: now_millis(),
+            benchmark_name: benchmark_name.to_string(),
+            scenario_count: scenarios.len(),
+            call_count: self.calls.len(),
+            required_game_endpoint_count: REQUIRED_GAME_ENDPOINTS.len(),
+            covered_required_endpoint_count: covered_required.len(),
+            missing_required_endpoints,
+            total_row_growth: final_storage
+                .total_rows
+                .saturating_sub(initial_storage.total_rows),
+            stable_memory_pages_start: initial_storage.stable_memory_pages,
+            stable_memory_pages_final: final_storage.stable_memory_pages,
+            scenarios,
+            methods,
+        }
+    }
+}
+
+fn nat_to_u128(value: &candid::Nat) -> u128 {
+    value.0.to_string().parse::<u128>().unwrap_or(u128::MAX)
+}
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn unsigned_delta(after: u128, before: u128) -> i128 {
+    if after >= before {
+        i128::try_from(after - before).unwrap_or(i128::MAX)
+    } else {
+        -i128::try_from(before - after).unwrap_or(i128::MAX)
+    }
+}
+
+fn scenario_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkScenarioSummary> {
+    let mut grouped: BTreeMap<String, Vec<&BenchmarkCallRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        grouped
+            .entry(call.scenario_id.clone())
+            .or_default()
+            .push(call);
+    }
+
+    grouped
+        .into_iter()
+        .filter(|(id, _)| id != "diagnostics")
+        .map(|(id, calls)| {
+            let first = calls.first().expect("scenario group should not be empty");
+            let last = calls.last().expect("scenario group should not be empty");
+            BenchmarkScenarioSummary {
+                label: scenario_label(&id).to_string(),
+                description: scenario_description(&id).to_string(),
+                players: 2,
+                call_count: u64::try_from(calls.len()).unwrap_or(u64::MAX),
+                query_count: count_kind(&calls, "query"),
+                update_count: count_kind(&calls, "update"),
+                response_bytes_total: calls.iter().map(|call| call.response_bytes).sum(),
+                instruction_total: calls
+                    .iter()
+                    .filter_map(|call| call.instruction_delta)
+                    .map(u128::from)
+                    .sum(),
+                instruction_change_pct: None,
+                cycle_cost_total: calls.iter().map(|call| call.cycle_cost).sum(),
+                memory_delta_bytes: unsigned_delta(
+                    last.memory_size_after_bytes,
+                    first.memory_size_before_bytes,
+                ),
+                memory_change_pct: None,
+                id,
+            }
+        })
+        .collect()
+}
+
+fn method_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkMethodSummary> {
+    let mut grouped: BTreeMap<(String, String), Vec<&BenchmarkCallRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        grouped
+            .entry((call.method.clone(), call.kind.clone()))
+            .or_default()
+            .push(call);
+    }
+
+    grouped
+        .into_iter()
+        .map(|((method, kind), calls)| {
+            let instruction_values = calls
+                .iter()
+                .filter_map(|call| call.instruction_delta)
+                .collect::<Vec<_>>();
+            BenchmarkMethodSummary {
+                method,
+                kind,
+                call_count: u64::try_from(calls.len()).unwrap_or(u64::MAX),
+                error_count: u64::try_from(calls.iter().filter(|call| !call.ok).count())
+                    .unwrap_or(u64::MAX),
+                avg_instruction_delta: average_u64(&instruction_values),
+                p95_instruction_delta: percentile_u64(instruction_values, 95),
+                instruction_change_pct: None,
+                avg_memory_delta_bytes: average_i128(
+                    &calls
+                        .iter()
+                        .map(|call| call.memory_delta_bytes)
+                        .collect::<Vec<_>>(),
+                ),
+                memory_change_pct: None,
+                avg_cycle_cost: average_u128(
+                    &calls.iter().map(|call| call.cycle_cost).collect::<Vec<_>>(),
+                ),
+                avg_response_bytes: average_u64(
+                    &calls
+                        .iter()
+                        .map(|call| call.response_bytes)
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or(0.0),
+            }
+        })
+        .collect()
+}
+
+fn apply_previous_deltas(
+    scenarios: &mut [BenchmarkScenarioSummary],
+    methods: &mut [BenchmarkMethodSummary],
+    previous: Option<&BenchmarkSummaryArtifact>,
+) {
+    let Some(previous) = previous else {
+        return;
+    };
+    let previous_scenarios = previous
+        .scenarios
+        .iter()
+        .map(|scenario| (scenario.id.as_str(), scenario))
+        .collect::<BTreeMap<_, _>>();
+    let previous_methods = previous
+        .methods
+        .iter()
+        .map(|method| ((method.method.as_str(), method.kind.as_str()), method))
+        .collect::<BTreeMap<_, _>>();
+
+    for scenario in scenarios {
+        if let Some(previous) = previous_scenarios.get(scenario.id.as_str()) {
+            scenario.instruction_change_pct =
+                pct_change_u128(scenario.instruction_total, previous.instruction_total);
+            scenario.memory_change_pct =
+                pct_change_i128(scenario.memory_delta_bytes, previous.memory_delta_bytes);
+        }
+    }
+
+    for method in methods {
+        if let Some(previous) =
+            previous_methods.get(&(method.method.as_str(), method.kind.as_str()))
+        {
+            method.instruction_change_pct =
+                pct_change_f64(method.avg_instruction_delta, previous.avg_instruction_delta);
+            method.memory_change_pct = pct_change_f64(
+                Some(method.avg_memory_delta_bytes),
+                Some(previous.avg_memory_delta_bytes),
+            );
+        }
+    }
+}
+
+fn covered_required_endpoints(calls: &[BenchmarkCallRecord]) -> BTreeSet<&'static str> {
+    REQUIRED_GAME_ENDPOINTS
+        .iter()
+        .filter(|endpoint| {
+            calls.iter().any(|call| {
+                call.method == endpoint.name
+                    && matches!(
+                        (&call.kind[..], endpoint.kind),
+                        ("query", EndpointKind::Query) | ("update", EndpointKind::Update)
+                    )
+            })
+        })
+        .map(|endpoint| endpoint.name)
+        .collect()
+}
+
+fn is_internal_benchmark_method(method: &str) -> bool {
+    method.starts_with("get_diagnostic_")
+        || method.starts_with("reset_diagnostic_")
+        || method.starts_with("icydb_")
+}
+
+fn count_kind(calls: &[&BenchmarkCallRecord], kind: &str) -> u64 {
+    u64::try_from(calls.iter().filter(|call| call.kind == kind).count()).unwrap_or(u64::MAX)
+}
+
+fn average_u64(values: &[u64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    Some(values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64)
+}
+
+fn average_u128(values: &[u128]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64
+}
+
+fn average_i128(values: &[i128]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64
+}
+
+fn percentile_u64(mut values: Vec<u64>, percentile: u32) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let index = (values.len().saturating_sub(1) * usize::try_from(percentile).unwrap_or(100)) / 100;
+    values.get(index).copied()
+}
+
+fn pct_change_u128(current: u128, previous: u128) -> Option<f64> {
+    if previous == 0 {
+        return None;
+    }
+    Some(((current as f64 - previous as f64) / previous as f64) * 100.0)
+}
+
+fn pct_change_i128(current: i128, previous: i128) -> Option<f64> {
+    if previous == 0 {
+        return None;
+    }
+    Some(((current as f64 - previous as f64) / previous as f64) * 100.0)
+}
+
+fn pct_change_f64(current: Option<f64>, previous: Option<f64>) -> Option<f64> {
+    let (Some(current), Some(previous)) = (current, previous) else {
+        return None;
+    };
+    if previous == 0.0 {
+        return None;
+    }
+    Some(((current - previous) / previous) * 100.0)
+}
+
+fn previous_summary(output_dir: &Path) -> Option<BenchmarkSummaryArtifact> {
+    let parent = output_dir.parent()?;
+    let current = output_dir.canonicalize().ok();
+    let mut candidates = fs::read_dir(parent)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if current.as_ref().is_some_and(|current| {
+                path.canonicalize()
+                    .ok()
+                    .as_ref()
+                    .is_some_and(|path| path == current)
+            }) {
+                return None;
+            }
+            let summary_path = path.join("summary.json");
+            if summary_path.is_file() {
+                Some(summary_path)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    candidates.sort();
+    candidates
+        .into_iter()
+        .rev()
+        .find_map(|path| serde_json::from_slice(&fs::read(path).ok()?).ok())
+}
+
+fn write_json_file<T: Serialize>(path: &Path, value: &T) {
+    let json = serde_json::to_vec_pretty(value).expect("benchmark artifact should serialize");
+    fs::write(path, json).unwrap_or_else(|error| {
+        panic!(
+            "failed to write benchmark artifact {}: {error}",
+            path.display()
+        )
+    });
+}
+
+fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# DoMM Benchmark {}\n\n", summary.run_id));
+    out.push_str(&format!(
+        "- Git: `{}`\n- Benchmark: `{}`\n- Calls: {}\n- Required endpoints covered: {}/{}\n- Row growth: {}\n- Stable memory pages: {} -> {}\n\n",
+        summary.git_sha,
+        summary.benchmark_name,
+        summary.call_count,
+        summary.covered_required_endpoint_count,
+        summary.required_game_endpoint_count,
+        summary.total_row_growth,
+        summary.stable_memory_pages_start,
+        summary.stable_memory_pages_final
+    ));
+    out.push_str("## Scenarios\n\n");
+    out.push_str("| Scenario | Calls | Memory MB | Memory change | Instructions | Instruction change | Cycles |\n");
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for scenario in &summary.scenarios {
+        out.push_str(&format!(
+            "| {} | {} | {:.3} | {} | {} | {} | {} |\n",
+            scenario.label,
+            scenario.call_count,
+            scenario.memory_delta_bytes as f64 / 1_048_576.0,
+            format_pct(scenario.memory_change_pct),
+            scenario.instruction_total,
+            format_pct(scenario.instruction_change_pct),
+            scenario.cycle_cost_total
+        ));
+    }
+    out.push_str("\n## Public Methods\n\n");
+    out.push_str("| Method | Kind | Calls | Avg inst | Inst change | Avg mem bytes | Mem change | Avg cycles | Avg bytes | Errors |\n");
+    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for method in &summary.methods {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {:.1} | {} | {:.1} | {:.1} | {} |\n",
+            method.method,
+            method.kind,
+            method.call_count,
+            method
+                .avg_instruction_delta
+                .map(|value| format!("{value:.1}"))
+                .unwrap_or_else(|| "n/a".to_string()),
+            format_pct(method.instruction_change_pct),
+            method.avg_memory_delta_bytes,
+            format_pct(method.memory_change_pct),
+            method.avg_cycle_cost,
+            method.avg_response_bytes,
+            method.error_count
+        ));
+    }
+    if !summary.missing_required_endpoints.is_empty() {
+        out.push_str("\n## Missing Required Endpoints\n\n");
+        out.push_str(&summary.missing_required_endpoints.join(", "));
+        out.push('\n');
+    }
+    out
+}
+
+fn format_pct(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:+.1}%"))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn scenario_label(id: &str) -> &str {
+    match id {
+        "game_start" => "Game start",
+        "opening_views" => "Opening views",
+        "resource_town" => "Resource and town",
+        "guarded_mine_battle" => "Guarded mine battle",
+        "aftermath_victory" => "Aftermath and victory",
+        _ => id,
+    }
+}
+
+fn scenario_description(id: &str) -> &str {
+    match id {
+        "game_start" => {
+            "Two players register, create, join, ready, and activate first-playable setup."
+        }
+        "opening_views" => {
+            "One player loads opening game state, chunks, objects, participant, and champions."
+        }
+        "resource_town" => {
+            "One champion moves to a resource, syncs pickup, builds a town structure, and recruits."
+        }
+        "guarded_mine_battle" => {
+            "One champion captures a mine, triggers a neutral battle, resolves it, and checks aftermath."
+        }
+        "aftermath_victory" => {
+            "Late route crosses the map, defeats the opponent, captures town, finalizes victory, and reads history."
+        }
+        _ => "Benchmark scenario.",
+    }
+}
+
+fn git_sha() -> String {
+    let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+    else {
+        return "unknown".to_string();
+    };
+    if !output.status.success() {
+        return "unknown".to_string();
+    }
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string()
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
@@ -6700,6 +7406,74 @@ const COMMAND_RECOVERY_ENTITIES: &[&str] = &[
 ];
 
 impl GateJMetrics {
+    fn set_benchmark_scenario(&mut self, scenario_id: &str) {
+        self.benchmark_scenario_id = scenario_id.to_string();
+    }
+
+    fn reset_benchmark_canister(&mut self, fixture: &StandaloneCanisterFixture) {
+        if let Some(benchmark) = &mut self.benchmark {
+            benchmark.reset_canister_metrics(fixture);
+        }
+    }
+
+    fn benchmark_sample(
+        &self,
+        fixture: &StandaloneCanisterFixture,
+    ) -> Option<BenchmarkStatusSample> {
+        self.benchmark
+            .as_ref()
+            .map(|_| BenchmarkRecorder::capture_status(fixture))
+    }
+
+    fn pull_update_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        self.benchmark
+            .as_mut()
+            .and_then(|benchmark| benchmark.pull_update_instruction(fixture, method))
+    }
+
+    fn record_benchmark_call<T: candid::CandidType>(
+        &mut self,
+        method: &str,
+        kind: &str,
+        response: &Result<T, ApiError>,
+        elapsed: Duration,
+        before: Option<BenchmarkStatusSample>,
+        after: Option<BenchmarkStatusSample>,
+        update_instruction_delta: Option<u64>,
+    ) {
+        let Some(benchmark) = &mut self.benchmark else {
+            return;
+        };
+        let (Some(before), Some(after)) = (before, after) else {
+            return;
+        };
+        benchmark.record_call(
+            &self.benchmark_scenario_id,
+            method,
+            kind,
+            response,
+            elapsed,
+            &before,
+            &after,
+            update_instruction_delta,
+        );
+    }
+
+    fn write_benchmark_artifacts(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) {
+        if let Some(benchmark) = &self.benchmark {
+            benchmark.write_artifacts(benchmark_name, initial_storage, final_storage);
+        }
+    }
+
     fn record_query<T: candid::CandidType>(
         &mut self,
         method: &str,
@@ -8185,6 +8959,8 @@ fn gate_query_as<T>(
 where
     T: candid::CandidType + for<'de> serde::Deserialize<'de>,
 {
+    let before = metrics.benchmark_sample(fixture);
+    let started = Instant::now();
     let response = match query_as::<T>(fixture, caller, method, args) {
         Ok(response) => response,
         Err(error) => panic!(
@@ -8192,7 +8968,10 @@ where
             caller.to_text()
         ),
     };
+    let elapsed = started.elapsed();
+    let after = metrics.benchmark_sample(fixture);
     metrics.record_query(method, &response);
+    metrics.record_benchmark_call(method, "query", &response, elapsed, before, after, None);
     response
 }
 
@@ -8221,9 +9000,23 @@ fn gate_update_as<T>(
 where
     T: candid::CandidType + for<'de> serde::Deserialize<'de>,
 {
+    let before = metrics.benchmark_sample(fixture);
+    let started = Instant::now();
     let response = update_as::<T>(fixture, caller, method, args)
         .unwrap_or_else(|error| panic!("{method} should decode from update call: {error}"));
+    let elapsed = started.elapsed();
+    let after = metrics.benchmark_sample(fixture);
     metrics.record_update(method, &response);
+    let update_instruction_delta = metrics.pull_update_instruction(fixture, method);
+    metrics.record_benchmark_call(
+        method,
+        "update",
+        &response,
+        elapsed,
+        before,
+        after,
+        update_instruction_delta,
+    );
     response
 }
 
@@ -8264,19 +9057,29 @@ fn build_degens_canister() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("workspace root should resolve");
-    let target_dir = workspace_root.join("target/pocket-ic-endpoint-presence");
+    let canister_features = env::var("DOMM_CANISTER_FEATURES").ok();
+    let target_dir = workspace_root.join(if canister_features.is_some() {
+        "target/pocket-ic-endpoint-presence-benchmark"
+    } else {
+        "target/pocket-ic-endpoint-presence"
+    });
     let linker_wrapper_dir = write_host_linker_wrapper(&target_dir);
     let nested_path = path_with_prefix(&linker_wrapper_dir);
+    let mut args = vec![
+        "build".to_string(),
+        "-p".to_string(),
+        "domm-degens-canister".to_string(),
+        "--target".to_string(),
+        "wasm32-unknown-unknown".to_string(),
+        "--release".to_string(),
+    ];
+    if let Some(features) = canister_features {
+        args.push("--features".to_string());
+        args.push(features);
+    }
     let output = Command::new("cargo")
         .current_dir(&workspace_root)
-        .args([
-            "build",
-            "-p",
-            "domm-degens-canister",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-        ])
+        .args(args)
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("PATH", nested_path)
         .output()

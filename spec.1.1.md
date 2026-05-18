@@ -48,21 +48,21 @@ Current timing notes from 2026-05-18 full regression:
 | --- | --- | --- |
 | PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Revalidated in the 2026-05-18 full-regression `pocket-parallel` phase: `pocket-lock` 1.997s and `pocket-smoke` 1.116s |
 | Fast timing harness | Added 2026-05-17: `scripts/run-test-groups.sh`, `make test-fast`, `make test-groups`, and `make test-groups-list` | `make test-fast` passed after prebuild; group wall times: pure 2.277s, schema 0.482s, generated 0.521s, canister-check 0.500s, pocket-lock 1.373s |
-| Endpoint inventory/public surface | Revalidated 2026-05-18 in 174.614s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6`; no longer fully serial in `make test-pocket` |
-| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 129.926s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
-| Gate K battle/victory/history | Revalidated 2026-05-18 in 347.584s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
-| Gate L first-playable route | Revalidated 2026-05-18 in 365.395s during the 6-worker `pocket-long` phase of `make test-pocket` after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=6`; still a long smoke and out of the fast inner loop |
-| Movement crossing conflict | Revalidated 2026-05-18 in 103.238s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
-| Stationary enemy blocker | Revalidated 2026-05-18 in 113.146s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
-| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 110.608s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
-| Gate M web client probe | Revalidated 2026-05-18 in 557.915s in the isolated `pocket-gate-m` phase of `make test-pocket` after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
-| Timer jobs PocketIC group | Revalidated 2026-05-18 in 176.188s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
-| End-turn PocketIC group | Revalidated 2026-05-18 in 81.669s during the 12-worker `pocket-parallel` phase of `make test-pocket` after keeping render discovery materialization out of the timer movement path | Parallel-safe under `TEST_JOBS=12` |
-| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 373.519s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
-| Render projection PocketIC group | Revalidated 2026-05-18 in 246.414s during the 12-worker `pocket-parallel` phase of `make test-pocket` after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=12`; still a long focused route |
-| Query budget PocketIC group | Revalidated 2026-05-18 in 67.356s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
-| Command recovery PocketIC group | Revalidated 2026-05-18 in 196.913s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12`, but still not an inner-loop test |
-| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 88.129s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
+| Endpoint inventory/public surface | Revalidated 2026-05-18 in 180.059s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6`; no longer fully serial in `make test-pocket` |
+| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 131.112s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Gate K battle/victory/history | Revalidated 2026-05-18 in 350.232s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Gate L first-playable route | Revalidated 2026-05-18 in 363.724s during the 6-worker `pocket-long` phase of `make regression` after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=6`; still a long smoke and out of the fast inner loop |
+| Movement crossing conflict | Revalidated 2026-05-18 in 103.620s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Stationary enemy blocker | Revalidated 2026-05-18 in 113.356s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 112.773s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
+| Gate M web client probe | Revalidated 2026-05-18 in 455.882s in the isolated `pocket-gate-m` phase of `make regression` after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
+| Timer jobs PocketIC group | Revalidated 2026-05-18 in 175.345s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
+| End-turn PocketIC group | Revalidated 2026-05-18 in 84.055s during the 12-worker `pocket-parallel` phase of `make regression` after keeping render discovery materialization out of the timer movement path | Parallel-safe under `TEST_JOBS=12` |
+| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 372.131s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
+| Render projection PocketIC group | Revalidated 2026-05-18 in 247.123s during the 12-worker `pocket-parallel` phase of `make regression` after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=12`; still a long focused route |
+| Query budget PocketIC group | Revalidated 2026-05-18 in 67.006s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
+| Command recovery PocketIC group | Revalidated 2026-05-18 in 192.876s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12`, but still not an inner-loop test |
+| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 88.928s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
 | Local DFX/blast smoke group | Revalidated 2026-05-18 on fresh local DFX: release deploy build finished in 2m13s, `blast scan` exposed 68 methods, setup reached `active` at `start:9`, direct movement/build/recruit/guarded battle/capture/income calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because local DFX uses real 60s turn/battle deadlines |
 
 Testing-first todo:
@@ -836,10 +836,9 @@ spellcasting polish.
   are done with the current round, or one side has no stacks that can still move
   or act, the canister does not currently have a durable readiness path to
   advance the battle round without waiting on active-stack timeout machinery.
-- Movement-created encounters and battle setup still have fixture-like or
-  synthetic paths in pure/client proof layers.
-- Guarded mine battle victory does not automatically capture the mine; the live
-  route required stepping away and back.
+- Guarded-object battle creation, battle resolution, capture, and later mine
+  income are covered by local `blast`, Gate K, Gate L, and render projection
+  routes; remaining P0 work is test/audit closure, not route implementation.
 - `sync_battle` on resolved battles can look like it is replaying old aftermath
   as a fresh command.
 - Battle spellcasting is exposed in docs and service paths, but legal actions
@@ -1352,12 +1351,11 @@ Every todo item must use this loop:
 7. Record any limitation that still affects playability in `spec.missing.md`.
 ```
 
-Status note, 2026-05-17: checked items below are implemented or directly
+Status note, 2026-05-18: checked items below are implemented or directly
 exercised in the current codebase. Named full gate-test rows stay unchecked
 unless the named gate has been rerun and recorded. The first-playable local
-`blast` route now opens and reads the guarded-object tactical battle; the
-remaining route gap is battle resolution, guarded-mine capture, later mine
-income, and full regression/PocketIC evidence.
+`blast` route and PocketIC routes now cover guarded-object battle creation,
+battle resolution, guarded-mine capture, later mine income, and diagnostics.
 
 ### Gate 1. Durable Job And Readiness Schema
 
@@ -1832,12 +1830,21 @@ income, and full regression/PocketIC evidence.
     122 command rows, 146 event rows, and final diagnostics covering battles,
     movement snapshots, resource ledger summaries, object visits, objectives,
     world events, town/garrison rows, world objects, and neutrals.
-- [ ] Audit `spec.md`: battle start, aftermath, object capture, income start,
+- [x] Audit `spec.md`: battle start, aftermath, object capture, income start,
   and victory sections agree.
-- [ ] Audit `spec.1.1.md`: Topic 8 and Topic 10 no longer list the guarded mine
+- [x] Audit `spec.1.1.md`: Topic 8 and Topic 10 no longer list the guarded mine
   route as under-proven.
-- [ ] Gate tests: guarded route PocketIC test, battle/aftermath pure tests,
+- [x] Gate tests: guarded route PocketIC test, battle/aftermath pure tests,
   `make regression`.
+  - Completed 2026-05-18: updated Topic 8/status wording so the guarded-mine
+    route is no longer listed as an implementation gap; `spec.md` Sections 12,
+    16/16.1, 10.1, and movement rules still agree with battle aftermath,
+    guarded-object capture, income start, and victory behavior. Focused pure
+    tests passed: `cargo test -p domm-game aftermath` (7 tests) and
+    `cargo test -p domm-game guarded` (2 tests). Full evidence:
+    `TEST_JOBS=12 LONG_TEST_JOBS=6 GATE_M_TEST_JOBS=1 make regression` passed,
+    including non-PocketIC workspace tests, Gate K in 350.232s, Gate L in
+    363.724s, and isolated Gate M in 455.882s.
 
 ### Gate 12. Visibility, Redaction, And Auth Hardening
 

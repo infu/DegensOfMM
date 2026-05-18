@@ -342,34 +342,35 @@ pub(crate) fn schedule_turn_maintenance_jobs(
         return Ok(());
     }
 
-    let due_at = Timestamp::now();
-    let mut requeued_completed_job = false;
-    for job_kind in ["scenario_objectives", "world_events", "advanced_victory"] {
-        let job_key = format!("{job_kind}:{}:{}", session.id(), session.current_turn);
-        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key,
-            job_kind: job_kind.to_string(),
-            session_id: session.id(),
-            battle_id: None,
-            turn_number: Some(session.current_turn),
-            due_at,
-            command_id,
-            cursor_json: None,
-        })?;
-
-        if job.status == system_job_repo::STATUS_COMPLETED {
-            let mut job = job;
-            job.command_id = command_id.map(|id| id.key());
-            system_job_repo::reschedule_system_job(job, due_at, None)?;
-            requeued_completed_job = true;
-        }
-    }
-
-    if requeued_completed_job {
-        system_job_service::schedule_nearest_due_job()?;
-    }
-
+    schedule_scenario_job(session, command_id, "scenario_objectives")?;
     Ok(())
+}
+
+fn schedule_scenario_job(
+    session: &GameSession,
+    command_id: Option<Id<GameCommand>>,
+    job_kind: &str,
+) -> Result<(), ApiError> {
+    let due_at = Timestamp::now();
+    let job_key = format!("{job_kind}:{}:{}", session.id(), session.current_turn);
+    let job = system_job_repo::upsert_system_job(system_job_repo::SystemJobDraft {
+        job_key,
+        job_kind: job_kind.to_string(),
+        session_id: session.id(),
+        battle_id: None,
+        turn_number: Some(session.current_turn),
+        due_at,
+        command_id,
+        cursor_json: None,
+    })?;
+
+    if job.status == system_job_repo::STATUS_COMPLETED {
+        let mut job = job;
+        job.command_id = command_id.map(|id| id.key());
+        system_job_repo::reschedule_system_job(job, due_at, None)?;
+    }
+
+    system_job_service::schedule_nearest_due_job()
 }
 
 pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
@@ -442,7 +443,13 @@ fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError
     command.applied_at = Some(Timestamp::now());
     command.failed_at = None;
     commands_events_effects::update_game_command(command)?;
+    let completed_job_kind = job.job_kind.clone();
     system_job_repo::complete_system_job(job)?;
+    match completed_job_kind.as_str() {
+        "scenario_objectives" => schedule_scenario_job(&session, None, "world_events")?,
+        "world_events" => schedule_scenario_job(&session, None, "advanced_victory")?,
+        _ => {}
+    }
     Ok(())
 }
 

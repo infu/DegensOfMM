@@ -2,8 +2,7 @@ use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
-    Battle, BattleStack, Champion, ChampionArmyStack, GameCommand, GameParticipant, GameSession,
-    SystemJob, Town,
+    Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, SystemJob, Town,
 };
 use domm_game::{
     ApiError, BattleActionInput, BattleActionReceipt, BattleCommandBudget, BattleCoord,
@@ -523,37 +522,13 @@ fn enrich_battle_spell_actions_from_rows(
 }
 
 fn battle_spell_slugs_for_stack(stack: &BattleStack) -> Result<Vec<String>, ApiError> {
-    let mut slugs = stack
+    let slugs = stack
         .status_keys
         .iter()
         .filter_map(|key| key.strip_prefix("battle_spell:"))
         .filter(|slug| !slug.is_empty())
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-
-    if stack.origin_kind == "champion_army"
-        && let Some(origin_stack_id_text) = stack.origin_stack_id_text.as_deref()
-        && let Ok(origin_stack_key) = Ulid::from_str(origin_stack_id_text)
-        && let Some(origin_stack) =
-            champions_artifacts::load_champion_army_stack(Id::<ChampionArmyStack>::from_key(
-                origin_stack_key,
-            ))?
-    {
-        for known in champions_artifacts::page_champion_spells(
-            Id::from_key(origin_stack.champion_id),
-            domm_game::MAX_LIST_LIMIT,
-            None,
-        )?
-        .items
-        {
-            if let Some(slug) = known.spell_slug
-                && !slug.is_empty()
-            {
-                slugs.insert(slug);
-            }
-        }
-    }
-
     Ok(slugs.into_iter().collect())
 }
 

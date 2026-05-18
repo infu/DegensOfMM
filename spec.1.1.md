@@ -1571,10 +1571,11 @@ income, and full regression/PocketIC evidence.
   refresh without calling `sync_objectives`, `sync_world_events`, or
   `sync_advanced_victory`.
   - Completed 2026-05-18 by wiring
-    `schedule_turn_maintenance_jobs` to durable due-now
-    `scenario_objectives`, `world_events`, and `advanced_victory` jobs,
-    requeueing same-turn completed maintenance keys when later mutations make
-    them due again, and recording the actual scenario system command on the
+    `schedule_turn_maintenance_jobs` to start durable due-now
+    `scenario_objectives` jobs, then chain `world_events` and
+    `advanced_victory` jobs as each maintenance slice completes. The scheduler
+    requeues same-turn completed maintenance keys when later mutations make
+    them due again, and records the actual scenario system command on the
     completed `SystemJob`. Added
     `pocket_ic_timer_jobs_refresh_scenario_maintenance_without_sync_wrappers`,
     which advances seven turns through `end_turn` plus timer ticks only, proves
@@ -1590,7 +1591,19 @@ income, and full regression/PocketIC evidence.
 - [x] Audit `spec.md`: turn advancement, sync semantics, recovery-before-turn,
   scenario maintenance, and query/no-speculation rules match code.
 - [x] Audit `spec.1.1.md`: Topics 2 and 4 reflect the implemented runner.
-- [ ] Gate tests: `timer_jobs`, movement/turn tests, `make test-pocket`.
+- [x] Gate tests: `timer_jobs`, movement/turn tests, `make test-pocket`.
+  - Completed 2026-05-18 by stabilizing timer-job lease reclaim, chaining
+    scenario maintenance jobs to stay under turn-resolution timer budgets,
+    keeping PocketIC battle timeout helpers on explicit `sync_battle` instead
+    of accidental background timer ticks, and keeping Gate M town/battle views
+    backed by canister queries. Evidence: `TEST_JOBS=12 LONG_TEST_JOBS=4
+    GATE_M_TEST_JOBS=1 make test-pocket` passed. Final phase timings:
+    `pocket-parallel` passed all 11 groups including `timer-jobs` in
+    293.427s, `end-turn` in 208.933s, `battle-round` in 235.251s,
+    `render-projection` in 303.007s, and `command-recovery` in 284.676s;
+    `pocket-long` passed with `endpoint` 178.294s, `gate-j` 131.387s,
+    `gate-k` 336.126s, `gate-l` 374.727s, `movement` 104.166s, and
+    `stationary` 113.771s; `pocket-gate-m` passed in 441.277s.
 
 ### Gate 6. Timer-Driven Battle Timeout And Battle Round Readiness
 

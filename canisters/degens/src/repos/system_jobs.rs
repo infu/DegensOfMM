@@ -307,7 +307,7 @@ pub(crate) fn claim_system_job(
     let Some(mut job) = find_system_job_by_key(job_key)? else {
         return Ok(None);
     };
-    if job.due_at > now {
+    if job.status == STATUS_SCHEDULED && job.due_at > now {
         return Ok(None);
     }
     if !job_is_claimable(&job, now) {

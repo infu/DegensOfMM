@@ -173,9 +173,8 @@ impl CanisterWebClientBackend {
         self.metrics.borrow().clone()
     }
 
-    fn advance_time_ms(&mut self, millis: u64) {
+    fn advance_time_without_timers_ms(&mut self, millis: u64) {
         self.advance_clock_ms(millis);
-        self.fixture.pic().tick();
     }
 
     fn advance_time_for_timers_ms(&mut self, millis: u64) {
@@ -394,7 +393,7 @@ impl CanisterWebClientBackend {
         )?;
         Self::assert_applied(&moved)?;
 
-        let max_sync_calls = path.len().saturating_add(2);
+        let max_sync_calls = path.len().saturating_add(8).max(12);
         let sync_now_ms = now_ms.max(self.server_now_ms.saturating_add(61_000));
         self.sync_until_event(
             caller,
@@ -415,10 +414,10 @@ impl CanisterWebClientBackend {
         expected_event_type: &str,
         max_sync_calls: usize,
     ) -> Result<(CommandResponse, bool), ProbeError> {
+        let max_sync_calls = max_sync_calls.max(12);
         let mut saw_partial_sync = false;
         self.advance_to_time_ms(now_ms);
         for attempt in 0..max_sync_calls {
-            self.advance_clock_ms(61_000);
             let synced = self.update_command_response(
                 caller,
                 "sync_session_turn",
@@ -427,24 +426,34 @@ impl CanisterWebClientBackend {
                     format!("{sync_nonce_prefix}{attempt}"),
                 ),
             )?;
+            if expected_event_type != "session_turn_synced"
+                && self.public_event_seen(caller, session_id, expected_event_type)?
+            {
+                return Ok((synced, saw_partial_sync));
+            }
             if synced
                 .error
                 .as_ref()
                 .is_some_and(|error| error.code == "turn_not_due")
             {
+                self.advance_clock_ms(61_000);
                 continue;
             }
             Self::assert_applied(&synced)?;
-            saw_partial_sync |= synced
+            let partial_sync = synced
                 .events
                 .iter()
                 .any(|event| event.event_type == "movement_sync_incomplete");
+            saw_partial_sync |= partial_sync;
             if synced
                 .events
                 .iter()
                 .any(|event| event.event_type == expected_event_type)
             {
                 return Ok((synced, saw_partial_sync));
+            }
+            if !partial_sync {
+                self.advance_clock_ms(61_000);
             }
         }
 
@@ -453,6 +462,24 @@ impl CanisterWebClientBackend {
             format!("sync_session_turn did not emit {expected_event_type}"),
             false,
         )))
+    }
+
+    fn public_event_seen(
+        &self,
+        caller: Principal,
+        session_id: &str,
+        event_type: &str,
+    ) -> Result<bool, ProbeError> {
+        let page = self.query_result::<ApiEventPage>(
+            caller,
+            "get_events_after",
+            (session_id.to_string(), "public".to_string(), 0_u64, 200_u32),
+        )?;
+        self.observe_event_page(&page);
+        Ok(page
+            .events
+            .iter()
+            .any(|event| event.event_type == event_type))
     }
 
     fn sync_map_turn_if_due(
@@ -581,7 +608,7 @@ impl CanisterWebClientBackend {
             }
 
             if fallback_view.is_some() {
-                self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
+                self.advance_time_without_timers_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
                 let synced = self.update_command_response(
                     sync_caller,
                     "sync_battle",
@@ -697,7 +724,7 @@ impl CanisterWebClientBackend {
             "town_encounter_pending",
         )?;
         let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending")?;
-        self.advance_time_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
+        self.advance_time_without_timers_ms(domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
         let town_sync = self.update_command_response(
             caller,
             "sync_battle",

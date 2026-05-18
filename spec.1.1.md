@@ -1551,9 +1551,22 @@ income, and full regression/PocketIC evidence.
   budget.
 - [x] Recover or quarantine pending/applying commands that can affect turn
   closure before advancing.
-- [ ] Add PocketIC tests proving a 60-second deadline advances without
+- [x] Add PocketIC tests proving a 60-second deadline advances without
   `sync_session_turn`, multi-step movement finishes through continuations, and
   duplicate/stale timer fires do not duplicate effects.
+  - Completed 2026-05-18 by letting due `turn_deadline` jobs process pending
+    movement slices instead of requiring the manual `sync_session_turn`
+    wrapper, and adding
+    `pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync`.
+    The test submits a multi-step movement intent, advances only PocketIC time,
+    proves the champion reaches the destination and the turn advances, observes
+    partial movement progress, then forces the stale turn-one timer job and
+    proves the turn-one advancement event is not duplicated. Focused evidence:
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync
+    -- --nocapture` passed in 178.66s, `DOMM_TEST_JOBS=1
+    scripts/run-test-groups.sh timer-jobs` passed in 71.742s and ran both
+    `pocket_ic_timer_jobs_*` tests, and `make check-canister` passed.
 - [ ] Add PocketIC tests proving objectives, world events, and advanced victory
   refresh without calling `sync_objectives`, `sync_world_events`, or
   `sync_advanced_victory`.

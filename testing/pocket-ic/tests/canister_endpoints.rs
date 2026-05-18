@@ -2434,6 +2434,143 @@ fn pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases() {
 }
 
 #[test]
+fn pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-timer-move-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-timer-move-player-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "timer-move");
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let opening_view = compact_game_view(&fixture, player_one, &session_id);
+    let turn_one_key = turn_deadline_job_key(&session_id, 1);
+    let turn_one_job = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("scheduled".to_string()),
+    )
+    .jobs
+    .into_iter()
+    .find(|job| job.job_key == turn_one_key)
+    .expect("turn one deadline job should be scheduled before movement");
+
+    submit_move_intent(
+        &fixture,
+        player_one,
+        &session_id,
+        &champion_id,
+        (9_u16..=18)
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>(),
+        "nonce:timer-move:submit",
+        opening_view.render_time.server_now_ms,
+    );
+
+    advance_time_for_timers(
+        &fixture,
+        millis_until_due(
+            opening_view.render_time.server_now_ms,
+            turn_one_job.due_at_ms,
+        ),
+    );
+    let mut after_deadline = compact_game_view(&fixture, player_one, &session_id);
+    for _ in 0..12 {
+        if after_deadline.session.current_turn >= 2 {
+            break;
+        }
+        advance_time_for_timers(&fixture, 61_000);
+        after_deadline = compact_game_view(&fixture, player_one, &session_id);
+    }
+    assert_eq!(
+        after_deadline.session.current_turn, 2,
+        "deadline timer should finish movement continuations without sync_session_turn"
+    );
+
+    let champion = query_as::<ChampionView>(
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id),
+    )
+    .expect("timer-moved champion should decode")
+    .expect("timer-moved champion should load");
+    assert_eq!((champion.x, champion.y), (18, 24));
+
+    let completed_jobs = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("completed".to_string()),
+    );
+    let completed_turn_one = completed_jobs
+        .jobs
+        .iter()
+        .find(|job| job.job_key == turn_one_key)
+        .expect("turn one deadline job should complete after movement");
+    assert!(
+        completed_turn_one.attempt_count > turn_one_job.attempt_count.saturating_add(1),
+        "multi-step movement should require timer continuation attempts"
+    );
+
+    let public_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 100_u32),
+    )
+    .expect("timer movement event feed should decode")
+    .expect("timer movement event feed should load");
+    let turn_two_advanced_before_stale = public_events
+        .events
+        .iter()
+        .filter(|event| event.event_type == "session_turn_advanced")
+        .filter(|event| {
+            event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""current_turn":2"#))
+        })
+        .count();
+    assert_eq!(turn_two_advanced_before_stale, 1);
+    assert!(
+        public_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "movement_sync_incomplete"),
+        "deadline-driven movement should expose partial movement progress"
+    );
+
+    force_system_job_running(
+        &fixture,
+        &turn_one_key,
+        after_deadline.render_time.server_now_ms.saturating_sub(1),
+    );
+    let processed = run_diagnostic_system_jobs(&fixture, 4);
+    assert!(processed > 0, "stale forced job should be reclaimed");
+    let public_events_after_stale = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 100_u32),
+    )
+    .expect("post-stale timer event feed should decode")
+    .expect("post-stale timer event feed should load");
+    let turn_two_advanced_after_stale = public_events_after_stale
+        .events
+        .iter()
+        .filter(|event| event.event_type == "session_turn_advanced")
+        .filter(|event| {
+            event
+                .payload
+                .as_deref()
+                .is_some_and(|payload| payload.contains(r#""current_turn":2"#))
+        })
+        .count();
+    assert_eq!(
+        turn_two_advanced_after_stale, turn_two_advanced_before_stale,
+        "stale duplicate timer processing must not duplicate turn-one effects"
+    );
+}
+
+#[test]
 fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-end-turn-player-one");
@@ -6333,6 +6470,17 @@ fn force_system_job_running(
     )
     .expect("force diagnostic system job should decode")
     .expect("force diagnostic system job should succeed")
+}
+
+fn run_diagnostic_system_jobs(fixture: &StandaloneCanisterFixture, max_ticks: u32) -> u32 {
+    update_as::<u32>(
+        fixture,
+        candid::Principal::anonymous(),
+        "run_diagnostic_system_jobs",
+        (max_ticks,),
+    )
+    .expect("run diagnostic system jobs should decode")
+    .expect("run diagnostic system jobs should succeed")
 }
 
 fn replay_player_registration(

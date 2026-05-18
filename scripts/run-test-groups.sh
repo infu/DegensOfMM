@@ -84,7 +84,7 @@ add_group "gate-m" \
 add_group "timer-jobs" \
     "timer jobs scheduling, repair, no-op, and lease recovery PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
-    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases -- --nocapture"
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs -- --nocapture"
 add_group "end-turn" \
     "end-turn readiness, stale command, and replay PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \

@@ -438,11 +438,6 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         system_job_repo::reschedule_system_job(job, session.turn_deadline_at, None)?;
         return Ok(());
     }
-    if job.job_kind == "turn_deadline" && pending_movements_remain(&session)? {
-        system_job_repo::complete_system_job(job)?;
-        return Ok(());
-    }
-
     let command = ensure_system_turn_command(&session, &job)?;
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
@@ -1208,10 +1203,6 @@ fn stop_candidate_fast(
         "resolve",
     ));
     Ok(())
-}
-
-fn pending_movements_remain(session: &GameSession) -> Result<bool, ApiError> {
-    Ok(!pending_movement_intents_for_session(session)?.is_empty())
 }
 
 fn reschedule_current_turn_jobs_for_manual_sync(session: &GameSession) -> Result<(), ApiError> {

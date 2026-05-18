@@ -5047,6 +5047,8 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let viewport = opening_viewport_for_slot(0);
     let mut metrics = GateJMetrics::default();
 
+    metrics.reset_benchmark_canister(&fixture);
+    metrics.set_benchmark_scenario("diagnostics");
     let non_controller_diagnostic = gate_query_as::<DiagnosticStorageSnapshot>(
         &mut metrics,
         &fixture,
@@ -5061,6 +5063,7 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
     assert_eq!(initial_storage.total_rows, 0);
 
+    metrics.set_benchmark_scenario("gate_j_strategic_loop");
     let session_id = gate_start_active_two_player_session(
         &mut metrics,
         &fixture,
@@ -5391,6 +5394,7 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let command_storage =
         gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_COMMAND_EVENT_ENTITIES);
     metrics.print_report(&initial_storage, &final_storage, &command_storage);
+    metrics.write_benchmark_artifacts("gate_j_strategic_loop", &initial_storage, &final_storage);
 }
 
 #[test]
@@ -5398,14 +5402,30 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-k-one");
     let player_two = candid::Principal::self_authenticating(b"domm-pocket-gate-k-two");
-    let session_id = start_active_two_player_session(&fixture, player_one, player_two, "gate-k");
-    let west_champion_id = owned_champion_id(&fixture, player_one, &session_id);
-    let east_champion_id = owned_champion_id(&fixture, player_two, &session_id);
+    let mut metrics = GateJMetrics::default();
 
-    let initial_storage = diagnostic_snapshot(&fixture, GATE_K_ENTITIES);
-    assert_eq!(row_count(&initial_storage, "PlayerMatchSummary"), 2);
+    metrics.reset_benchmark_canister(&fixture);
+    metrics.set_benchmark_scenario("diagnostics");
+    let initial_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_K_ENTITIES);
 
-    let (neutral_sync, _) = submit_move_and_sync_until_event(
+    metrics.set_benchmark_scenario("game_start");
+    let session_id = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_one,
+        player_two,
+        "gate-k",
+    );
+    let west_champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_one, &session_id);
+    let east_champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_two, &session_id);
+
+    metrics.set_benchmark_scenario("diagnostics");
+    let started_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_K_ENTITIES);
+    assert_eq!(row_count(&started_storage, "PlayerMatchSummary"), 2);
+
+    metrics.set_benchmark_scenario("aftermath_victory");
+    let (neutral_sync, _) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
@@ -5424,31 +5444,32 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         "neutral_encounter_pending",
     );
     let neutral_battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
-    let neutral_view = query_as::<BattleView>(
+    let neutral_view = gate_query_as::<BattleView>(
+        &mut metrics,
         &fixture,
         player_one,
         "get_battle_state",
         (session_id.clone(), neutral_battle_id.clone()),
     )
-    .expect("neutral battle view should decode")
     .expect("neutral battle view should load");
     assert_eq!(neutral_view.battle_type, "neutral");
     assert!(!neutral_view.legal_actions_for_caller.is_empty());
 
-    resolve_battle_to_end(
+    gate_resolve_battle_to_end(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
         &neutral_battle_id,
         "nonce:gate-k:neutral-battle",
     );
-    let west_after_neutral = query_as::<ChampionView>(
+    let west_after_neutral = gate_query_as::<ChampionView>(
+        &mut metrics,
         &fixture,
         player_one,
         "get_champion_view",
         (session_id.clone(), west_champion_id.clone()),
     )
-    .expect("west champion after neutral should decode")
     .expect("west champion after neutral should load");
     assert_eq!(west_after_neutral.status, "active");
     assert_eq!((west_after_neutral.x, west_after_neutral.y), (12, 22));
@@ -5456,7 +5477,8 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
     let first_east_stage = ((west_after_neutral.x + 1)..=22)
         .map(|x| MoveCoord::new(x, west_after_neutral.y))
         .collect::<Vec<_>>();
-    submit_move_and_sync_until_event(
+    gate_submit_move_and_sync_until_event(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
@@ -5470,7 +5492,8 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
     let second_east_stage = (23..=32)
         .map(|x| MoveCoord::new(x, west_after_neutral.y))
         .collect::<Vec<_>>();
-    submit_move_and_sync_until_event(
+    gate_submit_move_and_sync_until_event(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
@@ -5486,7 +5509,8 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         .collect::<Vec<_>>();
     east_path.push(MoveCoord::new(39, 23));
     east_path.push(MoveCoord::new(39, 24));
-    let (champion_sync, _) = submit_move_and_sync_until_event(
+    let (champion_sync, _) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
@@ -5498,24 +5522,26 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         "champion_encounter_pending",
     );
     let champion_battle_id = battle_id_from_events(&champion_sync, "champion_encounter_pending");
-    resolve_battle_to_end(
+    gate_resolve_battle_to_end_for_callers(
+        &mut metrics,
         &fixture,
-        player_one,
+        &[player_one, player_two],
         &session_id,
         &champion_battle_id,
         "nonce:gate-k:champion-battle",
     );
-    let east_after_defeat = query_as::<ChampionView>(
+    let east_after_defeat = gate_query_as::<ChampionView>(
+        &mut metrics,
         &fixture,
         player_two,
         "get_champion_view",
         (session_id.clone(), east_champion_id),
     )
-    .expect("east champion after defeat should decode")
     .expect("east champion after defeat should load");
     assert_eq!(east_after_defeat.status, "defeated");
 
-    let (town_contact_sync, _) = submit_move_and_sync_until_event(
+    let (town_contact_sync, _) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
         &fixture,
         player_one,
         &session_id,
@@ -5528,7 +5554,8 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
     );
     let town_battle_id = battle_id_from_events(&town_contact_sync, "town_encounter_pending");
     advance_time_without_timers(&fixture, domm_game::BATTLE_ACTION_DEADLINE_MS + 1);
-    let town_sync = update_as::<CommandResponse>(
+    let town_sync = gate_update_as::<CommandResponse>(
+        &mut metrics,
         &fixture,
         player_one,
         "sync_battle",
@@ -5538,8 +5565,8 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
             "nonce:gate-k:town-battle:sync".to_string(),
         ),
     )
-    .expect("town sync_battle should decode")
     .expect("town sync_battle should succeed");
+    metrics.observe_command_response(&town_sync);
     assert_eq!(
         town_sync.status,
         CommandStatus::Applied,
@@ -5558,26 +5585,38 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
             .any(|event| event.event_type == "victory_finalized")
     );
 
-    let finished =
-        query_as::<SessionView>(&fixture, player_one, "get_session", (session_id.clone(),))
-            .expect("finished session should decode")
-            .expect("finished session should load");
+    let finished = gate_query_as::<SessionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_session",
+        (session_id.clone(),),
+    )
+    .expect("finished session should load");
     assert_eq!(finished.state, "finished");
 
-    let west_history =
-        query_as::<MatchHistoryPage>(&fixture, player_one, "get_match_history", (0_u32, 10_u32))
-            .expect("winner history should decode")
-            .expect("winner history should load");
+    let west_history = gate_query_as::<MatchHistoryPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_match_history",
+        (0_u32, 10_u32),
+    )
+    .expect("winner history should load");
     assert!(
         west_history
             .entries
             .iter()
             .any(|entry| entry.session_id == session_id && entry.result == "win")
     );
-    let east_history =
-        query_as::<MatchHistoryPage>(&fixture, player_two, "get_match_history", (0_u32, 10_u32))
-            .expect("loser history should decode")
-            .expect("loser history should load");
+    let east_history = gate_query_as::<MatchHistoryPage>(
+        &mut metrics,
+        &fixture,
+        player_two,
+        "get_match_history",
+        (0_u32, 10_u32),
+    )
+    .expect("loser history should load");
     assert!(
         east_history
             .entries
@@ -5585,14 +5624,15 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
             .any(|entry| entry.session_id == session_id && entry.result == "loss")
     );
 
-    let final_events = query_as::<ApiEventPage>(
+    let final_events = gate_query_as::<ApiEventPage>(
+        &mut metrics,
         &fixture,
         player_one,
         "get_events_after",
-        (session_id, "public".to_string(), 0_u64, 200_u32),
+        (session_id.clone(), "public".to_string(), 0_u64, 200_u32),
     )
-    .expect("Gate K event feed should decode")
     .expect("Gate K event feed should load");
+    metrics.observe_event_page(&final_events);
     for expected in [
         "battle_action_applied",
         "neutral_defeated",
@@ -5609,10 +5649,17 @@ fn pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows() {
         );
     }
 
-    let final_storage = diagnostic_snapshot(&fixture, GATE_K_ENTITIES);
+    metrics.set_benchmark_scenario("diagnostics");
+    let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_K_ENTITIES);
     assert!(row_count(&final_storage, "Battle") >= 3);
     assert!(row_count(&final_storage, "GameCommand") > row_count(&initial_storage, "GameCommand"));
     assert_eq!(row_count(&final_storage, "PlayerMatchSummary"), 2);
+    metrics.print_named_report("Gate K", &initial_storage, &final_storage, &final_storage);
+    metrics.write_benchmark_artifacts(
+        "gate_k_battle_aftermath_victory_history",
+        &initial_storage,
+        &final_storage,
+    );
 }
 
 #[test]
@@ -7706,6 +7753,7 @@ const GATE_K_ENTITIES: &[&str] = &[
     "BattleStack",
     "BattleOccupancy",
     "BattleObstacle",
+    "LobbyCommand",
     "GameCommand",
     "GameEvent",
     "CommandEffect",
@@ -8423,7 +8471,8 @@ fn gate_resolve_battle_to_end_for_callers(
                 .expect("resolved battle aftermath sync should succeed");
                 metrics.observe_command_response(&synced);
                 assert_eq!(synced.status, CommandStatus::Applied);
-                let turn_synced = update_as::<CommandResponse>(
+                let turn_synced = gate_update_as::<CommandResponse>(
+                    metrics,
                     fixture,
                     player,
                     "sync_session_turn",
@@ -8431,11 +8480,7 @@ fn gate_resolve_battle_to_end_for_callers(
                         session_id.to_string(),
                         format!("{nonce_prefix}:post-battle-turn"),
                     ),
-                )
-                .unwrap_or_else(|error| {
-                    panic!("post-battle sync_session_turn should decode: {error}")
-                });
-                metrics.record_update("sync_session_turn", &turn_synced);
+                );
                 match turn_synced {
                     Ok(response) => {
                         metrics.observe_command_response(&response);

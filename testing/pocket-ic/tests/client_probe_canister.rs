@@ -1826,19 +1826,29 @@ fn build_degens_canister() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("workspace root should resolve");
-    let target_dir = workspace_root.join("target/pocket-ic-client-probe");
+    let canister_features = env::var("DOMM_CANISTER_FEATURES").ok();
+    let target_dir = workspace_root.join(if canister_features.is_some() {
+        "target/pocket-ic-client-probe-benchmark"
+    } else {
+        "target/pocket-ic-client-probe"
+    });
     let linker_wrapper_dir = write_host_linker_wrapper(&target_dir);
     let nested_path = path_with_prefix(&linker_wrapper_dir);
+    let mut args = vec![
+        "build".to_string(),
+        "-p".to_string(),
+        "domm-degens-canister".to_string(),
+        "--target".to_string(),
+        "wasm32-unknown-unknown".to_string(),
+        "--release".to_string(),
+    ];
+    if let Some(features) = canister_features {
+        args.push("--features".to_string());
+        args.push(features);
+    }
     let output = Command::new("cargo")
         .current_dir(&workspace_root)
-        .args([
-            "build",
-            "-p",
-            "domm-degens-canister",
-            "--target",
-            "wasm32-unknown-unknown",
-            "--release",
-        ])
+        .args(args)
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("PATH", nested_path)
         .output()

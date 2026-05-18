@@ -1109,13 +1109,13 @@ Priority: P0 for one-call setup. P1 for metadata polish.
 
 ### Current Problems
 
-- `start_session` is currently a setup saga that may require many repeated
-  client calls with fresh nonces before activation.
-- That repeated-call model is not acceptable for a playable client. Starting a
-  match should be one client update call; the canister should drive setup
-  forward through fresh-message continuations: zero-delay timers by default, or
-  awaited self-calls/inter-canister calls where that shape is simpler.
-- Public responses do not expose enough setup progress.
+- The repeated-call `start_session` model was not acceptable for a playable
+  client. The v1.1 contract is now one host update call; the canister drives
+  setup through fresh-message continuations and the regression suite must keep
+  that contract from regressing.
+- Setup progress is now exposed through the dedicated
+  `get_setup_progress(session_id)` query; endpoint and Candid tests must keep
+  that public shape available to clients.
 - `get_session` is intentionally thin; docs and tests must direct active
   gameplay callers to the render metadata and dedicated endpoints.
 - Some render-time metadata exists in `get_game_view`, but that view is also a
@@ -1170,8 +1170,8 @@ Priority: P0 for one-call setup. P1 for metadata polish.
   progress or the original command result.
 - On `post_upgrade`, repair any `starting` session by upserting
   `setup_session:{session_id}` and scheduling the nearest/zero-delay job.
-- Return setup progress in lobby command responses or add a setup progress
-  query.
+- Expose setup progress through `get_setup_progress(session_id)`; lobby command
+  responses may keep the compact `setup_complete`/session result shape.
 - `get_session` remains a lobby/setup shell in v1.1: session id, state, and
   participants. Gameplay metadata comes from `get_game_view` render metadata,
   `get_content_manifest`, and dedicated map, object, champion, town, battle,
@@ -1471,10 +1471,20 @@ income, and full regression/PocketIC evidence.
     pocket_ic_one_call_setup_progress_replay_and_upgrade_resume -- --nocapture`
     passed in 57.97s. The full endpoint route also continues to prove one-call
     setup reaches `active`.
-- [ ] Audit `spec.md`: session setup saga, setup phase list, row caps, and
+- [x] Audit `spec.md`: session setup saga, setup phase list, row caps, and
   public API contract all describe one client call.
-- [ ] Audit `spec.1.1.md`: Topic 13 and first-gate criteria no longer mention
+  - Completed 2026-05-18 by updating `spec.md` to include
+    `get_setup_progress(session_id)`, documenting `SetupProgressView`, removing
+    the stale `StartSession.next_phase` shape, matching the setup phase list to
+    the implemented setup effects, and documenting the v1.1 one-effect
+    continuation cap.
+- [x] Audit `spec.1.1.md`: Topic 13 and first-gate criteria no longer mention
   repeated client-driven setup.
+  - Completed 2026-05-18 by changing Topic 13 from a current repeated-call
+    problem statement to the implemented one-call contract plus regression
+    expectations. The first-gate criteria still mention repeated calls only as a
+    prohibited regression: one `start_session` call must reach `active` without
+    repeated client calls.
 - [ ] Gate tests: targeted setup tests, `make test-pocket`,
   `make check-canister`.
 

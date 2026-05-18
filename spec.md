@@ -4898,6 +4898,8 @@ get_my_player()
 
 get_session(session_id)
 
+get_setup_progress(session_id)
+
 get_my_participant(session_id)
 
 get_game_view(session_id, request: GameViewRequest)
@@ -5018,7 +5020,7 @@ CommandResponse {
 ```text
 CreateSession { session_id }
 JoinSession { session_id, participant_id }
-StartSession { session_id, setup_complete: bool, next_phase: Option<Text> }
+StartSession { session_id, setup_complete: bool }
 EndTurn { turn_number, ended: bool, turn_closed: bool, closing_reason: Option<Text> }
 SyncSessionTurn { advanced_turns, sync_incomplete: bool }
 MoveIntent { movement_intent_id, superseded_by_command_id: Option<Id<GameCommand>> }
@@ -5028,6 +5030,24 @@ BattleAction { battle_id, active_stack_id, battle_state }
 SyncBattle { battle_id, timeout_actions_applied, battle_sync_incomplete: bool }
 EndBattleTurn { battle_id, round_number, ended: bool, round_advanced: bool, ready_reason: Text }
 Noop { reason }
+```
+
+Setup progress is exposed by `get_setup_progress(session_id)`:
+
+```text
+SetupProgressView {
+  session_id
+  session_state
+  setup_complete
+  completed_effect_count
+  total_effect_count
+  last_effect_key: Option<Text>
+  next_effect_key: Option<Text>
+  setup_command_id: Option<Id<GameCommand>>
+  setup_command_status: Option<Text>
+  setup_job_status: Option<Text>
+  setup_job_attempt_count
+}
 ```
 
 `SyncSessionTurn` and `SyncBattle` are returned only by manual recovery/admin
@@ -5719,21 +5739,30 @@ not reset the instruction limit. Before every await/timer boundary, persist the
 setup phase, command/effect status, and cursor. After every continuation, reload
 IcyDB state and no-op if setup has already advanced or completed.
 
-Each setup continuation may write at most 50 durable rows or 12 KiB of
-command/effect/event JSON.
+Each setup continuation runs at most one named setup effect in v1.1. A setup
+effect that approaches instruction, write, or command/effect/event JSON budgets
+must be split into smaller idempotent effects before it can be promoted.
 If setup is incomplete, the canister schedules or awaits the next continuation.
 Only after all required parent rows, child rows, occupancy rows, visibility seeds, and setup events are committed may the session become active.
 
 Setup phases:
-  create_map_chunks
-  create_participants
-  create_towns
-  create_champions
-  create_army_stacks
-  create_world_objects
-  create_occupancy
+  seed_ruleset_content
+  seed_participants
+  seed_towns
+  seed_champions
+  seed_map_chunks
+  seed_occupancy
   seed_visibility
-  emit_start_events
+  seed_neutrals
+  seed_world_objects
+  seed_resource_piles
+  seed_external_dwellings
+  seed_dwelling_pools
+  seed_economy
+  seed_tavern_offers
+  seed_scenario_progress
+  seed_worldgen
+  emit_start_event_and_match_summary_shells
 ```
 
 ---

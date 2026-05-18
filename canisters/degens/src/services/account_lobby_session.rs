@@ -1043,11 +1043,10 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
             cursor_json: None,
         })?;
     } else {
-        system_job_repo::reschedule_system_job(
-            job,
-            Timestamp::now(),
-            setup_command.result_json.clone(),
-        )?;
+        let cursor_json = commands_events_effects::load_game_command(setup_command.id())?
+            .and_then(|command| command.result_json)
+            .or_else(|| setup_command.result_json.clone());
+        system_job_repo::reschedule_system_job(job, Timestamp::now(), cursor_json)?;
     }
     Ok(())
 }

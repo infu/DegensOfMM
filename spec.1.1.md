@@ -1426,10 +1426,23 @@ income, and full regression/PocketIC evidence.
     passed in 303.28s with the zero-delay path, `cargo test -p
     domm-pocket-ic-tests --test client_probe_canister --no-run` passed, and
     `make check-canister` passed.
-- [ ] Allow awaited self-call/inter-canister continuation only if every phase is
+- [x] Allow awaited self-call/inter-canister continuation only if every phase is
   a real IC message boundary and persists cursor/effect state before awaiting.
-- [ ] Ensure replaying the original `start_session` nonce while setup is
+  - Completed 2026-05-18 by keeping setup continuation on timer-driven
+    `SystemJob` dispatch rather than awaited self/inter-canister calls, auditing
+    the canister service tree for `.await`/inter-canister call sites, and
+    refreshing `SystemJob.cursor_json` from the persisted setup command before
+    parking the next setup slice. Focused evidence:
+    `cargo test -p domm-degens-canister
+    services::tests::start_session_replay_while_starting_reuses_original_nonce_and_cursor
+    -- --nocapture` passed.
+- [x] Ensure replaying the original `start_session` nonce while setup is
   `starting` does not require fresh nonces and does not duplicate setup rows.
+  - Completed 2026-05-18 with
+    `services::tests::start_session_replay_while_starting_reuses_original_nonce_and_cursor`,
+    which starts a ready lobby once, proves the session parks in `starting`,
+    replays the same start nonce, and verifies the setup command, setup job, and
+    next setup effect are not duplicated or advanced by the replay.
 - [ ] Add setup progress to the lobby response or a dedicated setup progress
   query.
 - [ ] Add PocketIC tests proving one call reaches `active`, artificial phase

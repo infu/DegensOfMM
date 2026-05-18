@@ -1,5 +1,5 @@
 use candid::Principal;
-use domm_degens_schema::schema::{Battle, GameParticipant};
+use domm_degens_schema::schema::{Battle, GameParticipant, GameSession};
 use domm_game::{
     BattleActionInput, BattleView, CommandStatus, FIRST_PLAYABLE_RULESET_ID, LobbyCommandResult,
     MoveCoord, Viewport,
@@ -25,6 +25,171 @@ fn bootstrap_service_memory() {
         120,
     )
     .expect("service tests should reserve the generated canister memory range");
+}
+
+fn create_ready_two_player_lobby(prefix: &str) -> (Principal, Principal, String) {
+    let player_one_seed = format!("{prefix}-player-one");
+    let player_two_seed = format!("{prefix}-player-two");
+    let player_one = Principal::self_authenticating(player_one_seed.as_bytes());
+    let player_two = Principal::self_authenticating(player_two_seed.as_bytes());
+
+    account_lobby_session::register_player(
+        player_one,
+        Some(format!("{prefix}-one")),
+        Some(format!("{prefix} One")),
+        format!("nonce:{prefix}:register:one"),
+    )
+    .expect("player one registration should not trap");
+    account_lobby_session::register_player(
+        player_two,
+        Some(format!("{prefix}-two")),
+        Some(format!("{prefix} Two")),
+        format!("nonce:{prefix}:register:two"),
+    )
+    .expect("player two registration should not trap");
+
+    let created = account_lobby_session::create_session(
+        player_one,
+        format!("{prefix} Match"),
+        FIRST_PLAYABLE_RULESET_ID.to_string(),
+        19_105,
+        format!("nonce:{prefix}:create"),
+    )
+    .expect("session creation should not trap");
+    let session_id = match created.result {
+        LobbyCommandResult::Session(session) => session.session_id,
+        other => panic!("create_session returned unexpected result: {other:?}"),
+    };
+
+    account_lobby_session::join_session(
+        player_two,
+        session_id.clone(),
+        "faction:ashen-ledger".to_string(),
+        format!("nonce:{prefix}:join"),
+    )
+    .expect("join should not trap");
+    account_lobby_session::mark_ready(
+        player_one,
+        session_id.clone(),
+        format!("nonce:{prefix}:ready:one"),
+    )
+    .expect("player one ready should not trap");
+    account_lobby_session::mark_ready(
+        player_two,
+        session_id.clone(),
+        format!("nonce:{prefix}:ready:two"),
+    )
+    .expect("player two ready should not trap");
+
+    (player_one, player_two, session_id)
+}
+
+#[test]
+fn start_session_replay_while_starting_reuses_original_nonce_and_cursor() {
+    bootstrap_service_memory();
+
+    let (player_one, _player_two, session_id) =
+        create_ready_two_player_lobby("service-setup-replay");
+    let start_nonce = "nonce:service-setup-replay:start".to_string();
+    let first_start =
+        account_lobby_session::start_session(player_one, session_id.clone(), start_nonce.clone())
+            .expect("first start should not trap");
+    assert_eq!(first_start.status, CommandStatus::Applied);
+    match &first_start.result {
+        LobbyCommandResult::Session(session) => assert_eq!(session.state, "starting"),
+        other => panic!("start_session returned unexpected result: {other:?}"),
+    }
+
+    let session_key = Ulid::from_str(&session_id).expect("service session ids are Ulids");
+    let session_row_id = Id::<GameSession>::from_key(session_key);
+    let setup_command = commands_events_effects::find_game_command_by_idempotency(
+        session_row_id,
+        "system",
+        "setup",
+        command_response::nonce_u64("setup_session", &session_id),
+    )
+    .expect("setup command lookup should not fail")
+    .expect("setup command should exist after first start");
+    assert_eq!(setup_command.status, "applying");
+    assert!(
+        commands_events_effects::find_command_effect(setup_command.id(), "seed_ruleset_content")
+            .expect("first setup effect lookup should not fail")
+            .is_some()
+    );
+    assert!(
+        commands_events_effects::find_command_effect(setup_command.id(), "seed_participants")
+            .expect("second setup effect lookup should not fail")
+            .is_none()
+    );
+
+    let setup_job_key = format!("setup_session:{session_id}");
+    let setup_job = system_job_repo::find_system_job_by_key(&setup_job_key)
+        .expect("setup job lookup should not fail")
+        .expect("setup job should exist after first start");
+    assert_eq!(setup_job.command_id, Some(setup_command.id().key()));
+    assert!(
+        setup_job
+            .cursor_json
+            .as_deref()
+            .is_some_and(|cursor| cursor.contains(r#""last_effect":"seed_ruleset_content""#)),
+        "setup job cursor should mirror the persisted command cursor"
+    );
+    let jobs_for_command =
+        system_job_repo::page_system_jobs_by_command(setup_command.id(), 10, None)
+            .expect("setup jobs should page by command");
+    assert_eq!(
+        jobs_for_command
+            .items
+            .iter()
+            .filter(|job| job.job_key == setup_job_key)
+            .count(),
+        1
+    );
+
+    let replay = account_lobby_session::start_session(player_one, session_id.clone(), start_nonce)
+        .expect("start replay should not trap");
+    assert_eq!(replay.command_id, first_start.command_id);
+    match &replay.result {
+        LobbyCommandResult::Session(session) => assert_eq!(session.state, "starting"),
+        other => panic!("start_session replay returned unexpected result: {other:?}"),
+    }
+
+    let replayed_setup_command = commands_events_effects::find_game_command_by_idempotency(
+        session_row_id,
+        "system",
+        "setup",
+        command_response::nonce_u64("setup_session", &session_id),
+    )
+    .expect("setup command replay lookup should not fail")
+    .expect("setup command should still exist after replay");
+    assert_eq!(replayed_setup_command.id(), setup_command.id());
+    assert!(
+        commands_events_effects::find_command_effect(setup_command.id(), "seed_participants")
+            .expect("second setup effect replay lookup should not fail")
+            .is_none(),
+        "replaying the original start nonce must not advance setup or duplicate effects"
+    );
+    let replayed_setup_job = system_job_repo::find_system_job_by_key(&setup_job_key)
+        .expect("setup job replay lookup should not fail")
+        .expect("setup job should still exist after replay");
+    assert_eq!(replayed_setup_job.id(), setup_job.id());
+    assert_eq!(replayed_setup_job.attempt_count, setup_job.attempt_count);
+
+    let applying_setup_commands = commands_events_effects::page_game_commands_by_session_status(
+        session_row_id,
+        "applying",
+        10,
+        None,
+    )
+    .expect("setup commands should page by status");
+    assert_eq!(
+        applying_setup_commands
+            .items
+            .iter()
+            .filter(|command| command.command_type == "setup_session")
+            .count(),
+        1
+    );
 }
 
 #[test]

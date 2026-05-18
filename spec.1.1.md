@@ -1899,13 +1899,28 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
   generated-session tests, and the agent-run local `blast` smoke checklist.
   Completed with the 2026-05-18 full regression/check-canister/test-pocket run
   plus the 2026-05-17 local `blast` smoke evidence.
-- [ ] Audit every active `spec.md` v1.1 rule against implementation and tests.
-- [ ] Audit every topic in `spec.1.1.md` and mark remaining work as fixed,
-  deferred to `spec.v2.md`, or still blocking in `spec.missing.md`.
+- [x] Audit every active `spec.md` v1.1 rule against implementation and tests.
+  Completed 2026-05-18 in `docs/first-playable-final-audit.md`: Part 1 is
+  background-only under the redaction note, active Part 2 rules map to typed
+  IcyDB rows/public endpoints/system jobs/recovery/budget tests, and expansion
+  mechanics remain in `spec.v2.md`.
+- [x] Audit every topic in `spec.1.1.md` and mark remaining work as fixed,
+  deferred to `spec.v2.md`, or still blocking in `spec.missing.md`. Completed
+  2026-05-18: Gates 1-14 are checked, the historical findings in
+  `spec.missing.md` now have a current fixed/deferred classification, and no
+  blocking v1.1 checkbox remains open.
 - [x] Update README, TESTING, docs/canister-endpoints, and local deployment
   instructions.
 - [x] Confirm generic SQL is not used for public gameplay paths.
-- [ ] Confirm public read endpoint state matches IcyDB diagnostics after the
-  first-playable route.
-- [ ] Final gate: a new developer can deploy locally, start once, play through
+- [x] Confirm public read endpoint state matches IcyDB diagnostics after the
+  first-playable route. Completed 2026-05-18: Gate L reads final state through
+  public endpoints (`get_session`, `get_visible_objects`, `get_champion_view`,
+  `get_town_view`, `get_events_after`, and `get_match_history`) and then
+  verifies typed IcyDB diagnostic counts for the same session; local `blast`
+  evidence also records `icydb_snapshot` with zero corrupted entries/keys.
+- [x] Final gate: a new developer can deploy locally, start once, play through
   the first playable route, and verify the same state through IcyDB evidence.
+  Completed 2026-05-18 with committed `dfx.json`, `make build-wasm`,
+  `make dfx-deploy-local`, and `docs/local-deploy-blast.md`; the local
+  checklist now uses one `start_session` call followed by
+  `get_session`/`get_setup_progress` polling and batched IcyDB diagnostics.

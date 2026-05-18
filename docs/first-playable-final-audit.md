@@ -4,6 +4,21 @@ Checkpoint 26 audits the v1 release scope against `spec.md`, `todo.md`, and the
 V2 backlog split in `spec.v2.md`. Checkpoint 20 remains the historical Gate N
 first-playable audit; Gate O is the final docs/spec/regression agreement pass.
 
+## Gate 14 Closure
+
+Status: pass as of 2026-05-18.
+
+The active `spec.md` v1.1 contract has implementation and test evidence:
+
+| Area | Closure evidence |
+| --- | --- |
+| `spec.md` Part 1 | Design background only under the redaction note. Anything without the bounded Part 2 model, endpoint, recovery path, deterministic key, caps, and tests remains deferred. |
+| `spec.md` Part 2 database, architecture, turn, command, API, lazy, budget, evolution, and first-playable sections | Covered by typed IcyDB repositories, public Candid endpoints, setup/turn/battle system jobs, command/effect/event recovery, bounded render endpoints, diagnostics, and the first-playable route tests. |
+| `spec.1.1.md` Topics 0-16 | Closed through the Gate 1-14 checklist; remaining expansion mechanics are in `spec.v2.md`. |
+| Historical `spec.missing.md` findings | Classified as fixed, deferred, or historical evidence in the 2026-05-18 status note at the top of that file. No blocking v1.1 item remains open there. |
+| Public read endpoints versus IcyDB diagnostics | Gate L reads public state through `get_session`, `get_visible_objects`, `get_champion_view`, `get_town_view`, `get_events_after`, and `get_match_history`, then verifies the expected typed IcyDB diagnostic row counts for the same route. Local blast evidence also records `icydb_snapshot` with zero corrupted entries/keys and small-batch diagnostic row counts. |
+| Local new-developer route | `dfx.json`, `make build-wasm`, `make dfx-deploy-local`, and `docs/local-deploy-blast.md` provide the committed local deploy path. The local checklist uses one `start_session` call, polls setup state, plays through public endpoints, and verifies IcyDB diagnostics in batches. |
+
 ## Gate O Result
 
 Status: pass. `make regression` completed successfully for checkpoint 26 on

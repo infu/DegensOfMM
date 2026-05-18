@@ -47,12 +47,22 @@ blast call "$CANISTER_ID" register_player '["p2", "Player Two", "nonce:blast:reg
 blast call "$CANISTER_ID" create_session '["Blast Smoke", "ruleset:first-playable:v1", 42, "nonce:blast:create"]' --host "$HOST" --id 1
 ```
 
-Continue with `join_session` and `mark_ready` for both players. On the current
-branch, `start_session` is still a phased setup command, so call it with fresh
-nonces until the returned session has `state == "active"`. Active play should
-use `get_game_view`, `get_content_manifest`, visible map/object queries,
-champion/town/battle detail queries, and `get_command_status_by_nonce` for
-nonce polling.
+Continue with `join_session` for player two and `mark_ready` for both players,
+then call `start_session` once with one nonce:
+
+```text
+blast call "$CANISTER_ID" join_session '["<session_id>", "faction:ashen-ledger", "nonce:blast:join"]' --host "$HOST" --id 2
+blast call "$CANISTER_ID" mark_ready '["<session_id>", "nonce:blast:ready:1"]' --host "$HOST" --id 1
+blast call "$CANISTER_ID" mark_ready '["<session_id>", "nonce:blast:ready:2"]' --host "$HOST" --id 2
+blast call "$CANISTER_ID" start_session '["<session_id>", "nonce:blast:start"]' --host "$HOST" --id 1
+```
+
+Setup is a canister-owned job. After the single `start_session` call, poll
+`get_session` or `get_setup_progress` until the session reports
+`state == "active"`; do not advance setup with new `start_session` nonces.
+Active play should use `get_game_view`, `get_content_manifest`, visible
+map/object queries, champion/town/battle detail queries, and
+`get_command_status_by_nonce` for nonce polling.
 
 After moving, collecting, building, recruiting, fighting the guarded mine, and
 advancing income, check storage health:

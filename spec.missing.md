@@ -6,7 +6,26 @@ under-proven for a truly playable v1 game. It does not list V2 backlog such as
 active siege, naval movement, large procedural maps, ranked, guilds, diplomacy,
 durable rematch, or full bot opponents.
 
-## Summary
+## Current Status - 2026-05-18
+
+Status: no blocking v1.1 item remains open in this file. The older sections
+below are retained as audit history; their active outcomes are classified here.
+
+| Historical finding | Current classification |
+| --- | --- |
+| Local DFX deploy path, public Candid metadata, and blast identity/controller setup | Fixed by committed `dfx.json`, `make build-wasm`, `make dfx-deploy-local`, README/TESTING notes, and `docs/local-deploy-blast.md`. |
+| Repeated `start_session` setup driving | Fixed for the v1.1 contract: clients call `start_session` once, then poll `get_session` or `get_setup_progress` while canister-owned setup jobs continue. |
+| Real 60-second local DFX turn waits and manual sync friction | Documented as a local-smoke constraint; PocketIC tests use time advancement for fast regression. A configurable short local turn duration remains V2/dev-tooling cleanup, not a v1.1 blocker. |
+| Public render/projection and battle read budget gaps | Fixed by dedicated bounded render endpoints, live-row render projection, battle start/read slicing, and Gate L/Gate M regression evidence. |
+| Guarded mine, battle aftermath, capture, income, victory, and history route | Fixed and covered by Gate L, Gate K, render-projection, battle-round, command-recovery, and local blast evidence. |
+| Diagnostics drift and large local diagnostic snapshots | Fixed for v1.1 by controller-gated small-batch diagnostics and endpoint inventory coverage; large all-entity local diagnostic snapshots stay intentionally unsupported. |
+| Auth/redaction gaps | Fixed by visibility-redaction coverage plus the endpoint-auth matrix added on 2026-05-18. |
+| Expansion mechanics such as active siege/naval gameplay, richer economy variants, full bot AI, broader scenarios, and local/same-tile dwelling recruitment | Deferred to `spec.v2.md`. |
+
+## Historical Summary - 2026-05-16
+
+The following summary is preserved from the original audit and is superseded by
+the current status table above.
 
 The canister and pure test coverage are broad, and `make regression` passed at
 checkpoint 26. A local `blast` run also proved that two identities can register,

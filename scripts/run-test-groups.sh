@@ -119,14 +119,20 @@ POCKET_PARALLEL_GROUPS=(
     "command-recovery"
     "visibility-redaction"
 )
-POCKET_SERIAL_GROUPS=(
+POCKET_LONG_GROUPS=(
     "endpoint"
     "gate-j"
     "gate-k"
     "gate-l"
     "movement"
     "stationary"
+)
+POCKET_GATE_M_GROUPS=(
     "gate-m"
+)
+POCKET_SERIAL_GROUPS=(
+    "${POCKET_LONG_GROUPS[@]}"
+    "${POCKET_GATE_M_GROUPS[@]}"
 )
 POCKET_GROUPS=(
     "${POCKET_PARALLEL_GROUPS[@]}"
@@ -137,7 +143,7 @@ usage() {
     cat <<'USAGE'
 Usage:
   scripts/run-test-groups.sh list
-  scripts/run-test-groups.sh [fast|pocket|pocket-parallel|pocket-serial|all-existing|GROUP...]
+  scripts/run-test-groups.sh [fast|pocket|pocket-parallel|pocket-long|pocket-gate-m|pocket-serial|all-existing|GROUP...]
 
 Environment:
   DOMM_TEST_JOBS      Parallel group limit. Defaults to min(nproc, 8).
@@ -173,6 +179,14 @@ selected_groups() {
             ;;
         pocket-parallel)
             printf "%s\n" "${POCKET_PARALLEL_GROUPS[@]}"
+            return
+            ;;
+        pocket-long)
+            printf "%s\n" "${POCKET_LONG_GROUPS[@]}"
+            return
+            ;;
+        pocket-gate-m)
+            printf "%s\n" "${POCKET_GATE_M_GROUPS[@]}"
             return
             ;;
         pocket-serial)

@@ -1,6 +1,8 @@
 CANDID_EXTRACTOR ?= $(HOME)/.cargo/bin/candid-extractor
 IC_WASM ?= ic-wasm
 TEST_JOBS ?= 8
+LONG_TEST_JOBS ?= 4
+GATE_M_TEST_JOBS ?= 1
 
 .PHONY: build-wasm check-canister dfx-deploy-local dfx-stop-local regression smoke smoke-e2e test test-fast test-generated test-groups test-groups-list test-pocket test-pure test-schema
 
@@ -36,7 +38,8 @@ test-groups-list:
 
 test-pocket:
 	DOMM_TEST_JOBS=$(TEST_JOBS) scripts/run-test-groups.sh pocket-parallel
-	DOMM_TEST_JOBS=1 scripts/run-test-groups.sh pocket-serial
+	DOMM_TEST_JOBS=$(LONG_TEST_JOBS) scripts/run-test-groups.sh pocket-long
+	DOMM_TEST_JOBS=$(GATE_M_TEST_JOBS) scripts/run-test-groups.sh pocket-gate-m
 
 check-canister:
 	cargo check -p domm-degens-canister

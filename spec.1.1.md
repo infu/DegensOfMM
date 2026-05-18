@@ -65,7 +65,7 @@ Current timing notes from 2026-05-18 full regression:
 | Command recovery PocketIC group | Revalidated 2026-05-18 in 192.876s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12`, but still not an inner-loop test |
 | Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 81.713s with expanded opponent scenario/worldgen/champion/object checks during `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth visibility-redaction` | Parallel-safe under `TEST_JOBS=12` |
 | Local DFX/blast smoke group | Revalidated 2026-05-18 on fresh local DFX: release deploy build finished in 2m13s, `blast scan` exposed 68 methods, setup reached `active` at `start:9`, direct movement/build/recruit/guarded battle/capture/income calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because local DFX uses real 60s turn/battle deadlines |
-| Full benchmark suite | Added and ran 2026-05-18 with `scripts/run-benchmarks.sh`: clean run `target/benchmarks/20260518-230050-8eb5000` passed Gate J in 131s, Gate K in 311s, Gate L in 354s, and Gate M in 472s | Runs J/K/L/M as one benchmark suite with 4 parallel gate jobs; J/K/L write `summary.json` and `run.json`, and Gate M contributes probe/log-derived suite metrics until its adapter shares the recorder |
+| Full benchmark suite | Added and ran 2026-05-18 with `scripts/run-benchmarks.sh`: clean post-commit run `target/benchmarks/20260518-231144-9f17dcb` passed Gate J in 130s, Gate K in 312s, Gate L in 355s, and Gate M in 473s | Runs J/K/L/M as one benchmark suite with 4 parallel gate jobs; J/K/L write `summary.json` and `run.json`, and Gate M contributes probe/log-derived suite metrics until its adapter shares the recorder |
 
 Testing-first todo:
 
@@ -87,7 +87,7 @@ Testing-first todo:
 - [x] Add and run one full benchmark suite covering Gate J, Gate K, Gate L,
   and Gate M in one command. Completed 2026-05-18 with
   `scripts/run-benchmarks.sh`, producing
-  `target/benchmarks/20260518-230050-8eb5000/suite-summary.md` and
+  `target/benchmarks/20260518-231144-9f17dcb/suite-summary.md` and
   `suite-summary.json`. Evidence: all four gates passed; Gate J/K/L had zero
   recorded calls with missing instruction deltas; no leftover PocketIC
   processes were present after cleanup.

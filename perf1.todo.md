@@ -85,6 +85,36 @@ Benchmark comparison checklist:
 - Compare scenario totals for `guarded_mine_battle` and `aftermath_victory`.
 - Keep before/after run IDs in commit messages or todo notes when a checkpoint claims performance progress.
 
+## Saved Baseline: submit_battle_action
+
+Baseline source:
+
+```text
+run id: 20260518-231144-9f17dcb
+suite: target/benchmarks/20260518-231144-9f17dcb/suite-summary.md
+gate-k: target/benchmarks/20260518-231144-9f17dcb/gate-k/summary.json
+gate-l: target/benchmarks/20260518-231144-9f17dcb/gate-l/summary.json
+```
+
+This baseline was not rerun after creating `smell.md` and `perf1.todo.md` because those commits are documentation-only. There are no code/test/script changes between benchmarked git sha `9f17dcb` and this checkpoint for `Cargo.toml`, `Cargo.lock`, `canisters`, `crates`, `schema`, `scripts`, `testing`, `dfx.json`, or `Makefile`.
+
+Saved method summary:
+
+| source | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Gate K | update | 25 | 27.4632B | 28.7961B | 173.88 MB | 0.0275T |
+| Gate L | update | 26 | 26.5272B | 28.8134B | 156.41 MB | 0.0265T |
+| combined | update | 51 | 26.9860B | 28.8344B | 164.97 MB | 0.0270T |
+
+Saved scenario split:
+
+| scenario | calls | avg instructions | min instructions | max instructions | avg memory delta | avg cycles | avg wall time |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `aftermath_victory` | 45 | 27.7169B | 20.7519B | 29.2661B | 172.20 MB | 0.0277T | 3.15s |
+| `guarded_mine_battle` | 6 | 21.5041B | 3.5254B | 27.3657B | 110.76 MB | 0.0215T | 2.46s |
+
+Improvement will be measured against the combined line unless a checkpoint specifically optimizes one scenario. The first target is under 10B average instructions for `submit_battle_action`; the stretch target is under 5B.
+
 ## Testing Policy
 
 Roll fast here. Use focused tests during implementation and full benchmark/regression runs only at meaningful checkpoints.
@@ -108,6 +138,7 @@ When a todo item is completed:
 ### 0. Plan And Baseline
 
 - [x] Write the perf1 problem statement, motivation, aggregate rewrite direction, benchmark measurement plan, and checkbox/commit workflow in `perf1.todo.md`.
+- [x] Save the current `submit_battle_action` benchmark baseline in `perf1.todo.md` so aggregate-runtime work has a fixed comparison point.
 - [ ] Add benchmark-only repo operation tracing so each public endpoint call can report table/index operation counts, row counts returned/affected, and operation names.
 - [ ] Add benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
 - [ ] Run a fresh baseline benchmark after repo-op tracing lands and record the run ID plus `submit_battle_action` table/index counts in this file.

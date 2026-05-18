@@ -48,21 +48,21 @@ Current timing notes from 2026-05-18 full regression:
 | --- | --- | --- |
 | PocketIC harness parallelism baseline | Fixed 2026-05-17: `canic-testkit` lock is repo-patched to default to process-local namespaces, with `CANIC_POCKET_IC_LOCK_NAMESPACE` available for explicit shared shards | Revalidated in the 2026-05-18 full-regression `pocket-parallel` phase: `pocket-lock` 1.997s and `pocket-smoke` 1.116s |
 | Fast timing harness | Added 2026-05-17: `scripts/run-test-groups.sh`, `make test-fast`, `make test-groups`, and `make test-groups-list` | `make test-fast` passed after prebuild; group wall times: pure 2.277s, schema 0.482s, generated 0.521s, canister-check 0.500s, pocket-lock 1.373s |
-| Endpoint inventory/public surface | Revalidated 2026-05-18 in 147.512s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4`; no longer fully serial in `make test-pocket` |
-| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 111.473s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Gate K battle/victory/history | Revalidated 2026-05-18 in 282.888s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Gate L first-playable route | Revalidated 2026-05-18 in 322.933s during the full-regression 4-worker `pocket-long` phase after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=4`; still a long smoke and out of the fast inner loop |
-| Movement crossing conflict | Revalidated 2026-05-18 in 84.788s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Stationary enemy blocker | Revalidated 2026-05-18 in 90.571s during the full-regression 4-worker `pocket-long` phase | Parallel-safe under `LONG_TEST_JOBS=4` |
-| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 195.508s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Gate M web client probe | Revalidated 2026-05-18 in 460.601s in the full-regression isolated `pocket-gate-m` phase after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
-| Timer jobs PocketIC group | Revalidated 2026-05-18 in 178.582s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| End-turn PocketIC group | Revalidated 2026-05-18 in 176.090s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 207.284s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Render projection PocketIC group | Revalidated 2026-05-18 in 230.591s after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=8`; still a long focused route |
-| Query budget PocketIC group | Revalidated 2026-05-18 in 169.144s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
-| Command recovery PocketIC group | Revalidated 2026-05-18 in 259.327s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8`, but still not an inner-loop test |
-| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 188.763s during the full-regression 8-worker `pocket-parallel` phase | Parallel-safe under `TEST_JOBS=8` |
+| Endpoint inventory/public surface | Revalidated 2026-05-18 in 174.614s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6`; no longer fully serial in `make test-pocket` |
+| Gate J strategic loop/IcyDB rows | Revalidated 2026-05-18 in 129.926s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Gate K battle/victory/history | Revalidated 2026-05-18 in 347.584s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Gate L first-playable route | Revalidated 2026-05-18 in 365.395s during the 6-worker `pocket-long` phase of `make test-pocket` after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=6`; still a long smoke and out of the fast inner loop |
+| Movement crossing conflict | Revalidated 2026-05-18 in 103.238s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Stationary enemy blocker | Revalidated 2026-05-18 in 113.146s during the 6-worker `pocket-long` phase of `make test-pocket` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Week-two tavern/recruit growth | Revalidated 2026-05-18 in 110.608s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
+| Gate M web client probe | Revalidated 2026-05-18 in 557.915s in the isolated `pocket-gate-m` phase of `make test-pocket` after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
+| Timer jobs PocketIC group | Revalidated 2026-05-18 in 176.188s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
+| End-turn PocketIC group | Revalidated 2026-05-18 in 81.669s during the 12-worker `pocket-parallel` phase of `make test-pocket` after keeping render discovery materialization out of the timer movement path | Parallel-safe under `TEST_JOBS=12` |
+| Battle-round readiness PocketIC group | Revalidated 2026-05-18 in 373.519s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
+| Render projection PocketIC group | Revalidated 2026-05-18 in 246.414s during the 12-worker `pocket-parallel` phase of `make test-pocket` after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=12`; still a long focused route |
+| Query budget PocketIC group | Revalidated 2026-05-18 in 67.356s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
+| Command recovery PocketIC group | Revalidated 2026-05-18 in 196.913s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12`, but still not an inner-loop test |
+| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 88.129s during the 12-worker `pocket-parallel` phase of `make test-pocket` | Parallel-safe under `TEST_JOBS=12` |
 | Local DFX/blast smoke group | Revalidated 2026-05-18 on fresh local DFX: release deploy build finished in 2m13s, `blast scan` exposed 68 methods, setup reached `active` at `start:9`, direct movement/build/recruit/guarded battle/capture/income calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because local DFX uses real 60s turn/battle deadlines |
 
 Testing-first todo:
@@ -1767,8 +1767,14 @@ income, and full regression/PocketIC evidence.
 - [x] Audit `spec.md`: bounded render endpoint contract, fog/redaction, object
   details, and pagination match code.
 - [x] Audit `spec.1.1.md`: Topic 6 is reduced to remaining non-P0 work.
-- [ ] Gate tests: `render_projection`, visibility service tests,
+- [x] Gate tests: `render_projection`, visibility service tests,
   `make test-pocket`.
+  - Completed 2026-05-18: `TEST_JOBS=12 LONG_TEST_JOBS=6
+    GATE_M_TEST_JOBS=1 make test-pocket` passed. `pocket-parallel` passed all
+    11 groups, including `render-projection` in 246.414s,
+    `visibility-redaction` in 88.129s, `end-turn` in 81.669s, and
+    `battle-round` in 373.519s. `pocket-long` passed all 6 groups, with Gate L
+    at 365.395s. The isolated Gate M web-client probe passed in 557.915s.
 
 ### Gate 10. Movement Preview And Validation Parity
 

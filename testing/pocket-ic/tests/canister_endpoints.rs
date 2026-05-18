@@ -2543,8 +2543,20 @@ fn pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync() {
         &turn_one_key,
         after_deadline.render_time.server_now_ms.saturating_sub(1),
     );
-    let processed = run_diagnostic_system_jobs(&fixture, 4);
-    assert!(processed > 0, "stale forced job should be reclaimed");
+    let processed = run_diagnostic_system_job(&fixture, &turn_one_key);
+    assert_eq!(processed, 1, "stale forced job should be reclaimed");
+    let stale_reclaimed = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("completed".to_string()),
+    )
+    .jobs
+    .iter()
+    .any(|job| job.job_key == turn_one_key);
+    assert!(
+        stale_reclaimed,
+        "stale forced job should return to completed"
+    );
     let public_events_after_stale = query_as::<ApiEventPage>(
         &fixture,
         player_one,
@@ -2567,6 +2579,198 @@ fn pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync() {
     assert_eq!(
         turn_two_advanced_after_stale, turn_two_advanced_before_stale,
         "stale duplicate timer processing must not duplicate turn-one effects"
+    );
+}
+
+#[test]
+fn pocket_ic_timer_jobs_refresh_scenario_maintenance_without_sync_wrappers() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-scenario-jobs-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-scenario-jobs-player-two");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "scenario-jobs");
+
+    let initial_rules = query_as::<ScenarioRulesView>(
+        &fixture,
+        player_one,
+        "get_scenario_rules",
+        (session_id.clone(),),
+    )
+    .expect("initial scenario rules should decode")
+    .expect("initial scenario rules should load");
+    let initial_max_turn = initial_rules
+        .rules
+        .iter()
+        .find(|rule| rule.rule_key == "rule:max-turn")
+        .expect("max-turn rule should be seeded");
+    assert_eq!(initial_max_turn.current_value, 1);
+    assert_eq!(initial_max_turn.last_checked_turn, 1);
+
+    for turn in 1..=7 {
+        for (player, suffix) in [(player_one, "one"), (player_two, "two")] {
+            let ended = update_as::<CommandResponse>(
+                &fixture,
+                player,
+                "end_turn",
+                (
+                    session_id.clone(),
+                    format!("nonce:scenario-jobs:end-turn:{turn}:{suffix}"),
+                ),
+            )
+            .expect("end_turn should decode")
+            .expect("end_turn should succeed");
+            assert_eq!(ended.status, CommandStatus::Applied);
+        }
+
+        let expected_turn = turn + 1;
+        let expected_jobs = [
+            format!("scenario_objectives:{session_id}:{expected_turn}"),
+            format!("world_events:{session_id}:{expected_turn}"),
+            format!("advanced_victory:{session_id}:{expected_turn}"),
+        ];
+        let mut view = compact_game_view(&fixture, player_one, &session_id);
+        let mut jobs_done = false;
+        let mut observed_jobs = Vec::new();
+        for _ in 0..8 {
+            advance_time_for_timers(&fixture, 1);
+            view = compact_game_view(&fixture, player_one, &session_id);
+            if view.session.current_turn == expected_turn {
+                let completed = diagnostic_system_jobs(
+                    &fixture,
+                    Some(session_id.clone()),
+                    Some("completed".to_string()),
+                );
+                jobs_done = expected_jobs
+                    .iter()
+                    .all(|key| completed.jobs.iter().any(|job| job.job_key == *key));
+                if jobs_done {
+                    break;
+                }
+                observed_jobs = diagnostic_system_jobs(&fixture, Some(session_id.clone()), None)
+                    .jobs
+                    .into_iter()
+                    .map(|job| {
+                        format!(
+                            "{}:{}:{:?}",
+                            job.job_key,
+                            job.status,
+                            job.last_error.as_deref()
+                        )
+                    })
+                    .collect();
+            }
+        }
+        assert_eq!(view.session.current_turn, turn + 1);
+        assert!(
+            jobs_done,
+            "turn {turn} should complete scenario maintenance jobs {:?}; observed jobs: {:?}",
+            expected_jobs, observed_jobs
+        );
+    }
+
+    let objectives = query_as::<ObjectiveProgressView>(
+        &fixture,
+        player_one,
+        "get_objective_progress",
+        (session_id.clone(),),
+    )
+    .expect("job-refreshed objectives should decode")
+    .expect("job-refreshed objectives should load");
+    assert_eq!(objectives.objectives.len(), 2);
+    assert!(
+        objectives
+            .objectives
+            .iter()
+            .any(|objective| objective.objective_key == "objective:north")
+    );
+
+    let world_events = query_as::<WorldEventsView>(
+        &fixture,
+        player_one,
+        "get_world_events",
+        (session_id.clone(),),
+    )
+    .expect("job-refreshed world events should decode")
+    .expect("job-refreshed world events should load");
+    assert!(
+        world_events
+            .events
+            .iter()
+            .any(|event| event.event_window == "week:2"),
+        "week two world event should be materialized by the world_events job: {:?}",
+        world_events.events
+    );
+
+    let rules = query_as::<ScenarioRulesView>(
+        &fixture,
+        player_one,
+        "get_scenario_rules",
+        (session_id.clone(),),
+    )
+    .expect("job-refreshed scenario rules should decode")
+    .expect("job-refreshed scenario rules should load");
+    let max_turn = rules
+        .rules
+        .iter()
+        .find(|rule| rule.rule_key == "rule:max-turn")
+        .expect("max-turn rule should remain visible");
+    assert_eq!(max_turn.current_value, 8);
+    assert_eq!(max_turn.last_checked_turn, 8);
+
+    let completed_jobs = diagnostic_system_jobs(
+        &fixture,
+        Some(session_id.clone()),
+        Some("completed".to_string()),
+    );
+    for (job_kind, touched) in [
+        ("scenario_objectives", 2_u32),
+        ("world_events", 1_u32),
+        ("advanced_victory", 4_u32),
+    ] {
+        let job_key = format!("{job_kind}:{session_id}:8");
+        let job = completed_jobs
+            .jobs
+            .iter()
+            .find(|job| job.job_key == job_key)
+            .unwrap_or_else(|| panic!("{job_key} should be completed: {:?}", completed_jobs.jobs));
+        let command_id = job
+            .command_id
+            .as_ref()
+            .unwrap_or_else(|| panic!("{job_key} should record its system command"));
+        let status = query_as::<CommandStatusView>(
+            &fixture,
+            player_one,
+            "get_command_status",
+            (session_id.clone(), command_id.clone()),
+        )
+        .expect("scenario maintenance command status should decode")
+        .expect("scenario maintenance command status should load");
+        assert_eq!(status.status, CommandStatus::Applied);
+        let result_json = status
+            .result_json
+            .as_deref()
+            .expect("scenario maintenance command should persist result_json");
+        assert!(
+            result_json.contains(&format!(r#""command_kind":"{job_kind}""#))
+                && result_json.contains(&format!(r#""touched":{touched}"#)),
+            "{job_key} should report the expected maintenance result, got {result_json}"
+        );
+    }
+
+    let public_events = query_as::<ApiEventPage>(
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id, "public".to_string(), 0_u64, 200_u32),
+    )
+    .expect("scenario maintenance public events should decode")
+    .expect("scenario maintenance public events should load");
+    assert!(
+        public_events.events.iter().all(|event| !matches!(
+            event.event_type.as_str(),
+            "objectives_synced" | "world_event_synced" | "advanced_victory_synced"
+        )),
+        "scenario maintenance jobs must not rely on manual sync wrapper events"
     );
 }
 
@@ -6472,15 +6676,15 @@ fn force_system_job_running(
     .expect("force diagnostic system job should succeed")
 }
 
-fn run_diagnostic_system_jobs(fixture: &StandaloneCanisterFixture, max_ticks: u32) -> u32 {
+fn run_diagnostic_system_job(fixture: &StandaloneCanisterFixture, job_key: &str) -> u32 {
     update_as::<u32>(
         fixture,
         candid::Principal::anonymous(),
-        "run_diagnostic_system_jobs",
-        (max_ticks,),
+        "run_diagnostic_system_job",
+        (job_key.to_string(),),
     )
-    .expect("run diagnostic system jobs should decode")
-    .expect("run diagnostic system jobs should succeed")
+    .expect("run diagnostic system job should decode")
+    .expect("run diagnostic system job should succeed")
 }
 
 fn replay_player_registration(

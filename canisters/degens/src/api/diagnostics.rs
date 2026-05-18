@@ -36,3 +36,8 @@ fn force_diagnostic_system_job_running(
 fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError> {
     crate::services::diagnostics::run_diagnostic_system_jobs(max_ticks)
 }
+
+#[update]
+fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
+    crate::services::diagnostics::run_diagnostic_system_job(job_key)
+}

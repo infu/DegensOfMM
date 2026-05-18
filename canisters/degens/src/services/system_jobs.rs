@@ -75,6 +75,10 @@ pub(crate) fn run_due_jobs_until_idle(max_ticks: u32) -> Result<u32, ApiError> {
     Ok(total)
 }
 
+pub(crate) fn run_due_job_by_key(job_key: &str) -> Result<u32, ApiError> {
+    run_job_by_key(job_key)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn heartbeat_tick() {
     if !nearest_timer_is_due() {

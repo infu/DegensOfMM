@@ -117,6 +117,7 @@ pub(crate) fn force_diagnostic_system_job_running(
     job.last_error = None;
 
     let updated = system_jobs::update_system_job(job)?;
+    system_job_service::schedule_nearest_due_job()?;
     Ok(system_job_view(&updated))
 }
 
@@ -130,6 +131,11 @@ pub(crate) fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError
         ));
     }
     system_job_service::run_due_jobs_until_idle(max_ticks)
+}
+
+pub(crate) fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
+    crate::auth::require_controller("run_diagnostic_system_job")?;
+    system_job_service::run_due_job_by_key(&job_key)
 }
 
 fn push_named_count(

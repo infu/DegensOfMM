@@ -1567,9 +1567,26 @@ income, and full regression/PocketIC evidence.
     -- --nocapture` passed in 178.66s, `DOMM_TEST_JOBS=1
     scripts/run-test-groups.sh timer-jobs` passed in 71.742s and ran both
     `pocket_ic_timer_jobs_*` tests, and `make check-canister` passed.
-- [ ] Add PocketIC tests proving objectives, world events, and advanced victory
+- [x] Add PocketIC tests proving objectives, world events, and advanced victory
   refresh without calling `sync_objectives`, `sync_world_events`, or
   `sync_advanced_victory`.
+  - Completed 2026-05-18 by wiring
+    `schedule_turn_maintenance_jobs` to durable due-now
+    `scenario_objectives`, `world_events`, and `advanced_victory` jobs,
+    requeueing same-turn completed maintenance keys when later mutations make
+    them due again, and recording the actual scenario system command on the
+    completed `SystemJob`. Added
+    `pocket_ic_timer_jobs_refresh_scenario_maintenance_without_sync_wrappers`,
+    which advances seven turns through `end_turn` plus timer ticks only, proves
+    turn-eight objective/world/victory jobs completed with persisted command
+    results, observes the week-two world event and max-turn rule refresh, and
+    asserts no `objectives_synced`, `world_event_synced`, or
+    `advanced_victory_synced` wrapper events were emitted. Focused evidence:
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_timer_jobs_refresh_scenario_maintenance_without_sync_wrappers
+    -- --nocapture` passed in 154.65s, `DOMM_TEST_JOBS=1
+    scripts/run-test-groups.sh timer-jobs` passed in 280.472s, and
+    `make check-canister` passed.
 - [x] Audit `spec.md`: turn advancement, sync semantics, recovery-before-turn,
   scenario maintenance, and query/no-speculation rules match code.
 - [x] Audit `spec.1.1.md`: Topics 2 and 4 reflect the implemented runner.

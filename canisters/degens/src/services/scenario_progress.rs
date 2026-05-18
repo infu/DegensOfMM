@@ -22,6 +22,7 @@ use crate::repos::{
 use super::{
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
+    system_jobs as system_job_service,
 };
 
 pub(crate) fn get_objective_progress(
@@ -334,9 +335,40 @@ pub(crate) fn sync_advanced_victory(
 }
 
 pub(crate) fn schedule_turn_maintenance_jobs(
-    _session: &GameSession,
-    _command_id: Option<Id<GameCommand>>,
+    session: &GameSession,
+    command_id: Option<Id<GameCommand>>,
 ) -> Result<(), ApiError> {
+    if session.state != "active" {
+        return Ok(());
+    }
+
+    let due_at = Timestamp::now();
+    let mut requeued_completed_job = false;
+    for job_kind in ["scenario_objectives", "world_events", "advanced_victory"] {
+        let job_key = format!("{job_kind}:{}:{}", session.id(), session.current_turn);
+        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key,
+            job_kind: job_kind.to_string(),
+            session_id: session.id(),
+            battle_id: None,
+            turn_number: Some(session.current_turn),
+            due_at,
+            command_id,
+            cursor_json: None,
+        })?;
+
+        if job.status == system_job_repo::STATUS_COMPLETED {
+            let mut job = job;
+            job.command_id = command_id.map(|id| id.key());
+            system_job_repo::reschedule_system_job(job, due_at, None)?;
+            requeued_completed_job = true;
+        }
+    }
+
+    if requeued_completed_job {
+        system_job_service::schedule_nearest_due_job()?;
+    }
+
     Ok(())
 }
 
@@ -350,6 +382,7 @@ pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), Api
 }
 
 fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let mut job = job;
     let session_id = Id::<GameSession>::from_key(job.session_id);
     let Some(session) = sessions::load_session(session_id)? else {
         system_job_repo::fail_system_job(
@@ -372,6 +405,7 @@ fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError
     }
 
     let mut command = ensure_system_scenario_command(&session, &job)?;
+    job.command_id = Some(command.id().key());
     command.status = "applying".to_string();
     command.phase = "applying".to_string();
     command = commands_events_effects::update_game_command(command)?;

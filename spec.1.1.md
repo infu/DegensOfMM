@@ -54,6 +54,7 @@ Current timing notes from 2026-05-18 full regression:
 | Gate L first-playable route | Revalidated 2026-05-18 in 363.724s during the 6-worker `pocket-long` phase of `make regression` after active-state champion battle setup, stack-based battle visibility, bounded battle-state query rows, reduced battle row write amplification, and a two-caller champion battle resolver | Parallel-safe under `LONG_TEST_JOBS=6`; still a long smoke and out of the fast inner loop |
 | Movement crossing conflict | Revalidated 2026-05-18 in 103.620s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
 | Stationary enemy blocker | Revalidated 2026-05-18 in 113.356s during the 6-worker `pocket-long` phase of `make regression` | Parallel-safe under `LONG_TEST_JOBS=6` |
+| Endpoint auth matrix | Added and validated 2026-05-18 in 60.706s with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth visibility-redaction` | Parallel-safe; now included in `pocket-parallel` |
 | Week-two tavern/recruit growth | Revalidated 2026-05-18 in 112.773s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
 | Gate M web client probe | Revalidated 2026-05-18 in 455.882s in the isolated `pocket-gate-m` phase of `make regression` after restoring real `get_town_view` town child rows, probing `get_town_view` from the Gate M game-view path, resetting staged battle deadlines on activation, and filtering handled no-op retries from the web-client command log | Keep isolated until it has more PocketIC TTL margin |
 | Timer jobs PocketIC group | Revalidated 2026-05-18 in 175.345s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
@@ -62,7 +63,7 @@ Current timing notes from 2026-05-18 full regression:
 | Render projection PocketIC group | Revalidated 2026-05-18 in 247.123s during the 12-worker `pocket-parallel` phase of `make regression` after adding live movement/pickup/discovery/capture/income assertions to `pocket_ic_render_projection_tracks_live_objects_and_fog` | Parallel-safe under `TEST_JOBS=12`; still a long focused route |
 | Query budget PocketIC group | Revalidated 2026-05-18 in 67.006s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
 | Command recovery PocketIC group | Revalidated 2026-05-18 in 192.876s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12`, but still not an inner-loop test |
-| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 88.928s during the 12-worker `pocket-parallel` phase of `make regression` | Parallel-safe under `TEST_JOBS=12` |
+| Visibility/redaction PocketIC group | Revalidated 2026-05-18 in 81.713s with expanded opponent scenario/worldgen/champion/object checks during `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth visibility-redaction` | Parallel-safe under `TEST_JOBS=12` |
 | Local DFX/blast smoke group | Revalidated 2026-05-18 on fresh local DFX: release deploy build finished in 2m13s, `blast scan` exposed 68 methods, setup reached `active` at `start:9`, direct movement/build/recruit/guarded battle/capture/income calls succeeded, and IcyDB diagnostics reported zero corruptions | Manual smoke remains slower and real-time bound because local DFX uses real 60s turn/battle deadlines |
 
 Testing-first todo:
@@ -218,8 +219,16 @@ Testing-first todo:
   scripts/run-test-groups.sh`. The route verifies opponent private-event denial,
   public redacted town build/recruit payloads, owner private payloads, hidden
   town internals staying hidden, and neutral battle state/details staying
-  inaccessible to an uninvolved opponent. Revalidated 2026-05-18 in the
-  full-regression `pocket-parallel` phase, passing in 188.763s.
+  inaccessible to an uninvolved opponent. Revalidated 2026-05-18 with expanded
+  opponent scenario/worldgen/champion/object checks in
+  `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth
+  visibility-redaction`, passing in 81.713s.
+- [x] Endpoint auth matrix group: anonymous and registered non-participant
+  callers are rejected from session-scoped game view, map/object/champion/town,
+  battle, event, scenario, quest, and worldgen read endpoints. Completed
+  2026-05-18 with `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth
+  visibility-redaction`; `endpoint-auth` passed in 60.706s while
+  `visibility-redaction` passed in 81.713s.
 - [x] Pure rules group: `cargo test -p domm-game`. Completed 2026-05-17
   with `DOMM_TEST_JOBS=4 scripts/run-test-groups.sh pure schema generated
   canister-check` passing the pure group in 2.018s after prebuild.
@@ -1067,12 +1076,12 @@ Priority: P0.
 
 ### Current Problems
 
-- Public events can leak hidden opponent town actions even when the opponent
-  cannot see the town via `get_town_view`.
-- Some visibility/auth behavior works correctly, including hidden champion and
-  non-participant scenario access checks.
-- Resolved neutral battle visibility now has a locked contract, but the current
-  implementation still needs enforcement for uninvolved participants.
+- Hidden opponent town build/recruit actions are redacted in public events and
+  available in full only through participant-private event audiences.
+- Hidden champion, town, object, and neutral battle detail reads are
+  visibility-gated for opponents.
+- Registered non-participants are rejected from session-scoped scenario,
+  worldgen, event, map/object, champion, town, and battle endpoints.
 
 ### Reproducible Tests
 
@@ -1853,11 +1862,18 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 - [x] Enforce resolved neutral battle visibility: full tactical detail is
   visible only to involved participants; uninvolved participants get
   `battle_not_visible` and only redacted/public map outcomes.
-- [ ] Add non-participant and opponent visibility tests across scenario,
-  worldgen, events, champions, towns, battles, and objects.
+- [x] Add non-participant and opponent visibility tests across scenario,
+  worldgen, events, champions, towns, battles, and objects. Completed
+  2026-05-18 by adding `endpoint-auth` and extending
+  `pocket_ic_visibility_redaction_keeps_private_payloads_private`; evidence:
+  `DOMM_TEST_JOBS=2 scripts/run-test-groups.sh endpoint-auth
+  visibility-redaction` passed with `endpoint-auth` in 60.706s and
+  `visibility-redaction` in 81.713s.
 - [x] Audit `spec.md`: fog/redaction and event audience rules match code.
 - [x] Audit `spec.1.1.md`: Topic 12 has no remaining P0 ambiguity.
-- [ ] Gate tests: `visibility_redaction`, endpoint auth matrix tests.
+- [x] Gate tests: `visibility_redaction`, endpoint auth matrix tests. Completed
+  2026-05-18 with the same focused parallel run and `bash -n
+  scripts/run-test-groups.sh`.
 
 ### Gate 13. Economy, Tavern, Recruitment, Spells, And Victory Polish
 

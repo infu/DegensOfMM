@@ -2035,6 +2035,240 @@ fn pocket_ic_canister_exposes_every_required_game_endpoint() {
 }
 
 #[test]
+fn pocket_ic_endpoint_auth_matrix_rejects_anonymous_and_non_participant_session_reads() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-auth-matrix-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-auth-matrix-two");
+    let non_participant = candid::Principal::self_authenticating(b"domm-auth-matrix-outsider");
+    let session_id =
+        start_active_two_player_session(&fixture, player_one, player_two, "endpoint-auth");
+
+    let registered_non_participant = update_as::<LobbyCommandResponse>(
+        &fixture,
+        non_participant,
+        "register_player",
+        (
+            Some("endpoint-auth-outsider".to_string()),
+            Some("Endpoint Auth Outsider".to_string()),
+            "nonce:endpoint-auth:register:outsider".to_string(),
+        ),
+    )
+    .expect("non-participant registration should decode")
+    .expect("non-participant registration should succeed");
+    assert_eq!(registered_non_participant.status, CommandStatus::Applied);
+
+    let anonymous = candid::Principal::anonymous();
+    let viewport = opening_viewport_for_slot(0);
+    let game_request = GameViewRequest::opening_for_slot(0);
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+
+    expect_query_error::<ParticipantView>(
+        &fixture,
+        anonymous,
+        "get_my_participant",
+        (session_id.clone(),),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ParticipantView>(
+        &fixture,
+        non_participant,
+        "get_my_participant",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<GameView>(
+        &fixture,
+        anonymous,
+        "get_game_view",
+        (session_id.clone(), game_request.clone()),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<GameView>(
+        &fixture,
+        non_participant,
+        "get_game_view",
+        (session_id.clone(), game_request),
+        "participant_not_found",
+    );
+    expect_query_error::<MapChunkPage>(
+        &fixture,
+        anonymous,
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 8_u32),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<MapChunkPage>(
+        &fixture,
+        non_participant,
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 8_u32),
+        "participant_not_found",
+    );
+    expect_query_error::<ObjectViewPage>(
+        &fixture,
+        anonymous,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 128_u32),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ObjectViewPage>(
+        &fixture,
+        non_participant,
+        "get_visible_objects",
+        (session_id.clone(), viewport, None::<u32>, 128_u32),
+        "participant_not_found",
+    );
+    expect_query_error::<ObjectView>(
+        &fixture,
+        anonymous,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ObjectView>(
+        &fixture,
+        non_participant,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+        "participant_not_found",
+    );
+    expect_query_error::<Vec<ChampionView>>(
+        &fixture,
+        anonymous,
+        "get_my_champions",
+        (session_id.clone(),),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<Vec<ChampionView>>(
+        &fixture,
+        non_participant,
+        "get_my_champions",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<ChampionView>(
+        &fixture,
+        anonymous,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ChampionView>(
+        &fixture,
+        non_participant,
+        "get_champion_view",
+        (session_id.clone(), champion_id),
+        "participant_not_found",
+    );
+    expect_query_error::<ApiTownView>(
+        &fixture,
+        anonymous,
+        "get_town_view",
+        (session_id.clone(), "town:west".to_string()),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ApiTownView>(
+        &fixture,
+        non_participant,
+        "get_town_view",
+        (session_id.clone(), "town:west".to_string()),
+        "participant_not_found",
+    );
+    expect_query_error::<BattleView>(
+        &fixture,
+        anonymous,
+        "get_battle_state",
+        (session_id.clone(), "battle:auth-matrix".to_string()),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<BattleView>(
+        &fixture,
+        non_participant,
+        "get_battle_state",
+        (session_id.clone(), "battle:auth-matrix".to_string()),
+        "participant_not_found",
+    );
+    expect_query_error::<ApiEventPage>(
+        &fixture,
+        anonymous,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 50_u32),
+        "anonymous_not_allowed",
+    );
+    expect_query_error::<ApiEventPage>(
+        &fixture,
+        non_participant,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 50_u32),
+        "participant_not_found",
+    );
+    expect_query_error::<ObjectiveProgressView>(
+        &fixture,
+        non_participant,
+        "get_objective_progress",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<QuestPreview>(
+        &fixture,
+        non_participant,
+        "preview_quest",
+        (session_id.clone(), OPENING_QUEST_KEY.to_string()),
+        "participant_not_found",
+    );
+    expect_query_error::<ScenarioRulesView>(
+        &fixture,
+        non_participant,
+        "get_scenario_rules",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<WorldEventsView>(
+        &fixture,
+        non_participant,
+        "get_world_events",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<SkirmishSettingsView>(
+        &fixture,
+        non_participant,
+        "get_skirmish_settings",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<ProceduralMapView>(
+        &fixture,
+        non_participant,
+        "get_procedural_map_state",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<NavalRoutesView>(
+        &fixture,
+        non_participant,
+        "get_naval_routes",
+        (session_id.clone(),),
+        "participant_not_found",
+    );
+    expect_query_error::<SiegeRulesView>(
+        &fixture,
+        non_participant,
+        "get_siege_rules",
+        (session_id,),
+        "participant_not_found",
+    );
+}
+
+#[test]
 fn pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-week-two-player-one");
@@ -4446,6 +4680,138 @@ fn pocket_ic_visibility_redaction_keeps_private_payloads_private() {
     )
     .expect("visibility participant query should decode")
     .expect("visibility participant should load");
+    let participant_two = query_as::<ParticipantView>(
+        &fixture,
+        player_two,
+        "get_my_participant",
+        (session_id.clone(),),
+    )
+    .expect("visibility opponent participant query should decode")
+    .expect("visibility opponent participant should load");
+    assert_eq!(participant_two.slot_index, 1);
+
+    let opponent_rules = query_as::<ScenarioRulesView>(
+        &fixture,
+        player_two,
+        "get_scenario_rules",
+        (session_id.clone(),),
+    )
+    .expect("opponent scenario rules should decode")
+    .expect("opponent scenario rules should load");
+    assert!(
+        opponent_rules
+            .rules
+            .iter()
+            .any(|rule| { rule.rule_key == "rule:conquest" && rule.victory_state == "active" })
+    );
+    let opponent_world_events = query_as::<WorldEventsView>(
+        &fixture,
+        player_two,
+        "get_world_events",
+        (session_id.clone(),),
+    )
+    .expect("opponent world events should decode")
+    .expect("opponent world events should load");
+    assert_eq!(opponent_world_events.events.len(), 1);
+    assert!(
+        opponent_world_events
+            .events
+            .iter()
+            .all(|event| !event.redacted)
+    );
+    let opponent_skirmish = query_as::<SkirmishSettingsView>(
+        &fixture,
+        player_two,
+        "get_skirmish_settings",
+        (session_id.clone(),),
+    )
+    .expect("opponent skirmish settings should decode")
+    .expect("opponent skirmish settings should load");
+    assert_eq!(
+        opponent_skirmish.settings.generation_key,
+        PROCEDURAL_GENERATION_KEY
+    );
+    let opponent_procedural = query_as::<ProceduralMapView>(
+        &fixture,
+        player_two,
+        "get_procedural_map_state",
+        (session_id.clone(),),
+    )
+    .expect("opponent procedural map should decode")
+    .expect("opponent procedural map should load");
+    assert_eq!(opponent_procedural.maps.len(), 1);
+    let opponent_naval_routes = query_as::<NavalRoutesView>(
+        &fixture,
+        player_two,
+        "get_naval_routes",
+        (session_id.clone(),),
+    )
+    .expect("opponent naval routes should decode")
+    .expect("opponent naval routes should load");
+    assert_eq!(opponent_naval_routes.routes.len(), 1);
+    let opponent_siege_rules = query_as::<SiegeRulesView>(
+        &fixture,
+        player_two,
+        "get_siege_rules",
+        (session_id.clone(),),
+    )
+    .expect("opponent siege rules should decode")
+    .expect("opponent siege rules should load");
+    assert_eq!(opponent_siege_rules.rules.len(), 1);
+
+    let west_viewport = opening_viewport_for_slot(0);
+    let opponent_west_objects = query_as::<ObjectViewPage>(
+        &fixture,
+        player_two,
+        "get_visible_objects",
+        (session_id.clone(), west_viewport, None::<u32>, 128_u32),
+    )
+    .expect("opponent west object page should decode")
+    .expect("opponent west object page should not leak hidden objects");
+    assert!(opponent_west_objects.objects.iter().all(|object| {
+        object.subject_id_text != "champion:west"
+            && object.subject_id_text != "town:west"
+            && object.subject_id_text != "pile:west-wood-1"
+    }));
+
+    let hidden_west_pile = query_as::<ObjectView>(
+        &fixture,
+        player_two,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+    )
+    .expect("opponent hidden west object query should decode")
+    .expect_err("opponent should not read hidden west object detail");
+    assert_eq!(hidden_west_pile.code, "not_visible");
+
+    let hidden_west_champion_object = query_as::<ObjectView>(
+        &fixture,
+        player_two,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "champion".to_string(),
+            "champion:west".to_string(),
+        ),
+    )
+    .expect("opponent hidden west champion object query should decode")
+    .expect_err("opponent should not read hidden west champion object detail");
+    assert_eq!(hidden_west_champion_object.code, "not_visible");
+
+    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
+    let hidden_champion = query_as::<ChampionView>(
+        &fixture,
+        player_two,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    )
+    .expect("opponent hidden champion query should decode")
+    .expect_err("opponent should not read hidden champion detail");
+    assert_eq!(hidden_champion.code, "not_visible");
 
     let hidden_town = query_as::<ApiTownView>(
         &fixture,
@@ -4608,7 +4974,6 @@ fn pocket_ic_visibility_redaction_keeps_private_payloads_private() {
     .expect_err("opponent should still not read hidden town internals");
     assert_eq!(still_hidden_town.code, "not_visible");
 
-    let champion_id = owned_champion_id(&fixture, player_one, &session_id);
     let (neutral_sync, _) = submit_move_and_sync_until_event(
         &fixture,
         player_one,
@@ -7782,6 +8147,31 @@ where
         .pic()
         .query_call_as(fixture.canister_id(), caller, method, args)
         .map_err(|error| format!("{error:?}"))
+}
+
+#[track_caller]
+fn expect_query_error<T>(
+    fixture: &StandaloneCanisterFixture,
+    caller: candid::Principal,
+    method: &str,
+    args: impl candid::utils::ArgumentEncoder,
+    expected_code: &str,
+) -> ApiError
+where
+    T: candid::CandidType + for<'de> serde::Deserialize<'de>,
+{
+    let response = query_as::<T>(fixture, caller, method, args)
+        .unwrap_or_else(|error| panic!("{method} should decode from query call: {error}"));
+    match response {
+        Ok(_) => panic!("{method} should return {expected_code}"),
+        Err(error) => {
+            assert_eq!(
+                error.code, expected_code,
+                "{method} should return {expected_code}"
+            );
+            error
+        }
+    }
 }
 
 #[track_caller]

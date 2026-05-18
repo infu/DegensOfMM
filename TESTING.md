@@ -40,7 +40,8 @@ for groups that are isolated and stable under concurrent Pocket-IC instances.
 Pocket-IC tests now exercise meaningful canister routes. New v1.1 suites should stay split
 by failure mode (`timer_jobs`, `end_turn`, `battle_round_readiness`,
 `render_projection`, `query_budgets`, `command_recovery`, and
-`visibility_redaction`) rather than growing one monolithic endpoint test.
+`visibility_redaction`), with endpoint auth matrices in the `endpoint-auth` group,
+rather than growing one monolithic endpoint test.
 
 ## Fixtures
 

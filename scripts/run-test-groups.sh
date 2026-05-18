@@ -49,6 +49,10 @@ add_group "endpoint" \
     "endpoint inventory and public surface PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture"
+add_group "endpoint-auth" \
+    "endpoint anonymous and non-participant auth matrix PocketIC route" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
+    "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_endpoint_auth_matrix_rejects_anonymous_and_non_participant_session_reads -- --nocapture"
 add_group "gate-j" \
     "Gate J strategic loop and IcyDB persistence PocketIC route" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
@@ -114,6 +118,7 @@ FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
 POCKET_PARALLEL_GROUPS=(
     "pocket-lock"
     "pocket-smoke"
+    "endpoint-auth"
     "week-two"
     "setup"
     "timer-jobs"

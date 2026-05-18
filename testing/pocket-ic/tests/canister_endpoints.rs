@@ -2170,6 +2170,122 @@ fn pocket_ic_week_two_tavern_and_recruit_growth_materialize_on_turn_advance() {
 }
 
 #[test]
+fn pocket_ic_one_call_setup_progress_replay_and_upgrade_resume() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-setup-gate-player-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-setup-gate-player-two");
+    let session_id =
+        create_ready_two_player_session(&fixture, player_one, player_two, "setup-gate");
+    let start_nonce = "nonce:setup-gate:start".to_string();
+
+    let started = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_one,
+        "start_session",
+        (session_id.clone(), start_nonce.clone()),
+    )
+    .expect("one-call setup start should decode")
+    .expect("one-call setup start should succeed");
+    assert_eq!(started.status, CommandStatus::Applied);
+    match &started.result {
+        LobbyCommandResult::Session(session) => assert_eq!(session.state, "starting"),
+        other => panic!("start_session returned unexpected result: {other:?}"),
+    }
+
+    let initial_progress = setup_progress(&fixture, player_one, &session_id);
+    assert_eq!(initial_progress.session_state, "starting");
+    assert!(!initial_progress.setup_complete);
+    assert!(initial_progress.total_effect_count > 1);
+    assert_eq!(initial_progress.completed_effect_count, 0);
+    assert_eq!(
+        initial_progress.next_effect_key.as_deref(),
+        Some("seed_ruleset_content")
+    );
+    assert_eq!(
+        initial_progress.setup_command_status.as_deref(),
+        Some("pending")
+    );
+    assert_eq!(
+        initial_progress.setup_job_status.as_deref(),
+        Some("scheduled")
+    );
+
+    let replayed = update_as::<LobbyCommandResponse>(
+        &fixture,
+        player_one,
+        "start_session",
+        (session_id.clone(), start_nonce),
+    )
+    .expect("start replay while starting should decode")
+    .expect("start replay while starting should succeed");
+    assert_eq!(replayed.command_id, started.command_id);
+    let replayed_progress = setup_progress(&fixture, player_one, &session_id);
+    assert!(replayed_progress.completed_effect_count >= initial_progress.completed_effect_count);
+    assert!(
+        replayed_progress.completed_effect_count < replayed_progress.total_effect_count,
+        "setup should still be starting before the upgrade checkpoint: {replayed_progress:?}"
+    );
+    assert_eq!(
+        replayed_progress.setup_command_id,
+        initial_progress.setup_command_id
+    );
+    let replay_jobs = diagnostic_system_jobs(&fixture, Some(session_id.clone()), None);
+    assert_eq!(
+        replay_jobs
+            .jobs
+            .iter()
+            .filter(|job| job.job_key == format!("setup_session:{session_id}"))
+            .count(),
+        1,
+        "replaying the start nonce must not duplicate the setup job: {:?}",
+        replay_jobs.jobs
+    );
+
+    upgrade_degens_canister(&fixture);
+    let mut progress = setup_progress(&fixture, player_one, &session_id);
+    assert!(progress.completed_effect_count >= replayed_progress.completed_effect_count);
+    let mut observed_counts = vec![progress.completed_effect_count];
+    for _ in 0..80 {
+        if progress.setup_complete {
+            break;
+        }
+        advance_time_for_timers(&fixture, 5);
+        progress = setup_progress(&fixture, player_one, &session_id);
+        if observed_counts.last() != Some(&progress.completed_effect_count) {
+            observed_counts.push(progress.completed_effect_count);
+        }
+    }
+
+    assert!(
+        progress.setup_complete,
+        "setup progress after ticks: {progress:?}"
+    );
+    assert_eq!(
+        progress.completed_effect_count, progress.total_effect_count,
+        "completed setup should report all setup effects"
+    );
+    assert!(
+        observed_counts
+            .iter()
+            .any(|count| *count > 0 && *count < progress.total_effect_count),
+        "setup should expose intermediate progress across fresh timer messages: {observed_counts:?}"
+    );
+    let active =
+        query_as::<SessionView>(&fixture, player_one, "get_session", (session_id.clone(),))
+            .expect("post-upgrade setup session should decode")
+            .expect("post-upgrade setup session should load");
+    assert_eq!(active.state, "active");
+    let setup_jobs = diagnostic_system_jobs(&fixture, Some(session_id.clone()), None);
+    assert!(
+        setup_jobs.jobs.iter().any(|job| {
+            job.job_key == format!("setup_session:{session_id}") && job.status == "completed"
+        }),
+        "setup job should complete after post-upgrade timer resume: {:?}",
+        setup_jobs.jobs
+    );
+}
+
+#[test]
 fn pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-timer-jobs-player-one");
@@ -5099,6 +5215,22 @@ fn start_active_two_player_session(
     player_two: candid::Principal,
     nonce_stem: &str,
 ) -> String {
+    let session_id = create_ready_two_player_session(fixture, player_one, player_two, nonce_stem);
+    start_session_once_and_wait_active(
+        fixture,
+        player_one,
+        &session_id,
+        &format!("nonce:{nonce_stem}:start"),
+    );
+    session_id
+}
+
+fn create_ready_two_player_session(
+    fixture: &StandaloneCanisterFixture,
+    player_one: candid::Principal,
+    player_two: candid::Principal,
+    nonce_stem: &str,
+) -> String {
     update_as::<LobbyCommandResponse>(
         fixture,
         player_one,
@@ -5171,12 +5303,6 @@ fn start_active_two_player_session(
     .expect("player two ready should decode")
     .expect("player two ready should succeed");
 
-    start_session_once_and_wait_active(
-        fixture,
-        player_one,
-        &session_id,
-        &format!("nonce:{nonce_stem}:start"),
-    );
     session_id
 }
 
@@ -6125,6 +6251,21 @@ fn compact_game_view(
     )
     .expect("compact game view should decode")
     .expect("compact game view should load")
+}
+
+fn setup_progress(
+    fixture: &StandaloneCanisterFixture,
+    player: candid::Principal,
+    session_id: &str,
+) -> SetupProgressView {
+    query_as::<SetupProgressView>(
+        fixture,
+        player,
+        "get_setup_progress",
+        (session_id.to_string(),),
+    )
+    .expect("setup progress should decode")
+    .expect("setup progress should load")
 }
 
 fn visible_objects_page(

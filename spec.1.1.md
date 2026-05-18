@@ -1458,13 +1458,19 @@ income, and full regression/PocketIC evidence.
     exported_candid_contains_every_required_game_endpoint -- --nocapture`
     passed, `cargo test -p domm-pocket-ic-tests --test canister_endpoints
     --no-run` passed, and `make check-canister` passed.
-- [ ] Add PocketIC tests proving one call reaches `active`, artificial phase
+- [x] Add PocketIC tests proving one call reaches `active`, artificial phase
   caps continue through fresh messages, replay is idempotent, and upgrade during
   `starting` resumes.
-  - Partial evidence 2026-05-18: the endpoint route now proves one
-    `start_session` call reaches `active` through the durable setup job. Replay
-    and upgrade-during-starting coverage still need a targeted setup test before
-    this checkbox closes.
+  - Completed 2026-05-18 with
+    `pocket_ic_one_call_setup_progress_replay_and_upgrade_resume`, which starts
+    a ready session with one `start_session` call, observes setup progress while
+    `starting`, replays the same start nonce without duplicating the setup job,
+    upgrades the canister during `starting`, and then proves timer continuation
+    resumes to `active` with intermediate progress counts. Focused evidence:
+    `cargo test -p domm-pocket-ic-tests --test canister_endpoints
+    pocket_ic_one_call_setup_progress_replay_and_upgrade_resume -- --nocapture`
+    passed in 57.97s. The full endpoint route also continues to prove one-call
+    setup reaches `active`.
 - [ ] Audit `spec.md`: session setup saga, setup phase list, row caps, and
   public API contract all describe one client call.
 - [ ] Audit `spec.1.1.md`: Topic 13 and first-gate criteria no longer mention

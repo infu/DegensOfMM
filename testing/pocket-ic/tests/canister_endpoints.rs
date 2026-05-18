@@ -2352,9 +2352,23 @@ fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
             "nonce:end-turn:move-after-ended".to_string(),
         ),
     )
-    .expect("ended-player move denial should decode")
-    .expect_err("ended player should not create new turn commands");
-    assert_eq!(ended_player_move.code, "turn_already_ended");
+    .expect("ended-player move should decode")
+    .expect("ended player should still be able to act until the turn closes");
+    assert_eq!(ended_player_move.status, CommandStatus::Applied);
+    assert_eq!(ended_player_move.effective_turn, 1);
+
+    let duplicate_end_turn = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "end_turn",
+        (
+            session_id.clone(),
+            "nonce:end-turn:end:one:fresh".to_string(),
+        ),
+    )
+    .expect("fresh duplicate end_turn denial should decode")
+    .expect_err("fresh duplicate end_turn should still be rejected");
+    assert_eq!(duplicate_end_turn.code, "turn_already_ended");
 
     let player_one_replay = update_as::<CommandResponse>(
         &fixture,
@@ -2392,6 +2406,21 @@ fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
         "final participant readiness should schedule immediate turn resolution"
     );
 
+    let closing_move = update_as::<CommandResponse>(
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            vec![MoveCoord::new(9, 24)],
+            "nonce:end-turn:move-after-close".to_string(),
+        ),
+    )
+    .expect("closing-turn move denial should decode")
+    .expect_err("commands should be blocked once turn closure is accepted");
+    assert_eq!(closing_move.code, "backend_work_pending");
+
     let mut after_turn_resolution = compact_game_view(&fixture, player_one, &session_id);
     if after_turn_resolution.session.current_turn == 1 {
         advance_time_for_timers(&fixture, 1_000);
@@ -2420,7 +2449,7 @@ fn pocket_ic_end_turn_closes_turn_and_blocks_stale_actions() {
         (
             session_id.clone(),
             champion_id,
-            vec![MoveCoord::new(9, 24)],
+            vec![MoveCoord::new(10, 24)],
             "nonce:end-turn:turn-two-move".to_string(),
         ),
     )

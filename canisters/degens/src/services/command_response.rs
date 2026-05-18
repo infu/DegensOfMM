@@ -161,12 +161,13 @@ fn ensure_map_turn_accepts_new_command(
             }
         }
     }
-    if turn_ready::find_turn_ready(
-        context.session.id(),
-        context.participant.id(),
-        context.session.current_turn,
-    )?
-    .is_some()
+    if command_type == "end_turn"
+        && turn_ready::find_turn_ready(
+            context.session.id(),
+            context.participant.id(),
+            context.session.current_turn,
+        )?
+        .is_some()
     {
         return Err(public_error(
             "turn_already_ended",

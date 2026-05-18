@@ -1387,13 +1387,21 @@ income, and full regression/PocketIC evidence.
   `init`/`post_upgrade` rescheduling.
 - [x] Keep timers as wakeups only; every callback must reload IcyDB state before
   mutating.
-- [ ] Add PocketIC tests for scheduling, duplicate timer no-op, expired lease
+- [x] Add PocketIC tests for scheduling, duplicate timer no-op, expired lease
   recovery, and post-upgrade rescheduling.
+  - Completed by
+    `pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases`, which
+    asserts durable deadline rows, post-upgrade deadline preservation,
+    timer-driven turn advancement, duplicate stale sync no-op behavior, expired
+    running-job lease recovery, completed job state, and nonduplicated
+    `session_turn_advanced` events. Revalidated 2026-05-18 in the
+    full-regression `timer-jobs` group, passing in 178.582s.
 - [x] Audit `spec.md`: timer/job semantics, idempotency keys, and recovery
   language match the implementation.
 - [x] Audit `spec.1.1.md`: Topic 2 and first-gate criteria remain accurate.
-- [ ] Gate tests: `cargo test -p domm-pocket-ic-tests --test timer_jobs`,
-  `make check-canister`.
+- [x] Gate tests: timer-jobs PocketIC route and `make check-canister`.
+  Completed 2026-05-18 with `make check-canister` and `make regression`; the
+  timer-jobs grouped route passed in 178.582s during full regression.
 
 ### Gate 3. One-Call `start_session`
 
@@ -1426,15 +1434,25 @@ income, and full regression/PocketIC evidence.
 - [x] When all active map participants are ready, enqueue or run
   `turn_resolution:{session_id}:{turn_number}` immediately.
 - [x] Reject old-turn commands once turn resolution has been accepted.
-- [ ] Add PocketIC tests for ended-player-still-acts, final participant closes
+- [x] Add PocketIC tests for ended-player-still-acts, final participant closes
   before 60 seconds, old-turn stale rejection, and active battle participants
   still ending the map turn.
+  - Completed 2026-05-18 by updating
+    `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` so a player who
+    has marked ready can still submit same-turn movement until final turn
+    closure is accepted, a fresh duplicate `end_turn` remains rejected, the
+    final participant schedules immediate turn resolution, and new movement is
+    rejected with `backend_work_pending` once the turn is closing. Focused
+    PocketIC evidence: `cargo test -p domm-pocket-ic-tests --test
+    canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions
+    -- --nocapture` passed in 61.90s.
 - [x] Audit `spec.md`: `ParticipantTurnReady`, public API shape,
   `CommandResult::EndTurn`, turn advancement rule, and map/battle separation
   agree with code.
 - [x] Audit `spec.1.1.md`: Topic 3 and first-gate criteria are complete.
-- [ ] Gate tests: `cargo test -p domm-pocket-ic-tests --test end_turn`,
-  `make check-canister`.
+- [x] Gate tests: end-turn PocketIC route and `make check-canister`.
+  Completed 2026-05-18 with `make check-canister` and the focused
+  `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` PocketIC route.
 
 ### Gate 5. Timer-Driven Turn Resolution
 

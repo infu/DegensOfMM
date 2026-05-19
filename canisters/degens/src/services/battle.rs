@@ -2268,13 +2268,6 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
                     .all(|stack| stack.acted_round >= battle.current_round);
             let reason = if all_acted {
                 Some("auto_all_stacks_acted")
-            } else if !participant_has_meaningful_action(
-                &runtime.state,
-                &battle_id_text,
-                &participant_text,
-                battle.current_round,
-            )? {
-                Some("auto_no_actions")
             } else {
                 None
             };

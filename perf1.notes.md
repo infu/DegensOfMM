@@ -933,3 +933,20 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-end-turn3 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-end-turn2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_both_players_end_round_and_timer_catches_up -- --nocapture`
+
+## Checkpoint: Runtime Readiness Without Legal-Action Scan
+
+Removed `legal_actions_for_stack` from active runtime battle readiness recompute.
+
+What changed:
+
+- Active runtime readiness now marks participants ready only from runtime alive/acted state.
+- This is equivalent under the current rules because `legal_actions_for_stack` always exposes `Defend` for every living unacted stack and does not check active-stack turn ownership.
+- The row-backed fallback readiness path still uses the legacy `participant_has_meaningful_action` scan.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-acted-ready cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-acted-ready2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_both_players_end_round_and_timer_catches_up -- --nocapture`

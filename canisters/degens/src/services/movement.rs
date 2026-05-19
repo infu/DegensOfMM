@@ -1294,9 +1294,8 @@ fn stop_candidate_fast(
 fn reschedule_current_turn_jobs_for_manual_sync(session: &GameSession) -> Result<(), ApiError> {
     let due_at = manual_sync_retry_at();
     update_current_turn_jobs(session.id(), session.current_turn, |job| {
-        system_job_repo::reschedule_system_job(job, due_at, None).map(|_| ())
-    })?;
-    system_job_service::schedule_nearest_due_job()
+        system_job_service::reschedule_job(job, due_at, None).map(|_| ())
+    })
 }
 
 fn complete_current_turn_jobs(
@@ -1305,8 +1304,7 @@ fn complete_current_turn_jobs(
 ) -> Result<(), ApiError> {
     update_current_turn_jobs(session_id, turn_number, |job| {
         system_job_repo::complete_system_job(job).map(|_| ())
-    })?;
-    system_job_service::schedule_nearest_due_job()
+    })
 }
 
 fn update_current_turn_jobs<F>(

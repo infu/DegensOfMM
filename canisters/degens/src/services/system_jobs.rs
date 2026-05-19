@@ -43,6 +43,17 @@ pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError>
     Ok(job)
 }
 
+pub(crate) fn reschedule_job(
+    job: SystemJob,
+    due_at: Timestamp,
+    cursor_json: Option<String>,
+) -> Result<SystemJob, ApiError> {
+    let job = system_jobs::reschedule_system_job(job, due_at, cursor_json)?;
+    #[cfg(target_arch = "wasm32")]
+    schedule_wakeup_for_upserted_job(&job)?;
+    Ok(job)
+}
+
 pub(crate) fn schedule_nearest_due_job() -> Result<(), ApiError> {
     let Some(job) = next_claimable_or_scheduled_job()? else {
         clear_nearest_timer();

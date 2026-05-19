@@ -1425,3 +1425,49 @@ Decision:
 
 - Keep this cut because it is a direct extension of the already-proven fresh command/effect shortcut and it removes eight measured effect lookup reads from Gate J.
 - The remaining applied sync cost is still dominated by system-job scans, event/session writes, movement intent loading, participant/champion loads, and battle-start row work. The path still needs a real active turn aggregate to approach the 5B target.
+
+## Checkpoint: Direct Timer Refresh For Current-Turn Job Reschedules
+
+Added a `system_jobs::reschedule_job` service wrapper that updates a known job row and refreshes the heap timer for that job directly. `reschedule_current_turn_jobs_for_manual_sync` now uses it instead of rescanning all due/running jobs after each partial sync. `complete_current_turn_jobs` also no longer calls `schedule_nearest_due_job`; `sync_session_turn` immediately schedules the next turn deadline and scenario jobs after completing the old current-turn jobs, so the scan was redundant on the successful turn-advance path.
+
+Safety condition:
+
+- Partial sync still updates the same current-turn `turn_deadline`/`turn_resolution` jobs; it just refreshes the timer from the updated job instead of finding the nearest job through global scans.
+- Successful turn advancement still completes current-turn jobs before mutating the session to the next turn, then schedules next-turn deadline and maintenance jobs in the same update. If a later step traps, IC rollback reverts the completed jobs too.
+- The stale-turn PocketIC regression passed, covering immediate turn resolution, timer advancement, and stale action blocking after all players ended the turn.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,575,951 bytes
+IC limit: 12,582,912 bytes
+headroom: 6,961 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-103739-movement-job-reschedule-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-103739-movement-job-reschedule-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-102824-movement-sync-effect-gate-j`:
+
+| metric | sync effect shortcut | job reschedule cut | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 379.3951B | 366.6428B | -3.4% |
+| `submit_move_intent` avg instructions | 14.2066B | 14.2054B | flat |
+| `sync_session_turn` avg instructions | 16.5509B | 15.3974B | -7.0% |
+| `system_jobs.by_status_due` calls | 11 | 2 | -81.8% |
+| `system_jobs.by_status_lease` calls | 11 | 2 | -81.8% |
+| `system_jobs.by_status_due` total instructions | 7.7355B | 1.4095B | -81.8% |
+| `system_jobs.by_status_lease` total instructions | 7.7383B | 1.4089B | -81.8% |
+
+Decision:
+
+- Keep this cut because it removes the global nearest-job scans from the applied sync hot path while preserving timer behavior in the regression that matters.
+- Benchmark Wasm headroom is now only about 7 KB, so the next large active-turn aggregate likely needs another code-size freeing checkpoint or a split of benchmark/debug-only surface before adding new runtime structures.

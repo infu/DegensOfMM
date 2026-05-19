@@ -62,9 +62,23 @@ target/benchmarks/<run-id>/gate-l/run.json
 
 Primary method to watch:
 
-| method | current baseline | first target | stretch target |
-| --- | ---: | ---: | ---: |
-| `submit_battle_action` | ~26B-28B avg | under 10B avg | under 5B avg |
+| method | current baseline | first target | good target | normal target |
+| --- | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | ~26B-28B avg | under 10B avg | under 1B avg | around 0.3B avg |
+
+The plan is intentionally fluid. The implementation details can change aggressively if the benchmark does not move enough. What matters is reducing `submit_battle_action` toward the normal target, not preserving any particular intermediate design.
+
+Performance gates:
+
+| gate | target | likely work | decision rule |
+| --- | ---: | --- | --- |
+| Perf Gate 0 | measured baseline | endpoint repo/phase tracing | establish exact cost attribution |
+| Perf Gate 1 | under 10B avg | eliminate repeated child-row hydrate/diff/reload in active battles | if not hit, skip smaller cleanup and remove more stable writes |
+| Perf Gate 2 | under 3B avg | heap-resident active battle state, no per-action tactical child-row persistence | if not hit, inspect event/command writes and battle rule CPU |
+| Perf Gate 3 | under 1B avg | batch event/session writes, avoid readiness rows where possible, action-specific validation | if not hit, profile command/idempotency and Candid/serialization cost |
+| Perf Gate 4 | around 0.3B avg | keep only essential durable writes on submit, defer/project everything else | this is the normal target |
+
+If a gate is missed, do not treat the current design as fixed. Re-open the architecture and remove the next largest measured cost.
 
 Secondary methods to watch:
 
@@ -113,7 +127,7 @@ Saved scenario split:
 | `aftermath_victory` | 45 | 27.7169B | 20.7519B | 29.2661B | 172.20 MB | 0.0277T | 3.15s |
 | `guarded_mine_battle` | 6 | 21.5041B | 3.5254B | 27.3657B | 110.76 MB | 0.0215T | 2.46s |
 
-Improvement will be measured against the combined line unless a checkpoint specifically optimizes one scenario. The first target is under 10B average instructions for `submit_battle_action`; the stretch target is under 5B.
+Improvement will be measured against the combined line unless a checkpoint specifically optimizes one scenario. The first target is under 10B average instructions for `submit_battle_action`; the normal target is around 0.3B. If an intermediate design cannot plausibly reach that range, replace it rather than polishing it.
 
 ## Testing Policy
 
@@ -139,6 +153,7 @@ When a todo item is completed:
 
 - [x] Write the perf1 problem statement, motivation, aggregate rewrite direction, benchmark measurement plan, and checkbox/commit workflow in `perf1.todo.md`.
 - [x] Save the current `submit_battle_action` benchmark baseline in `perf1.todo.md` so aggregate-runtime work has a fixed comparison point.
+- [x] Set explicit performance gates in `perf1.todo.md` from the 26.9860B baseline toward the 0.3B normal target.
 - [ ] Add benchmark-only repo operation tracing so each public endpoint call can report table/index operation counts, row counts returned/affected, and operation names.
 - [ ] Add benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
 - [ ] Run a fresh baseline benchmark after repo-op tracing lands and record the run ID plus `submit_battle_action` table/index counts in this file.
@@ -171,6 +186,11 @@ When a todo item is completed:
 
 ### 4. Benchmarks And Regression Gates
 
+- [ ] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
+- [ ] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction.
+- [ ] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction.
+- [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
+- [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.
 - [ ] Run focused Gate K after the first battle aggregate submit path works.
 - [ ] Run focused Gate L after first-playable battle flow works through public endpoints.
 - [ ] Run full benchmark suite and compare against the baseline run.

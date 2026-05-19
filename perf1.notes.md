@@ -1332,3 +1332,51 @@ Decision:
 - Keep the shortcut because it is small, behaviorally narrow, and removes two measured stable index reads from Gate J.
 - Do not spread `append_new_public_event` broadly until each caller can prove a comparable freshness invariant.
 - The cost is still far above the 5B target. The next meaningful work should stop creating durable movement commands/intents/events on every active-turn operation, or introduce an active turn aggregate that owns fresh intent and event buffers like the battle runtime.
+
+## Checkpoint: Early Sync Not-Due Precheck
+
+Moved the `sync_session_turn` `turn_not_due` check before durable command creation. The endpoint still returns a `CommandResponse` with `CommandStatus::Failed`, but early not-due syncs now use the same in-memory response path used by active battle runtime failures instead of writing a failed `GameCommand` row.
+
+Safety condition:
+
+- Existing command replays are only relevant after a command row exists. This path runs before command creation and only for fresh not-due sync attempts.
+- The stale-turn regression already allowed pre-command denials for movement when backend work is pending; this applies the same shape to a not-due manual sync retry.
+- Due syncs and all-ready syncs still use durable command idempotency and the normal apply path.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,571,456 bytes
+IC limit: 12,582,912 bytes
+headroom: 11,456 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-101910-movement-sync-precheck-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-101910-movement-sync-precheck-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-100606-movement-new-event-gate-j`:
+
+| metric | fresh event | sync precheck | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 389.8865B | 384.8650B | -1.3% |
+| scenario memory | 6,462.4375 MB | 6,358.3125 MB | -1.6% |
+| `submit_move_intent` avg instructions | 14.1924B | 14.1979B | flat |
+| `sync_session_turn` avg instructions | 17.5045B | 17.0512B | -2.6% |
+| early not-due sync calls | about 5.19B | about 3.52B | about -32% |
+| `commands.game_command_idempotency` calls | 17 | 14 | -17.6% |
+| `commands.create_game_command` calls | 17 | 14 | -17.6% |
+| `commands.update_game_command` calls | 16 | 13 | -18.8% |
+
+Decision:
+
+- Keep this cut because it is narrow, preserves the public response shape, and removes durable command writes from three benchmarked manual sync retries.
+- This does not change the real sync hot path. The high-cost applied sync calls are still dominated by movement/battle/start/aftermath rows, events/effects, system-job scans, and command rows.
+- Next cuts should target applied `sync_session_turn`, especially durable command/effect/event/session writes and repeated system-job scans, rather than more not-due retry cleanup.

@@ -5,7 +5,10 @@ use domm_degens_schema::schema::{
     Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
     NeutralArmy, SystemJob, Town, UnitDefinition, WorldObject,
 };
-use domm_game::{ApiError, CommandResponse, MoveCoord, MovementPathStop, MovementPreview};
+use domm_game::{
+    ApiError, CommandPhase, CommandResponse, CommandResult, CommandStatus, MoveCoord,
+    MovementPathStop, MovementPreview,
+};
 use icydb::{
     traits::EntityValue,
     types::{Blob, Id, Timestamp, Ulid},
@@ -312,6 +315,16 @@ pub(crate) fn sync_session_turn(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)
     );
+    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
+        && !all_participants_ready_for_turn(&context.session)?
+    {
+        return Ok(sync_turn_not_due_response(
+            caller,
+            &context,
+            &client_nonce,
+            &payload_json,
+        ));
+    }
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -323,17 +336,6 @@ pub(crate) fn sync_session_turn(
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
     };
-    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-        && !all_participants_ready_for_turn(&context.session)?
-    {
-        return command_response::fail_command(
-            caller,
-            &context,
-            command,
-            &client_nonce,
-            public_error("turn_not_due", "turn deadline has not elapsed", false),
-        );
-    }
 
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
@@ -435,6 +437,35 @@ pub(crate) fn sync_session_turn(
         command_response::result_json("sync_session_turn", context.session.current_turn),
         events,
         changed_subjects,
+    )
+}
+
+fn sync_turn_not_due_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    client_nonce: &str,
+    payload_json: &str,
+) -> CommandResponse {
+    let error = public_error("turn_not_due", "turn deadline has not elapsed", false);
+    command_response::runtime_command_response(
+        caller,
+        context,
+        Ulid::generate().to_string(),
+        "sync_session_turn".to_string(),
+        client_nonce,
+        command_response::payload_hash(
+            "sync_session_turn",
+            &context.participant.id().to_string(),
+            client_nonce,
+            payload_json,
+        ),
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        error.retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
     )
 }
 

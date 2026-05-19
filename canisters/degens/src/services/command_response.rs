@@ -22,7 +22,10 @@ pub(crate) enum GameCommandAction {
 }
 
 pub(crate) enum GameCommandStart {
-    Apply(GameCommand),
+    Apply {
+        command: GameCommand,
+        freshly_created: bool,
+    },
     Return(CommandResponse),
 }
 
@@ -85,7 +88,7 @@ where
         payload_json,
         new_command_guard,
     )? {
-        GameCommandStart::Apply(command) => Ok(GameCommandAction::Apply(command)),
+        GameCommandStart::Apply { command, .. } => Ok(GameCommandAction::Apply(command)),
         GameCommandStart::Return(response) => Ok(GameCommandAction::Return(response)),
     }
 }
@@ -152,7 +155,10 @@ where
         if is_recoverable_movement_command(command_type)
             && matches!(existing.status.as_str(), "pending" | "applying")
         {
-            return Ok(GameCommandStart::Apply(existing));
+            return Ok(GameCommandStart::Apply {
+                command: existing,
+                freshly_created: false,
+            });
         }
         return response_from_command(caller, context, existing, client_nonce_text)
             .map(GameCommandStart::Return);
@@ -173,7 +179,10 @@ where
         hash,
         payload_json,
     )?;
-    Ok(GameCommandStart::Apply(command))
+    Ok(GameCommandStart::Apply {
+        command,
+        freshly_created: true,
+    })
 }
 
 pub(crate) fn ensure_map_turn_accepts_new_command(
@@ -444,6 +453,27 @@ pub(crate) fn append_public_event(
     payload_json: String,
 ) -> Result<ApiEventView, ApiError> {
     append_event_for_audience(
+        session,
+        command_id,
+        event_key,
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
+pub(crate) fn append_new_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
+    create_event_for_audience(
         session,
         command_id,
         event_key,

@@ -1888,3 +1888,26 @@ Decision:
 
 - Keep this bridge cut because it reduces the whole Gate J route and removes most of the repeated pending-intent scans.
 - The one-time durable pending-intent hydration moved cost onto `submit_move_intent` (+4.2%). That is acceptable as a compatibility guard for now, but the next sync-runtime checkpoint should either avoid submit-side hydration in new sessions or make active turn sync fully runtime-owned so the durable pending-intent projection stops being a hot path.
+
+## Checkpoint: Fresh Sync Event Creation
+
+Cut more event-feed idempotency reads from the fresh manual `sync_session_turn` path.
+
+What changed:
+
+- `GameCommandStart::Apply` again carries whether the durable command row was freshly created or recovered from a pending/applying idempotency row.
+- Fresh manual `sync_session_turn` movement-incomplete events and the final `session_turn_synced` event now call `append_new_public_event`, skipping the durable `events.by_session_event_key` absence read.
+- Recovered/replayed pending/applying commands still use `append_public_event`, preserving idempotent event lookup after a partial failure or retry.
+- System turn-resolution jobs still use the idempotent event path because they can be resumed from a durable system command/job.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-fresh-sync-events cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync -- --nocapture` passed in `189.23s`.
+
+Measurement note:
+
+- No focused Gate J benchmark yet for this checkpoint. The expected measurable effect is lower `events.by_session_event_key` calls when sync continuations are fresh commands. Recovered sync commands should not change.

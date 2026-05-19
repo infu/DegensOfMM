@@ -1,0 +1,79 @@
+# perf1 Notes
+
+This is the running notes and decision log for `perf1.todo.md`.
+
+Keep this file current while working:
+
+- Record what changed and why.
+- Record benchmark run IDs and key numbers.
+- Record decisions, reversals, and measured blockers.
+- Keep `perf1.todo.md` as the checklist; keep this file as the narrative.
+
+## 2026-05-19
+
+### Current Goal
+
+Reduce `submit_battle_action` from the pinned combined baseline of `26.9860B` average instructions toward the normal target of around `0.3B`.
+
+The plan is benchmark-driven and intentionally fluid. If an implementation checkpoint does not reduce instructions enough, the design should change. The goal is not to defend the current architecture; the goal is to remove measured cost until the endpoint is in the expected range.
+
+### Current Baseline
+
+Saved baseline from `target/benchmarks/20260518-231144-9f17dcb`:
+
+| source | calls | avg instructions | p95 instructions | avg memory delta |
+| --- | ---: | ---: | ---: | ---: |
+| Gate K | 25 | 27.4632B | 28.7961B | 173.88 MB |
+| Gate L | 26 | 26.5272B | 28.8134B | 156.41 MB |
+| combined | 51 | 26.9860B | 28.8344B | 164.97 MB |
+
+### Decisions So Far
+
+1. The main smell is row-normalized live gameplay state, not just missing indexes.
+2. `submit_battle_action` should move toward loading/mutating one active battle aggregate instead of hydrating/diffing many tactical child rows.
+3. Use benchmark gates, not fixed architecture, to drive the work:
+   - Gate 0: traced baseline
+   - Gate 1: under 10B
+   - Gate 2: under 3B
+   - Gate 3: under 1B
+   - Gate 4: around 0.3B
+4. First implementation should add benchmark attribution before major rewrites, so repo operation counts and phase costs explain what actually moved.
+5. Initial active battle runtime can reuse `domm_game::BattleState`; do not invent a new rules model until measurements require it.
+6. Keep durable rows for command idempotency, event feed, system jobs, strategic aftermath, and history.
+7. Avoid per-action stable writes for tactical child rows if the goal is to reach the 0.3B range.
+
+### Subagent Findings
+
+Battle aggregate migration:
+
+- Hot row hydration/persistence is centralized around `battle_rows::load_battle_state*` and `battle_rows::persist_battle_state`.
+- Main call sites are `submit_battle_action`, `sync_battle`, timeout/round jobs, recovery, cast ability, readiness, and aftermath.
+- Minimal compatibility path can hydrate runtime from existing rows first, then switch hot battle command paths to runtime.
+- `Battle` should remain an indexed shell/projection for lookup, jobs, and references.
+
+Upgrade/runtime storage:
+
+- The canister currently has `init` and `post_upgrade`, but no `pre_upgrade`.
+- IcyDB uses stable memory IDs `20`, `21`, `22`, and commit memory `119`; any custom upgrade snapshot must avoid conflicting with those.
+- `domm_game::BattleState` already supports Candid/serde, so Candid serialization is viable.
+- For first pass, prefer heap active state plus upgrade serialization. Durable snapshot rows are optional and should not be added if they reintroduce per-action stable writes.
+
+API/projection compatibility:
+
+- `get_battle_state` should read active runtime directly.
+- `get_game_view` should stay projection/shell-oriented and should not decode full battle runtime.
+- `get_champion_view`, `get_town_view`, visible objects, history, events, and command status should remain row/projection-backed.
+- Active combat stack damage does not need to project into champion/town rows until aftermath.
+
+Benchmark tracing:
+
+- Extend benchmark metrics with repo operation records and phase markers.
+- Instrument `repos/foundation.rs` wrappers first.
+- Convert direct `foundation::storage_result(...)` repo queries to typed helpers over time so row counts are exact.
+- Add `submit_battle_action` phase markers around auth, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, and final response.
+
+### Next Work
+
+1. Implement benchmark-only repo operation tracing and phase markers.
+2. Run a traced baseline and record the run ID here and in `perf1.todo.md`.
+3. Use the traced baseline to choose the first code cut toward Gate 1.

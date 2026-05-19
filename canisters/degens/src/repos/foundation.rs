@@ -71,19 +71,27 @@ pub(crate) fn storage_result<T>(
     result.map_err(|error| map_storage_error(operation, error))
 }
 
+pub(crate) fn storage_operation<T>(
+    operation: &'static str,
+    body: impl FnOnce() -> Result<T, icydb::Error>,
+) -> RepoResult<T> {
+    let result = crate::metrics::benchmark_repo_operation(operation, body);
+    storage_result(operation, result)
+}
+
 pub(crate) fn create<I>(operation: &'static str, input: I) -> RepoResult<I::Entity>
 where
     I: EntityCreateInput,
     I::Entity: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().create(input))
+    storage_operation(operation, || crate::db().create(input))
 }
 
 pub(crate) fn insert<E>(operation: &'static str, entity: E) -> RepoResult<E>
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().insert(entity))
+    storage_operation(operation, || crate::db().insert(entity))
 }
 
 pub(crate) fn insert_many_atomic<E>(
@@ -93,28 +101,28 @@ pub(crate) fn insert_many_atomic<E>(
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().insert_many_atomic(entities))
+    storage_operation(operation, || crate::db().insert_many_atomic(entities))
 }
 
 pub(crate) fn update<E>(operation: &'static str, entity: E) -> RepoResult<E>
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().update(entity))
+    storage_operation(operation, || crate::db().update(entity))
 }
 
 pub(crate) fn load_by_id<E>(operation: &'static str, id: Id<E>) -> RepoResult<Option<E>>
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().load::<E>().by_id(id).try_entity())
+    storage_operation(operation, || crate::db().load::<E>().by_id(id).try_entity())
 }
 
 pub(crate) fn delete_by_id<E>(operation: &'static str, id: Id<E>) -> RepoResult<u32>
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, crate::db().delete::<E>().by_id(id).count())
+    storage_operation(operation, || crate::db().delete::<E>().by_id(id).count())
 }
 
 pub(crate) fn execute_page<E>(
@@ -126,12 +134,12 @@ pub(crate) fn execute_page<E>(
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    let page = storage_result(operation, query.limit(limit).page())?;
+    let page = storage_operation(operation, || query.limit(limit).page())?;
     let page = match cursor {
         Some(cursor) => page.cursor(cursor),
         None => page,
     };
-    let response = storage_result(operation, page.execute())?;
+    let response = storage_operation(operation, || page.execute())?;
 
     let next_cursor = response.next_cursor().map(str::to_string);
     let items = response.into_items();
@@ -151,5 +159,5 @@ pub(crate) fn explain_text<E>(
 where
     E: PersistedRow<Canister = DegensCanister> + EntityValue,
 {
-    storage_result(operation, query.explain()).map(|plan| plan.render_text_canonical())
+    storage_operation(operation, || query.explain()).map(|plan| plan.render_text_canonical())
 }

@@ -200,8 +200,8 @@ When a todo item is completed:
 - [x] Create `perf1.notes.md` as the running notes and decision log for this work.
 - [x] Re-evaluate the whole plan and update it so it can plausibly reach the 0.3B target instead of stopping at a partial aggregate rewrite.
 - [x] Re-evaluate the updated plan against the actual battle, event, command-status, readiness, and aftermath code paths.
-- [ ] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
-- [ ] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
+- [x] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
+- [x] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
 - [ ] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
 - [ ] Document the active runtime merge contract for `get_battle_state`, `sync_battle`, `end_battle_turn`, `get_events_after`, `get_command_status`, `get_command_status_by_nonce`, timeout jobs, round jobs, and aftermath.
 

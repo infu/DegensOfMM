@@ -120,15 +120,14 @@ pub(crate) fn update_system_job(job: SystemJob) -> RepoResult<SystemJob> {
 }
 
 pub(crate) fn find_system_job_by_key(job_key: &str) -> RepoResult<Option<SystemJob>> {
-    foundation::storage_result(
-        SYSTEM_JOB_BY_KEY_LOOKUP.name,
+    foundation::storage_operation(SYSTEM_JOB_BY_KEY_LOOKUP.name, || {
         crate::db()
             .load::<SystemJob>()
             .filter(FieldRef::new("job_key").eq(job_key))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn page_due_system_jobs(
@@ -170,21 +169,19 @@ pub(crate) fn page_expired_running_system_jobs(
 }
 
 pub(crate) fn next_scheduled_system_job() -> RepoResult<Option<SystemJob>> {
-    foundation::storage_result(
-        SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP.name,
+    foundation::storage_operation(SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP.name, || {
         crate::db()
             .load::<SystemJob>()
             .filter(FieldRef::new("status").eq(STATUS_SCHEDULED))
             .order_asc("due_at")
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn next_expired_running_system_job(now: Timestamp) -> RepoResult<Option<SystemJob>> {
-    foundation::storage_result(
-        SYSTEM_JOBS_BY_STATUS_LEASE_LOOKUP.name,
+    foundation::storage_operation(SYSTEM_JOBS_BY_STATUS_LEASE_LOOKUP.name, || {
         crate::db()
             .load::<SystemJob>()
             .filter(FieldRef::new("status").eq(STATUS_RUNNING))
@@ -192,8 +189,8 @@ pub(crate) fn next_expired_running_system_job(now: Timestamp) -> RepoResult<Opti
             .order_asc("lease_expires_at")
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn page_system_jobs(

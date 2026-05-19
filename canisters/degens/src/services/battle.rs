@@ -544,57 +544,70 @@ pub(crate) fn submit_battle_action(
     client_nonce: String,
     now_ms: u64,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
-    let battle = battle_rows::load_battle_row(&context.session, &input.battle_id)?;
-    let payload_json = battle_action_payload_json(&input);
-    let command = match command_response::begin_participant_command_guarded(
-        caller,
-        &context,
-        "submit_battle_action",
-        &client_nonce,
-        battle.attacker_champion_id.map(Id::from_key),
-        payload_json,
-        || {
-            ensure_battle_round_accepts_new_action(
-                context.session.id(),
-                battle.id(),
-                context.participant.id(),
-                battle.current_round,
+    let mut context =
+        crate::metrics::benchmark_phase("submit_battle_action", "auth_context", || {
+            session_context::require_active_session_caller(caller, &session_id)
+        })?;
+    let battle = crate::metrics::benchmark_phase("submit_battle_action", "load_battle", || {
+        battle_rows::load_battle_row(&context.session, &input.battle_id)
+    })?;
+    let command =
+        match crate::metrics::benchmark_phase("submit_battle_action", "command_begin", || {
+            let payload_json = battle_action_payload_json(&input);
+            command_response::begin_participant_command_guarded(
+                caller,
+                &context,
+                "submit_battle_action",
+                &client_nonce,
+                battle.attacker_champion_id.map(Id::from_key),
+                payload_json,
+                || {
+                    ensure_battle_round_accepts_new_action(
+                        context.session.id(),
+                        battle.id(),
+                        context.participant.id(),
+                        battle.current_round,
+                    )
+                },
             )
-        },
-    )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
-    };
+        })? {
+            GameCommandAction::Apply(command) => command,
+            GameCommandAction::Return(response) => return Ok(response),
+        };
 
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
     let response_participant_id = context.participant.id().to_string();
-    let recovery_result = recover_applying_battle_commands(
-        &mut context.session,
-        battle.id(),
-        command.id(),
-        Some(&response_participant_id),
-        &mut events,
-        &mut changed_subjects,
-    );
+    let recovery_result =
+        crate::metrics::benchmark_phase("submit_battle_action", "recovery", || {
+            recover_applying_battle_commands(
+                &mut context.session,
+                battle.id(),
+                command.id(),
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+        });
     if let Err(error) = recovery_result {
         return command_response::fail_command(caller, &context, command, &client_nonce, error);
     }
     let skip_timeout_for_submit_grace = battle_action_submit_grace_applies(&battle, &input, now_ms);
-    let sync_result = if skip_timeout_for_submit_grace {
-        Ok(false)
-    } else {
-        apply_due_timeouts(
-            &mut context.session,
-            battle.id(),
-            now_ms,
-            CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
-            Some(&response_participant_id),
-            &mut events,
-            &mut changed_subjects,
-        )
-    };
+    let sync_result = crate::metrics::benchmark_phase("submit_battle_action", "timeout", || {
+        if skip_timeout_for_submit_grace {
+            Ok(false)
+        } else {
+            apply_due_timeouts(
+                &mut context.session,
+                battle.id(),
+                now_ms,
+                CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+        }
+    });
     if let Err(error) = sync_result {
         return command_response::fail_command(caller, &context, command, &client_nonce, error);
     }
@@ -613,7 +626,10 @@ pub(crate) fn submit_battle_action(
         );
     }
 
-    let normalized_input = normalize_battle_action_input(&context.session, &input)?;
+    let normalized_input =
+        crate::metrics::benchmark_phase("submit_battle_action", "normalize_input", || {
+            normalize_battle_action_input(&context.session, &input)
+        })?;
     let action_result = apply_player_action(
         &mut context.session,
         &context.participant.id().to_string(),
@@ -630,31 +646,39 @@ pub(crate) fn submit_battle_action(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
-    if let Some(updated_battle) = battles::load_battle(battle.id())? {
-        let readiness = recompute_battle_round_readiness_and_schedule(
-            context.session.id(),
-            &updated_battle,
-            Some(command.id()),
-            true,
-        )?;
-        changed_subjects.extend(readiness.changed_subjects);
-        schedule_battle_timeout_job(context.session.id(), &updated_battle)?;
-    }
+    crate::metrics::benchmark_phase("submit_battle_action", "readiness_schedule", || {
+        if let Some(updated_battle) = battles::load_battle(battle.id())? {
+            let readiness = recompute_battle_round_readiness_and_schedule(
+                context.session.id(),
+                &updated_battle,
+                Some(command.id()),
+                true,
+            )?;
+            changed_subjects.extend(readiness.changed_subjects);
+            schedule_battle_timeout_job(context.session.id(), &updated_battle)?;
+        }
+        Ok::<(), ApiError>(())
+    })?;
 
-    if let Some(updated_session) = crate::repos::sessions::load_session(context.session.id())? {
-        context.session = updated_session;
-    }
+    crate::metrics::benchmark_phase("submit_battle_action", "reload_session", || {
+        if let Some(updated_session) = crate::repos::sessions::load_session(context.session.id())? {
+            context.session = updated_session;
+        }
+        Ok::<(), ApiError>(())
+    })?;
     let result_json = battle_action_result_json(&receipt);
-    command_response::apply_command_with_result(
-        caller,
-        &context,
-        command,
-        &client_nonce,
-        result_json,
-        events,
-        changed_subjects,
-        CommandResult::BattleAction(receipt),
-    )
+    crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
+        command_response::apply_command_with_result(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            result_json,
+            events,
+            changed_subjects,
+            CommandResult::BattleAction(receipt),
+        )
+    })
 }
 
 fn normalize_battle_action_input(
@@ -1341,16 +1365,24 @@ fn apply_player_action(
 ) -> Result<BattleActionReceipt, ApiError> {
     command.status = "applying".to_string();
     command.phase = "applying".to_string();
-    command = commands_events_effects::update_game_command(command)?;
+    command =
+        crate::metrics::benchmark_phase("submit_battle_action", "mark_command_applying", || {
+            commands_events_effects::update_game_command(command)
+        })?;
 
-    let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
-    validate_player_action(
-        &state,
-        participant_id,
-        input,
-        now_ms,
-        CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
-    )?;
+    let mut state =
+        crate::metrics::benchmark_phase("submit_battle_action", "load_battle_state", || {
+            battle_rows::load_battle_state(session, &input.battle_id)
+        })?;
+    crate::metrics::benchmark_phase("submit_battle_action", "validate_action", || {
+        validate_player_action(
+            &state,
+            participant_id,
+            input,
+            now_ms,
+            CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
+        )
+    })?;
     if input.action == "CastAbility" {
         return apply_cast_ability_command(
             session,
@@ -1373,16 +1405,22 @@ fn apply_player_action(
         false,
     );
     state.commands.push(battle_command);
-    domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), now_ms)
-        .map_err(map_battle_error)?;
-    battle_rows::persist_battle_state(&state, command.id())?;
-    append_new_battle_events(
-        session,
-        command.id(),
-        &state,
-        Some(response_participant_id),
-        events,
-    )?;
+    crate::metrics::benchmark_phase("submit_battle_action", "apply_rules", || {
+        domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), now_ms)
+            .map_err(map_battle_error)
+    })?;
+    crate::metrics::benchmark_phase("submit_battle_action", "persist_battle_state", || {
+        battle_rows::persist_battle_state(&state, command.id())
+    })?;
+    crate::metrics::benchmark_phase("submit_battle_action", "event_fanout", || {
+        append_new_battle_events(
+            session,
+            command.id(),
+            &state,
+            Some(response_participant_id),
+            events,
+        )
+    })?;
     changed_subjects.push(command_response::changed(
         "battle",
         &input.battle_id,

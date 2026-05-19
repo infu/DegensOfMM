@@ -78,6 +78,25 @@ Benchmark tracing:
 2. Run a traced baseline and record the run ID here and in `perf1.todo.md`.
 3. Use the traced baseline to choose the first code cut toward Gate 1.
 
+### Gate 0 Instrumentation Checkpoint
+
+Implemented benchmark-only attribution for the current `submit_battle_action` path before changing battle behavior.
+
+What changed:
+
+- `DiagnosticBenchmarkCallView` now carries nested phase records and aggregated repo operation records.
+- `submit_battle_action` now marks auth/context, battle load, command begin, recovery, timeout processing, input normalization, command-applying update, battle-state load, validation, rule application, tactical persistence, event fanout, readiness/schedule, session reload, and final response phases.
+- Repository foundation helpers now trace create/insert/update/load/delete/page operations.
+- Battle hot repository lookups, command/event lookups, battle-round readiness lookups, and system-job lookups were converted from eager `storage_result(...)` calls to traced `storage_operation(...)` calls.
+- Benchmark artifacts now include phase and repo-operation summaries in `summary.json`, `run.json`, and `summary.md`.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints benchmark_summary --no-run`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints benchmark_summary -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid -- --nocapture`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

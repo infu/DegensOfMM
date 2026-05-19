@@ -6697,6 +6697,24 @@ struct BenchmarkCallRecord {
     stable_memory_delta_bytes: i128,
     memory_size_before_bytes: u128,
     memory_size_after_bytes: u128,
+    phases: Vec<BenchmarkPhaseRecord>,
+    repo_ops: Vec<BenchmarkRepoOpRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkPhaseRecord {
+    name: String,
+    instruction_delta: u64,
+    stable_memory_pages_before: u64,
+    stable_memory_pages_after: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkRepoOpRecord {
+    operation: String,
+    calls: u64,
+    instruction_delta: u64,
+    stable_memory_page_delta: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -6732,6 +6750,25 @@ struct BenchmarkMethodSummary {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkPhaseSummary {
+    method: String,
+    phase: String,
+    call_count: u64,
+    avg_instruction_delta: f64,
+    total_instruction_delta: u128,
+    avg_stable_page_delta: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkRepoOpSummary {
+    operation: String,
+    call_count: u64,
+    avg_instruction_delta: f64,
+    total_instruction_delta: u128,
+    stable_page_delta: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct BenchmarkSummaryArtifact {
     run_id: String,
     git_sha: String,
@@ -6747,6 +6784,8 @@ struct BenchmarkSummaryArtifact {
     stable_memory_pages_final: u64,
     scenarios: Vec<BenchmarkScenarioSummary>,
     methods: Vec<BenchmarkMethodSummary>,
+    phases: Vec<BenchmarkPhaseSummary>,
+    repo_ops: Vec<BenchmarkRepoOpSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -6761,6 +6800,13 @@ struct BenchmarkQueryLog {
     instruction_delta: u64,
     stable_pages_before: u64,
     stable_pages_after: u64,
+}
+
+#[derive(Clone, Debug)]
+struct BenchmarkCanisterCallMeasurement {
+    instruction_delta: u64,
+    phases: Vec<BenchmarkPhaseRecord>,
+    repo_ops: Vec<BenchmarkRepoOpRecord>,
 }
 
 #[derive(Debug)]
@@ -6814,6 +6860,8 @@ impl BenchmarkRecorder {
         before: &BenchmarkStatusSample,
         after: &BenchmarkStatusSample,
         measured_instruction_delta: Option<u64>,
+        phases: Vec<BenchmarkPhaseRecord>,
+        repo_ops: Vec<BenchmarkRepoOpRecord>,
     ) {
         let instruction_delta = if measured_instruction_delta.is_some() {
             measured_instruction_delta
@@ -6859,6 +6907,8 @@ impl BenchmarkRecorder {
             ),
             memory_size_before_bytes: before.memory_size_bytes,
             memory_size_after_bytes: after.memory_size_bytes,
+            phases,
+            repo_ops,
         });
         self.next_sequence = self.next_sequence.saturating_add(1);
     }
@@ -6877,11 +6927,11 @@ impl BenchmarkRecorder {
         self.query_log_entry_cursor = 0;
     }
 
-    fn pull_update_instruction(
+    fn pull_update_measurement(
         &mut self,
         fixture: &StandaloneCanisterFixture,
         method: &str,
-    ) -> Option<u64> {
+    ) -> Option<BenchmarkCanisterCallMeasurement> {
         let page = query_as::<DiagnosticBenchmarkCallPage>(
             fixture,
             candid::Principal::anonymous(),
@@ -6898,7 +6948,29 @@ impl BenchmarkRecorder {
             .iter()
             .rev()
             .find(|call| call.method == method && call.kind == EndpointKind::Update)
-            .map(|call| call.instruction_delta)
+            .map(|call| BenchmarkCanisterCallMeasurement {
+                instruction_delta: call.instruction_delta,
+                phases: call
+                    .phases
+                    .iter()
+                    .map(|phase| BenchmarkPhaseRecord {
+                        name: phase.name.clone(),
+                        instruction_delta: phase.instruction_delta,
+                        stable_memory_pages_before: phase.stable_memory_pages_before,
+                        stable_memory_pages_after: phase.stable_memory_pages_after,
+                    })
+                    .collect(),
+                repo_ops: call
+                    .repo_ops
+                    .iter()
+                    .map(|op| BenchmarkRepoOpRecord {
+                        operation: op.operation.clone(),
+                        calls: op.calls,
+                        instruction_delta: op.instruction_delta,
+                        stable_memory_page_delta: op.stable_memory_page_delta,
+                    })
+                    .collect(),
+            })
     }
 
     fn pull_query_instruction(
@@ -7002,6 +7074,8 @@ impl BenchmarkRecorder {
     ) -> BenchmarkSummaryArtifact {
         let mut scenarios = scenario_summaries(&self.calls);
         let mut methods = method_summaries(&self.calls);
+        let phases = phase_summaries(&self.calls);
+        let repo_ops = repo_op_summaries(&self.calls);
         apply_previous_deltas(&mut scenarios, &mut methods, previous);
 
         let covered_required = covered_required_endpoints(&self.calls);
@@ -7033,6 +7107,8 @@ impl BenchmarkRecorder {
             stable_memory_pages_final: final_storage.stable_memory_pages,
             scenarios,
             methods,
+            phases,
+            repo_ops,
         }
     }
 }
@@ -7050,6 +7126,14 @@ fn unsigned_delta(after: u128, before: u128) -> i128 {
         i128::try_from(after - before).unwrap_or(i128::MAX)
     } else {
         -i128::try_from(before - after).unwrap_or(i128::MAX)
+    }
+}
+
+fn signed_delta_u64(after: u64, before: u64) -> i64 {
+    if after >= before {
+        i64::try_from(after - before).unwrap_or(i64::MAX)
+    } else {
+        -i64::try_from(before - after).unwrap_or(i64::MAX)
     }
 }
 
@@ -7167,6 +7251,88 @@ fn method_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkMethodSummary
         .collect()
 }
 
+fn phase_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkPhaseSummary> {
+    let mut grouped: BTreeMap<(String, String), Vec<&BenchmarkPhaseRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        for phase in &call.phases {
+            grouped
+                .entry((call.method.clone(), phase.name.clone()))
+                .or_default()
+                .push(phase);
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|((method, phase), phases)| {
+            let instruction_values = phases
+                .iter()
+                .map(|phase| phase.instruction_delta)
+                .collect::<Vec<_>>();
+            let stable_page_deltas = phases
+                .iter()
+                .map(|phase| {
+                    signed_delta_u64(
+                        phase.stable_memory_pages_after,
+                        phase.stable_memory_pages_before,
+                    )
+                })
+                .collect::<Vec<_>>();
+            BenchmarkPhaseSummary {
+                method,
+                phase,
+                call_count: u64::try_from(phases.len()).unwrap_or(u64::MAX),
+                avg_instruction_delta: average_u64(&instruction_values).unwrap_or(0.0),
+                total_instruction_delta: instruction_values
+                    .iter()
+                    .map(|value| u128::from(*value))
+                    .sum(),
+                avg_stable_page_delta: average_i64(&stable_page_deltas),
+            }
+        })
+        .collect()
+}
+
+fn repo_op_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkRepoOpSummary> {
+    let mut grouped: BTreeMap<String, Vec<&BenchmarkRepoOpRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        for op in &call.repo_ops {
+            grouped.entry(op.operation.clone()).or_default().push(op);
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|(operation, ops)| {
+            let call_count = ops.iter().map(|op| op.calls).sum::<u64>();
+            let total_instruction_delta = ops
+                .iter()
+                .map(|op| u128::from(op.instruction_delta))
+                .sum::<u128>();
+            let stable_page_delta = ops.iter().fold(0_i64, |sum, op| {
+                sum.saturating_add(op.stable_memory_page_delta)
+            });
+            BenchmarkRepoOpSummary {
+                operation,
+                call_count,
+                avg_instruction_delta: if call_count == 0 {
+                    0.0
+                } else {
+                    total_instruction_delta as f64 / call_count as f64
+                },
+                total_instruction_delta,
+                stable_page_delta,
+            }
+        })
+        .collect()
+}
+
 fn apply_previous_deltas(
     scenarios: &mut [BenchmarkScenarioSummary],
     methods: &mut [BenchmarkMethodSummary],
@@ -7254,6 +7420,13 @@ fn average_u128(values: &[u128]) -> f64 {
 }
 
 fn average_i128(values: &[i128]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64
+}
+
+fn average_i64(values: &[i64]) -> f64 {
     if values.is_empty() {
         return 0.0;
     }
@@ -7381,6 +7554,37 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
             method.error_count
         ));
     }
+    if !summary.phases.is_empty() {
+        out.push_str("\n## Endpoint Phases\n\n");
+        out.push_str("| Method | Phase | Calls | Avg inst B | Total inst B | Avg stable pages |\n");
+        out.push_str("| --- | --- | ---: | ---: | ---: | ---: |\n");
+        for phase in &summary.phases {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {:.2} |\n",
+                phase.method,
+                phase.phase,
+                phase.call_count,
+                format_billions_f64(phase.avg_instruction_delta),
+                format_billions_u128(phase.total_instruction_delta),
+                phase.avg_stable_page_delta
+            ));
+        }
+    }
+    if !summary.repo_ops.is_empty() {
+        out.push_str("\n## Repo Operations\n\n");
+        out.push_str("| Operation | Calls | Avg inst B | Total inst B | Stable page delta |\n");
+        out.push_str("| --- | ---: | ---: | ---: | ---: |\n");
+        for op in &summary.repo_ops {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                op.operation,
+                op.call_count,
+                format_billions_f64(op.avg_instruction_delta),
+                format_billions_u128(op.total_instruction_delta),
+                op.stable_page_delta
+            ));
+        }
+    }
     if !summary.missing_required_endpoints.is_empty() {
         out.push_str("\n## Missing Required Endpoints\n\n");
         out.push_str(&summary.missing_required_endpoints.join(", "));
@@ -7411,6 +7615,10 @@ fn format_billions_option(value: Option<f64>) -> String {
     value
         .map(|value| format_scaled(value / 1_000_000_000.0))
         .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_billions_f64(value: f64) -> String {
+    format_scaled(value / 1_000_000_000.0)
 }
 
 fn format_trillions_u128(value: u128) -> String {
@@ -7588,6 +7796,8 @@ fn benchmark_summary_deltas_compare_previous_run() {
             avg_memory_delta_bytes: 50.0,
             ..methods[0].clone()
         }],
+        phases: Vec::new(),
+        repo_ops: Vec::new(),
     };
 
     apply_previous_deltas(&mut scenarios, &mut methods, Some(&previous));
@@ -7716,6 +7926,8 @@ fn benchmark_test_call(scenario_id: &str, method: &str, kind: &str) -> Benchmark
         stable_memory_delta_bytes: 0,
         memory_size_before_bytes: 1_000,
         memory_size_after_bytes: 1_020,
+        phases: Vec::new(),
+        repo_ops: Vec::new(),
     }
 }
 
@@ -7844,14 +8056,14 @@ impl GateJMetrics {
             .map(|_| BenchmarkRecorder::capture_status(fixture))
     }
 
-    fn pull_update_instruction(
+    fn pull_update_measurement(
         &mut self,
         fixture: &StandaloneCanisterFixture,
         method: &str,
-    ) -> Option<u64> {
+    ) -> Option<BenchmarkCanisterCallMeasurement> {
         self.benchmark
             .as_mut()
-            .and_then(|benchmark| benchmark.pull_update_instruction(fixture, method))
+            .and_then(|benchmark| benchmark.pull_update_measurement(fixture, method))
     }
 
     fn pull_query_instruction(
@@ -7873,6 +8085,8 @@ impl GateJMetrics {
         before: Option<BenchmarkStatusSample>,
         after: Option<BenchmarkStatusSample>,
         measured_instruction_delta: Option<u64>,
+        phases: Vec<BenchmarkPhaseRecord>,
+        repo_ops: Vec<BenchmarkRepoOpRecord>,
     ) {
         let Some(benchmark) = &mut self.benchmark else {
             return;
@@ -7889,6 +8103,8 @@ impl GateJMetrics {
             &before,
             &after,
             measured_instruction_delta,
+            phases,
+            repo_ops,
         );
     }
 
@@ -9406,6 +9622,8 @@ where
         before,
         after,
         query_instruction_delta,
+        Vec::new(),
+        Vec::new(),
     );
     response
 }
@@ -9442,7 +9660,7 @@ where
     let elapsed = started.elapsed();
     let after = metrics.benchmark_sample(fixture);
     metrics.record_update(method, &response);
-    let update_instruction_delta = metrics.pull_update_instruction(fixture, method);
+    let update_measurement = metrics.pull_update_measurement(fixture, method);
     metrics.record_benchmark_call(
         method,
         "update",
@@ -9450,7 +9668,16 @@ where
         elapsed,
         before,
         after,
-        update_instruction_delta,
+        update_measurement
+            .as_ref()
+            .map(|measurement| measurement.instruction_delta),
+        update_measurement
+            .as_ref()
+            .map(|measurement| measurement.phases.clone())
+            .unwrap_or_default(),
+        update_measurement
+            .map(|measurement| measurement.repo_ops)
+            .unwrap_or_default(),
     );
     response
 }

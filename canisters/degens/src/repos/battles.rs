@@ -132,31 +132,29 @@ pub(crate) fn page_battles_by_session_state(
 }
 
 pub(crate) fn find_battle_by_attacker(champion_id: Id<Champion>) -> RepoResult<Option<Battle>> {
-    foundation::storage_result(
-        "battles.by_attacker",
+    foundation::storage_operation("battles.by_attacker", || {
         crate::db()
             .load::<Battle>()
             .filter(FieldRef::new("attacker_champion_id").eq(champion_id.key()))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn find_champion_battle_by_attacker_defender(
     attacker_champion_id: Id<Champion>,
     defender_champion_id: Id<Champion>,
 ) -> RepoResult<Option<Battle>> {
-    foundation::storage_result(
-        "battles.by_attacker_defender_champion",
+    foundation::storage_operation("battles.by_attacker_defender_champion", || {
         crate::db()
             .load::<Battle>()
             .filter(FieldRef::new("attacker_champion_id").eq(attacker_champion_id.key()))
             .filter(FieldRef::new("defender_champion_id").eq(defender_champion_id.key()))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn page_battle_stacks(
@@ -183,8 +181,7 @@ pub(crate) fn list_battle_stacks(
     limit: u32,
 ) -> RepoResult<Vec<BattleStack>> {
     let limit = foundation::validate_list_limit(limit)?;
-    foundation::storage_result(
-        BATTLE_STACKS_BY_BATTLE_LOOKUP.name,
+    foundation::storage_operation(BATTLE_STACKS_BY_BATTLE_LOOKUP.name, || {
         crate::db()
             .load::<BattleStack>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
@@ -192,8 +189,8 @@ pub(crate) fn list_battle_stacks(
             .order_asc("slot_index")
             .order_asc("id")
             .limit(limit)
-            .entities(),
-    )
+            .entities()
+    })
 }
 
 pub(crate) fn update_battle_stack(stack: BattleStack) -> RepoResult<BattleStack> {
@@ -335,8 +332,7 @@ pub(crate) fn list_battle_obstacles(
     limit: u32,
 ) -> RepoResult<Vec<BattleObstacle>> {
     let limit = foundation::validate_list_limit(limit)?;
-    foundation::storage_result(
-        BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name,
+    foundation::storage_operation(BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name, || {
         crate::db()
             .load::<BattleObstacle>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
@@ -344,8 +340,8 @@ pub(crate) fn list_battle_obstacles(
             .order_asc("battle_y")
             .order_asc("id")
             .limit(limit)
-            .entities(),
-    )
+            .entities()
+    })
 }
 
 pub(crate) fn page_battle_occupancy(
@@ -372,8 +368,7 @@ pub(crate) fn list_battle_occupancy(
     limit: u32,
 ) -> RepoResult<Vec<BattleOccupancy>> {
     let limit = foundation::validate_list_limit(limit)?;
-    foundation::storage_result(
-        BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP.name,
+    foundation::storage_operation(BATTLE_OCCUPANCY_BY_BATTLE_LOOKUP.name, || {
         crate::db()
             .load::<BattleOccupancy>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
@@ -381,8 +376,8 @@ pub(crate) fn list_battle_occupancy(
             .order_asc("battle_y")
             .order_asc("id")
             .limit(limit)
-            .entities(),
-    )
+            .entities()
+    })
 }
 
 pub(crate) fn page_battle_stacks_by_side(
@@ -410,8 +405,7 @@ pub(crate) fn find_battle_occupancy_cell(
     battle_x: u8,
     battle_y: u8,
 ) -> RepoResult<Option<BattleOccupancy>> {
-    foundation::storage_result(
-        BATTLE_OCCUPANCY_CELL_LOOKUP.name,
+    foundation::storage_operation(BATTLE_OCCUPANCY_CELL_LOOKUP.name, || {
         crate::db()
             .load::<BattleOccupancy>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
@@ -419,8 +413,8 @@ pub(crate) fn find_battle_occupancy_cell(
             .filter(FieldRef::new("battle_y").eq(battle_y))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 #[cfg(test)]

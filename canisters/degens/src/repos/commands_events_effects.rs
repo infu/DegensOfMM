@@ -67,8 +67,7 @@ pub(crate) fn find_game_command_by_idempotency(
     actor_id_text: &str,
     client_nonce: u64,
 ) -> RepoResult<Option<GameCommand>> {
-    foundation::storage_result(
-        GAME_COMMAND_IDEMPOTENCY_LOOKUP.name,
+    foundation::storage_operation(GAME_COMMAND_IDEMPOTENCY_LOOKUP.name, || {
         crate::db()
             .load::<GameCommand>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
@@ -77,8 +76,8 @@ pub(crate) fn find_game_command_by_idempotency(
             .filter(FieldRef::new("client_nonce").eq(client_nonce))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn load_game_command(id: Id<GameCommand>) -> RepoResult<Option<GameCommand>> {
@@ -153,16 +152,15 @@ pub(crate) fn find_lobby_command_by_idempotency(
     actor_principal: Principal,
     client_nonce: u64,
 ) -> RepoResult<Option<LobbyCommand>> {
-    foundation::storage_result(
-        LOBBY_COMMAND_IDEMPOTENCY_LOOKUP.name,
+    foundation::storage_operation(LOBBY_COMMAND_IDEMPOTENCY_LOOKUP.name, || {
         crate::db()
             .load::<LobbyCommand>()
             .filter(FieldRef::new("actor_principal").eq(actor_principal))
             .filter(FieldRef::new("client_nonce").eq(client_nonce))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn load_lobby_command(id: Id<LobbyCommand>) -> RepoResult<Option<LobbyCommand>> {
@@ -209,8 +207,7 @@ pub(crate) fn events_after(
     limit: u32,
 ) -> RepoResult<Vec<GameEvent>> {
     let limit = foundation::validate_list_limit(limit)?;
-    foundation::storage_result(
-        EVENT_FEED_LOOKUP.name,
+    foundation::storage_operation(EVENT_FEED_LOOKUP.name, || {
         crate::db()
             .load::<GameEvent>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
@@ -219,8 +216,8 @@ pub(crate) fn events_after(
             .order_asc("event_seq")
             .order_asc("id")
             .limit(limit)
-            .entities(),
-    )
+            .entities()
+    })
 }
 
 pub(crate) fn events_by_type(
@@ -247,16 +244,15 @@ pub(crate) fn find_event_by_key(
     session_id: Id<GameSession>,
     event_key: &str,
 ) -> RepoResult<Option<GameEvent>> {
-    foundation::storage_result(
-        "events.by_session_event_key",
+    foundation::storage_operation("events.by_session_event_key", || {
         crate::db()
             .load::<GameEvent>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
             .filter(FieldRef::new("event_key").eq(event_key))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -294,24 +290,22 @@ pub(crate) fn find_command_effect(
     command_id: Id<GameCommand>,
     effect_key: &str,
 ) -> RepoResult<Option<CommandEffect>> {
-    foundation::storage_result(
-        "effects.command_effect_by_command_key",
+    foundation::storage_operation("effects.command_effect_by_command_key", || {
         crate::db()
             .load::<CommandEffect>()
             .filter(FieldRef::new("command_id").eq(command_id.key()))
             .filter(FieldRef::new("effect_key").eq(effect_key))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn find_applied_command_effect_by_session_key(
     session_id: Id<GameSession>,
     effect_key: &str,
 ) -> RepoResult<Option<CommandEffect>> {
-    foundation::storage_result(
-        COMMAND_EFFECT_SESSION_STATUS_LOOKUP.name,
+    foundation::storage_operation(COMMAND_EFFECT_SESSION_STATUS_LOOKUP.name, || {
         crate::db()
             .load::<CommandEffect>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
@@ -319,8 +313,8 @@ pub(crate) fn find_applied_command_effect_by_session_key(
             .filter(FieldRef::new("effect_key").eq(effect_key))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn create_applied_command_effect(
@@ -352,16 +346,15 @@ pub(crate) fn find_pending_effect(
     session_id: Id<GameSession>,
     effect_key: &str,
 ) -> RepoResult<Option<PendingEffect>> {
-    foundation::storage_result(
-        "effects.pending_by_session_key",
+    foundation::storage_operation("effects.pending_by_session_key", || {
         crate::db()
             .load::<PendingEffect>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
             .filter(FieldRef::new("effect_key").eq(effect_key))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -100,8 +100,7 @@ pub(crate) fn find_battle_round_ready(
     participant_id: Id<GameParticipant>,
     round_number: u16,
 ) -> RepoResult<Option<BattleParticipantRoundReady>> {
-    foundation::storage_result(
-        BATTLE_ROUND_READY_UNIQUE_LOOKUP.name,
+    foundation::storage_operation(BATTLE_ROUND_READY_UNIQUE_LOOKUP.name, || {
         crate::db()
             .load::<BattleParticipantRoundReady>()
             .filter(FieldRef::new("battle_id").eq(battle_id.key()))
@@ -109,8 +108,8 @@ pub(crate) fn find_battle_round_ready(
             .filter(FieldRef::new("round_number").eq(round_number))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 pub(crate) fn page_battle_round_ready(
@@ -138,15 +137,14 @@ pub(crate) fn page_battle_round_ready(
 pub(crate) fn find_battle_round_ready_by_command(
     command_id: Id<GameCommand>,
 ) -> RepoResult<Option<BattleParticipantRoundReady>> {
-    foundation::storage_result(
-        BATTLE_ROUND_READY_BY_COMMAND_LOOKUP.name,
+    foundation::storage_operation(BATTLE_ROUND_READY_BY_COMMAND_LOOKUP.name, || {
         crate::db()
             .load::<BattleParticipantRoundReady>()
             .filter(FieldRef::new("command_id").eq(command_id.key()))
             .order_asc("id")
             .limit(1)
-            .try_entity(),
-    )
+            .try_entity()
+    })
 }
 
 #[cfg(test)]

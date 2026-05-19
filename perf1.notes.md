@@ -950,3 +950,19 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-acted-ready cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-acted-ready2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_both_players_end_round_and_timer_catches_up -- --nocapture`
+
+## Checkpoint: CastAbility Fallback Decision
+
+Documented `CastAbility` as a rare row-backed fallback instead of moving it into runtime in this pass.
+
+Reasoning:
+
+- `CastAbility` is absent from the saved full benchmark suite artifacts under `target/benchmarks/20260519-063353-02c93e3`.
+- Gate M's client probe chooses enabled battle actions excluding `CastAbility`, so the main playable benchmark path is measuring normal attack/move/defend battle actions.
+- The canister path for `CastAbility` intentionally couples tactical state with champion mana, learned spell ownership, and command effect rows. Moving it to runtime would require a broader champion/spell aggregate decision, not just a battle-state patch.
+- The previous `end_battle_turn` runtime receipt/event attempt already showed the benchmark Wasm is close to the IC code-section limit, so adding a low-frequency spell runtime path is not the right next tradeoff.
+
+Decision:
+
+- Keep `CastAbility` row-backed for now.
+- Revisit only if a benchmark scenario starts casting battle spells often enough to show up in method or phase summaries.

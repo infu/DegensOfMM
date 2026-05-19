@@ -323,7 +323,7 @@ When a todo item is completed:
 - [x] Reuse the already-mutated aggregate for round readiness instead of reloading battle child state.
 - [x] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
 - [x] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
-- [ ] Move `CastAbility` off the row-backed tactical persist path or explicitly benchmark/document it as a rare fallback.
+- [x] Move `CastAbility` off the row-backed tactical persist path or explicitly benchmark/document it as a rare fallback. Decision: keep it as a documented rare fallback for now because the full suite does not exercise `CastAbility`, the client probe avoids it, and the spell path also mutates champion mana/spell/effect rows.
 - [x] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`. Gate K now passes and the active runtime event archive checkpoint brought `submit_battle_action` to 9.3621B avg, so the first `<10B` target is cleared. The remaining blocker is stable command/header/readiness/auth work, not tactical child-row mutation.
 
 ### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes

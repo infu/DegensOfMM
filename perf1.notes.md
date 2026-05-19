@@ -1963,3 +1963,40 @@ Decision:
 - Reject both versions and drop the code.
 - The eager version just moved cost from sync to submit, and the lazy version was measurement noise.
 - The next performance work should stop trying to shave this row-backed readiness path and instead move active `sync_session_turn` authority into the runtime aggregate.
+
+## Checkpoint: One-Page Current Turn Job Updates
+
+Changed `update_current_turn_jobs` from two status-specific pages (`running`, `scheduled`) to one session job page with Rust-side filtering for:
+
+- status `running` or `scheduled`;
+- job kind `turn_resolution` or `turn_deadline`;
+- the current turn number.
+
+Why this was safe enough:
+
+- It preserves the same status/kind/turn predicates before calling the existing update closure.
+- It reuses the existing `page_system_jobs_by_session` repository function.
+- It loops over cursors, so it is safer than the previous single-page-per-status implementation if a session ever has more than one page of jobs.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-current-turn-jobs-page cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync -- --nocapture` passed in `187.76s`.
+- Focused Gate J `20260519-151917-current-turn-job-page-gate-j` passed in `684.00s`.
+
+Measured delta versus `20260519-135856-movement-runtime-pending-gate-j`:
+
+| metric | runtime pending | one-page job updates | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 272.1560B | 266.5048B | -2.1% |
+| `sync_session_turn` avg | 13.8411B | 13.3267B | -3.7% |
+| `submit_move_intent` avg | 11.5097B | 11.5099B | flat |
+| `system_jobs.by_session_status_due` calls | 48 | 32 | -33.3% |
+| `system_jobs.by_session_status_due` total | 16.8968B | 11.2665B | -33.3% |
+
+Decision:
+
+- Keep this cut. It is a true route-level win and it does not move cost into submit.
+- The next nearby cut is the map-turn command guard in `ensure_map_turn_accepts_new_command`, which still scans status pages separately in the post-deadline branch.

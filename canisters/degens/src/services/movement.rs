@@ -1430,17 +1430,20 @@ fn update_current_turn_jobs<F>(
 where
     F: FnMut(SystemJob) -> Result<(), ApiError>,
 {
-    for status in [
-        system_job_repo::STATUS_RUNNING,
-        system_job_repo::STATUS_SCHEDULED,
-    ] {
-        let page = system_job_repo::page_system_jobs_by_session_status(
+    let mut cursor = None;
+    loop {
+        let page = system_job_repo::page_system_jobs_by_session(
             session_id,
-            status,
             domm_game::MAX_LIST_LIMIT,
-            None,
+            cursor,
         )?;
         for job in page.items {
+            if !matches!(
+                job.status.as_str(),
+                system_job_repo::STATUS_RUNNING | system_job_repo::STATUS_SCHEDULED
+            ) {
+                continue;
+            }
             if !matches!(job.job_kind.as_str(), "turn_resolution" | "turn_deadline") {
                 continue;
             }
@@ -1449,6 +1452,10 @@ where
             }
             update(job)?;
         }
+        let Some(next_cursor) = page.next_cursor else {
+            break;
+        };
+        cursor = Some(next_cursor);
     }
     Ok(())
 }

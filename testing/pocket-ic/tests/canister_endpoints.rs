@@ -3246,11 +3246,35 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
                 &fixture,
                 player_one,
                 "submit_battle_action",
-                (session_id.clone(), input.clone(), nonce),
+                (session_id.clone(), input.clone(), nonce.clone()),
             )
             .expect("battle action replay should decode")
             .expect("battle action replay should succeed");
             assert_eq!(replay.command_id, action.command_id);
+            let status_by_id = query_as::<CommandStatusView>(
+                &fixture,
+                player_one,
+                "get_command_status",
+                (session_id.clone(), action.command_id.clone()),
+            )
+            .expect("runtime battle action status by id should decode")
+            .expect("runtime battle action status by id should load");
+            assert_eq!(status_by_id.status, CommandStatus::Applied);
+            assert_eq!(status_by_id.command_id, action.command_id);
+            let status_by_nonce = query_as::<CommandStatusView>(
+                &fixture,
+                player_one,
+                "get_command_status_by_nonce",
+                (
+                    session_id.clone(),
+                    "submit_battle_action".to_string(),
+                    nonce.clone(),
+                ),
+            )
+            .expect("runtime battle action status by nonce should decode")
+            .expect("runtime battle action status by nonce should load");
+            assert_eq!(status_by_nonce.status, CommandStatus::Applied);
+            assert_eq!(status_by_nonce.command_id, action.command_id);
         }
         saw_auto_ready |= action
             .changed_subjects

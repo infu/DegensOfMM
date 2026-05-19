@@ -298,6 +298,41 @@ pub(crate) fn apply_command_with_result(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn runtime_command_response(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_id: String,
+    command_type: String,
+    client_nonce_text: &str,
+    payload_hash: String,
+    status: CommandStatus,
+    phase: CommandPhase,
+    retryable: bool,
+    events: Vec<ApiEventView>,
+    changed_subjects: Vec<ChangedSubject>,
+    result: CommandResult,
+    error: Option<ApiError>,
+) -> CommandResponse {
+    CommandResponse {
+        command_id,
+        command_type,
+        actor_principal: caller,
+        actor_participant_id: Some(context.participant.id().to_string()),
+        client_nonce: client_nonce_text.to_string(),
+        payload_hash,
+        status,
+        phase,
+        retryable,
+        effective_turn: context.session.current_turn,
+        durable_turn: context.session.current_turn,
+        events,
+        changed_subjects,
+        result,
+        error,
+    }
+}
+
 pub(crate) fn fail_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,

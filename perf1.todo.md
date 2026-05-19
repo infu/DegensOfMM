@@ -341,15 +341,15 @@ When a todo item is completed:
 
 ### 4. Gate 3: Move Active Battle Commands And Events Out Of Per-Action Stable Writes
 
-- [ ] Add active battle command receipt/idempotency storage inside `BattleRuntime` for battle actions.
-- [ ] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
-- [ ] Make `get_command_status` and `get_command_status_by_nonce` merge active runtime command receipts before falling back to durable `GameCommand` rows.
+- [x] Add active battle command receipt/idempotency storage inside `BattleRuntime` for battle actions.
+- [x] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
+- [x] Make `get_command_status` and `get_command_status_by_nonce` merge active runtime command receipts before falling back to durable `GameCommand` rows.
 - [x] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
 - [x] Precompute/use participant audience keys in runtime so active event fanout does not load champion/town owners per event.
 - [x] Keep resolved-battle runtime events visible through an in-memory session archive after runtime removal; defer bulk durable event flushing because a one-shot finalization flush exceeded the 40B single-message limit.
 - [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
 - [x] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands by reserving active event sequence blocks.
-- [ ] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`.
+- [x] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`. Focused Gate K `20260519-051826-gate-k-runtime-command-receipts` passed with `submit_battle_action` at 4.0563B avg, so this checkpoint did not clear Gate 3. The remaining measured blockers are `auth_context` at 2.1350B, `readiness_schedule` at 1.1899B, and `load_battle` at 0.7120B.
 
 ### 5. Gate 4: CPU And Runtime Data-Structure Pass
 

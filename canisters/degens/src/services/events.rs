@@ -142,6 +142,13 @@ pub(crate) fn get_command_status(
     let lobby_candidates = lobby_command_type_candidates(&command_id_or_client_nonce);
     let game_candidates = game_command_type_candidates(&command_id_or_client_nonce);
     if lobby_candidates.is_empty() {
+        if let Some(status) = runtime_submit_battle_command_status_by_nonce(
+            &context,
+            &command_id_or_client_nonce,
+            game_candidates,
+        ) {
+            return Ok(status);
+        }
         if let Some(command) =
             find_game_command_by_nonce(&context, &command_id_or_client_nonce, game_candidates)?
         {
@@ -164,6 +171,13 @@ pub(crate) fn get_command_status(
             lobby_candidates,
         )? {
             return Ok(lobby_status_view(command));
+        }
+        if let Some(status) = runtime_submit_battle_command_status_by_nonce(
+            &context,
+            &command_id_or_client_nonce,
+            game_candidates,
+        ) {
+            return Ok(status);
         }
         if let Some(command) =
             find_game_command_by_nonce(&context, &command_id_or_client_nonce, game_candidates)?
@@ -211,6 +225,19 @@ pub(crate) fn get_command_status_by_nonce(
         ));
     }
 
+    if command_type == "submit_battle_action" {
+        let nonce = nonce_u64(&command_type, &client_nonce);
+        let canonical_session_id = context.session.id().to_string();
+        let actor_participant_id = context.participant.id().to_string();
+        if let Some(receipt) = battle_runtime::command_receipt_by_nonce(
+            &canonical_session_id,
+            &actor_participant_id,
+            nonce,
+        ) {
+            return Ok(receipt.status_view());
+        }
+    }
+
     let command = find_game_command_by_nonce(&context, &client_nonce, &[command_type.as_str()])?;
     command.map(game_status_view).ok_or_else(|| {
         public_error(
@@ -219,6 +246,21 @@ pub(crate) fn get_command_status_by_nonce(
             false,
         )
     })
+}
+
+fn runtime_submit_battle_command_status_by_nonce(
+    context: &session_context::SessionCallerContext,
+    client_nonce: &str,
+    command_types: &[&str],
+) -> Option<CommandStatusView> {
+    if !command_types.contains(&"submit_battle_action") {
+        return None;
+    }
+    let nonce = nonce_u64("submit_battle_action", client_nonce);
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    battle_runtime::command_receipt_by_nonce(&canonical_session_id, &actor_participant_id, nonce)
+        .map(|receipt| receipt.status_view())
 }
 
 fn find_game_command_by_nonce(
@@ -374,6 +416,11 @@ fn command_status_by_id(
     actor_principal: Principal,
     value: &str,
 ) -> Result<Option<CommandStatusView>, ApiError> {
+    let canonical_session_id = context.session.id().to_string();
+    if let Some(receipt) = battle_runtime::command_receipt_by_id(&canonical_session_id, value) {
+        return Ok(Some(receipt.status_view()));
+    }
+
     let Ok(id) = Ulid::from_str(value) else {
         return Ok(None);
     };

@@ -374,6 +374,9 @@ thread_local! {
         RefCell::new(BTreeMap::new());
     static ARCHIVED_SESSION_RUNTIME_EVENTS: RefCell<BTreeMap<String, Vec<BattleRuntimeEvent>>> =
         RefCell::new(BTreeMap::new());
+    static ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS:
+        RefCell<BTreeMap<String, Vec<BattleRuntimeCommandReceipt>>> =
+            RefCell::new(BTreeMap::new());
 }
 
 pub(crate) fn contains_runtime(battle_id: &str) -> bool {
@@ -393,7 +396,12 @@ pub(crate) fn insert_runtime(runtime: BattleRuntime) -> Option<BattleRuntime> {
 }
 
 pub(crate) fn remove_runtime(battle_id: &str) -> Option<BattleRuntime> {
-    ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().remove(battle_id))
+    let removed = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().remove(battle_id));
+    if let Some(runtime) = removed.as_ref() {
+        archive_runtime_events(runtime);
+        archive_runtime_command_receipts(runtime);
+    }
+    removed
 }
 
 pub(crate) fn reserve_session_event_seq(session: &mut GameSession) -> Result<u64, ApiError> {
@@ -491,6 +499,62 @@ pub(crate) fn active_events_after(
     events
 }
 
+pub(crate) fn command_receipt_by_id(
+    session_id: &str,
+    command_id: &str,
+) -> Option<BattleRuntimeCommandReceipt> {
+    if let Some(receipt) = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .find_map(|runtime| runtime.command_receipts.get(command_id).cloned())
+    }) {
+        return Some(receipt);
+    }
+
+    ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| {
+        archived
+            .borrow()
+            .get(session_id)?
+            .iter()
+            .find(|receipt| receipt.command_id == command_id)
+            .cloned()
+    })
+}
+
+pub(crate) fn command_receipt_by_nonce(
+    session_id: &str,
+    actor_participant_id: &str,
+    client_nonce: u64,
+) -> Option<BattleRuntimeCommandReceipt> {
+    if let Some(receipt) = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .find_map(|runtime| {
+                runtime
+                    .command_receipt_by_nonce(actor_participant_id, client_nonce)
+                    .cloned()
+            })
+    }) {
+        return Some(receipt);
+    }
+
+    ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| {
+        archived
+            .borrow()
+            .get(session_id)?
+            .iter()
+            .find(|receipt| {
+                receipt.actor_participant_id == actor_participant_id
+                    && receipt.client_nonce == client_nonce
+            })
+            .cloned()
+    })
+}
+
 pub(crate) fn archive_runtime_events(runtime: &BattleRuntime) {
     let events = runtime
         .active_events
@@ -516,6 +580,25 @@ pub(crate) fn archive_runtime_events(runtime: &BattleRuntime) {
     });
 }
 
+pub(crate) fn archive_runtime_command_receipts(runtime: &BattleRuntime) {
+    if runtime.command_receipts.is_empty() {
+        return;
+    }
+    ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| {
+        let mut archived = archived.borrow_mut();
+        let session_receipts = archived.entry(runtime.session_id.clone()).or_default();
+        let mut existing_ids = session_receipts
+            .iter()
+            .map(|receipt| receipt.command_id.clone())
+            .collect::<BTreeSet<_>>();
+        for receipt in runtime.command_receipts.values() {
+            if existing_ids.insert(receipt.command_id.clone()) {
+                session_receipts.push(receipt.clone());
+            }
+        }
+    });
+}
+
 pub(crate) fn snapshot_for_upgrade() -> BattleRuntimeSnapshot {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| BattleRuntimeSnapshot {
         runtimes: runtimes.borrow().values().cloned().collect(),
@@ -536,6 +619,7 @@ pub(crate) fn clear_all_for_tests() {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
     ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| blocks.borrow_mut().clear());
     ARCHIVED_SESSION_RUNTIME_EVENTS.with(|events| events.borrow_mut().clear());
+    ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|receipts| receipts.borrow_mut().clear());
 }
 
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {

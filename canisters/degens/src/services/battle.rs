@@ -6,8 +6,8 @@ use domm_degens_schema::schema::{
 };
 use domm_game::{
     ApiError, BattleActionInput, BattleActionReceipt, BattleCommandBudget, BattleCoord,
-    BattleError, BattleStackRecord, BattleSyncOutcome, BattleView, CommandResponse, CommandResult,
-    LegalBattleAction, RollKey, legal_actions_for_stack,
+    BattleError, BattleStackRecord, BattleSyncOutcome, BattleView, CommandPhase, CommandResponse,
+    CommandResult, CommandStatus, LegalBattleAction, RollKey, legal_actions_for_stack,
 };
 use icydb::{
     traits::EntityValue,
@@ -21,7 +21,9 @@ use crate::repos::{
 
 use super::{
     battle_aftermath, battle_rows,
-    battle_runtime::{self, BattleRuntime, BattleRuntimeEvent, BattleRuntimeReadyKey},
+    battle_runtime::{
+        self, BattleRuntime, BattleRuntimeCommandReceipt, BattleRuntimeEvent, BattleRuntimeReadyKey,
+    },
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
     system_jobs as system_job_service,
@@ -35,6 +37,15 @@ const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
     (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
 const CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT: usize = 16;
 const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
+
+#[derive(Clone, Debug)]
+struct RuntimeBattleCommandContext {
+    command_id: String,
+    client_nonce_text: String,
+    client_nonce: u64,
+    payload_hash: String,
+    created_at_ms: u64,
+}
 
 pub(crate) fn schedule_battle_timeout_job(
     session_id: Id<GameSession>,
@@ -1044,6 +1055,19 @@ pub(crate) fn submit_battle_action(
     if battle.state == "active" {
         battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
     }
+    if battle.state == "active"
+        && input.action != "CastAbility"
+        && let Some(response) = submit_runtime_battle_action(
+            caller,
+            &mut context,
+            &battle,
+            &input,
+            &client_nonce,
+            now_ms,
+        )?
+    {
+        return Ok(response);
+    }
     let command =
         match crate::metrics::benchmark_phase("submit_battle_action", "command_begin", || {
             let payload_json = battle_action_payload_json(&input);
@@ -1187,6 +1211,273 @@ pub(crate) fn submit_battle_action(
             CommandResult::BattleAction(receipt),
         )
     })
+}
+
+enum RuntimeBattleCommandAction {
+    Apply(RuntimeBattleCommandContext),
+    Return(CommandResponse),
+}
+
+fn submit_runtime_battle_action(
+    caller: CandidPrincipal,
+    context: &mut session_context::SessionCallerContext,
+    battle: &Battle,
+    input: &BattleActionInput,
+    client_nonce: &str,
+    now_ms: u64,
+) -> Result<Option<CommandResponse>, ApiError> {
+    let battle_id_text = battle.id().to_string();
+    let Some(runtime) =
+        crate::metrics::benchmark_phase("submit_battle_action", "load_battle_state", || {
+            battle_runtime::with_runtime(&battle_id_text, Clone::clone)
+        })
+    else {
+        return Ok(None);
+    };
+    if runtime.session_id != context.session.id().to_string() {
+        return Ok(None);
+    }
+    if runtime_battle_timeout_due_without_submit_grace(&runtime, input, now_ms)? {
+        return Ok(None);
+    }
+
+    let command =
+        match crate::metrics::benchmark_phase("submit_battle_action", "command_begin", || {
+            begin_runtime_battle_command(caller, context, battle, input, client_nonce)
+        })? {
+            RuntimeBattleCommandAction::Apply(command) => command,
+            RuntimeBattleCommandAction::Return(response) => return Ok(Some(response)),
+        };
+
+    crate::metrics::benchmark_phase(
+        "submit_battle_action",
+        "recovery",
+        || Ok::<(), ApiError>(()),
+    )?;
+    crate::metrics::benchmark_phase("submit_battle_action", "timeout", || Ok::<(), ApiError>(()))?;
+    let normalized_input =
+        crate::metrics::benchmark_phase("submit_battle_action", "normalize_input", || {
+            normalize_battle_action_input(&context.session, input)
+        })?;
+
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    let response_participant_id = context.participant.id().to_string();
+    let action_result = apply_player_action_from_runtime_parts(
+        &mut context.session,
+        &response_participant_id,
+        &command,
+        &normalized_input,
+        now_ms,
+        &response_participant_id,
+        &mut events,
+        &mut changed_subjects,
+        runtime,
+    );
+
+    let response = match action_result {
+        Ok(receipt) => {
+            crate::metrics::benchmark_phase("submit_battle_action", "readiness_schedule", || {
+                if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
+                    context.session.id(),
+                    battle.id(),
+                    None,
+                    true,
+                    true,
+                )? {
+                    changed_subjects.extend(readiness.changed_subjects);
+                }
+                Ok::<(), ApiError>(())
+            })?;
+            let result = CommandResult::BattleAction(receipt);
+            crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
+                Ok::<CommandResponse, ApiError>(command_response::runtime_command_response(
+                    caller,
+                    context,
+                    command.command_id.clone(),
+                    "submit_battle_action".to_string(),
+                    &command.client_nonce_text,
+                    command.payload_hash.clone(),
+                    CommandStatus::Applied,
+                    CommandPhase::Complete,
+                    false,
+                    events,
+                    changed_subjects,
+                    result,
+                    None,
+                ))
+            })?
+        }
+        Err(error) => {
+            let retryable = error.retryable;
+            crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
+                Ok::<CommandResponse, ApiError>(command_response::runtime_command_response(
+                    caller,
+                    context,
+                    command.command_id.clone(),
+                    "submit_battle_action".to_string(),
+                    &command.client_nonce_text,
+                    command.payload_hash.clone(),
+                    CommandStatus::Failed,
+                    CommandPhase::Failed,
+                    retryable,
+                    Vec::new(),
+                    Vec::new(),
+                    CommandResult::None,
+                    Some(error),
+                ))
+            })?
+        }
+    };
+
+    insert_runtime_battle_command_receipt(
+        &battle_id_text,
+        &response_participant_id,
+        command,
+        response.clone(),
+    );
+    Ok(Some(response))
+}
+
+fn begin_runtime_battle_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    battle: &Battle,
+    input: &BattleActionInput,
+    client_nonce_text: &str,
+) -> Result<RuntimeBattleCommandAction, ApiError> {
+    let payload_json = battle_action_payload_json(input);
+    let client_nonce = command_response::nonce_u64("submit_battle_action", client_nonce_text);
+    let payload_hash = command_response::payload_hash(
+        "submit_battle_action",
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        let response = runtime_battle_failed_response(
+            caller,
+            context,
+            Ulid::generate().to_string(),
+            client_nonce_text,
+            payload_hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        );
+        return Ok(RuntimeBattleCommandAction::Return(response));
+    }
+
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    if let Some(existing) = battle_runtime::command_receipt_by_nonce(
+        &canonical_session_id,
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != payload_hash {
+            let response = runtime_battle_failed_response(
+                caller,
+                context,
+                Ulid::generate().to_string(),
+                client_nonce_text,
+                payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            );
+            return Ok(RuntimeBattleCommandAction::Return(response));
+        }
+        return Ok(RuntimeBattleCommandAction::Return(existing.response));
+    }
+
+    ensure_battle_round_accepts_new_action(
+        context.session.id(),
+        battle.id(),
+        context.participant.id(),
+        battle.current_round,
+    )?;
+
+    Ok(RuntimeBattleCommandAction::Apply(
+        RuntimeBattleCommandContext {
+            command_id: Ulid::generate().to_string(),
+            client_nonce_text: client_nonce_text.to_string(),
+            client_nonce,
+            payload_hash,
+            created_at_ms: Timestamp::now().as_millis().try_into().unwrap_or(0),
+        },
+    ))
+}
+
+fn runtime_battle_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce_text: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
+        caller,
+        context,
+        command_id,
+        "submit_battle_action".to_string(),
+        client_nonce_text,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    )
+}
+
+fn insert_runtime_battle_command_receipt(
+    battle_id: &str,
+    actor_participant_id: &str,
+    command: RuntimeBattleCommandContext,
+    response: CommandResponse,
+) {
+    let receipt = BattleRuntimeCommandReceipt {
+        command_id: command.command_id,
+        command_type: "submit_battle_action".to_string(),
+        actor_participant_id: actor_participant_id.to_string(),
+        client_nonce_text: command.client_nonce_text,
+        client_nonce: command.client_nonce,
+        payload_hash: command.payload_hash,
+        response,
+    };
+    battle_runtime::with_runtime_mut(battle_id, |runtime| {
+        runtime.insert_command_receipt(receipt);
+    });
+}
+
+fn runtime_battle_timeout_due_without_submit_grace(
+    runtime: &BattleRuntime,
+    input: &BattleActionInput,
+    now_ms: u64,
+) -> Result<bool, ApiError> {
+    let battle = runtime
+        .state
+        .battle(&runtime.battle_id)
+        .map_err(map_battle_error)?;
+    let Some(deadline_ms) = battle.action_deadline_at else {
+        return Ok(false);
+    };
+    if deadline_ms > now_ms {
+        return Ok(false);
+    }
+    let grace_applies = now_ms
+        <= deadline_ms.saturating_add(CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS)
+        && battle.active_stack_id.as_deref() == Some(input.battle_stack_id.as_str());
+    Ok(!grace_applies)
 }
 
 fn normalize_battle_action_input(
@@ -2283,6 +2574,38 @@ fn apply_player_action_from_runtime(
     response_participant_id: &str,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+    runtime: BattleRuntime,
+) -> Result<BattleActionReceipt, ApiError> {
+    let command_context = RuntimeBattleCommandContext {
+        command_id: command.id().to_string(),
+        client_nonce_text: command.client_nonce.to_string(),
+        client_nonce: command.client_nonce,
+        payload_hash: command.payload_hash.clone(),
+        created_at_ms: command.created_at.as_millis().try_into().unwrap_or(0),
+    };
+    apply_player_action_from_runtime_parts(
+        session,
+        participant_id,
+        &command_context,
+        input,
+        now_ms,
+        response_participant_id,
+        events,
+        changed_subjects,
+        runtime,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_player_action_from_runtime_parts(
+    session: &mut GameSession,
+    participant_id: &str,
+    command: &RuntimeBattleCommandContext,
+    input: &BattleActionInput,
+    now_ms: u64,
+    response_participant_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
     mut runtime: BattleRuntime,
 ) -> Result<BattleActionReceipt, ApiError> {
     crate::metrics::benchmark_phase("submit_battle_action", "validate_action", || {
@@ -2294,8 +2617,11 @@ fn apply_player_action_from_runtime(
             CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
         )
     })?;
-    let battle_command = battle_rows::battle_action_command(
-        &command,
+    let battle_command = battle_rows::battle_action_command_from_parts(
+        &command.command_id,
+        command.client_nonce.to_string(),
+        command.payload_hash.clone(),
+        command.created_at_ms,
         &input.battle_id,
         Some(participant_id.to_string()),
         input.battle_stack_id.clone(),
@@ -2306,7 +2632,7 @@ fn apply_player_action_from_runtime(
     );
     runtime.state.commands.push(battle_command);
     crate::metrics::benchmark_phase("submit_battle_action", "apply_rules", || {
-        domm_game::apply_battle_command_by_id(&mut runtime.state, &command.id().to_string(), now_ms)
+        domm_game::apply_battle_command_by_id(&mut runtime.state, &command.command_id, now_ms)
             .map_err(map_battle_error)
     })?;
     crate::metrics::benchmark_phase("submit_battle_action", "persist_battle_state", || {
@@ -2315,15 +2641,15 @@ fn apply_player_action_from_runtime(
     crate::metrics::benchmark_phase("submit_battle_action", "event_fanout", || {
         append_new_runtime_battle_events(
             session,
-            command.id(),
+            &command.command_id,
             &mut runtime,
             Some(response_participant_id),
             events,
         )
     })?;
     refresh_runtime_metadata_from_state(&mut runtime, session, &input.battle_id)?;
-    let receipt = battle_action_receipt(&runtime.state, &command.id().to_string())
-        .map_err(map_battle_error)?;
+    let receipt =
+        battle_action_receipt(&runtime.state, &command.command_id).map_err(map_battle_error)?;
     trim_runtime_transient_battle_history(&mut runtime);
     battle_runtime::insert_runtime(runtime);
     changed_subjects.push(command_response::changed(
@@ -3051,9 +3377,10 @@ fn apply_system_battle_action_from_runtime(
     )
     .map_err(map_battle_error)?;
     battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
+    let command_id_text = command.id().to_string();
     append_new_runtime_battle_events(
         session,
-        command.id(),
+        &command_id_text,
         &mut runtime,
         response_participant_id,
         events,
@@ -3647,7 +3974,7 @@ fn append_new_battle_events(
 
 fn append_new_runtime_battle_events(
     session: &mut GameSession,
-    command_id: Id<GameCommand>,
+    command_id: &str,
     runtime: &mut BattleRuntime,
     response_participant_id: Option<&str>,
     events: &mut Vec<domm_game::ApiEventView>,

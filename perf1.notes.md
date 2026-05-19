@@ -626,3 +626,69 @@ Decision:
 
 - Event fanout is no longer a meaningful submit blocker: 1.2526B -> 0.0171B avg.
 - The next cuts should target durable command lifecycle (`command_begin`, `mark_command_applying`, `final_response`) and recovery scanning, or reduce auth/session lookup cost.
+
+### Runtime Command Receipt Cut
+
+Moved active non-spell battle action command idempotency and status onto `BattleRuntime`.
+
+Changes made:
+
+- Active non-spell `submit_battle_action` now uses runtime command receipts instead of creating a durable `GameCommand` row, updating it to `applying`, scanning applying commands, and updating it complete.
+- Runtime receipts store the command id, command type, actor participant, nonce text/hash, payload hash, and the full `CommandResponse`.
+- Replays of the same nonce/payload return the runtime receipt without mutating battle state.
+- Same nonce/different payload returns the existing duplicate nonce failure.
+- `get_command_status` and `get_command_status_by_nonce` now check active and archived runtime receipts before durable `GameCommand` rows.
+- Runtime command receipts are archived in heap when a runtime battle is removed, matching the previous active event archive pattern.
+- The row-backed command path remains for `CastAbility`, due-timeout fallback, and missing-runtime compatibility.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-command-status cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
+Focused benchmark:
+
+```text
+run id: 20260519-051826-gate-k-runtime-command-receipts
+artifact: target/benchmarks/20260519-051826-gate-k-runtime-command-receipts/gate-k/summary.json
+note: summary git_sha is 6fc9e0a because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| passed | 88 | 118 | 229 | 1025 | 150401 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 26 | 4.0563B | 4.4771B | 0.01 MB | 0.0041T |
+| `sync_battle` | update | 29 | 9.7519B | 36.1259B | 37.01 MB | 0.0102T |
+| `get_battle_state` | query | 50 | n/a | n/a | 0 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 26 | 2.1350B |
+| `readiness_schedule` | 26 | 1.1899B |
+| `load_battle` | 26 | 0.7120B |
+| `event_fanout` | 26 | 0.0184B |
+| `apply_rules` | 26 | 0.0003B |
+| `load_battle_state` | 26 | 0.0003B |
+| `command_begin` | 26 | 0.0001B |
+| `validate_action` | 26 | 0.0001B |
+| `final_response` | 26 | 0.0000B |
+| `recovery` | 26 | 0.0000B |
+| `timeout` | 26 | 0.0000B |
+| `persist_battle_state` | 26 | 0.0000B |
+
+Decision:
+
+- Durable command lifecycle is no longer a submit blocker: `command_begin`, `mark_command_applying`, `recovery`, and `final_response` dropped from about 2.8582B combined to effectively zero in the active runtime path.
+- The checkpoint did not clear the `<1B` Gate 3 target because `auth_context`, `readiness_schedule`, and `load_battle` still total about 4.0369B.
+- The next practical cuts are: avoid durable session/participant reload in auth for battle actions, stop loading the durable `Battle` row before runtime submit, and move timeout/round scheduling fully out of the per-action readiness path.

@@ -139,19 +139,48 @@ pub(crate) fn battle_action_command(
     destination: Option<domm_game::BattleCoord>,
     system: bool,
 ) -> BattleCommandRecord {
+    battle_action_command_from_parts(
+        &command.id().to_string(),
+        command.client_nonce.to_string(),
+        command.payload_hash.clone(),
+        command.created_at.as_millis().try_into().unwrap_or(0),
+        battle_id,
+        participant_id,
+        stack_id,
+        action,
+        target_stack_id,
+        destination,
+        system,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn battle_action_command_from_parts(
+    command_id: &str,
+    client_nonce: String,
+    payload_hash: String,
+    created_at: u64,
+    battle_id: &str,
+    participant_id: Option<String>,
+    stack_id: String,
+    action: String,
+    target_stack_id: Option<String>,
+    destination: Option<domm_game::BattleCoord>,
+    system: bool,
+) -> BattleCommandRecord {
     BattleCommandRecord {
-        command_id: command.id().to_string(),
+        command_id: command_id.to_string(),
         battle_id: battle_id.to_string(),
         actor_participant_id: participant_id,
         battle_stack_id: Some(stack_id),
-        client_nonce: command.client_nonce.to_string(),
-        payload_hash: command.payload_hash.clone(),
+        client_nonce,
+        payload_hash,
         action,
         target_stack_id,
         destination,
         system,
         status: "applying".to_string(),
-        created_at: command.created_at.as_millis().try_into().unwrap_or(0),
+        created_at,
         applied_at: None,
         retryable_error: None,
     }

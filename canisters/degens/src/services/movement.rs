@@ -18,7 +18,7 @@ use crate::repos::{
 };
 
 use super::{
-    battle as battle_service, battle_start,
+    battle as battle_service, battle_runtime, battle_start,
     command_response::{self, GameCommandAction},
     economy_expansion, scenario_progress,
     session_context::{self, public_error},
@@ -2605,6 +2605,7 @@ fn start_neutral_battle(
             ensure_neutral_battle_started_effect(
                 session, command_id, &existing, neutral_id, object_id,
             )?;
+            battle_runtime::adopt_active_battle_from_rows(session, existing.clone())?;
             return Ok(Some(existing));
         }
     }
@@ -2698,6 +2699,7 @@ fn continue_neutral_battle_start(
             ensure_neutral_battle_started_effect(
                 session, command_id, &battle, neutral_id, object_id,
             )?;
+            battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
             Ok(None)
         }
         _ => Ok(None),

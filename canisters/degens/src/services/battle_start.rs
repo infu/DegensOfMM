@@ -9,7 +9,9 @@ use icydb::{
 
 use crate::repos::{battles, champions_artifacts, content, towns};
 
-use super::{battle as battle_service, command_response, session_context::public_error};
+use super::{
+    battle as battle_service, battle_runtime, command_response, session_context::public_error,
+};
 
 pub(crate) fn start_champion_battle(
     session: &GameSession,
@@ -28,6 +30,7 @@ pub(crate) fn start_champion_battle(
                     session, command_id, existing, attacker, defender,
                 );
             }
+            battle_runtime::adopt_active_battle_from_rows(session, existing.clone())?;
             return Ok(Some(existing));
         }
     }
@@ -109,6 +112,7 @@ fn continue_champion_battle_start(
             battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
             battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+            battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
             Ok(Some(battle))
         }
         _ => Ok(None),
@@ -125,6 +129,7 @@ pub(crate) fn start_town_battle(
 ) -> Result<Battle, ApiError> {
     if let Some(existing) = battles::find_battle_by_attacker(attacker.id())? {
         if existing.state == "active" && existing.defender_town_id == Some(town.id().key()) {
+            battle_runtime::adopt_active_battle_from_rows(session, existing.clone())?;
             return Ok(existing);
         }
     }
@@ -162,6 +167,7 @@ pub(crate) fn start_town_battle(
     } else {
         let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
         battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+        battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
         Ok(battle)
     }
 }

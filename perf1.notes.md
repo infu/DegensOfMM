@@ -202,6 +202,22 @@ Verified:
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
 - `cargo check -p domm-degens-canister`
 
+### Runtime Adoption And Row Hydration
+
+Added active runtime adoption without changing command execution yet.
+
+Checkpoint scope:
+
+- `battle_runtime::hydrate_runtime_from_rows` builds `BattleRuntime` from existing durable `Battle`/stack/obstacle/occupancy rows through the current `battle_rows` loader.
+- `battle_runtime::adopt_active_battle_from_rows` inserts a runtime for active battles only, and is idempotent when runtime already exists.
+- Champion battle start, town battle start, and neutral battle start now adopt runtime once the battle reaches `active`.
+- Existing active champion/town/neutral battles encountered by start paths are also adopted, which covers row-backed active battles created before this checkpoint.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

@@ -16,8 +16,12 @@ use candid::CandidType;
 use canic_cdk::structures::{
     Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
 };
+use domm_degens_schema::schema::{Battle, GameSession};
 use domm_game::{ApiEventView, BattleState, CommandResponse, CommandStatusView};
+use icydb::traits::EntityValue;
 use serde::{Deserialize, Serialize};
+
+use super::battle_rows;
 
 pub(crate) const BATTLE_RUNTIME_MEMORY_ID: u8 = 23;
 const MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES: u32 = 32 * 1024 * 1024;
@@ -156,6 +160,69 @@ impl BattleRuntime {
             round_number,
         });
         self.mark_dirty();
+    }
+}
+
+pub(crate) fn build_runtime_from_loaded_state(
+    session: &GameSession,
+    battle: &Battle,
+    state: BattleState,
+) -> BattleRuntime {
+    let deadline_ms = battle
+        .action_deadline_at
+        .and_then(|deadline| u64::try_from(deadline.as_millis()).ok());
+    let mut runtime = BattleRuntime::new(
+        session.id().to_string(),
+        battle.id().to_string(),
+        state,
+        session.next_event_seq,
+    );
+    runtime.deadline = BattleRuntimeDeadline {
+        action_deadline_at_ms: deadline_ms,
+        timeout_job_key: deadline_ms
+            .map(|deadline| format!("battle_timeout:{}:{deadline}", battle.id())),
+        round_job_key: None,
+    };
+    hydrate_participant_audience_keys(&mut runtime);
+    runtime
+}
+
+pub(crate) fn hydrate_runtime_from_rows(
+    session: &GameSession,
+    battle: Battle,
+) -> Result<BattleRuntime, domm_game::ApiError> {
+    let state = battle_rows::load_battle_state_from_row(session, battle.clone())?;
+    Ok(build_runtime_from_loaded_state(session, &battle, state))
+}
+
+pub(crate) fn adopt_active_battle_from_rows(
+    session: &GameSession,
+    battle: Battle,
+) -> Result<bool, domm_game::ApiError> {
+    if battle.state != "active" {
+        return Ok(false);
+    }
+    let battle_id = battle.id().to_string();
+    if contains_runtime(&battle_id) {
+        return Ok(false);
+    }
+    let runtime = hydrate_runtime_from_rows(session, battle)?;
+    insert_runtime(runtime);
+    Ok(true)
+}
+
+fn hydrate_participant_audience_keys(runtime: &mut BattleRuntime) {
+    let participant_ids = runtime
+        .state
+        .stacks
+        .iter()
+        .filter_map(|stack| stack.owner_participant_id.clone())
+        .collect::<BTreeSet<_>>();
+    for participant_id in participant_ids {
+        runtime
+            .participant_audience_keys
+            .entry(participant_id.clone())
+            .or_insert_with(|| BattleRuntimeAudience::participant(participant_id));
     }
 }
 

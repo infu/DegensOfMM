@@ -651,6 +651,12 @@ pub(crate) fn get_my_participant(
     let player = require_player(caller)?;
     let session = load_session_from_text(&session_id)?;
     let participant = require_participant_for_player(session.id(), player.id())?;
+    if let Some(runtime_participant) = session_turn_runtime::participant_snapshot(
+        &session.id().to_string(),
+        &participant.id().to_string(),
+    ) {
+        return participant_view(&runtime_participant);
+    }
     participant_view(&participant)
 }
 

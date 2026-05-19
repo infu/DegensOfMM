@@ -18,7 +18,10 @@ use crate::repos::{
     champions_artifacts, content, foundation, map_visibility_occupancy, neutrals, sessions, towns,
 };
 
-use super::session_context::{SessionCallerContext, public_error};
+use super::{
+    session_context::{SessionCallerContext, public_error},
+    session_turn_runtime,
+};
 
 const MAX_OWNED_CHAMPIONS_VIEW: u32 = 16;
 
@@ -190,6 +193,11 @@ pub(crate) fn my_champions(context: &SessionCallerContext) -> Result<Vec<Champio
             else {
                 continue;
             };
+            let champion = session_turn_runtime::champion_snapshot(
+                &context.session.id().to_string(),
+                &champion.id().to_string(),
+            )
+            .unwrap_or(champion);
             if champion.session_id != context.session.id().key()
                 || champion.participant_id != context.participant.id().key()
                 || champion.status != "active"
@@ -942,7 +950,8 @@ fn world_object_list_view(
 fn live_world_objects_by_coord(
     session_id: Id<GameSession>,
 ) -> Result<BTreeMap<(u16, u16), WorldObject>, ApiError> {
-    Ok(map_visibility_occupancy::page_world_objects_by_session(
+    let session_id_text = session_id.to_string();
+    let mut objects = map_visibility_occupancy::page_world_objects_by_session(
         session_id,
         domm_game::MAX_LIST_LIMIT,
         None,
@@ -950,7 +959,11 @@ fn live_world_objects_by_coord(
     .items
     .into_iter()
     .map(|object| ((object.x, object.y), object))
-    .collect())
+    .collect::<BTreeMap<_, _>>();
+    for object in session_turn_runtime::world_object_snapshots(&session_id_text) {
+        objects.insert((object.x, object.y), object);
+    }
+    Ok(objects)
 }
 
 fn is_visible_for_projection(
@@ -1000,7 +1013,14 @@ fn fast_champion_for_known(
     subject: &ObjectSubject,
 ) -> Result<Option<Champion>, ApiError> {
     if let Ok(id) = Ulid::from_str(&subject.subject_id_text).map(Id::<Champion>::from_key) {
-        return champions_artifacts::load_champion(id);
+        let champion = session_turn_runtime::champion_snapshot(
+            &context.session.id().to_string(),
+            &id.to_string(),
+        );
+        return match champion {
+            Some(champion) => Ok(Some(champion)),
+            None => champions_artifacts::load_champion(id),
+        };
     }
     if scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
         for champion_id in &context.participant.champion_ids {
@@ -1009,6 +1029,11 @@ fn fast_champion_for_known(
             else {
                 continue;
             };
+            let champion = session_turn_runtime::champion_snapshot(
+                &context.session.id().to_string(),
+                &champion.id().to_string(),
+            )
+            .unwrap_or(champion);
             if champion.session_id == context.session.id().key()
                 && champion.participant_id == context.participant.id().key()
             {
@@ -1431,11 +1456,16 @@ fn world_object_view(
 }
 
 fn live_world_object_for_subject(
-    _session_id: Id<GameSession>,
+    session_id: Id<GameSession>,
     subject_id_text: &str,
     world_objects_by_key: &BTreeMap<String, WorldObject>,
 ) -> Result<Option<WorldObject>, ApiError> {
     if let Ok(id) = Ulid::from_str(subject_id_text).map(Id::<WorldObject>::from_key) {
+        if let Some(object) =
+            session_turn_runtime::world_object_by_id(&session_id.to_string(), &id.to_string())
+        {
+            return Ok(Some(object));
+        }
         return map_visibility_occupancy::load_world_object(id);
     }
     if let Some(object) = world_objects_by_key.get(subject_id_text) {
@@ -1449,7 +1479,17 @@ fn live_world_object_for_known(
     subject: &ObjectSubject,
 ) -> Result<Option<WorldObject>, ApiError> {
     if let Ok(id) = Ulid::from_str(&subject.subject_id_text).map(Id::<WorldObject>::from_key) {
+        if let Some(object) =
+            session_turn_runtime::world_object_by_id(&session_id.to_string(), &id.to_string())
+        {
+            return Ok(Some(object));
+        }
         return map_visibility_occupancy::load_world_object(id);
+    }
+    if let Some(runtime_result) =
+        session_turn_runtime::world_object_at(&session_id.to_string(), subject.x, subject.y)
+    {
+        return Ok(runtime_result);
     }
     map_visibility_occupancy::find_world_object_by_session_xy(session_id, subject.x, subject.y)
 }
@@ -1633,6 +1673,11 @@ fn json_string_field(json: Option<&str>, field: &str) -> Option<String> {
 
 fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion, ApiError> {
     if let Ok(id) = Ulid::from_str(champion_id).map(Id::<Champion>::from_key) {
+        if let Some(champion) =
+            session_turn_runtime::champion_snapshot(&session.id().to_string(), &id.to_string())
+        {
+            return Ok(champion);
+        }
         return champions_artifacts::load_champion(id)?
             .ok_or_else(|| public_error("not_found", "champion not found", false));
     }

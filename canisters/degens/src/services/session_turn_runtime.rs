@@ -12,7 +12,7 @@ use std::{
 };
 
 use domm_degens_schema::schema::{
-    Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
+    Champion, GameCommand, GameParticipant, GameSession, MovementIntent, WorldObject,
 };
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 use icydb::{traits::EntityValue, types::Id};
@@ -36,6 +36,7 @@ pub(crate) struct SessionTurnRuntime {
     pub participants: Vec<SessionTurnParticipant>,
     pub ready_participants: BTreeSet<String>,
     pub champion_snapshots: Vec<Champion>,
+    pub world_object_snapshots: Vec<WorldObject>,
     pub occupancy_index: Vec<RuntimeOccupancyCell>,
     pub contact_index: Vec<RuntimeContactCell>,
     pub intents: Vec<RuntimeMovementIntent>,
@@ -71,6 +72,7 @@ impl SessionTurnRuntime {
             participants: Vec::new(),
             ready_participants: BTreeSet::new(),
             champion_snapshots: Vec::new(),
+            world_object_snapshots: Vec::new(),
             occupancy_index: Vec::new(),
             contact_index: Vec::new(),
             intents: Vec::new(),
@@ -125,6 +127,20 @@ impl SessionTurnRuntime {
             self.champion_snapshots.push(champion);
         }
         self.dirty.champion_snapshots = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_world_object_snapshot(&mut self, object: WorldObject) {
+        if let Some(existing) = self
+            .world_object_snapshots
+            .iter_mut()
+            .find(|existing| existing.id() == object.id())
+        {
+            *existing = object;
+        } else {
+            self.world_object_snapshots.push(object);
+        }
+        self.dirty.world_object_snapshots = true;
         self.mark_dirty();
     }
 
@@ -228,6 +244,18 @@ impl SessionTurnRuntime {
     pub(crate) fn push_event(&mut self, event: SessionTurnEvent) {
         self.active_events.push(event);
         self.dirty.events = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn push_resource_delta(&mut self, delta: ResourceTurnDelta) {
+        self.resource_deltas.push(delta);
+        self.dirty.resource_deltas = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn push_object_delta(&mut self, delta: ObjectTurnDelta) {
+        self.object_deltas.push(delta);
+        self.dirty.object_deltas = true;
         self.mark_dirty();
     }
 }
@@ -406,6 +434,7 @@ pub(crate) struct SessionTurnDirtySets {
     pub participants: bool,
     pub ready: bool,
     pub champion_snapshots: bool,
+    pub world_object_snapshots: bool,
     pub occupancy_index: bool,
     pub contact_index: bool,
     pub intents: bool,
@@ -506,6 +535,203 @@ pub(crate) fn mirror_champion_update(champion: &Champion) {
     });
 }
 
+pub(crate) fn mirror_participant_update(participant: &GameParticipant) {
+    let session_id = Id::<GameSession>::from_key(participant.session_id).to_string();
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        for runtime in runtimes
+            .values_mut()
+            .filter(|runtime| runtime.session_id == session_id)
+        {
+            let principal_text = runtime
+                .participants
+                .iter()
+                .find(|existing| existing.participant_id == participant.id().to_string())
+                .and_then(|existing| existing.principal_text.clone());
+            runtime.upsert_participant(SessionTurnParticipant {
+                participant_id: participant.id().to_string(),
+                player_id: Id::<domm_degens_schema::schema::PlayerAccount>::from_key(
+                    participant.player_id,
+                )
+                .to_string(),
+                principal_text,
+                slot_index: participant.slot_index,
+                status: participant.status.clone(),
+                participant: Some(participant.clone()),
+            });
+        }
+    });
+}
+
+pub(crate) fn mirror_world_object_update(object: &WorldObject) {
+    let session_id = Id::<GameSession>::from_key(object.session_id).to_string();
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        for runtime in runtimes
+            .values_mut()
+            .filter(|runtime| runtime.session_id == session_id)
+        {
+            runtime.upsert_world_object_snapshot(object.clone());
+            runtime.push_object_delta(ObjectTurnDelta {
+                subject_kind: "world_object".to_string(),
+                subject_id: object.id().to_string(),
+                x: object.x,
+                y: object.y,
+                visible: object.state != "collected",
+            });
+            runtime.upsert_contact_cell(RuntimeContactCell {
+                x: object.x,
+                y: object.y,
+                subject_kind: "world_object".to_string(),
+                subject_id_text: object.id().to_string(),
+                owner_participant_id: object
+                    .owner_participant_id
+                    .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
+                guarded_neutral_army_id: object.guarded_neutral_army_id.map(|id| {
+                    Id::<domm_degens_schema::schema::NeutralArmy>::from_key(id).to_string()
+                }),
+                status: object.state.clone(),
+            });
+        }
+    });
+}
+
+pub(crate) fn participant_snapshot(
+    session_id: &str,
+    participant_id: &str,
+) -> Option<GameParticipant> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                runtime
+                    .participants
+                    .iter()
+                    .find(|participant| participant.participant_id == participant_id)
+                    .and_then(|participant| participant.participant.clone())
+            })
+    })
+}
+
+pub(crate) fn record_resource_delta(
+    session_id: &str,
+    turn_number: u32,
+    participant_id: &str,
+    resource_key: &str,
+    delta: i64,
+) {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        let Some(runtime) = runtimes.get_mut(&runtime_key(session_id, turn_number)) else {
+            return;
+        };
+        let mut resource_delta = ResourceTurnDelta {
+            participant_id: participant_id.to_string(),
+            gold: 0,
+            wood: 0,
+            stone: 0,
+            iron: 0,
+            crystal: 0,
+            ember: 0,
+            aether: 0,
+        };
+        match resource_key {
+            "gold" => resource_delta.gold = delta,
+            "wood" => resource_delta.wood = delta,
+            "stone" => resource_delta.stone = delta,
+            "iron" => resource_delta.iron = delta,
+            "crystal" => resource_delta.crystal = delta,
+            "ember" => resource_delta.ember = delta,
+            "aether" => resource_delta.aether = delta,
+            _ => return,
+        }
+        runtime.push_resource_delta(resource_delta);
+    });
+}
+
+pub(crate) fn champion_snapshot(session_id: &str, champion_id: &str) -> Option<Champion> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                runtime
+                    .champion_snapshots
+                    .iter()
+                    .find(|champion| champion.id().to_string() == champion_id)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn champion_snapshot_by_start(session_id: &str, x: u16, y: u16) -> Option<Champion> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                runtime
+                    .champion_snapshots
+                    .iter()
+                    .find(|champion| champion.x == x && champion.y == y)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn world_object_at(session_id: &str, x: u16, y: u16) -> Option<Option<WorldObject>> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .map(|runtime| {
+                runtime
+                    .world_object_snapshots
+                    .iter()
+                    .find(|object| object.x == x && object.y == y)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn world_object_by_id(session_id: &str, object_id: &str) -> Option<WorldObject> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                runtime
+                    .world_object_snapshots
+                    .iter()
+                    .find(|object| object.id().to_string() == object_id)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn world_object_snapshots(session_id: &str) -> Vec<WorldObject> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .map(|runtime| runtime.world_object_snapshots.clone())
+            .unwrap_or_default()
+    })
+}
+
 pub(crate) fn insert_runtime(runtime: SessionTurnRuntime) -> Option<SessionTurnRuntime> {
     ACTIVE_SESSION_TURN_RUNTIMES
         .with(|runtimes| runtimes.borrow_mut().insert(runtime.key(), runtime))
@@ -560,6 +786,9 @@ pub(crate) fn prepare_active_turn_runtime(
     runtime.session = Some(session.clone());
     runtime.event_seq_block = Some(event_seq_block);
     hydrate_active_turn_rows(session, &mut runtime)?;
+    if let Some(previous) = latest_runtime_before(&session.id().to_string(), session.current_turn) {
+        carry_forward_runtime_state(&mut runtime, previous);
+    }
     Ok(Some(runtime))
 }
 
@@ -567,14 +796,21 @@ pub(crate) fn prepare_active_turn_runtime_from_previous(
     session: &mut GameSession,
     previous_turn: u32,
 ) -> Result<Option<SessionTurnRuntime>, ApiError> {
-    if session.state != "active"
-        || contains_runtime(&session.id().to_string(), session.current_turn)
-    {
+    if session.state != "active" {
+        return Ok(None);
+    }
+    let session_id = session.id().to_string();
+    if contains_runtime(&session_id, session.current_turn) {
+        if let Some(previous) = with_runtime(&session_id, previous_turn, Clone::clone) {
+            with_runtime_mut(&session_id, session.current_turn, |runtime| {
+                carry_forward_runtime_state(runtime, previous);
+            });
+        }
         return Ok(None);
     }
 
     let event_seq_block = reserve_event_seq_block_in_session(session)?;
-    let previous = with_runtime(&session.id().to_string(), previous_turn, Clone::clone);
+    let previous = with_runtime(&session_id, previous_turn, Clone::clone);
     let Some(previous) = previous else {
         let mut runtime = SessionTurnRuntime::new(
             session.id().to_string(),
@@ -598,20 +834,45 @@ pub(crate) fn prepare_active_turn_runtime_from_previous(
     );
     runtime.session = Some(session.clone());
     runtime.event_seq_block = Some(event_seq_block);
-    runtime.participants = previous
+    carry_forward_runtime_state(&mut runtime, previous);
+    Ok(Some(runtime))
+}
+
+fn latest_runtime_before(session_id: &str, turn_number: u32) -> Option<SessionTurnRuntime> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id && runtime.turn_number < turn_number)
+            .max_by_key(|runtime| runtime.turn_number)
+            .cloned()
+    })
+}
+
+fn carry_forward_runtime_state(runtime: &mut SessionTurnRuntime, previous: SessionTurnRuntime) {
+    for participant in previous
         .participants
         .into_iter()
         .filter(|participant| participant.status == "active")
-        .collect();
-    runtime.champion_snapshots = previous.champion_snapshots;
-    runtime.occupancy_index = previous.occupancy_index;
-    runtime.contact_index = previous.contact_index;
-    runtime.dirty.participants = true;
-    runtime.dirty.champion_snapshots = true;
-    runtime.dirty.occupancy_index = true;
-    runtime.dirty.contact_index = true;
-    runtime.mark_dirty();
-    Ok(Some(runtime))
+    {
+        runtime.upsert_participant(participant);
+    }
+    for champion in previous.champion_snapshots {
+        runtime.upsert_champion_snapshot(champion);
+    }
+    for object in previous.world_object_snapshots {
+        runtime.upsert_world_object_snapshot(object);
+    }
+    for cell in previous.occupancy_index {
+        if cell.layer == "champion" {
+            runtime.upsert_occupancy_for_occupant(cell);
+        } else {
+            runtime.upsert_occupancy_cell(cell);
+        }
+    }
+    for cell in previous.contact_index {
+        runtime.upsert_contact_cell(cell);
+    }
 }
 
 pub(crate) fn ensure_active_turn_runtime(session: &mut GameSession) -> Result<(), ApiError> {
@@ -780,6 +1041,7 @@ fn hydrate_runtime_world_object_contacts(
     )?
     .items
     {
+        runtime.upsert_world_object_snapshot(object.clone());
         runtime.upsert_contact_cell(RuntimeContactCell {
             x: object.x,
             y: object.y,

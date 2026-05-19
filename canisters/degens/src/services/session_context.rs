@@ -10,6 +10,8 @@ use icydb::{
 
 use crate::repos::{content, players, sessions};
 
+use super::session_turn_runtime;
+
 #[derive(Clone, Debug)]
 pub(crate) struct SessionCallerContext {
     pub session: GameSession,
@@ -45,6 +47,11 @@ pub(crate) fn require_session_caller(
                 false,
             )
         })?;
+    let participant = session_turn_runtime::participant_snapshot(
+        &session.id().to_string(),
+        &participant.id().to_string(),
+    )
+    .unwrap_or(participant);
     Ok(SessionCallerContext {
         session,
         participant,

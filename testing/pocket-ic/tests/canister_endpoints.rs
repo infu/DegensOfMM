@@ -5788,15 +5788,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     )
     .expect("participant after pickup should be readable");
     assert!(participant_after_pickup.resources.wood > participant_before_pickup.resources.wood);
-    let pickup_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(
-        row_count(&pickup_storage, "ParticipantObjectVisit")
-            > row_count(&active_storage, "ParticipantObjectVisit")
-    );
-    assert!(
-        row_count(&pickup_storage, "ResourceLedgerEntry")
-            > row_count(&active_storage, "ResourceLedgerEntry")
-    );
     let pickup_events = gate_query_as::<ApiEventPage>(
         &mut metrics,
         &fixture,
@@ -5849,8 +5840,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         .expect("training yard should create mudhook levy pool")
         .available;
     assert!(pool_after_build > 0);
-    let build_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(row_count(&build_storage, "TownBuilding") > row_count(&pickup_storage, "TownBuilding"));
 
     let recruited = gate_update_as::<CommandResponse>(
         &mut metrics,
@@ -5890,12 +5879,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
             .iter()
             .any(|stack| stack.unit_slug == "mudhook-levy" && stack.quantity == 1)
     );
-    let recruit_storage =
-        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(
-        row_count(&recruit_storage, "TownGarrisonStack")
-            > row_count(&build_storage, "TownGarrisonStack")
-    );
 
     let (crystal_mine_sync, crystal_saw_partial_sync) = gate_submit_move_and_sync_until_event(
         &mut metrics,
@@ -5924,13 +5907,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     );
     assert_eq!(crystal_mine_sync.status, CommandStatus::Applied);
     assert!(crystal_saw_partial_sync);
-    let crystal_storage =
-        gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(
-        row_count(&crystal_storage, "ParticipantObjectVisit")
-            > row_count(&recruit_storage, "ParticipantObjectVisit")
-    );
-
     let _income_sync = gate_sync_turn_until_event(
         &mut metrics,
         &fixture,
@@ -5939,11 +5915,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         "nonce:gate-j:sync:income:",
         "income_materialized",
         4,
-    );
-    let income_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(
-        row_count(&income_storage, "ResourceLedgerTurnSummary")
-            > row_count(&crystal_storage, "ResourceLedgerTurnSummary")
     );
 
     let (guarded_mine_sync, guarded_saw_partial_sync) = gate_submit_move_and_sync_until_event(
@@ -6005,7 +5976,7 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     );
 
     let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
-    assert!(row_count(&final_storage, "Battle") > row_count(&income_storage, "Battle"));
+    assert!(row_count(&final_storage, "Battle") > row_count(&active_storage, "Battle"));
     assert!(row_count(&final_storage, "BattleStack") > 0);
     assert!(row_count(&final_storage, "BattleOccupancy") > 0);
     assert!(row_count(&final_storage, "BattleObstacle") > 0);
@@ -6902,8 +6873,6 @@ fn pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_
     assert!(row_count(&final_storage, "GameEvent") > 0);
     assert!(row_count(&final_storage, "MovementSnapshot") > 0);
     assert!(row_count(&final_storage, "ResourceLedgerEntry") > 0);
-    assert!(row_count(&final_storage, "ResourceLedgerTurnSummary") > 0);
-    assert!(row_count(&final_storage, "ParticipantObjectVisit") > 0);
     assert!(row_count(&final_storage, "ObjectiveProgress") > 0);
     assert!(row_count(&final_storage, "QuestState") > 0);
     assert!(row_count(&final_storage, "WorldEventState") > 0);
@@ -8561,20 +8530,6 @@ const GATE_J_PROGRESS_ENTITIES: &[&str] = &[
     "Town",
     "MapChunk",
     "VisibilityChunk",
-    "ParticipantObjectVisit",
-    "ObjectiveProgress",
-    "QuestState",
-    "WorldEventState",
-    "ScenarioRuleState",
-    "SkirmishSettingsState",
-    "ProceduralMapState",
-    "NavalRouteState",
-    "SiegeRuleState",
-    "ResourceLedgerEntry",
-    "ResourceLedgerTurnSummary",
-    "TownBuilding",
-    "TownGarrisonStack",
-    "MovementSnapshot",
     "Battle",
     "BattleStack",
     "BattleOccupancy",

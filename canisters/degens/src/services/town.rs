@@ -16,7 +16,7 @@ use crate::repos::{commands_events_effects, content, economy, players, sessions,
 
 use super::{
     command_response::{self, GameCommandAction},
-    render_projection, session_context,
+    render_projection, session_context, session_turn_runtime,
 };
 
 pub(crate) fn get_town_view(
@@ -279,6 +279,7 @@ pub(crate) fn submit_build_town_structure(
     )?;
     context.participant.last_action_turn = context.session.current_turn;
     context.participant = sessions::update_participant(context.participant.clone())?;
+    session_turn_runtime::mirror_participant_update(&context.participant);
 
     let building_row = match towns::find_town_building(town.id(), building.id())? {
         Some(row) => row,
@@ -436,6 +437,7 @@ pub(crate) fn submit_recruit_units(
     )?;
     context.participant.last_action_turn = context.session.current_turn;
     context.participant = sessions::update_participant(context.participant.clone())?;
+    session_turn_runtime::mirror_participant_update(&context.participant);
 
     pool.available = pool.available.saturating_sub(quantity);
     pool.last_command_id = Some(command.id);

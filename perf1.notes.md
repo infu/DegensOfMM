@@ -2777,3 +2777,53 @@ Decision:
 
 - Gate 5C is complete because the active sync average is now below the documented `4B` target.
 - Next implementation should not spend time polishing command/event mechanics. The biggest wins now are Gate 5D runtime deltas for champion/resources/objects and Gate 5F runtime-first battle/town/neutral contact.
+
+## Checkpoint: Runtime Movement Deltas And Snapshot Carry-Forward
+
+Implemented the first Gate 5D runtime-delta slice:
+
+- Active runtime movement now mirrors champion position/status and participant resource changes into `SessionTurnRuntime` instead of writing those rows on the hot movement path.
+- Resource pile pickups and income can mutate the runtime participant row and record runtime resource deltas; durable `ResourceLedgerEntry`/`ResourceLedgerTurnSummary` writes are skipped for the runtime-owned path.
+- World object captures/visits are mirrored into runtime snapshots and object deltas; mine owner updates still project to durable `WorldObject` so existing income lookup remains compatible until income is fully runtime-owned.
+- `get_my_participant`, session caller auth, `get_my_champions`, `get_champion_view`, visible object/detail helpers, and movement object lookups merge runtime snapshots before durable fallback.
+- Town build/recruit keeps the runtime participant mirror current after durable town resource spending.
+- Turn-runtime bootstrap now carries prior-turn heap snapshots forward and overlays them onto lazily rebuilt runtimes. This fixed a stale-position bug where a heap-only crystal-mine move was followed by a new movement submit that validated against old durable champion coordinates.
+- Gate J row-growth assertions were narrowed so runtime-owned movement/object/resource state no longer has to create durable visit/ledger/summary rows during active gameplay.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-gate5d-runtime-deltas-v2-gate-j` failed after `174.37s` because runtime-only crystal capture was invisible to income; fixed by durable mine owner projection plus runtime/durable income max.
+- Focused Gate J `20260519-gate5d-runtime-deltas-v3-gate-j` failed after `290.21s` with `movement_path_not_adjacent`; fixed by carrying prior-turn heap snapshots into current runtime bootstrap.
+- Focused Gate J `20260520-gate5d-runtime-carry-forward-gate-j` passed in `326.27s` but wrote artifacts to the nested test-relative target path.
+- Focused Gate J `20260520-gate5d-runtime-deltas-gate-j` passed in `76.12s` with canonical artifacts under `target/benchmarks/20260520-gate5d-runtime-deltas-gate-j`.
+- Post-run PocketIC cleanup confirmed no leftover PocketIC/server processes.
+
+Measured delta versus Gate 5C `20260519-runtime-sync-empty-intents-gate-j`:
+
+| metric | Gate 5C | Gate 5D.1 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 196.2456B | 180.8734B | -7.8% |
+| Gate J memory | 5220.9375 MB | 5084.9375 MB | -2.6% |
+| row growth | 76 | 43 | -43.4% |
+| `sync_session_turn` avg | 3.9270B | 2.7653B | -29.6% |
+| `sync_session_turn` avg memory | 62.7500 MB | 52.7396 MB | -16.0% |
+| `submit_move_intent` avg | 0.7110B | 0.7113B | flat |
+| `get_champion_view` avg | 4.9342B | 4.2264B | -14.3% |
+
+Measured repo-operation movement:
+
+| operation | Gate 5C calls | Gate 5D.1 calls | note |
+| --- | ---: | ---: | --- |
+| `champions.update_champion` | 4 | 2 | active movement champion writes moved into runtime; remaining writes are non-active/battle boundary paths |
+| `sessions.update_participant` | 6 | 4 | active movement resource/last-action writes moved into runtime |
+| `economy.create_resource_ledger_entry` | 6 | 4 | runtime pickup/income skips durable ledger entries |
+| `economy.create_resource_turn_summary` | 1 | 0 | runtime income skips durable summary |
+| `map.create_participant_object_visit` | 2 | 0 | runtime object visits no longer create durable visit rows |
+| `map.update_world_object` | 2 | 1 | resource pile visit moved runtime-only; mine capture still durable for income compatibility |
+
+Decision:
+
+- Keep this cut. It removes real durable row growth and drops `sync_session_turn` below `3B` without hollowing out behavior; Gate J still reaches pickup, build, recruit, crystal income, guarded neutral contact, battle row creation, and final event checks.
+- Gate 5D remains open because the target is `<1.5B`. The next meaningful cuts are runtime-owned battle/contact handoff, turn/session/job writes, and full runtime income/object projection so mine compatibility no longer needs a durable `WorldObject` update.

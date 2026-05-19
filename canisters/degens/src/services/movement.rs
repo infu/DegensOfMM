@@ -684,7 +684,7 @@ fn sync_session_turn_with_command(
     }
 
     participant.last_action_turn = context.session.current_turn;
-    participant = sessions::update_participant(participant)?;
+    participant = update_movement_participant(command.persistence_mode(), participant)?;
     context.participant = participant;
 
     if !command.is_runtime() {
@@ -1334,6 +1334,11 @@ fn world_object_at(
     session: &GameSession,
     coord: MoveCoord,
 ) -> Result<Option<WorldObject>, ApiError> {
+    if let Some(runtime_result) =
+        session_turn_runtime::world_object_at(&session.id().to_string(), coord.x, coord.y)
+    {
+        return Ok(runtime_result);
+    }
     if runtime_contact_present(session, coord, "world_object") == Some(false) {
         return Ok(None);
     }
@@ -1461,6 +1466,7 @@ fn resolve_pending_movement(
             &mut pending,
             &mut active,
             step_index,
+            persistence_mode,
             changed_subjects,
         )?;
         let crossing_resolution_complete = resolve_crossing_conflicts(
@@ -1523,7 +1529,13 @@ fn resolve_pending_movement(
 
     for pending_move in &mut pending {
         if !pending_move.resolved && pending_move.path.len() <= usize::from(step_index) {
-            mark_pending_resolved(session, command_id, pending_move, changed_subjects)?;
+            mark_pending_resolved(
+                session,
+                command_id,
+                pending_move,
+                persistence_mode,
+                changed_subjects,
+            )?;
         }
     }
     Ok(true)
@@ -1642,6 +1654,7 @@ fn resolve_single_long_movement_fast(
                 stop_coord,
                 movement_cost,
                 remaining_after,
+                persistence_mode,
                 if enemy {
                     "started_champion_battle"
                 } else {
@@ -1690,6 +1703,7 @@ fn resolve_single_long_movement_fast(
                     stop_coord,
                     movement_cost,
                     remaining_after,
+                    persistence_mode,
                     "started_neutral_battle",
                     Some(MovementPathStop {
                         reason: "guarded_object".to_string(),
@@ -1716,7 +1730,7 @@ fn resolve_single_long_movement_fast(
     pending[0].champion.movement_remaining = remaining_after;
     pending[0].champion.movement_turn = session.current_turn;
     pending[0].champion.last_command_id = Some(command_id.key());
-    pending[0].champion = champions_artifacts::update_champion(pending[0].champion.clone())?;
+    pending[0].champion = update_movement_champion(persistence_mode, pending[0].champion.clone())?;
     update_champion_occupancy(
         session.id(),
         command_id,
@@ -1736,7 +1750,8 @@ fn resolve_single_long_movement_fast(
         events.push(event);
     }
     if interaction.participant_resources_changed {
-        pending[0].participant = sessions::update_participant(pending[0].participant.clone())?;
+        pending[0].participant =
+            update_movement_participant(persistence_mode, pending[0].participant.clone())?;
         changed_subjects.push(command_response::changed(
             "participant",
             &pending[0].participant.id().to_string(),
@@ -1895,6 +1910,7 @@ fn resolve_two_movement_crossing_fast(
             left_from,
             left_cost,
             left_remaining,
+            persistence_mode,
             "started_crossing_battle",
             Some(MovementPathStop {
                 reason: "crossing_conflict".to_string(),
@@ -1914,6 +1930,7 @@ fn resolve_two_movement_crossing_fast(
             right_from,
             right_cost,
             right_remaining,
+            persistence_mode,
             "started_crossing_battle",
             Some(MovementPathStop {
                 reason: "crossing_conflict".to_string(),
@@ -1991,6 +2008,7 @@ fn stop_candidate_fast(
     to: MoveCoord,
     movement_cost: u16,
     remaining_after: u16,
+    persistence_mode: MovementPersistenceMode,
     outcome: &str,
     stop: Option<MovementPathStop>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
@@ -2007,7 +2025,8 @@ fn stop_candidate_fast(
         outcome,
         stop,
     )?;
-    pending_move.champion = champions_artifacts::update_champion(pending_move.champion.clone())?;
+    pending_move.champion =
+        update_movement_champion(persistence_mode, pending_move.champion.clone())?;
     update_champion_occupancy(
         session.id(),
         command_id,
@@ -2531,6 +2550,7 @@ fn resolve_tile_conflicts(
     pending: &mut [PendingMovement],
     active: &mut BTreeMap<usize, MoveCandidate>,
     step_index: u16,
+    persistence_mode: MovementPersistenceMode,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
     let mut by_tile: BTreeMap<MoveCoord, Vec<MoveCandidate>> = BTreeMap::new();
@@ -2553,6 +2573,7 @@ fn resolve_tile_conflicts(
                 pending,
                 candidate,
                 step_index,
+                persistence_mode,
                 "stopped_tile_conflict",
                 Some(MovementPathStop {
                     reason: "tile_conflict".to_string(),
@@ -2631,6 +2652,7 @@ fn resolve_crossing_conflicts(
                     pending,
                     &left,
                     step_index,
+                    persistence_mode,
                     if enemy {
                         "started_crossing_battle"
                     } else {
@@ -2651,6 +2673,7 @@ fn resolve_crossing_conflicts(
                     pending,
                     &right,
                     step_index,
+                    persistence_mode,
                     if enemy {
                         "started_crossing_battle"
                     } else {
@@ -2694,6 +2717,7 @@ fn resolve_blockers_and_guarded_objects(
                 pending,
                 &candidate,
                 step_index,
+                persistence_mode,
                 "stopped_budget_exhausted",
                 None,
                 changed_subjects,
@@ -2730,6 +2754,7 @@ fn resolve_blockers_and_guarded_objects(
                     pending,
                     &candidate,
                     step_index,
+                    persistence_mode,
                     "started_neutral_battle",
                     Some(MovementPathStop {
                         reason: "guarded_object".to_string(),
@@ -2820,6 +2845,7 @@ fn resolve_blockers_and_guarded_objects(
                     pending,
                     &candidate,
                     step_index,
+                    persistence_mode,
                     if enemy {
                         "started_champion_battle"
                     } else {
@@ -2905,6 +2931,7 @@ fn resolve_blockers_and_guarded_objects(
                     pending,
                     &candidate,
                     step_index,
+                    persistence_mode,
                     outcome,
                     Some(MovementPathStop {
                         reason: if enemy_town {
@@ -3003,6 +3030,7 @@ fn commit_active_moves(
                 session,
                 command_id,
                 &mut pending[candidate.pending_index],
+                persistence_mode,
                 changed_subjects,
             )?;
         }
@@ -3064,6 +3092,28 @@ fn update_known_champion_projection(
     Ok(())
 }
 
+fn update_movement_champion(
+    persistence_mode: MovementPersistenceMode,
+    champion: Champion,
+) -> Result<Champion, ApiError> {
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly && champion.status == "active" {
+        session_turn_runtime::mirror_champion_update(&champion);
+        return Ok(champion);
+    }
+    champions_artifacts::update_champion(champion).map_err(Into::into)
+}
+
+fn update_movement_participant(
+    persistence_mode: MovementPersistenceMode,
+    participant: GameParticipant,
+) -> Result<GameParticipant, ApiError> {
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+        session_turn_runtime::mirror_participant_update(&participant);
+        return Ok(participant);
+    }
+    sessions::update_participant(participant).map_err(Into::into)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stop_candidate(
     session: &GameSession,
@@ -3071,6 +3121,7 @@ fn stop_candidate(
     pending: &mut [PendingMovement],
     candidate: &MoveCandidate,
     step_index: u16,
+    persistence_mode: MovementPersistenceMode,
     outcome: &str,
     stop: Option<MovementPathStop>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
@@ -3088,19 +3139,27 @@ fn stop_candidate(
         outcome,
         stop,
     )?;
-    mark_pending_resolved(session, command_id, pending_move, changed_subjects)
+    mark_pending_resolved(
+        session,
+        command_id,
+        pending_move,
+        persistence_mode,
+        changed_subjects,
+    )
 }
 
 fn mark_pending_resolved(
     session: &GameSession,
     command_id: Id<GameCommand>,
     pending_move: &mut PendingMovement,
+    persistence_mode: MovementPersistenceMode,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
     if pending_move.resolved {
         return Ok(());
     }
-    pending_move.champion = champions_artifacts::update_champion(pending_move.champion.clone())?;
+    pending_move.champion =
+        update_movement_champion(persistence_mode, pending_move.champion.clone())?;
     update_champion_occupancy(
         pending_move.intent.session_id,
         command_id,
@@ -3118,7 +3177,8 @@ fn mark_pending_resolved(
     pending_move.intent.mark_resolved()?;
     pending_move.resolved = true;
     pending_move.participant.last_action_turn = pending_move.intent.turn_number;
-    pending_move.participant = sessions::update_participant(pending_move.participant.clone())?;
+    pending_move.participant =
+        update_movement_participant(persistence_mode, pending_move.participant.clone())?;
     mirror_runtime_pending_movement(session, pending_move);
     changed_subjects.push(command_response::changed(
         "movement_intent",
@@ -3167,7 +3227,7 @@ fn park_partial_movements(
         )?;
 
         pending_move.champion =
-            champions_artifacts::update_champion(pending_move.champion.clone())?;
+            update_movement_champion(persistence_mode, pending_move.champion.clone())?;
         update_champion_occupancy(
             session.id(),
             command_id,
@@ -4028,6 +4088,7 @@ fn apply_world_object_at(
 
     let event_type = if object.scoring_kind == "resource_pile" {
         apply_reward_json(
+            persistence_mode,
             session.id(),
             participant,
             command_id,
@@ -4065,15 +4126,22 @@ fn apply_world_object_at(
         )?;
     }
 
-    map_visibility_occupancy::create_participant_object_visit(
-        session.id(),
-        object.id(),
-        participant.id(),
-        "once".to_string(),
-        object.scoring_kind.clone(),
-        session.current_turn,
-    )?;
-    map_visibility_occupancy::update_world_object(object.clone())?;
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+        if object.scoring_kind == "mine" {
+            map_visibility_occupancy::update_world_object(object.clone())?;
+        }
+        session_turn_runtime::mirror_world_object_update(&object);
+    } else {
+        map_visibility_occupancy::create_participant_object_visit(
+            session.id(),
+            object.id(),
+            participant.id(),
+            "once".to_string(),
+            object.scoring_kind.clone(),
+            session.current_turn,
+        )?;
+        map_visibility_occupancy::update_world_object(object.clone())?;
+    }
     let event = append_movement_public_event(
         session,
         command_id,
@@ -4124,17 +4192,11 @@ fn hide_known_world_object(
     Ok(())
 }
 
-fn materialize_income(
-    session: &mut domm_degens_schema::schema::GameSession,
-    command_id: Id<domm_degens_schema::schema::GameCommand>,
-    participant: &mut GameParticipant,
+fn durable_gold_income(
+    session: &GameSession,
+    participant: &GameParticipant,
     turn_number: u32,
-    reserved_event_seq: Option<&mut u64>,
-    persistence_mode: MovementPersistenceMode,
-) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
-    if participant.last_income_turn >= turn_number {
-        return Ok(Vec::new());
-    }
+) -> Result<u32, ApiError> {
     let mut gold_income = 0_u32;
     for object in map_visibility_occupancy::page_world_objects_by_owner_scoring_state(
         session.id(),
@@ -4150,11 +4212,54 @@ fn materialize_income(
             gold_income = gold_income.saturating_add(250);
         }
     }
+    Ok(gold_income)
+}
+
+fn runtime_gold_income(
+    session: &GameSession,
+    participant: &GameParticipant,
+    turn_number: u32,
+) -> Option<u32> {
+    let session_id = session.id().to_string();
+    let participant_key = participant.id().key();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        runtime
+            .world_object_snapshots
+            .iter()
+            .filter(|object| {
+                object.scoring_kind == "mine"
+                    && object.state == "captured"
+                    && object.owner_participant_id == Some(participant_key)
+                    && object.income_started_turn <= turn_number
+            })
+            .fold(0_u32, |total, _| total.saturating_add(250))
+    })
+}
+
+fn materialize_income(
+    session: &mut domm_degens_schema::schema::GameSession,
+    command_id: Id<domm_degens_schema::schema::GameCommand>,
+    participant: &mut GameParticipant,
+    turn_number: u32,
+    reserved_event_seq: Option<&mut u64>,
+    persistence_mode: MovementPersistenceMode,
+) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
+    if participant.last_income_turn >= turn_number {
+        return Ok(Vec::new());
+    }
+    let gold_income = if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+        let runtime_income = runtime_gold_income(session, participant, turn_number).unwrap_or(0);
+        let durable_income = durable_gold_income(session, participant, turn_number)?;
+        runtime_income.max(durable_income)
+    } else {
+        durable_gold_income(session, participant, turn_number)?
+    };
     participant.last_income_turn = turn_number;
     if gold_income == 0 {
         return Ok(Vec::new());
     }
-    apply_resource_delta(
+    apply_resource_delta_for_mode(
+        persistence_mode,
         session.id(),
         participant,
         command_id,
@@ -4164,13 +4269,15 @@ fn materialize_income(
         i64::from(gold_income),
         "income",
     )?;
-    economy::create_resource_turn_summary(
-        session.id(),
-        participant.id(),
-        turn_number,
-        format!(r#"{{"kind":"income","gold":{gold_income}}}"#),
-    )
-    .ok();
+    if persistence_mode != MovementPersistenceMode::RuntimeOnly {
+        economy::create_resource_turn_summary(
+            session.id(),
+            participant.id(),
+            turn_number,
+            format!(r#"{{"kind":"income","gold":{gold_income}}}"#),
+        )
+        .ok();
+    }
     let event_key = format!("income:{}:{turn_number}", participant.id());
     let event_type = "income_materialized".to_string();
     let subject_kind = Some("participant".to_string());
@@ -4305,6 +4412,7 @@ fn api_event_view(event: GameEvent) -> domm_game::ApiEventView {
 }
 
 fn apply_reward_json(
+    persistence_mode: MovementPersistenceMode,
     session_id: Id<GameSession>,
     participant: &mut GameParticipant,
     command_id: Id<GameCommand>,
@@ -4324,7 +4432,8 @@ fn apply_reward_json(
         if delta == 0 {
             continue;
         }
-        apply_resource_delta(
+        apply_resource_delta_for_mode(
+            persistence_mode,
             session_id,
             participant,
             command_id,
@@ -4335,6 +4444,44 @@ fn apply_reward_json(
             "pickup",
         )?;
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_resource_delta_for_mode(
+    persistence_mode: MovementPersistenceMode,
+    session_id: Id<domm_degens_schema::schema::GameSession>,
+    participant: &mut GameParticipant,
+    command_id: Id<domm_degens_schema::schema::GameCommand>,
+    ledger_key: String,
+    turn_number: u32,
+    resource_key: &str,
+    delta: i64,
+    reason: &str,
+) -> Result<(), ApiError> {
+    if persistence_mode != MovementPersistenceMode::RuntimeOnly {
+        return apply_resource_delta(
+            session_id,
+            participant,
+            command_id,
+            ledger_key,
+            turn_number,
+            resource_key,
+            delta,
+            reason,
+        );
+    }
+
+    apply_resource_balance_delta(participant, resource_key, delta)?;
+    participant.last_resource_command_id = Some(command_id.key());
+    session_turn_runtime::record_resource_delta(
+        &session_id.to_string(),
+        turn_number,
+        &participant.id().to_string(),
+        resource_key,
+        delta,
+    );
+    session_turn_runtime::mirror_participant_update(participant);
     Ok(())
 }
 
@@ -4354,43 +4501,7 @@ fn apply_resource_delta(
         participant.last_resource_command_id = Some(command_id.key());
         return Ok(());
     }
-    let balance_after = match resource_key {
-        "gold" => {
-            participant.gold = apply_u64_delta(participant.gold, delta)?;
-            participant.gold
-        }
-        "wood" => {
-            participant.wood = apply_u32_delta(participant.wood, delta)?;
-            u64::from(participant.wood)
-        }
-        "stone" => {
-            participant.stone = apply_u32_delta(participant.stone, delta)?;
-            u64::from(participant.stone)
-        }
-        "iron" => {
-            participant.iron = apply_u32_delta(participant.iron, delta)?;
-            u64::from(participant.iron)
-        }
-        "crystal" => {
-            participant.crystal = apply_u32_delta(participant.crystal, delta)?;
-            u64::from(participant.crystal)
-        }
-        "ember" => {
-            participant.ember = apply_u32_delta(participant.ember, delta)?;
-            u64::from(participant.ember)
-        }
-        "aether" => {
-            participant.aether = apply_u32_delta(participant.aether, delta)?;
-            u64::from(participant.aether)
-        }
-        _ => {
-            return Err(public_error(
-                "unknown_resource",
-                "unknown resource key",
-                false,
-            ));
-        }
-    };
+    let balance_after = apply_resource_balance_delta(participant, resource_key, delta)?;
     economy::create_resource_ledger_entry(
         session_id,
         participant.id(),
@@ -4405,6 +4516,48 @@ fn apply_resource_delta(
     )?;
     participant.last_resource_command_id = Some(command_id.key());
     Ok(())
+}
+
+fn apply_resource_balance_delta(
+    participant: &mut GameParticipant,
+    resource_key: &str,
+    delta: i64,
+) -> Result<u64, ApiError> {
+    match resource_key {
+        "gold" => {
+            participant.gold = apply_u64_delta(participant.gold, delta)?;
+            Ok(participant.gold)
+        }
+        "wood" => {
+            participant.wood = apply_u32_delta(participant.wood, delta)?;
+            Ok(u64::from(participant.wood))
+        }
+        "stone" => {
+            participant.stone = apply_u32_delta(participant.stone, delta)?;
+            Ok(u64::from(participant.stone))
+        }
+        "iron" => {
+            participant.iron = apply_u32_delta(participant.iron, delta)?;
+            Ok(u64::from(participant.iron))
+        }
+        "crystal" => {
+            participant.crystal = apply_u32_delta(participant.crystal, delta)?;
+            Ok(u64::from(participant.crystal))
+        }
+        "ember" => {
+            participant.ember = apply_u32_delta(participant.ember, delta)?;
+            Ok(u64::from(participant.ember))
+        }
+        "aether" => {
+            participant.aether = apply_u32_delta(participant.aether, delta)?;
+            Ok(u64::from(participant.aether))
+        }
+        _ => Err(public_error(
+            "unknown_resource",
+            "unknown resource key",
+            false,
+        )),
+    }
 }
 
 fn reconcile_resource_balance(

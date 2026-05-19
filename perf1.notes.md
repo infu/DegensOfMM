@@ -2163,3 +2163,31 @@ Measured delta versus `20260519-163253-runtime-champion-submit-gate-j`:
 Decision:
 
 - Keep this cut. It is a small but real stable-read removal on the final sync path, and it does not move work into submit or weaken idempotency for the partial movement events that previously failed under the broad fresh-sync shortcut.
+
+## Rejected Experiment: Runtime-Open Map Turn Guard
+
+Tried to skip the pre-deadline scheduled `SystemJob` scan in `ensure_map_turn_accepts_new_command` when the active `SessionTurnRuntime` could prove the turn was still open: same current turn/deadline, not closing, and no ready participants.
+
+The first version was wrong: it returned from the whole guard before the duplicate `end_turn` ready-row check. `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` caught this by accepting a fresh duplicate `end_turn`. The fixed version skipped only the job page and still ran the duplicate-ready check.
+
+Verified fixed version:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-open-guard-stale-rerun cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture` passed in `186.94s`.
+- Focused Gate J `20260519-runtime-open-guard-gate-j` passed in `232.09s`.
+
+Measured delta versus `20260519-164028-final-sync-new-event-gate-j`:
+
+| metric | final sync new event | runtime-open guard | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 319.4200B | 319.4200B | flat |
+| `submit_move_intent` avg | 11.0396B | 11.0396B | flat |
+| `submit_build_town_structure` avg | 20.0597B | 20.0597B | flat |
+| `submit_recruit_units` avg | 15.5931B | 15.5931B | flat |
+| `sync_session_turn` avg | 12.1032B | 12.1032B | flat |
+| `system_jobs.by_session_status_due` calls | 26 | 26 | flat |
+
+Decision:
+
+- Reject the shortcut and do not keep the code. In the measured route, each movement/town command that pays this guard starts a fresh current turn where no active `SessionTurnRuntime` exists yet. The proof cannot fire unless runtime creation moves earlier, and doing that as a guard micro-cut risks replacing a job scan with runtime hydration work. Handle this in the real active-turn aggregate instead.

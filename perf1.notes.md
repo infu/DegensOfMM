@@ -168,6 +168,21 @@ Decision highlights:
 - Runtime command receipts need enough data to satisfy command status and nonce replay before durable command rows are removed from the hot path.
 - Finalization must either project survivor `BattleStack` rows before existing aftermath or rewrite aftermath to consume runtime survivors directly.
 
+### BattleRuntime Scaffold
+
+Added `canisters/degens/src/services/battle_runtime.rs`.
+
+Checkpoint scope:
+
+- `BattleRuntime` now wraps `domm_game::BattleState`.
+- Runtime metadata includes session id, battle id, participant audience keys, command receipts, nonce lookup, active event buffer, readiness set, deadline/job hints, session event sequence cursor, and dirty generation.
+- Heap store is keyed by battle id and exposes insert/remove/read/mutate helpers.
+- Snapshot/restore helpers exist for the future `pre_upgrade`/`post_upgrade` checkpoint, but canister upgrade hooks are not wired yet.
+
+Verified:
+
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

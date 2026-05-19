@@ -4,6 +4,7 @@ pub(crate) mod account_lobby_session;
 pub(crate) mod battle;
 pub(crate) mod battle_aftermath;
 pub(crate) mod battle_rows;
+pub(crate) mod battle_runtime;
 pub(crate) mod battle_start;
 pub(crate) mod champion_magic;
 pub(crate) mod cleanup;

@@ -753,3 +753,66 @@ Decision:
 - The durable `Battle` load is gone from the active submit phase summary and `submit_battle_action` improved from 4.0563B to 3.3426B avg.
 - Gate 2 is still not cleared because `readiness_schedule` and `auth_context` dominate the endpoint.
 - The next cut should remove per-action timeout/round job scheduling from runtime readiness; that should get the endpoint below the 3B Gate 2 threshold before tackling auth/session caching.
+
+### Runtime Timeout Wakeup Hints
+
+Removed the per-action timeout `SystemJob` upsert from active runtime battle submit.
+
+Changes made:
+
+- Active non-spell submit now recomputes runtime readiness without scheduling a fresh timeout job each action.
+- Runtime state remains the deadline authority; the durable timeout job is only a wakeup hint.
+- When a timeout job wakes early, it reads the runtime deadline and reschedules itself to the current runtime deadline.
+- When a runtime timeout is actually due, the job projects the runtime battle header just before falling through to the existing timeout application path.
+- The first implementation handled the full runtime timeout action inside a new helper, but that pushed the benchmark Wasm over the IC code-section limit by about 2 KB. The final implementation reuses the existing timeout path to stay under the limit.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-timeout-job2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_timer_auto_defends_without_sync_battle_and_replays_noop -- --nocapture`
+
+Focused benchmark:
+
+```text
+run id: 20260519-055234-gate-k-runtime-timeout-hints
+artifact: target/benchmarks/20260519-055234-gate-k-runtime-timeout-hints/gate-k/summary.json
+note: summary git_sha is ec8345a because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| passed | 87 | 115 | 228 | 1025 | 149889 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 25 | 2.2481B | 2.5912B | 0.01 MB | 0.0023T |
+| `sync_battle` | update | 28 | 9.8840B | 36.1195B | 36.06 MB | 0.0107T |
+| `get_battle_state` | query | 48 | n/a | n/a | 1.33 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 25 | 2.1328B |
+| `readiness_schedule` | 25 | 0.0950B |
+| `event_fanout` | 25 | 0.0192B |
+| `apply_rules` | 25 | 0.0003B |
+| `load_battle_state` | 25 | 0.0003B |
+| `command_begin` | 25 | 0.0001B |
+| `validate_action` | 25 | 0.0001B |
+| `final_response` | 25 | 0.0000B |
+| `recovery` | 25 | 0.0000B |
+| `timeout` | 25 | 0.0000B |
+| `persist_battle_state` | 25 | 0.0000B |
+
+Decision:
+
+- Gate 2 is cleared: `submit_battle_action` is now below 3B avg.
+- `readiness_schedule` is no longer a major blocker: 1.1894B -> 0.0950B avg.
+- The remaining dominant cost is `auth_context` at about 2.13B, which means the next meaningful work is a session/participant auth cache or runtime submit auth shortcut.

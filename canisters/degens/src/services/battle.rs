@@ -1283,7 +1283,7 @@ fn submit_runtime_battle_action(
                     battle_id,
                     None,
                     true,
-                    true,
+                    false,
                 )? {
                     changed_subjects.extend(readiness.changed_subjects);
                 }
@@ -1844,6 +1844,9 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
+    if process_runtime_battle_timeout_job(&session, &job, battle_id)? {
+        return Ok(());
+    }
     let Some(battle) = battles::load_battle(battle_id)? else {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
@@ -1895,6 +1898,44 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         })?;
     }
     Ok(())
+}
+
+fn process_runtime_battle_timeout_job(
+    session: &GameSession,
+    job: &SystemJob,
+    battle_id: Id<Battle>,
+) -> Result<bool, ApiError> {
+    let battle_id_text = battle_id.to_string();
+    let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
+        return Ok(false);
+    };
+    if runtime.session_id != session.id().to_string() {
+        return Ok(false);
+    }
+    let battle = runtime
+        .state
+        .battle(&battle_id_text)
+        .map_err(map_battle_error)?
+        .clone();
+    if battle.state != "active" {
+        system_job_repo::complete_system_job(job.clone())?;
+        return Ok(true);
+    }
+    let Some(deadline_ms) = battle.action_deadline_at else {
+        system_job_repo::complete_system_job(job.clone())?;
+        return Ok(true);
+    };
+    let deadline = Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX));
+    if deadline > Timestamp::now() {
+        system_job_repo::reschedule_system_job(job.clone(), deadline, None)?;
+        system_job_service::schedule_nearest_due_job()?;
+        return Ok(true);
+    }
+    if let Some(active_stack_id) = battle.active_stack_id {
+        let command = begin_timeout_command(session, battle_id, &active_stack_id, deadline_ms)?;
+        battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
+    }
+    Ok(false)
 }
 
 pub(crate) fn process_battle_round_advance_job(job: SystemJob) -> Result<(), ApiError> {

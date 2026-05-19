@@ -331,14 +331,14 @@ When a todo item is completed:
 - [x] Move submit-time auto-ready bookkeeping to `BattleRuntime.ready_participants` and use runtime readiness for active submit/round-job checks, while preserving row-backed `end_battle_turn` compatibility for now.
 - [x] Route submit-time timeout checks through active runtime and remove the redundant submit response session reload.
 - [x] Try the active `BattleRuntime` submit path before loading the durable `Battle` row, falling back to row load/adoption only when runtime is absent or the action needs legacy handling.
-- [ ] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
-- [ ] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
+- [x] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
+- [x] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
 - [x] Stop projecting the durable `Battle` row header for active non-spell player submissions; runtime is authoritative for active round/stack/deadline until sync/finalization projection.
 - [ ] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points.
 - [ ] Replace readiness recompute with runtime alive/acted tracking; avoid `legal_actions_for_stack` during readiness except for a measured edge case.
 - [ ] Move `end_battle_turn` onto runtime readiness so manual readiness does not keep `BattleParticipantRoundReady` hot.
-- [ ] Keep enough scheduling behavior to make timeout/round advancement work from heap state.
-- [ ] Run focused Gate K/L and decide whether Gate 2 cleared `<3B`.
+- [x] Keep enough scheduling behavior to make timeout/round advancement work from heap state.
+- [x] Run focused Gate K/L and decide whether Gate 2 cleared `<3B`. Focused Gate K `20260519-055234-gate-k-runtime-timeout-hints` passed with `submit_battle_action` at 2.2481B avg, so Gate 2 is cleared.
 
 ### 4. Gate 3: Move Active Battle Commands And Events Out Of Per-Action Stable Writes
 
@@ -364,7 +364,7 @@ When a todo item is completed:
 
 - [x] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
 - [x] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction. The measured blocker is now durable command/event/session/aftermath work after tactical row writes were reduced; continue into Gate 2/3 cuts.
-- [ ] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction.
+- [x] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction. Gate K `20260519-055234-gate-k-runtime-timeout-hints` measured 2.2481B avg.
 - [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.
 - [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.

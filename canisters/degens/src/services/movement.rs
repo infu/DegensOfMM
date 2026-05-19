@@ -3655,6 +3655,9 @@ fn resolve_owned_champion(
     context: &session_context::SessionCallerContext,
     champion_id: &str,
 ) -> Result<Champion, ApiError> {
+    if let Some(champion) = runtime_owned_active_champion(context, champion_id) {
+        return Ok(champion);
+    }
     let champion = resolve_champion(&context.session, champion_id)?;
     if champion.participant_id != context.participant.id().key() {
         return Err(public_error(
@@ -3671,6 +3674,28 @@ fn resolve_owned_champion(
         ));
     }
     Ok(champion)
+}
+
+fn runtime_owned_active_champion(
+    context: &session_context::SessionCallerContext,
+    champion_id: &str,
+) -> Option<Champion> {
+    let champion_id = Ulid::from_str(champion_id).ok()?;
+    let session_id = context.session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, context.session.current_turn, |runtime| {
+        runtime
+            .intents
+            .iter()
+            .filter_map(|intent| intent.champion.as_ref())
+            .find(|champion| {
+                champion.id().key() == champion_id
+                    && champion.session_id == context.session.id().key()
+                    && champion.participant_id == context.participant.id().key()
+                    && champion.status == "active"
+            })
+            .cloned()
+    })
+    .flatten()
 }
 
 fn resolve_champion(

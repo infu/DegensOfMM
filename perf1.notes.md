@@ -2106,3 +2106,36 @@ Comparison caveat:
 Decision:
 
 - Keep this cut. It removes durable scans from the common "sync before deadline and nobody is ready" case, keeps the all-ready durable path intact, and does not shift cost into submit.
+
+## Checkpoint: Runtime Champion Submit Lookup
+
+Changed `resolve_owned_champion` to use the active `SessionTurnRuntime` champion projection only when it can prove all of the following:
+
+- the submitted champion id is a real ULID matching the runtime champion;
+- the runtime belongs to the caller's current session and turn;
+- the champion belongs to the caller's participant;
+- the runtime champion status is `active`.
+
+If any check fails, the existing durable `resolve_champion` path runs. This is intentionally conservative so stale runtime entries from battle/aftermath cannot falsely authorize or reject movement.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Focused Gate J `20260519-163253-runtime-champion-submit-gate-j` passed in `229.75s`.
+
+Measured delta versus `20260519-162235-runtime-empty-ready-gate-j`:
+
+| metric | empty-ready shortcut | runtime champion submit | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 320.8642B | 320.1759B | -0.2% |
+| `submit_move_intent` avg | 11.2728B | 11.0394B | -2.1% |
+| `sync_session_turn` avg | 12.1704B | 12.1716B | flat |
+| `champions.load_champion` calls | 3 | 2 | -33.3% |
+| `champions.load_champion` total | 2.1206B | 1.4147B | -33.3% |
+
+Decision:
+
+- Keep this cut. It is small, safe by construction, and directly reduces submit-side stable reads without changing durable fallback behavior.

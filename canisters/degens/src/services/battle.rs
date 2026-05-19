@@ -1196,6 +1196,45 @@ fn mirror_battle_runtime_from_state(
     Ok(())
 }
 
+fn apply_resolved_battle_aftermath_with_runtime_projection(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<(), ApiError> {
+    let battle_id_text = battle_id.to_string();
+    if let Some(state) =
+        battle_runtime::with_runtime(&battle_id_text, |runtime| runtime.state.clone())
+    {
+        let is_resolved = state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .state
+            == "resolved";
+        if is_resolved {
+            battle_rows::persist_battle_state(&state, command_id)?;
+            changed_subjects.push(command_response::changed(
+                "battle",
+                &battle_id_text,
+                "runtime_projection",
+            ));
+        }
+    }
+
+    battle_aftermath::apply_resolved_battle_aftermath(
+        session,
+        command_id,
+        battle_id,
+        events,
+        changed_subjects,
+    )?;
+    if battles::load_battle(battle_id)?.is_some_and(|battle| battle.state != "active") {
+        battle_runtime::remove_runtime(&battle_id_text);
+    }
+    Ok(())
+}
+
 pub(crate) fn sync_battle(
     caller: CandidPrincipal,
     session_id: String,
@@ -1260,7 +1299,7 @@ pub(crate) fn sync_battle(
         )?;
         changed_subjects.extend(readiness.changed_subjects);
     }
-    if let Err(error) = battle_aftermath::apply_resolved_battle_aftermath(
+    if let Err(error) = apply_resolved_battle_aftermath_with_runtime_projection(
         &mut context.session,
         command.id(),
         battle.id(),
@@ -2222,7 +2261,7 @@ fn recover_applying_battle_commands(
                         events,
                     )?;
                     mirror_battle_runtime_from_state(session, &state)?;
-                    battle_aftermath::apply_resolved_battle_aftermath(
+                    apply_resolved_battle_aftermath_with_runtime_projection(
                         session,
                         command.id(),
                         battle_id,
@@ -2275,7 +2314,7 @@ fn recover_applying_battle_commands(
                     events,
                 )?;
                 mirror_battle_runtime_from_state(session, &state)?;
-                battle_aftermath::apply_resolved_battle_aftermath(
+                apply_resolved_battle_aftermath_with_runtime_projection(
                     session,
                     command.id(),
                     battle_id,
@@ -2327,7 +2366,7 @@ fn recover_applying_battle_commands(
                     events,
                 )?;
                 mirror_battle_runtime_from_state(session, &state)?;
-                battle_aftermath::apply_resolved_battle_aftermath(
+                apply_resolved_battle_aftermath_with_runtime_projection(
                     session,
                     command.id(),
                     battle_id,
@@ -2495,7 +2534,7 @@ fn apply_timeout_command(
         events,
     )?;
     mirror_battle_runtime_from_state(session, &state)?;
-    battle_aftermath::apply_resolved_battle_aftermath(
+    apply_resolved_battle_aftermath_with_runtime_projection(
         session,
         command.id(),
         battle_id,
@@ -2616,7 +2655,7 @@ fn apply_round_auto_defend_command(
         events,
     )?;
     mirror_battle_runtime_from_state(session, &state)?;
-    battle_aftermath::apply_resolved_battle_aftermath(
+    apply_resolved_battle_aftermath_with_runtime_projection(
         session,
         command.id(),
         battle_id,

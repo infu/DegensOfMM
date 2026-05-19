@@ -312,8 +312,8 @@ When a todo item is completed:
 - [x] Implement loader compatibility so existing row-backed battles can be converted into `BattleRuntime` during migration or first access.
 - [x] Make `get_battle_state` read active runtime directly and fall back to legacy rows only when runtime is absent.
 - [x] Decide whether active runtime events use a heap session event sequence overlay or a stable batch reservation; prevent collisions with stable `GameSession.next_event_seq`.
-- [ ] Implement battle finalization that projects resolved runtime state into durable strategic rows/history/events needed after the battle is over.
-- [ ] Ensure finalization either projects survivor `BattleStack` rows before calling existing aftermath or rewrites aftermath to read survivors from runtime.
+- [x] Implement battle finalization that projects resolved runtime state into durable strategic rows/history/events needed after the battle is over.
+- [x] Ensure finalization either projects survivor `BattleStack` rows before calling existing aftermath or rewrites aftermath to read survivors from runtime.
 
 ### 2. Gate 1: Remove Tactical Child-Row Hot Writes
 

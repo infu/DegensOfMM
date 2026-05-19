@@ -218,6 +218,23 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
 
+### Runtime Finalization Projection
+
+Added the projection guard needed before active battle submit stops writing tactical rows per action.
+
+Checkpoint scope:
+
+- Added `apply_resolved_battle_aftermath_with_runtime_projection` in the battle service.
+- Before existing aftermath reads durable rows, the helper checks for a resolved active runtime and persists its final `BattleState` through the existing battle row projector.
+- This projects the resolved `Battle` header plus survivor `BattleStack` and `BattleOccupancy` rows before neutral/town/champion aftermath consumes survivor state.
+- Existing aftermath call sites now go through the helper, so timeout, recovery, sync, and round-advance paths all share the same ordering.
+- Once aftermath sees the durable battle as non-active, the active runtime is removed from heap.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_render_projection_tracks_battle_aftermath_objects -- --nocapture`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

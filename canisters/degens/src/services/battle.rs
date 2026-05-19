@@ -47,6 +47,56 @@ struct RuntimeBattleCommandContext {
     created_at_ms: u64,
 }
 
+fn runtime_battle_header(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+) -> Result<Option<domm_game::BattleRecord>, ApiError> {
+    let battle_id_text = battle_id.to_string();
+    battle_runtime::with_runtime(&battle_id_text, |runtime| {
+        if runtime.session_id != session_id.to_string() {
+            return Ok(None);
+        }
+        runtime
+            .state
+            .battle(&battle_id_text)
+            .cloned()
+            .map(Some)
+            .map_err(map_battle_error)
+    })
+    .unwrap_or(Ok(None))
+}
+
+fn response_active_stack_id(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+) -> Result<Option<String>, ApiError> {
+    if let Some(battle) = runtime_battle_header(session_id, battle_id)? {
+        return Ok(battle.active_stack_id);
+    }
+    Ok(battles::load_battle(battle_id)?
+        .and_then(|battle| battle.active_stack_id)
+        .map(|id| Id::<BattleStack>::from_key(id).to_string()))
+}
+
+fn schedule_runtime_battle_timeout_job(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    battle: &domm_game::BattleRecord,
+) -> Result<(), ApiError> {
+    if battle.state != "active" {
+        return Ok(());
+    }
+    let Some(deadline_ms) = battle.action_deadline_at else {
+        return Ok(());
+    };
+    schedule_battle_timeout_job_at(
+        session_id,
+        battle_id,
+        battle.created_turn,
+        Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
+    )
+}
+
 pub(crate) fn schedule_battle_timeout_job(
     session_id: Id<GameSession>,
     battle: &Battle,
@@ -1669,9 +1719,7 @@ pub(crate) fn sync_battle(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     }
-    let active_stack_id = battles::load_battle(battle.id())?
-        .and_then(|battle| battle.active_stack_id)
-        .map(|id| Id::<BattleStack>::from_key(id).to_string());
+    let active_stack_id = response_active_stack_id(context.session.id(), battle.id())?;
     let outcome = BattleSyncOutcome {
         battle_id,
         timeout_actions_applied: events
@@ -1895,7 +1943,7 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
-    if process_runtime_battle_timeout_job(&session, &job, battle_id)? {
+    if process_runtime_battle_timeout_job(&mut session, &job, battle_id)? {
         return Ok(());
     }
     let Some(battle) = battles::load_battle(battle_id)? else {
@@ -1952,7 +2000,7 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
 }
 
 fn process_runtime_battle_timeout_job(
-    session: &GameSession,
+    session: &mut GameSession,
     job: &SystemJob,
     battle_id: Id<Battle>,
 ) -> Result<bool, ApiError> {
@@ -1977,6 +2025,10 @@ fn process_runtime_battle_timeout_job(
         return Ok(true);
     };
     let deadline = Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX));
+    if job.due_at != deadline {
+        system_job_repo::complete_system_job(job.clone())?;
+        return Ok(true);
+    }
     if deadline > Timestamp::now() {
         system_job_repo::reschedule_system_job(job.clone(), deadline, None)?;
         system_job_service::schedule_nearest_due_job()?;
@@ -1984,9 +2036,30 @@ fn process_runtime_battle_timeout_job(
     }
     if let Some(active_stack_id) = battle.active_stack_id {
         let command = begin_timeout_command(session, battle_id, &active_stack_id, deadline_ms)?;
-        battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
+        let mut events = Vec::new();
+        let mut changed_subjects = Vec::new();
+        apply_timeout_command(
+            session,
+            command,
+            battle_id,
+            active_stack_id,
+            deadline_ms,
+            None,
+            &mut events,
+            &mut changed_subjects,
+        )?;
+        if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
+            session.id(),
+            battle_id,
+            None,
+            true,
+            true,
+        )? {
+            changed_subjects.extend(readiness.changed_subjects);
+        }
     }
-    Ok(false)
+    system_job_repo::complete_system_job(job.clone())?;
+    Ok(true)
 }
 
 pub(crate) fn process_battle_round_advance_job(job: SystemJob) -> Result<(), ApiError> {
@@ -2025,11 +2098,16 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
+    let runtime_battle = runtime_battle_header(session.id(), battle_id)?;
     let Some(battle) = battles::load_battle(battle_id)? else {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
     };
-    if battle.state != "active" || battle.current_round != round_number {
+    let header_state = runtime_battle
+        .as_ref()
+        .map(|battle| (battle.state.as_str(), battle.current_round))
+        .unwrap_or((battle.state.as_str(), battle.current_round));
+    if header_state.0 != "active" || header_state.1 != round_number {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
     }
@@ -2051,30 +2129,35 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
     let mut auto_defends = 0_u32;
     let mut round_incomplete = false;
+    let battle_id_text = battle_id.to_string();
     loop {
         if auto_defends >= CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE {
             round_incomplete = true;
             break;
         }
-        let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
-            public_error(
-                "battle_not_found",
-                "battle disappeared during round advance",
-                true,
-            )
-        })?;
-        if current_battle.state != "active" || current_battle.current_round != round_number {
-            break;
-        }
-        let battle_id_text = battle_id.to_string();
-        let state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+        let runtime_state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
             (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
         })
-        .flatten()
-        .map_or_else(
-            || battle_rows::load_battle_state_from_row(&session, current_battle),
-            Ok,
-        )?;
+        .flatten();
+        let state = if let Some(state) = runtime_state {
+            let current_battle = state.battle(&battle_id_text).map_err(map_battle_error)?;
+            if current_battle.state != "active" || current_battle.current_round != round_number {
+                break;
+            }
+            state
+        } else {
+            let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+                public_error(
+                    "battle_not_found",
+                    "battle disappeared during round advance",
+                    true,
+                )
+            })?;
+            if current_battle.state != "active" || current_battle.current_round != round_number {
+                break;
+            }
+            battle_rows::load_battle_state_from_row(&session, current_battle)?
+        };
         let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id.to_string())
             .map_err(map_battle_error)?
         else {
@@ -2107,7 +2190,9 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     }
 
     system_job_repo::complete_system_job(job)?;
-    if let Some(updated_battle) = battles::load_battle(battle_id)?
+    if let Some(updated_battle) = runtime_battle_header(session.id(), battle_id)? {
+        schedule_runtime_battle_timeout_job(session.id(), battle_id, &updated_battle)?;
+    } else if let Some(updated_battle) = battles::load_battle(battle_id)?
         && updated_battle.state == "active"
     {
         schedule_battle_timeout_job(session.id(), &updated_battle)?;
@@ -3288,7 +3373,6 @@ fn apply_due_runtime_timeouts_for_sync(
         });
         domm_game::apply_battle_command_by_id(&mut runtime.state, &timeout_command_id, deadline)
             .map_err(map_battle_error)?;
-        battle_rows::persist_battle_header_from_state(&runtime.state, command_id)?;
         append_runtime_timeout_public_event(session, command_id, &battle_id_text, events)?;
         refresh_runtime_metadata_from_state(&mut runtime, session, &battle_id_text)?;
         trim_runtime_transient_battle_history(&mut runtime);
@@ -3466,7 +3550,6 @@ fn apply_system_battle_action_from_runtime(
         deadline_base_ms,
     )
     .map_err(map_battle_error)?;
-    battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
     let command_id_text = command.id().to_string();
     append_new_runtime_battle_events(
         session,
@@ -3636,25 +3719,23 @@ fn apply_round_auto_defend_command(
     command.phase = "applying".to_string();
     command = commands_events_effects::update_game_command(command)?;
 
-    let battle = battles::load_battle(battle_id)?.ok_or_else(|| {
-        public_error(
-            "battle_not_found",
-            "battle not found during round advance",
-            true,
-        )
-    })?;
-    if battle.current_round != round_number {
-        command.status = "applied".to_string();
-        command.phase = "complete".to_string();
-        command.result_json = Some(command_response::result_json(
-            "battle_round_auto_defend",
-            session.current_turn,
-        ));
-        command.applied_at = Some(Timestamp::now());
-        commands_events_effects::update_game_command(command)?;
-        return Ok(());
-    }
     if let Some(runtime) = battle_runtime::with_runtime(&battle_id.to_string(), Clone::clone) {
+        let runtime_battle = runtime
+            .state
+            .battle(&battle_id.to_string())
+            .map_err(map_battle_error)?
+            .clone();
+        if runtime_battle.state != "active" || runtime_battle.current_round != round_number {
+            command.status = "applied".to_string();
+            command.phase = "complete".to_string();
+            command.result_json = Some(command_response::result_json(
+                "battle_round_auto_defend",
+                session.current_turn,
+            ));
+            command.applied_at = Some(Timestamp::now());
+            commands_events_effects::update_game_command(command)?;
+            return Ok(());
+        }
         apply_system_battle_action_from_runtime(
             session,
             &command,
@@ -3669,6 +3750,24 @@ fn apply_round_auto_defend_command(
             "round_auto_defend",
         )?;
     } else {
+        let battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+            public_error(
+                "battle_not_found",
+                "battle not found during round advance",
+                true,
+            )
+        })?;
+        if battle.current_round != round_number {
+            command.status = "applied".to_string();
+            command.phase = "complete".to_string();
+            command.result_json = Some(command_response::result_json(
+                "battle_round_auto_defend",
+                session.current_turn,
+            ));
+            command.applied_at = Some(Timestamp::now());
+            commands_events_effects::update_game_command(command)?;
+            return Ok(());
+        }
         let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
         let battle_command = battle_rows::battle_action_command(
             &command,

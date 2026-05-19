@@ -1006,3 +1006,25 @@ Decision:
 - The acted-state readiness cut is behaviorally safe but not a large measured win; submit remains auth dominated.
 - Runtime occupancy/stack indexes are not justified yet because runtime `load_battle_state` and `apply_rules` phases are tiny.
 - No active-submit serialization/checkpointing remains visible in traces: `persist_battle_state` is 0B avg and memory delta is about 0.0025 MB.
+
+## Checkpoint: Runtime Battle Header Is Authoritative While Active
+
+Removed the remaining active-runtime `Battle` row header projections for round, active stack, and deadline changes.
+
+What changed:
+
+- `sync_battle` now reports `active_stack_id` from `BattleRuntime` when an active runtime exists, falling back to the durable `Battle` row only for row-backed battles.
+- Runtime timeout timer jobs now apply the timeout directly against `BattleRuntime` and complete the timer job instead of projecting the header and falling into the row-backed timeout path.
+- Round-advance jobs now use runtime round/state/active-stack data while active and schedule the next timeout from the runtime deadline.
+- `apply_system_battle_action_from_runtime` no longer writes the durable `Battle` row header after timeout auto-defend or round auto-defend.
+
+Decision:
+
+- The durable `Battle` row remains a shell/projection for lookup, row-backed fallback, battle start, finalization, and explicit full-state projection.
+- Active runtime is now authoritative for active tactical round/stack/deadline movement.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-header cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round -- --nocapture`

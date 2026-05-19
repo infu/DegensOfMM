@@ -334,7 +334,7 @@ When a todo item is completed:
 - [x] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
 - [x] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
 - [x] Stop projecting the durable `Battle` row header for active non-spell player submissions; runtime is authoritative for active round/stack/deadline until sync/finalization projection.
-- [ ] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points.
+- [x] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points. Active timeout sync, timeout timer jobs, and round-advance jobs now read active round/stack/deadline from `BattleRuntime`; durable header projection is left for row-backed fallback and finalization/checkpoint paths.
 - [x] Replace readiness recompute with runtime alive/acted tracking; avoid `legal_actions_for_stack` during active runtime readiness except for a measured edge case. The row-backed fallback still uses the legacy legal-action scan.
 - [x] Move `end_battle_turn` onto runtime readiness so manual readiness does not keep `BattleParticipantRoundReady` hot. Active runtime battles now mark manual ready state in `BattleRuntime.ready_participants`; durable `GameCommand`/public event behavior stays for this checkpoint because the full runtime receipt/event version exceeded the IC Wasm code-section limit.
 - [x] Keep enough scheduling behavior to make timeout/round advancement work from heap state.

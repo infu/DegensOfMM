@@ -307,7 +307,7 @@ When a todo item is completed:
 
 - [x] Define the first `BattleRuntime` as `domm_game::BattleState` plus canister runtime metadata: session id, battle id, participant audience keys, command receipts, active event buffer, readiness set, deadline state, and session event sequence cursor.
 - [x] Add a heap active battle store keyed by battle id.
-- [ ] Add `pre_upgrade`/`post_upgrade` serialization for active battles using a dedicated memory slot that does not collide with IcyDB memory IDs.
+- [x] Add `pre_upgrade`/`post_upgrade` serialization for active battles using a dedicated memory slot that does not collide with IcyDB memory IDs.
 - [ ] Create/adopt active runtime during battle start paths before the first player action, with compatibility hydration from existing row-backed active battles.
 - [ ] Implement loader compatibility so existing row-backed battles can be converted into `BattleRuntime` during migration or first access.
 - [ ] Make `get_battle_state` read active runtime directly and fall back to legacy rows only when runtime is absent.

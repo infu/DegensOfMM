@@ -183,6 +183,25 @@ Verified:
 
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
 
+### BattleRuntime Upgrade Snapshot
+
+Added upgrade persistence for active battle runtimes.
+
+Checkpoint scope:
+
+- Dedicated battle runtime memory id is `23`.
+- This does not collide with IcyDB data/index/schema ids `20/21/22` or commit id `119`.
+- Snapshot storage uses Canic's registered stable-memory slot machinery, not raw stable-memory offsets.
+- `canister_pre_upgrade` serializes `BattleRuntimeSnapshot` into the dedicated stable cell.
+- `post_upgrade` restores the snapshot before system job repair/scheduling and then clears the snapshot cell.
+- Snapshot encode/decode uses Candid for the current runtime shape.
+- Snapshot/restore failure traps the upgrade path instead of silently dropping active battles.
+
+Verified:
+
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `cargo check -p domm-degens-canister`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

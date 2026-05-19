@@ -7,13 +7,66 @@
 #![allow(dead_code)]
 
 use std::{
+    borrow::Cow,
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
 };
 
 use candid::CandidType;
+use canic_cdk::structures::{
+    Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
+};
 use domm_game::{ApiEventView, BattleState, CommandResponse, CommandStatusView};
 use serde::{Deserialize, Serialize};
+
+pub(crate) const BATTLE_RUNTIME_MEMORY_ID: u8 = 23;
+const MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES: u32 = 32 * 1024 * 1024;
+
+struct BattleRuntimeStableCell;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RawBattleRuntimeSnapshot(Vec<u8>);
+
+impl RawBattleRuntimeSnapshot {
+    const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl Storable for RawBattleRuntimeSnapshot {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.as_bytes())
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.into_owned())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES,
+        is_fixed_size: false,
+    };
+}
+
+thread_local! {
+    static BATTLE_RUNTIME_SNAPSHOT_CELL: RefCell<
+        StableCell<RawBattleRuntimeSnapshot, VirtualMemory<DefaultMemoryImpl>>,
+    > = RefCell::new(StableCell::init(
+        icydb::__reexports::canic_memory::ic_memory!(
+            BattleRuntimeStableCell,
+            BATTLE_RUNTIME_MEMORY_ID
+        ),
+        RawBattleRuntimeSnapshot::empty(),
+    ));
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntime {
@@ -237,6 +290,39 @@ pub(crate) fn clear_all_for_tests() {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
 }
 
+pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
+    let snapshot = snapshot_for_upgrade();
+    let bytes = candid::encode_one(snapshot)
+        .map_err(|error| format!("battle runtime Candid encode failed: {error}"))?;
+    if bytes.len() > MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES as usize {
+        return Err(format!(
+            "battle runtime snapshot exceeds {} bytes: {}",
+            MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES,
+            bytes.len()
+        ));
+    }
+
+    BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| {
+        cell.borrow_mut().set(RawBattleRuntimeSnapshot(bytes));
+    });
+    Ok(())
+}
+
+pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
+    let raw = BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| cell.borrow().get().clone());
+    if raw.as_bytes().is_empty() {
+        return Ok(());
+    }
+
+    let snapshot = candid::decode_one::<BattleRuntimeSnapshot>(raw.as_bytes())
+        .map_err(|error| format!("battle runtime Candid decode failed: {error}"))?;
+    restore_from_upgrade(snapshot);
+    BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| {
+        cell.borrow_mut().set(RawBattleRuntimeSnapshot::empty());
+    });
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,5 +408,23 @@ mod tests {
             with_runtime("battle:2", |runtime| runtime.session_event_sequence_cursor),
             Some(18)
         );
+    }
+
+    #[test]
+    fn runtime_snapshot_candid_round_trips() {
+        let snapshot = BattleRuntimeSnapshot {
+            runtimes: vec![BattleRuntime::new(
+                "session:1",
+                "battle:1",
+                empty_state("s1", "b1"),
+                42,
+            )],
+        };
+
+        let bytes = candid::encode_one(&snapshot).expect("snapshot should encode");
+        let decoded: BattleRuntimeSnapshot =
+            candid::decode_one(&bytes).expect("snapshot should decode");
+
+        assert_eq!(decoded, snapshot);
     }
 }

@@ -21,7 +21,7 @@ use crate::repos::{
 
 use super::{
     battle_aftermath, battle_rows,
-    battle_runtime::{self, BattleRuntime},
+    battle_runtime::{self, BattleRuntime, BattleRuntimeReadyKey},
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
     system_jobs as system_job_service,
@@ -46,12 +46,21 @@ pub(crate) fn schedule_battle_timeout_job(
     let Some(deadline) = battle.action_deadline_at else {
         return Ok(());
     };
+    schedule_battle_timeout_job_at(session_id, battle.id(), battle.created_turn, deadline)
+}
+
+fn schedule_battle_timeout_job_at(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    created_turn: u32,
+    deadline: Timestamp,
+) -> Result<(), ApiError> {
     system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-        job_key: format!("battle_timeout:{}:{}", battle.id(), deadline.as_millis()),
+        job_key: format!("battle_timeout:{battle_id}:{}", deadline.as_millis()),
         job_kind: "battle_timeout".to_string(),
         session_id,
-        battle_id: Some(battle.id()),
-        turn_number: Some(battle.created_turn),
+        battle_id: Some(battle_id),
+        turn_number: Some(created_turn),
         due_at: deadline,
         command_id: None,
         cursor_json: None,
@@ -1081,15 +1090,28 @@ pub(crate) fn submit_battle_action(
         if skip_timeout_for_submit_grace {
             Ok(false)
         } else {
-            apply_due_timeouts(
+            match apply_due_runtime_timeouts_for_sync(
                 &mut context.session,
                 battle.id(),
                 now_ms,
                 CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                command.id(),
                 Some(&response_participant_id),
                 &mut events,
                 &mut changed_subjects,
-            )
+            ) {
+                Ok(Some((sync_incomplete, _applied))) => Ok(sync_incomplete),
+                Ok(None) => apply_due_timeouts(
+                    &mut context.session,
+                    battle.id(),
+                    now_ms,
+                    CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                    Some(&response_participant_id),
+                    &mut events,
+                    &mut changed_subjects,
+                ),
+                Err(error) => Err(error),
+            }
         }
     });
     if let Err(error) = sync_result {
@@ -1131,7 +1153,15 @@ pub(crate) fn submit_battle_action(
         }
     };
     crate::metrics::benchmark_phase("submit_battle_action", "readiness_schedule", || {
-        if let Some(updated_battle) = battles::load_battle(battle.id())? {
+        if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
+            context.session.id(),
+            battle.id(),
+            Some(command.id()),
+            true,
+            true,
+        )? {
+            changed_subjects.extend(readiness.changed_subjects);
+        } else if let Some(updated_battle) = battles::load_battle(battle.id())? {
             let readiness = recompute_battle_round_readiness_and_schedule(
                 context.session.id(),
                 &updated_battle,
@@ -1144,12 +1174,6 @@ pub(crate) fn submit_battle_action(
         Ok::<(), ApiError>(())
     })?;
 
-    crate::metrics::benchmark_phase("submit_battle_action", "reload_session", || {
-        if let Some(updated_session) = crate::repos::sessions::load_session(context.session.id())? {
-            context.session = updated_session;
-        }
-        Ok::<(), ApiError>(())
-    })?;
     let result_json = battle_action_result_json(&receipt);
     crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
         command_response::apply_command_with_result(
@@ -1421,16 +1445,33 @@ pub(crate) fn end_battle_turn(
         "player_end_turn".to_string(),
         Timestamp::now(),
     )?;
+    battle_runtime::with_runtime_mut(&battle.id().to_string(), |runtime| {
+        if runtime.session_id == context.session.id().to_string() {
+            runtime.mark_ready(caller_participant_id.to_string(), battle.current_round);
+        }
+    });
     let mut changed_subjects = vec![command_response::changed(
         "battle_participant_round_ready",
         &ready.id().to_string(),
         "upsert",
     )];
-    let readiness = recompute_battle_round_readiness_and_schedule(
+    let readiness = recompute_runtime_battle_round_readiness_and_schedule(
         context.session.id(),
-        &battle,
+        battle.id(),
         Some(command.id()),
         true,
+        false,
+    )?
+    .map_or_else(
+        || {
+            recompute_battle_round_readiness_and_schedule(
+                context.session.id(),
+                &battle,
+                Some(command.id()),
+                true,
+            )
+        },
+        Ok,
     )?;
     changed_subjects.extend(readiness.changed_subjects);
 
@@ -1604,8 +1645,13 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         return Ok(());
     }
 
-    let readiness =
-        recompute_battle_round_readiness_and_schedule(session_id, &battle, None, false)?;
+    let readiness = recompute_runtime_battle_round_readiness_and_schedule(
+        session_id, battle_id, None, false, false,
+    )?
+    .map_or_else(
+        || recompute_battle_round_readiness_and_schedule(session_id, &battle, None, false),
+        Ok,
+    )?;
     if !readiness.all_ready {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
@@ -1687,6 +1733,12 @@ struct BattleRoundReadinessSummary {
     changed_subjects: Vec<domm_game::ChangedSubject>,
 }
 
+struct RuntimeBattleRoundReadinessSummary {
+    summary: BattleRoundReadinessSummary,
+    round_job_key: Option<String>,
+    timeout_deadline: Option<(u32, u64)>,
+}
+
 fn recompute_battle_round_readiness_and_schedule(
     session_id: Id<GameSession>,
     battle: &Battle,
@@ -1765,6 +1817,170 @@ fn recompute_battle_round_readiness_and_schedule(
         all_ready,
         changed_subjects,
     })
+}
+
+fn recompute_runtime_battle_round_readiness_and_schedule(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    command_id: Option<Id<GameCommand>>,
+    schedule_if_ready: bool,
+    schedule_timeout: bool,
+) -> Result<Option<BattleRoundReadinessSummary>, ApiError> {
+    let battle_id_text = battle_id.to_string();
+    let Some(runtime_summary) = battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+        if runtime.session_id != session_id.to_string() {
+            return Ok(None);
+        }
+
+        let battle = runtime
+            .state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .clone();
+        if battle.state != "active" {
+            return Ok(Some(RuntimeBattleRoundReadinessSummary {
+                summary: BattleRoundReadinessSummary {
+                    ready_count: 0,
+                    participant_count: 0,
+                    all_ready: false,
+                    changed_subjects: Vec::new(),
+                },
+                round_job_key: None,
+                timeout_deadline: None,
+            }));
+        }
+
+        let participant_ids = alive_battle_participant_ids(&runtime.state, &battle_id_text)?;
+        let mut changed_subjects = Vec::new();
+        for participant_id_key in &participant_ids {
+            let participant_id =
+                Id::<domm_degens_schema::schema::GameParticipant>::from_key(*participant_id_key);
+            let participant_text = participant_id.to_string();
+            let ready_key = BattleRuntimeReadyKey {
+                participant_id: participant_text.clone(),
+                round_number: battle.current_round,
+            };
+            if runtime.ready_participants.contains(&ready_key) {
+                continue;
+            }
+            let living_owned = runtime
+                .state
+                .stacks
+                .iter()
+                .filter(|stack| {
+                    stack.battle_id == battle_id_text
+                        && stack.owner_participant_id.as_deref() == Some(participant_text.as_str())
+                        && stack.is_living()
+                })
+                .collect::<Vec<_>>();
+            let all_acted = !living_owned.is_empty()
+                && living_owned
+                    .iter()
+                    .all(|stack| stack.acted_round >= battle.current_round);
+            let reason = if all_acted {
+                Some("auto_all_stacks_acted")
+            } else if !participant_has_meaningful_action(
+                &runtime.state,
+                &battle_id_text,
+                &participant_text,
+                battle.current_round,
+            )? {
+                Some("auto_no_actions")
+            } else {
+                None
+            };
+            if reason.is_none() {
+                continue;
+            }
+            runtime.mark_ready(participant_text, battle.current_round);
+            changed_subjects.push(command_response::changed(
+                "battle_participant_round_ready",
+                &format!(
+                    "runtime:{battle_id}:{participant_id}:{}",
+                    battle.current_round
+                ),
+                "upsert",
+            ));
+        }
+
+        let ready_count = participant_ids
+            .iter()
+            .filter(|participant_id_key| {
+                let participant_id = Id::<domm_degens_schema::schema::GameParticipant>::from_key(
+                    **participant_id_key,
+                )
+                .to_string();
+                runtime.ready_participants.contains(&BattleRuntimeReadyKey {
+                    participant_id,
+                    round_number: battle.current_round,
+                })
+            })
+            .count();
+        let all_ready = !participant_ids.is_empty() && ready_count == participant_ids.len();
+        let round_job_key = (all_ready && schedule_if_ready).then(|| {
+            format!(
+                "battle_round_advance:{}:{}",
+                battle_id, battle.current_round
+            )
+        });
+        let timeout_deadline = (schedule_timeout && battle.state == "active")
+            .then_some(battle.action_deadline_at)
+            .flatten()
+            .map(|deadline| (battle.created_turn, deadline));
+
+        Ok(Some(RuntimeBattleRoundReadinessSummary {
+            summary: BattleRoundReadinessSummary {
+                ready_count,
+                participant_count: participant_ids.len(),
+                all_ready,
+                changed_subjects,
+            },
+            round_job_key,
+            timeout_deadline,
+        }))
+    }) else {
+        return Ok(None);
+    };
+
+    let Some(mut runtime_summary) = runtime_summary? else {
+        return Ok(None);
+    };
+
+    if let Some(round_job_key) = runtime_summary.round_job_key.clone() {
+        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: round_job_key.clone(),
+            job_kind: "battle_round_advance".to_string(),
+            session_id,
+            battle_id: Some(battle_id),
+            turn_number: None,
+            due_at: Timestamp::now(),
+            command_id,
+            cursor_json: None,
+        })?;
+        battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+            runtime.deadline.round_job_key = Some(round_job_key);
+            runtime.mark_dirty();
+        });
+        runtime_summary
+            .summary
+            .changed_subjects
+            .push(command_response::changed(
+                "system_job",
+                &job.id().to_string(),
+                "upsert",
+            ));
+    }
+
+    if let Some((created_turn, deadline_ms)) = runtime_summary.timeout_deadline {
+        schedule_battle_timeout_job_at(
+            session_id,
+            battle_id,
+            created_turn,
+            Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
+        )?;
+    }
+
+    Ok(Some(runtime_summary.summary))
 }
 
 fn mark_auto_ready_participants(
@@ -1882,11 +2098,44 @@ fn participant_has_meaningful_action(
 }
 
 fn ensure_battle_round_accepts_new_action(
-    _session_id: Id<GameSession>,
+    session_id: Id<GameSession>,
     battle_id: Id<Battle>,
     participant_id: Id<domm_degens_schema::schema::GameParticipant>,
     round_number: u16,
 ) -> Result<(), ApiError> {
+    let participant_id_text = participant_id.to_string();
+    if let Some(handled) = battle_runtime::with_runtime(&battle_id.to_string(), |runtime| {
+        if runtime.session_id != session_id.to_string() {
+            return None;
+        }
+        if runtime
+            .ready_participants
+            .contains(&BattleRuntimeReadyKey {
+                participant_id: participant_id_text,
+                round_number,
+            })
+        {
+            return Some(Err(public_error(
+                "battle_round_closed",
+                "this participant has already ended the current battle round",
+                false,
+            )));
+        }
+        let round_job_key = format!("battle_round_advance:{battle_id}:{round_number}");
+        if runtime.deadline.round_job_key.as_deref() == Some(round_job_key.as_str()) {
+            return Some(Err(public_error(
+                "battle_processing",
+                "the current battle round is advancing; refresh before submitting another battle action",
+                true,
+            )));
+        }
+        Some(Ok(()))
+    })
+    .flatten()
+    {
+        return handled;
+    }
+
     if battle_round_ready::find_battle_round_ready(battle_id, participant_id, round_number)?
         .is_some()
     {

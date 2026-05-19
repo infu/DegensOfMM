@@ -328,6 +328,8 @@ When a todo item is completed:
 
 ### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes
 
+- [x] Move submit-time auto-ready bookkeeping to `BattleRuntime.ready_participants` and use runtime readiness for active submit/round-job checks, while preserving row-backed `end_battle_turn` compatibility for now.
+- [x] Route submit-time timeout checks through active runtime and remove the redundant submit response session reload.
 - [ ] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
 - [ ] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
 - [ ] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points.

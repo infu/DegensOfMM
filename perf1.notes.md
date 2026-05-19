@@ -393,3 +393,62 @@ Decision:
 - Gate K is playable/passing again after the runtime submit cut.
 - Perf Gate 1 did not clear `<10B`; `submit_battle_action` improved from the Gate K baseline of 27.4632B to 20.3549B, but durable command/event/session and aftermath-adjacent stable work still dominate.
 - Continue into Gate 2/3 style cuts rather than polishing tactical row persistence. The next likely wins are removing per-action durable battle header/job/readiness writes and moving active command receipts/events into runtime.
+
+### Runtime Readiness And Submit Timeout Cut
+
+Moved more submit-side support work onto active runtime without changing durable command/event behavior yet.
+
+Changes made:
+
+- Submit-time auto-ready bookkeeping now uses `BattleRuntime.ready_participants` for active battles.
+- Active submit command guards check runtime ready/round-processing state first, avoiding row-ready and system-job lookups on the hot path.
+- `end_battle_turn` still writes durable ready rows for compatibility, but mirrors the ready participant into runtime so submit guards and runtime round jobs see the same state.
+- Round-advance job processing can read runtime readiness before falling back to row readiness.
+- Submit-time timeout checks now use the active runtime timeout helper first.
+- The redundant post-submit session reload was removed; event append/finalization already mutate the `context.session` value used for the response.
+
+Focused regression:
+
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
+Focused benchmark:
+
+```text
+run id: 20260519-034828-gate-k-submit-runtime-timeout
+artifact: target/benchmarks/20260519-034828-gate-k-submit-runtime-timeout/gate-k/summary.json
+note: summary git_sha is 1b9eb20 because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | elapsed | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| passed | 592.77s | 86 | 120 | 332 | 1025 | 218497 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 26 | 13.9983B | 14.4811B | 168.71 MB | 0.0140T |
+| `sync_battle` | update | 29 | 9.7119B | 36.1282B | 29.84 MB | 0.0101T |
+| `get_battle_state` | query | 50 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `event_fanout` | 26 | 5.9479B |
+| `auth_context` | 26 | 2.1175B |
+| `command_begin` | 26 | 1.1884B |
+| `readiness_schedule` | 26 | 1.1861B |
+| `persist_battle_state` | 26 | 1.1824B |
+| `recovery` | 26 | 0.7068B |
+| `load_battle` | 26 | 0.7060B |
+| `final_response` | 26 | 0.4815B |
+| `mark_command_applying` | 26 | 0.4810B |
+| `timeout` | 26 | 0.0001B |
+
+Decision:
+
+- Runtime readiness and runtime submit timeout reduced Gate K `submit_battle_action` from 20.3549B to 13.9983B avg.
+- The next blocker is unambiguous: durable `event_fanout` is ~5.95B avg by itself. Moving active battle events into runtime/response projection is the next cut toward `<10B`.

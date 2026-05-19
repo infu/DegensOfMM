@@ -172,6 +172,56 @@ Saved scenario split:
 
 Improvement will be measured against the combined line unless a checkpoint specifically optimizes one scenario. The first target is under 10B average instructions for `submit_battle_action`; the normal target is around 0.3B. If an intermediate design cannot plausibly reach that range, replace it rather than polishing it.
 
+## Traced Baseline: submit_battle_action
+
+Traced source:
+
+```text
+run id: 20260519-002234-3dfd9a4
+suite: target/benchmarks/20260519-002234-3dfd9a4/suite-summary.md
+gate-k: target/benchmarks/20260519-002234-3dfd9a4/gate-k/summary.json
+gate-l: target/benchmarks/20260519-002234-3dfd9a4/gate-l/summary.json
+git sha: 3dfd9a4
+```
+
+The traced average is effectively unchanged from the pinned baseline, so the attribution hooks are good enough for Gate 1 decisions.
+
+| source | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Gate K | 25 | 27.4636B | 28.7972B | 173.88 MB | 0.0275T |
+| Gate L | 26 | 26.5264B | 28.8148B | 156.41 MB | 0.0265T |
+| combined | 51 | 26.9858B | 28.8148B | 164.97 MB | 0.0270T |
+
+Top combined `submit_battle_action` phases:
+
+| phase | calls | avg instructions | total instructions |
+| --- | ---: | ---: | ---: |
+| readiness_schedule | 50 | 6.6912B | 334.5608B |
+| event_fanout | 50 | 5.9269B | 296.3457B |
+| persist_battle_state | 50 | 3.5228B | 176.1409B |
+| load_battle_state | 50 | 2.8205B | 141.0273B |
+| command_begin | 51 | 2.5587B | 130.4941B |
+| auth_context | 51 | 2.1156B | 107.8965B |
+| load_battle | 51 | 0.7055B | 35.9827B |
+| recovery | 50 | 0.7058B | 35.2898B |
+
+Top combined repo operations inside `submit_battle_action`:
+
+| operation | calls | avg instructions | total instructions |
+| --- | ---: | ---: | ---: |
+| battles.load_battle | 251 | 0.7049B | 176.9241B |
+| battle_round_ready.by_battle_participant_round | 150 | 0.7039B | 105.5895B |
+| sessions.load_session | 147 | 0.7046B | 103.5801B |
+| battles.stacks_by_battle | 146 | 0.7067B | 103.1712B |
+| battles.occupancy_by_battle | 146 | 0.7042B | 102.8087B |
+| events.by_session_event_key | 140 | 0.7054B | 98.7552B |
+| system_jobs.by_job_key | 100 | 0.7043B | 70.4334B |
+| battles.obstacles_by_battle | 96 | 0.7049B | 67.6672B |
+| events.create_game_event | 140 | 0.4791B | 67.0757B |
+| sessions.update_session | 140 | 0.4779B | 66.9078B |
+
+Trace conclusion: the next cut should remove repeated active battle row loads/persistence and readiness/job/event fanout from the per-action path. `apply_rules` and `validate_action` are tiny in this baseline, so the first win is storage shape, not pure battle CPU.
+
 ## Testing Policy
 
 Roll fast here. Use focused tests during implementation and full benchmark/regression runs only at meaningful checkpoints.
@@ -202,7 +252,7 @@ When a todo item is completed:
 - [x] Re-evaluate the updated plan against the actual battle, event, command-status, readiness, and aftermath code paths.
 - [x] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
 - [x] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
-- [ ] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
+- [x] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
 - [ ] Document the active runtime merge contract for `get_battle_state`, `sync_battle`, `end_battle_turn`, `get_events_after`, `get_command_status`, `get_command_status_by_nonce`, timeout jobs, round jobs, and aftermath.
 
 ### 1. Active Battle Runtime Authority

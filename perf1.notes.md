@@ -97,6 +97,63 @@ Verified:
 - `cargo test -p domm-pocket-ic-tests --test canister_endpoints benchmark_summary -- --nocapture`
 - `cargo test -p domm-degens-canister exported_candid -- --nocapture`
 
+### Traced Baseline Checkpoint
+
+Fresh traced run:
+
+```text
+run id: 20260519-002234-3dfd9a4
+git sha: 3dfd9a4
+suite: target/benchmarks/20260519-002234-3dfd9a4/suite-summary.md
+```
+
+Suite status:
+
+| gate | status | elapsed | note |
+| --- | --- | ---: | --- |
+| Gate J | passed | 257s | strategic loop |
+| Gate K | passed | 440s | battle aftermath/victory |
+| Gate L | passed | 479s | first-playable route |
+| Gate M | passed | n/a | client probe log-only artifact |
+
+`submit_battle_action` summary:
+
+| source | calls | avg instructions | p95 instructions | avg memory delta |
+| --- | ---: | ---: | ---: | ---: |
+| Gate K | 25 | 27.4636B | 28.7972B | 173.88 MB |
+| Gate L | 26 | 26.5264B | 28.8148B | 156.41 MB |
+| combined | 51 | 26.9858B | 28.8148B | 164.97 MB |
+
+Top combined phases:
+
+| phase | calls | avg instructions | total instructions |
+| --- | ---: | ---: | ---: |
+| readiness_schedule | 50 | 6.6912B | 334.5608B |
+| event_fanout | 50 | 5.9269B | 296.3457B |
+| persist_battle_state | 50 | 3.5228B | 176.1409B |
+| load_battle_state | 50 | 2.8205B | 141.0273B |
+| command_begin | 51 | 2.5587B | 130.4941B |
+| auth_context | 51 | 2.1156B | 107.8965B |
+| load_battle | 51 | 0.7055B | 35.9827B |
+| recovery | 50 | 0.7058B | 35.2898B |
+
+Top combined repo operations inside `submit_battle_action`:
+
+| operation | calls | avg instructions | total instructions |
+| --- | ---: | ---: | ---: |
+| battles.load_battle | 251 | 0.7049B | 176.9241B |
+| battle_round_ready.by_battle_participant_round | 150 | 0.7039B | 105.5895B |
+| sessions.load_session | 147 | 0.7046B | 103.5801B |
+| battles.stacks_by_battle | 146 | 0.7067B | 103.1712B |
+| battles.occupancy_by_battle | 146 | 0.7042B | 102.8087B |
+| events.by_session_event_key | 140 | 0.7054B | 98.7552B |
+| system_jobs.by_job_key | 100 | 0.7043B | 70.4334B |
+| battles.obstacles_by_battle | 96 | 0.7049B | 67.6672B |
+| events.create_game_event | 140 | 0.4791B | 67.0757B |
+| sessions.update_session | 140 | 0.4779B | 66.9078B |
+
+Decision from trace: focus Gate 1 on removing active tactical row load/persist first, but do not stop there. The largest measured phase is readiness/schedule, event fanout is second, and `apply_rules`/`validate_action` are tiny. If the runtime aggregate still writes events/readiness/jobs per action, it will not reach `0.3B`.
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

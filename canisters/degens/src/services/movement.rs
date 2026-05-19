@@ -559,11 +559,13 @@ pub(crate) fn sync_session_turn(
 
     let income_turn = context.session.current_turn;
     let mut participant = context.participant.clone();
+    let mut next_event_seq = context.session.next_event_seq;
     let income_events = materialize_income(
         &mut context.session,
         command.id(),
         &mut participant,
         income_turn,
+        Some(&mut next_event_seq),
     )?;
     if !income_events.is_empty() {
         events.extend(income_events);
@@ -584,8 +586,8 @@ pub(crate) fn sync_session_turn(
     context.session.turn_deadline_at = turn_deadline();
     context.session.last_command_id = Some(command.id);
     economy_expansion::materialize_weekly_economy(&context.session, command.id())?;
-    let final_event_seq = context.session.next_event_seq;
-    context.session.next_event_seq = final_event_seq.saturating_add(1);
+    let final_event_seq = next_event_seq;
+    context.session.next_event_seq = next_event_seq.saturating_add(1);
     context.session = sessions::update_session(context.session)?;
     changed_subjects.push(command_response::changed(
         "session",
@@ -734,8 +736,13 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         None,
     )?;
     for mut participant in participants.items {
-        let income_events =
-            materialize_income(&mut session, command.id(), &mut participant, income_turn)?;
+        let income_events = materialize_income(
+            &mut session,
+            command.id(),
+            &mut participant,
+            income_turn,
+            None,
+        )?;
         events.extend(income_events);
         participant.last_action_turn = income_turn;
         sessions::update_participant(participant)?;
@@ -3431,6 +3438,7 @@ fn materialize_income(
     command_id: Id<domm_degens_schema::schema::GameCommand>,
     participant: &mut GameParticipant,
     turn_number: u32,
+    reserved_event_seq: Option<&mut u64>,
 ) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
     if participant.last_income_turn >= turn_number {
         return Ok(Vec::new());
@@ -3471,16 +3479,70 @@ fn materialize_income(
         format!(r#"{{"kind":"income","gold":{gold_income}}}"#),
     )
     .ok();
-    command_response::append_public_event(
-        session,
-        command_id,
-        format!("income:{}:{turn_number}", participant.id()),
-        "income_materialized".to_string(),
-        Some("participant".to_string()),
-        Some(participant.id().to_string()),
-        format!(r#"{{"gold":{gold_income}}}"#),
-    )
-    .map(|event| vec![event])
+    let event_key = format!("income:{}:{turn_number}", participant.id());
+    let event_type = "income_materialized".to_string();
+    let subject_kind = Some("participant".to_string());
+    let subject_id_text = Some(participant.id().to_string());
+    let payload_json = format!(r#"{{"gold":{gold_income}}}"#);
+    let event = if let Some(next_event_seq) = reserved_event_seq {
+        append_public_event_with_local_seq(
+            session,
+            command_id,
+            next_event_seq,
+            event_key,
+            event_type,
+            subject_kind,
+            subject_id_text,
+            payload_json,
+        )?
+    } else {
+        command_response::append_public_event(
+            session,
+            command_id,
+            event_key,
+            event_type,
+            subject_kind,
+            subject_id_text,
+            payload_json,
+        )?
+    };
+    Ok(vec![event])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_public_event_with_local_seq(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    next_event_seq: &mut u64,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    if let Some(event) = commands_events_effects::find_event_by_key(session.id(), &event_key)? {
+        if *next_event_seq <= event.event_seq {
+            *next_event_seq = event.event_seq.saturating_add(1);
+        }
+        return Ok(api_event_view(event));
+    }
+
+    let event_seq = *next_event_seq;
+    let event = commands_events_effects::create_game_event(
+        session.id(),
+        Some(command_id),
+        None,
+        session.current_turn,
+        event_seq,
+        event_key,
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )?;
+    *next_event_seq = event_seq.saturating_add(1);
+    Ok(api_event_view(event))
 }
 
 #[allow(clippy::too_many_arguments)]

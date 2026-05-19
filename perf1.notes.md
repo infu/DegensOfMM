@@ -2429,3 +2429,43 @@ Caveat:
 Decision:
 
 - Keep this cut. It removes two stable operations from the normal successful sync path and does not change the movement partial, object-event, income, or recovered-event semantics.
+
+## Checkpoint: Batch Successful Sync Income Event Sequence
+
+Extended the successful-sync event sequence batching to the income event:
+
+- `sync_session_turn` now holds a local `next_event_seq` cursor for the successful turn-advance path.
+- `materialize_income` can append `income_materialized` with that local cursor for the manual sync path, without immediately updating `GameSession.next_event_seq`.
+- The system-job turn-resolution path still calls `materialize_income` with the old idempotent durable event append, keeping that path conservative.
+- The final `session_turn_synced` event uses the next local sequence, and the single turn-advance `sessions.update_session` persists the final cursor.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Focused Gate J `20260519-sync-income-reserved-event-gate-j` passed in `228.58s` test time / `245s` wall time.
+
+Measured delta versus `20260519-sync-not-due-cache-gate-j`:
+
+| metric | cached not-due sync | income reserved event | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 305.7282B | 304.0763B | -0.5% |
+| `sync_session_turn` avg | 11.6196B | 11.4681B | -1.3% |
+| `submit_move_intent` avg | 11.2527B | 11.2548B | flat |
+| `sessions.update_session` calls | 16 | 14 | -12.5% |
+| `sessions.load_participant` calls | 1 | 0 | -100.0% |
+| `events.by_session_event_key` calls | 10 | 10 | unchanged |
+
+Incremental delta versus `20260519-sync-final-reserved-event-gate-j`:
+
+| metric | final reserved event | income reserved event | change |
+| --- | ---: | ---: | ---: |
+| `sync_session_turn` avg | 11.5131B | 11.4681B | -0.4% |
+| `sessions.update_session` calls | 15 | 14 | -6.7% |
+| `sessions.update_session` instructions | 7.1577B | 6.6764B | -0.4814B |
+
+Decision:
+
+- Keep this cut. It removes the remaining event-sequence session write from the successful manual sync path while leaving partial movement, object event, recovered event, and system-job sync behavior on the older conservative path.

@@ -468,7 +468,7 @@ pub(crate) fn sync_session_turn(
             &payload_json,
         ));
     }
-    let (command, command_is_fresh) = match command_response::begin_participant_command_tracked(
+    let command = match command_response::begin_participant_command_tracked(
         caller,
         &context,
         "sync_session_turn",
@@ -476,10 +476,7 @@ pub(crate) fn sync_session_turn(
         None,
         payload_json,
     )? {
-        GameCommandStart::Apply {
-            command,
-            freshly_created,
-        } => (command, freshly_created),
+        GameCommandStart::Apply(command) => command,
         GameCommandStart::Return(response) => return Ok(response),
     };
 
@@ -488,7 +485,6 @@ pub(crate) fn sync_session_turn(
     let movement_complete = resolve_pending_movement(
         &mut context.session,
         command.id(),
-        command_is_fresh,
         &mut events,
         &mut changed_subjects,
     )?;
@@ -544,10 +540,9 @@ pub(crate) fn sync_session_turn(
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
-    let event = append_public_event_maybe_fresh(
+    let event = command_response::append_public_event(
         &mut context.session,
         command.id(),
-        command_is_fresh,
         format!("sync_turn:{session_id_text}:{current_turn}"),
         "session_turn_synced".to_string(),
         Some("session".to_string()),
@@ -658,7 +653,6 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let movement_complete = resolve_pending_movement(
         &mut session,
         command.id(),
-        false,
         &mut events,
         &mut changed_subjects,
     )?;
@@ -803,44 +797,9 @@ struct ObjectInteractionOutcome {
     object_changed: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-fn append_public_event_maybe_fresh(
-    session: &mut GameSession,
-    command_id: Id<GameCommand>,
-    fresh: bool,
-    event_key: String,
-    event_type: String,
-    subject_kind: Option<String>,
-    subject_id_text: Option<String>,
-    payload_json: String,
-) -> Result<domm_game::ApiEventView, ApiError> {
-    if fresh {
-        command_response::append_new_public_event(
-            session,
-            command_id,
-            event_key,
-            event_type,
-            subject_kind,
-            subject_id_text,
-            payload_json,
-        )
-    } else {
-        command_response::append_public_event(
-            session,
-            command_id,
-            event_key,
-            event_type,
-            subject_kind,
-            subject_id_text,
-            payload_json,
-        )
-    }
-}
-
 fn resolve_pending_movement(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
-    fresh_events: bool,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
@@ -849,7 +808,6 @@ fn resolve_pending_movement(
         session,
         command_id,
         &mut pending,
-        fresh_events,
         events,
         changed_subjects,
     )? {
@@ -859,7 +817,6 @@ fn resolve_pending_movement(
         session,
         command_id,
         &mut pending,
-        fresh_events,
         events,
         changed_subjects,
     )? {
@@ -878,7 +835,6 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
-                fresh_events,
                 events,
                 changed_subjects,
             )?;
@@ -912,7 +868,6 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
-                fresh_events,
                 events,
                 changed_subjects,
             )?;
@@ -933,7 +888,6 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
-                fresh_events,
                 events,
                 changed_subjects,
             )?;
@@ -983,7 +937,6 @@ fn resolve_single_long_movement_fast(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
-    fresh_events: bool,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<Option<bool>, ApiError> {
@@ -1001,10 +954,9 @@ fn resolve_single_long_movement_fast(
     {
         return Ok(None);
     }
-    let partial_event = append_public_event_maybe_fresh(
+    let partial_event = command_response::append_public_event(
         session,
         command_id,
-        fresh_events,
         format!(
             "movement_sync_incomplete:{}:{}:fast",
             session.id(),
@@ -1240,7 +1192,6 @@ fn resolve_two_movement_crossing_fast(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
-    fresh_events: bool,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<Option<bool>, ApiError> {
@@ -1269,10 +1220,9 @@ fn resolve_two_movement_crossing_fast(
             continue;
         }
 
-        let event = append_public_event_maybe_fresh(
+        let event = command_response::append_public_event(
             session,
             command_id,
-            fresh_events,
             format!(
                 "movement_sync_incomplete:{}:{}:crossing-fast",
                 session.id(),
@@ -2357,7 +2307,6 @@ fn park_partial_movements(
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
     consumed_steps: u16,
-    fresh_events: bool,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -2445,10 +2394,9 @@ fn park_partial_movements(
         session.id().to_string(),
         format!(r#"{{"consumed_steps":{consumed_steps},"parked_intents":{parked}}}"#),
     )?;
-    let event = append_public_event_maybe_fresh(
+    let event = command_response::append_public_event(
         session,
         command_id,
-        fresh_events,
         format!(
             "movement_sync_incomplete:{}:{}:{}",
             session.id(),

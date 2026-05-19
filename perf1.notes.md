@@ -1910,4 +1910,14 @@ Verified:
 
 Measurement note:
 
-- No focused Gate J benchmark yet for this checkpoint. The expected measurable effect is lower `events.by_session_event_key` calls when sync continuations are fresh commands. Recovered sync commands should not change.
+- Focused Gate J `20260519-142130-fresh-sync-events-gate-j` failed after `617.83s`:
+
+```text
+sync_session_turn should succeed: ApiError { code: "icydb_repository_error", message: "IcyDB repository operation failed: events.create_game_event", retryable: true, details_json: None }
+```
+
+Decision:
+
+- Reject the broad shortcut and restore idempotent `append_public_event` on manual sync movement events.
+- The flaw is architectural: a fresh sync command does not prove the business event key is fresh. `movement_sync_incomplete:{session}:{turn}:fast`, `movement_sync_incomplete:{session}:{turn}:crossing-fast`, and step-cursor incomplete keys can legitimately be reached by more than one fresh sync continuation in the same turn.
+- Do not spend more code-size headroom on this row-level micro-cut. The better fix is the full runtime sync/event-buffer path, where runtime owns active event identity and durable event projection can be batched or skipped on the hot path.

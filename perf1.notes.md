@@ -293,3 +293,26 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
 - `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
+### Runtime Event Sequence Reservation
+
+Decision: active battle runtime events will use stable batch reservation, not a pure heap overlay.
+
+Reasoning:
+
+- A pure heap counter can collide with normal durable `GameEvent` writes from movement, economy, scenario progress, aftermath, or other endpoints that still append stable events.
+- Reserving a block by bumping durable `GameSession.next_event_seq` once gives active battle events collision-free sequence numbers without paying a stable session update for every event.
+- Losing unused reserved numbers during upgrade or resolution is acceptable. Gaps are cheaper and safer than sequence collisions.
+- Multiple active battles in one session must share a session-scoped reserved block allocator, not per-battle counters.
+
+Checkpoint scope:
+
+- Added `BATTLE_RUNTIME_EVENT_SEQ_BLOCK_SIZE = 4096`.
+- Added a heap session event sequence block allocator in `battle_runtime`.
+- `reserve_session_event_seq` reserves a block by updating `GameSession.next_event_seq`, then hands out event sequence numbers from heap until the block is exhausted.
+- Runtime test cleanup clears both active runtimes and event sequence blocks.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`

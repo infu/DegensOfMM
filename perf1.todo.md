@@ -311,7 +311,7 @@ When a todo item is completed:
 - [x] Create/adopt active runtime during battle start paths before the first player action, with compatibility hydration from existing row-backed active battles.
 - [x] Implement loader compatibility so existing row-backed battles can be converted into `BattleRuntime` during migration or first access.
 - [x] Make `get_battle_state` read active runtime directly and fall back to legacy rows only when runtime is absent.
-- [ ] Decide whether active runtime events use a heap session event sequence overlay or a stable batch reservation; prevent collisions with stable `GameSession.next_event_seq`.
+- [x] Decide whether active runtime events use a heap session event sequence overlay or a stable batch reservation; prevent collisions with stable `GameSession.next_event_seq`.
 - [ ] Implement battle finalization that projects resolved runtime state into durable strategic rows/history/events needed after the battle is over.
 - [ ] Ensure finalization either projects survivor `BattleStack` rows before calling existing aftermath or rewrites aftermath to read survivors from runtime.
 

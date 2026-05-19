@@ -28,6 +28,7 @@ use crate::repos::{battles as battle_repo, sessions as session_repo};
 use super::battle_rows;
 
 pub(crate) const BATTLE_RUNTIME_MEMORY_ID: u8 = 23;
+pub(crate) const BATTLE_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 const MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES: u32 = 32 * 1024 * 1024;
 const UPGRADE_REFS_MAGIC: &str = "DOMM_BATTLE_RUNTIME_REFS_V1";
 
@@ -349,8 +350,27 @@ struct BattleRuntimeUpgradeRef {
     dirty_generation: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct BattleRuntimeEventSeqBlock {
+    pub next_event_seq: u64,
+    pub exclusive_end_event_seq: u64,
+}
+
+impl BattleRuntimeEventSeqBlock {
+    fn take_event_seq(&mut self) -> Option<u64> {
+        if self.next_event_seq >= self.exclusive_end_event_seq {
+            return None;
+        }
+        let event_seq = self.next_event_seq;
+        self.next_event_seq = self.next_event_seq.saturating_add(1);
+        Some(event_seq)
+    }
+}
+
 thread_local! {
     static ACTIVE_BATTLE_RUNTIMES: RefCell<BTreeMap<String, BattleRuntime>> =
+        RefCell::new(BTreeMap::new());
+    static ACTIVE_SESSION_EVENT_SEQ_BLOCKS: RefCell<BTreeMap<String, BattleRuntimeEventSeqBlock>> =
         RefCell::new(BTreeMap::new());
 }
 
@@ -372,6 +392,45 @@ pub(crate) fn insert_runtime(runtime: BattleRuntime) -> Option<BattleRuntime> {
 
 pub(crate) fn remove_runtime(battle_id: &str) -> Option<BattleRuntime> {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().remove(battle_id))
+}
+
+pub(crate) fn reserve_session_event_seq(session: &mut GameSession) -> Result<u64, ApiError> {
+    let session_id = session.id().to_string();
+    if let Some(event_seq) = take_reserved_session_event_seq(&session_id) {
+        return Ok(event_seq);
+    }
+
+    let start = session.next_event_seq;
+    let end = start
+        .checked_add(BATTLE_RUNTIME_EVENT_SEQ_BLOCK_SIZE)
+        .ok_or_else(|| {
+            ApiError::new(
+                "event_sequence_exhausted",
+                "session event sequence cannot reserve another active battle block",
+                true,
+            )
+        })?;
+    let mut updated = session.clone();
+    updated.next_event_seq = end;
+    *session = session_repo::update_session(updated)?;
+    ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| {
+        blocks.borrow_mut().insert(
+            session_id,
+            BattleRuntimeEventSeqBlock {
+                next_event_seq: start.saturating_add(1),
+                exclusive_end_event_seq: end,
+            },
+        );
+    });
+    Ok(start)
+}
+
+fn take_reserved_session_event_seq(session_id: &str) -> Option<u64> {
+    ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| {
+        let mut blocks = blocks.borrow_mut();
+        let block = blocks.get_mut(session_id)?;
+        block.take_event_seq()
+    })
 }
 
 pub(crate) fn with_runtime<R>(
@@ -412,6 +471,7 @@ pub(crate) fn restore_from_upgrade(snapshot: BattleRuntimeSnapshot) {
 
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
+    ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| blocks.borrow_mut().clear());
 }
 
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
@@ -660,5 +720,45 @@ mod tests {
         let decoded = decode_upgrade_refs(&bytes).expect("upgrade refs should decode");
 
         assert_eq!(decoded, refs);
+    }
+
+    #[test]
+    fn event_sequence_block_hands_out_reserved_range_only() {
+        let mut block = BattleRuntimeEventSeqBlock {
+            next_event_seq: 10,
+            exclusive_end_event_seq: 12,
+        };
+
+        assert_eq!(block.take_event_seq(), Some(10));
+        assert_eq!(block.take_event_seq(), Some(11));
+        assert_eq!(block.take_event_seq(), None);
+    }
+
+    #[test]
+    fn clear_all_for_tests_clears_event_sequence_blocks() {
+        clear_all_for_tests();
+        ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| {
+            blocks.borrow_mut().insert(
+                "session:1".to_string(),
+                BattleRuntimeEventSeqBlock {
+                    next_event_seq: 5,
+                    exclusive_end_event_seq: 6,
+                },
+            );
+        });
+
+        assert_eq!(take_reserved_session_event_seq("session:1"), Some(5));
+        ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| {
+            blocks.borrow_mut().insert(
+                "session:1".to_string(),
+                BattleRuntimeEventSeqBlock {
+                    next_event_seq: 5,
+                    exclusive_end_event_seq: 6,
+                },
+            );
+        });
+        clear_all_for_tests();
+
+        assert_eq!(take_reserved_session_event_seq("session:1"), None);
     }
 }

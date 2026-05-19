@@ -1,5 +1,6 @@
 //! Controller-gated diagnostics service boundary.
 
+#[allow(unused_imports)]
 use domm_degens_schema::schema::{
     AiActorState, ArtifactDefinition, ArtifactEquipment, ArtifactInstance, Battle, BattleObstacle,
     BattleOccupancy, BattleParticipantRoundReady, BattleStack, BuildingDefinition, Champion,
@@ -169,6 +170,57 @@ pub(crate) fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError
     system_job_service::run_due_job_by_key(&job_key)
 }
 
+#[cfg(feature = "benchmark")]
+fn push_named_count(
+    row_counts: &mut Vec<DiagnosticRowCount>,
+    entity: &str,
+) -> Result<(), ApiError> {
+    match entity {
+        "Battle" => push_count::<Battle>(row_counts, entity),
+        "BattleObstacle" => push_count::<BattleObstacle>(row_counts, entity),
+        "BattleOccupancy" => push_count::<BattleOccupancy>(row_counts, entity),
+        "BattleStack" => push_count::<BattleStack>(row_counts, entity),
+        "Champion" => push_count::<Champion>(row_counts, entity),
+        "ChampionArmyStack" => push_count::<ChampionArmyStack>(row_counts, entity),
+        "CommandEffect" => push_count::<CommandEffect>(row_counts, entity),
+        "GameCommand" => push_count::<GameCommand>(row_counts, entity),
+        "GameEvent" => push_count::<GameEvent>(row_counts, entity),
+        "GameParticipant" => push_count::<GameParticipant>(row_counts, entity),
+        "GameSession" => push_count::<GameSession>(row_counts, entity),
+        "LobbyCommand" => push_count::<LobbyCommand>(row_counts, entity),
+        "MapChunk" => push_count::<MapChunk>(row_counts, entity),
+        "MapOccupancy" => push_count::<MapOccupancy>(row_counts, entity),
+        "MovementIntent" => push_count::<MovementIntent>(row_counts, entity),
+        "MovementSnapshot" => push_count::<MovementSnapshot>(row_counts, entity),
+        "NavalRouteState" => push_count::<NavalRouteState>(row_counts, entity),
+        "NeutralArmy" => push_count::<NeutralArmy>(row_counts, entity),
+        "ObjectiveProgress" => push_count::<ObjectiveProgress>(row_counts, entity),
+        "ParticipantObjectVisit" => push_count::<ParticipantObjectVisit>(row_counts, entity),
+        "PlayerAccount" => push_count::<PlayerAccount>(row_counts, entity),
+        "PlayerMatchSummary" => push_count::<PlayerMatchSummary>(row_counts, entity),
+        "ProceduralMapState" => push_count::<ProceduralMapState>(row_counts, entity),
+        "QuestState" => push_count::<QuestState>(row_counts, entity),
+        "ResourceLedgerEntry" => push_count::<ResourceLedgerEntry>(row_counts, entity),
+        "ResourceLedgerTurnSummary" => push_count::<ResourceLedgerTurnSummary>(row_counts, entity),
+        "ScenarioRuleState" => push_count::<ScenarioRuleState>(row_counts, entity),
+        "SiegeRuleState" => push_count::<SiegeRuleState>(row_counts, entity),
+        "SkirmishSettingsState" => push_count::<SkirmishSettingsState>(row_counts, entity),
+        "Town" => push_count::<Town>(row_counts, entity),
+        "TownBuilding" => push_count::<TownBuilding>(row_counts, entity),
+        "TownGarrisonStack" => push_count::<TownGarrisonStack>(row_counts, entity),
+        "TownRecruitPool" => push_count::<TownRecruitPool>(row_counts, entity),
+        "VisibilityChunk" => push_count::<VisibilityChunk>(row_counts, entity),
+        "WorldEventState" => push_count::<WorldEventState>(row_counts, entity),
+        "WorldObject" => push_count::<WorldObject>(row_counts, entity),
+        _ => Err(ApiError::new(
+            "unknown_diagnostic_entity",
+            format!("unknown diagnostic entity name: {entity}"),
+            false,
+        )),
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
 fn push_named_count(
     row_counts: &mut Vec<DiagnosticRowCount>,
     entity: &str,

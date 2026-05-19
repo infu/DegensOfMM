@@ -1790,3 +1790,58 @@ Bug-prevention focus:
 - make battle handoff a flush/pass boundary;
 - archive runtime receipts/events before runtime removal;
 - avoid resource double-spend while economy is still row-backed.
+
+## Checkpoint: Runtime-Backed Movement Submit
+
+Moved the active `submit_move_intent` hot path onto the new session-turn runtime for command receipts and active events, while keeping the durable `MovementIntent` row as the compatibility projection consumed by the current row-backed `sync_session_turn`.
+
+What changed:
+
+- `submit_move_intent` now checks runtime nonce receipts first and returns runtime replays without touching durable `GameCommand` rows.
+- New movement submits no longer create/update durable `GameCommand` or durable `GameEvent` rows; the command response/status and active event feed are produced from `SessionTurnRuntime`.
+- The endpoint still creates or updates the durable `MovementIntent` row so the existing sync path can resolve moves until the next runtime-sync checkpoint.
+- Session-turn runtime events reserve a stable `GameSession.next_event_seq` block of 4,096 sequence numbers, avoiding collisions with durable events without a per-event session update.
+- Benchmark diagnostics now use a benchmark-only entity count list. Two focused Gate J attempts failed before this with benchmark Wasm code section `12,589,747` bytes, `6,835` bytes over the IC limit; the trim made the same benchmark install and run.
+
+Verified before the focused benchmark:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-move-endpoints cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture` passed in `272.37s`.
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-move-stale-turn cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture` passed in `71.88s`.
+
+Focused Gate J:
+
+```bash
+DOMM_CANISTER_FEATURES=benchmark \
+DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-132615-movement-runtime-submit-gate-j \
+DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-132615-movement-runtime-submit-gate-j/test-output.log \
+CANIC_POCKET_IC_LOCK_NAMESPACE=domm-bench-20260519-132615-movement-runtime-submit-gate-j-gate-j \
+cargo test -p domm-pocket-ic-tests --test canister_endpoints \
+  pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Result: passed in `693.19s`; artifact `target/benchmarks/20260519-132615-movement-runtime-submit-gate-j/summary.json`.
+
+Measured delta versus `20260519-123422-movement-intent-effect-gate-j`:
+
+| metric | previous | runtime submit | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 287.2952B | 275.6421B | -4.1% |
+| scenario memory | 6,094.1250 MB | 6,022.0625 MB | -1.2% |
+| `submit_move_intent` avg instructions | 13.2749B | 11.0412B | -16.8% |
+| `submit_move_intent` avg memory | 21.4375 MB | 10.8333 MB | -49.5% |
+| `sync_session_turn` avg instructions | 14.7336B | 14.2859B | -3.0% |
+| `sync_session_turn` avg memory | 125.2443 MB | 125.2330 MB | ~0.0% |
+| `commands.create_game_command` calls | 14 | 11 | -21.4% |
+| `commands.game_command_idempotency` calls | 14 | 11 | -21.4% |
+| `commands.update_game_command` calls | 13 | 10 | -23.1% |
+| `events.create_game_event` calls | 16 | 14 | -12.5% |
+
+Decision:
+
+- Keep this checkpoint. It proves the session-turn runtime can cut the movement submit command/event/idempotency tax without breaking the current durable sync projection.
+- The endpoint is still far above the `<5B` target because it still does auth/session/map-turn checks and writes durable `MovementIntent`. The next large cut should make active `sync_session_turn` resolve from runtime state and then remove or batch the remaining movement-intent durable projection on the hot submit path.
+- Query/view costs are now visible in the same Gate J route (`get_champion_view`, `get_town_view`, `get_events_after`, visible map/object reads), so the route-wide low-hanging work after runtime sync is active projection overlays, not only update endpoints.

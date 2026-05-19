@@ -7,7 +7,7 @@ use domm_degens_schema::schema::{
 };
 use domm_game::{
     ApiError, CommandPhase, CommandResponse, CommandResult, CommandStatus, MoveCoord,
-    MovementPathStop, MovementPreview,
+    MovementPathStop, MovementPreview, StrategicCommandReceipt,
 };
 use icydb::{
     traits::EntityValue,
@@ -25,7 +25,7 @@ use super::{
     command_response::{self, GameCommandAction, GameCommandStart},
     economy_expansion, scenario_progress,
     session_context::{self, public_error},
-    system_jobs as system_job_service,
+    session_turn_runtime, system_jobs as system_job_service,
 };
 
 const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 1;
@@ -80,53 +80,84 @@ pub(crate) fn submit_move_intent(
         command_response::escape_json(&champion_id),
         command_response::escape_json(&path_text)
     );
-    let (command, command_is_fresh) = match command_response::begin_participant_command_tracked(
-        caller,
-        &context,
+    let command_payload_hash = command_response::payload_hash(
         "submit_move_intent",
+        &context.participant.id().to_string(),
         &client_nonce,
-        Some(champion.id()),
-        payload_json,
-    )? {
-        GameCommandStart::Apply {
-            command,
-            freshly_created,
-        } => (command, freshly_created),
-        GameCommandStart::Return(response) => return Ok(response),
-    };
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        return Ok(runtime_movement_failed_response(
+            caller,
+            &context,
+            Ulid::generate().to_string(),
+            &client_nonce,
+            command_payload_hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        ));
+    }
+    let client_nonce_u64 = command_response::nonce_u64("submit_move_intent", &client_nonce);
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    if let Some(existing) = session_turn_runtime::command_receipt_by_nonce(
+        &canonical_session_id,
+        &actor_participant_id,
+        client_nonce_u64,
+    ) {
+        if existing.payload_hash != command_payload_hash {
+            return Ok(runtime_movement_failed_response(
+                caller,
+                &context,
+                Ulid::generate().to_string(),
+                &client_nonce,
+                command_payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce} was reused with a different payload"),
+                    false,
+                ),
+            ));
+        }
+        return Ok(existing.response);
+    }
+    command_response::ensure_map_turn_accepts_new_command(&context, "submit_move_intent")?;
+    ensure_session_turn_runtime(&context);
+    let command_id = Id::<GameCommand>::from_key(Ulid::generate());
+    let command_id_text = command_id.to_string();
     let path_hash = command_response::payload_hash(
         "movement_path",
         &champion.id().to_string(),
         &client_nonce,
         &path_text,
     );
-    let (intent, intent_is_fresh) = match movement::find_movement_intent(
+    let intent = match movement::find_movement_intent(
         context.session.id(),
         champion.id(),
         context.session.current_turn,
     )? {
         Some(mut intent) => {
-            intent.command_id = command.id;
+            intent.command_id = command_id.key();
             intent.actor_participant_id = context.participant.id().key();
             intent.status = "pending".to_string();
             intent.path_json = path_text.clone();
             intent.path_hash = path_hash;
             intent.resolved_at = None;
-            (movement::update_movement_intent(intent)?, false)
+            movement::update_movement_intent(intent)?
         }
-        None => (
-            movement::create_movement_intent(
-                context.session.id(),
-                context.session.current_turn,
-                context.participant.id(),
-                champion.id(),
-                command.id(),
-                "pending".to_string(),
-                path_text,
-                path_hash,
-            )?,
-            true,
-        ),
+        None => movement::create_movement_intent(
+            context.session.id(),
+            context.session.current_turn,
+            context.participant.id(),
+            champion.id(),
+            command_id,
+            "pending".to_string(),
+            path_text,
+            path_hash,
+        )?,
     };
 
     let mut session = context.session.clone();
@@ -140,39 +171,156 @@ pub(crate) fn submit_move_intent(
         intent.id(),
         path.len()
     );
-    let event = if command_is_fresh && intent_is_fresh {
-        command_response::append_new_public_event(
-            &mut session,
-            command.id(),
-            event_key,
-            "movement_intent_submitted".to_string(),
-            Some("champion".to_string()),
-            Some(champion.id().to_string()),
-            event_payload,
-        )?
-    } else {
-        command_response::append_public_event(
-            &mut session,
-            command.id(),
-            event_key,
-            "movement_intent_submitted".to_string(),
-            Some("champion".to_string()),
-            Some(champion.id().to_string()),
-            event_payload,
-        )?
-    };
-    command_response::apply_command(
+    session_turn_runtime::with_runtime_mut(
+        &canonical_session_id,
+        context.session.current_turn,
+        |runtime| {
+            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent {
+                intent_id: intent.id().to_string(),
+                command_id: command_id_text.clone(),
+                actor_participant_id: actor_participant_id.clone(),
+                champion_id: champion.id().to_string(),
+                path_json: intent.path_json.clone(),
+                path_hash: intent.path_hash.clone(),
+                status: intent.status.clone(),
+            });
+            let event = runtime
+                .active_events
+                .iter()
+                .find(|runtime_event| {
+                    runtime_event.event.event_key == event_key
+                        && runtime_event.event.audience_key == "public"
+                })
+                .map(|runtime_event| runtime_event.event.clone())
+                .map_or_else(
+                    || {
+                        let event_seq =
+                            session_turn_runtime::reserve_session_event_seq(runtime, &mut session)?;
+                        let event = domm_game::ApiEventView {
+                            session_id: canonical_session_id.clone(),
+                            event_seq,
+                            event_key: event_key.clone(),
+                            audience_key: "public".to_string(),
+                            turn_number: context.session.current_turn,
+                            event_type: "movement_intent_submitted".to_string(),
+                            subject_kind: Some("champion".to_string()),
+                            subject_id_text: Some(champion.id().to_string()),
+                            payload: Some(event_payload),
+                            redacted: false,
+                        };
+                        runtime.push_event(session_turn_runtime::SessionTurnEvent {
+                            command_id: Some(command_id_text.clone()),
+                            event: event.clone(),
+                            flushed: false,
+                        });
+                        Ok(event)
+                    },
+                    Ok::<domm_game::ApiEventView, ApiError>,
+                )?;
+            let changed_subjects = vec![command_response::changed(
+                "movement_intent",
+                &intent.id().to_string(),
+                "upsert",
+            )];
+            let response = command_response::runtime_command_response(
+                caller,
+                &context,
+                command_id_text.clone(),
+                "submit_move_intent".to_string(),
+                &client_nonce,
+                command_payload_hash.clone(),
+                CommandStatus::Applied,
+                CommandPhase::Complete,
+                false,
+                vec![event],
+                changed_subjects,
+                CommandResult::StrategicReceipt(StrategicCommandReceipt {
+                    command_kind: "submit_move_intent".to_string(),
+                    command_id: command_id_text.clone(),
+                    current_turn: context.session.current_turn,
+                    command_count: 1,
+                    event_count: 1,
+                }),
+                None,
+            );
+            runtime.insert_command_receipt(session_turn_runtime::SessionTurnCommandReceipt {
+                command_id: command_id_text,
+                command_type: "submit_move_intent".to_string(),
+                actor_participant_id,
+                client_nonce_text: client_nonce,
+                client_nonce: client_nonce_u64,
+                payload_hash: command_payload_hash,
+                response: response.clone(),
+            });
+            Ok(response)
+        },
+    )
+    .ok_or_else(|| {
+        public_error(
+            "turn_runtime_missing",
+            "active turn runtime was not available",
+            true,
+        )
+    })?
+}
+
+fn ensure_session_turn_runtime(context: &session_context::SessionCallerContext) {
+    let session_id = context.session.id().to_string();
+    let turn_number = context.session.current_turn;
+    let participant = session_turn_participant(context);
+    if session_turn_runtime::with_runtime_mut(&session_id, turn_number, |runtime| {
+        runtime.upsert_participant(participant.clone());
+    })
+    .is_some()
+    {
+        return;
+    }
+
+    let mut runtime = session_turn_runtime::SessionTurnRuntime::new(
+        session_id,
+        turn_number,
+        timestamp_to_u64(context.session.turn_started_at),
+        timestamp_to_u64(context.session.turn_deadline_at),
+        u64::from(context.session.turn_duration_ms),
+    );
+    runtime.upsert_participant(participant);
+    session_turn_runtime::insert_runtime(runtime);
+}
+
+fn session_turn_participant(
+    context: &session_context::SessionCallerContext,
+) -> session_turn_runtime::SessionTurnParticipant {
+    session_turn_runtime::SessionTurnParticipant {
+        participant_id: context.participant.id().to_string(),
+        player_id: context.participant.player_id.to_string(),
+        slot_index: context.participant.slot_index,
+        status: context.participant.status.clone(),
+    }
+}
+
+fn runtime_movement_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
         caller,
-        &context,
-        command,
-        &client_nonce,
-        command_response::result_json("submit_move_intent", session.current_turn),
-        vec![event],
-        vec![command_response::changed(
-            "movement_intent",
-            &intent.id().to_string(),
-            "upsert",
-        )],
+        context,
+        command_id,
+        "submit_move_intent".to_string(),
+        client_nonce,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
     )
 }
 
@@ -310,10 +458,7 @@ pub(crate) fn sync_session_turn(
         None,
         payload_json,
     )? {
-        GameCommandStart::Apply {
-            command,
-            freshly_created: _,
-        } => command,
+        GameCommandStart::Apply(command) => command,
         GameCommandStart::Return(response) => return Ok(response),
     };
 

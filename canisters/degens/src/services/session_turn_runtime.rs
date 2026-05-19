@@ -11,10 +11,14 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use domm_game::{ApiEventView, CommandResponse, CommandStatusView};
-use serde::{Deserialize, Serialize};
+use domm_degens_schema::schema::GameSession;
+use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+use crate::repos::sessions;
+
+pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
+
+#[derive(Clone)]
 pub(crate) struct SessionTurnRuntime {
     pub session_id: String,
     pub turn_number: u32,
@@ -144,7 +148,7 @@ impl SessionTurnRuntime {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct SessionTurnParticipant {
     pub participant_id: String,
     pub player_id: String,
@@ -152,7 +156,7 @@ pub(crate) struct SessionTurnParticipant {
     pub status: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct RuntimeMovementIntent {
     pub intent_id: String,
     pub command_id: String,
@@ -163,7 +167,7 @@ pub(crate) struct RuntimeMovementIntent {
     pub status: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct SessionTurnCommandReceipt {
     pub command_id: String,
     pub command_type: String,
@@ -180,14 +184,14 @@ impl SessionTurnCommandReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct SessionTurnEvent {
     pub command_id: Option<String>,
     pub event: ApiEventView,
     pub flushed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct SessionTurnEventSeqBlock {
     pub next_event_seq: u64,
     pub exclusive_end_event_seq: u64,
@@ -204,7 +208,7 @@ impl SessionTurnEventSeqBlock {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct ChampionTurnDelta {
     pub champion_id: String,
     pub x: u16,
@@ -213,7 +217,7 @@ pub(crate) struct ChampionTurnDelta {
     pub status: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct OccupancyTurnDelta {
     pub subject_kind: String,
     pub subject_id: String,
@@ -223,14 +227,14 @@ pub(crate) struct OccupancyTurnDelta {
     pub to_y: Option<u16>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct VisibilityTurnDelta {
     pub participant_id: String,
     pub chunk_x: u16,
     pub chunk_y: u16,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct ObjectTurnDelta {
     pub subject_kind: String,
     pub subject_id: String,
@@ -239,7 +243,7 @@ pub(crate) struct ObjectTurnDelta {
     pub visible: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct ResourceTurnDelta {
     pub participant_id: String,
     pub gold: i64,
@@ -251,13 +255,13 @@ pub(crate) struct ResourceTurnDelta {
     pub aether: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone)]
 pub(crate) struct MovementCursor {
     pub consumed_steps: u32,
     pub parked_intents: u32,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default)]
 pub(crate) struct SessionTurnDirtySets {
     pub participants: bool,
     pub ready: bool,
@@ -272,7 +276,7 @@ pub(crate) struct SessionTurnDirtySets {
     pub cursor: bool,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub(crate) struct SessionTurnRuntimeSnapshot {
     pub runtimes: Vec<SessionTurnRuntime>,
 }
@@ -327,6 +331,39 @@ pub(crate) fn with_runtime_mut<R>(
         let mut runtimes = runtimes.borrow_mut();
         runtimes.get_mut(&key).map(mutate)
     })
+}
+
+pub(crate) fn reserve_session_event_seq(
+    runtime: &mut SessionTurnRuntime,
+    session: &mut GameSession,
+) -> Result<u64, ApiError> {
+    if let Some(block) = runtime.event_seq_block.as_mut()
+        && let Some(event_seq) = block.take_event_seq()
+    {
+        runtime.mark_dirty();
+        return Ok(event_seq);
+    }
+
+    let start = session.next_event_seq;
+    let end = start
+        .checked_add(SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE)
+        .ok_or_else(|| {
+            ApiError::new(
+                "event_sequence_exhausted",
+                "session event sequence cannot reserve another active turn block",
+                true,
+            )
+        })?;
+    let mut updated = session.clone();
+    updated.next_event_seq = end;
+    *session = sessions::update_session(updated)?;
+    runtime.event_seq_block = Some(SessionTurnEventSeqBlock {
+        next_event_seq: start.saturating_add(1),
+        exclusive_end_event_seq: end,
+    });
+    runtime.dirty.events = true;
+    runtime.mark_dirty();
+    Ok(start)
 }
 
 pub(crate) fn active_events_after(

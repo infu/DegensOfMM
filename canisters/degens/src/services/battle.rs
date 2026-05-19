@@ -6,8 +6,8 @@ use domm_degens_schema::schema::{
 };
 use domm_game::{
     ApiError, BattleActionInput, BattleActionReceipt, BattleCommandBudget, BattleCoord,
-    BattleError, BattleSyncOutcome, BattleView, CommandResponse, CommandResult, LegalBattleAction,
-    RollKey, legal_actions_for_stack,
+    BattleError, BattleStackRecord, BattleSyncOutcome, BattleView, CommandResponse, CommandResult,
+    LegalBattleAction, RollKey, legal_actions_for_stack,
 };
 use icydb::{
     traits::EntityValue,
@@ -21,6 +21,7 @@ use crate::repos::{
 
 use super::{
     battle_aftermath, battle_rows,
+    battle_runtime::{self, BattleRuntime},
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
     system_jobs as system_job_service,
@@ -64,8 +65,28 @@ pub(crate) fn get_battle_state(
     now_ms: u64,
 ) -> Result<BattleView, ApiError> {
     let context = session_context::require_session_caller(caller, &session_id)?;
-    let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let participant_id = context.participant.id().to_string();
+    let canonical_session_id = context.session.id().to_string();
+    if let Some(view) = battle_runtime::with_runtime(&battle_id, |runtime| {
+        (runtime.session_id == canonical_session_id)
+            .then(|| battle_view_from_runtime(runtime, &participant_id, now_ms))
+    }) {
+        if let Some(view) = view {
+            return view;
+        }
+    }
+
+    let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
+    if battle.state == "active" {
+        battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
+        let canonical_battle_id = battle.id().to_string();
+        if let Some(view) = battle_runtime::with_runtime(&canonical_battle_id, |runtime| {
+            battle_view_from_runtime(runtime, &participant_id, now_ms)
+        }) {
+            return view;
+        }
+    }
+
     let stacks = battles::list_battle_stacks(battle.id(), CANISTER_MAX_BATTLE_STACKS_PER_BATTLE)?;
     if !battle_visible_to_participant_from_stacks(&stacks, context.participant.id()) {
         return Err(public_error(
@@ -88,6 +109,55 @@ pub(crate) fn get_battle_state(
         )?;
     }
     Ok(view)
+}
+
+fn battle_view_from_runtime(
+    runtime: &BattleRuntime,
+    caller_participant_id: &str,
+    now_ms: u64,
+) -> Result<BattleView, ApiError> {
+    if !battle_visible_to_participant_from_runtime(runtime, caller_participant_id) {
+        return Err(public_error(
+            "battle_not_visible",
+            "caller is not a participant in this battle",
+            false,
+        ));
+    }
+
+    let suppress_actions = runtime_battle_actions_suppressed(runtime, now_ms);
+    let mut view = canister_battle_view_from_runtime(
+        runtime,
+        caller_participant_id,
+        now_ms,
+        suppress_actions,
+    )?;
+    if !suppress_actions {
+        enrich_battle_spell_actions_from_runtime(runtime, &mut view, caller_participant_id)?;
+    }
+    Ok(view)
+}
+
+fn battle_visible_to_participant_from_runtime(
+    runtime: &BattleRuntime,
+    caller_participant_id: &str,
+) -> bool {
+    runtime.state.stacks.iter().any(|stack| {
+        stack.battle_id == runtime.battle_id
+            && stack.owner_participant_id.as_deref() == Some(caller_participant_id)
+    })
+}
+
+fn runtime_battle_actions_suppressed(runtime: &BattleRuntime, now_ms: u64) -> bool {
+    runtime
+        .state
+        .battle(&runtime.battle_id)
+        .is_ok_and(|battle| battle.state != "active")
+        || runtime
+            .deadline
+            .action_deadline_at_ms
+            .is_some_and(|deadline| {
+                now_ms > deadline.saturating_add(CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS)
+            })
 }
 
 fn battle_visible_to_participant_from_stacks(
@@ -114,6 +184,134 @@ fn should_suppress_battle_actions(
         return Ok(true);
     }
     Ok(false)
+}
+
+fn canister_battle_view_from_runtime(
+    runtime: &BattleRuntime,
+    caller_participant_id: &str,
+    now_ms: u64,
+    suppress_actions: bool,
+) -> Result<BattleView, ApiError> {
+    let battle = runtime
+        .state
+        .battle(&runtime.battle_id)
+        .map_err(map_battle_error)?;
+    let active_stack = battle
+        .active_stack_id
+        .as_deref()
+        .and_then(|active_id| runtime.state.stack(active_id).ok());
+    let active_participant_id = active_stack.and_then(|stack| stack.owner_participant_id.clone());
+    let legal_actions_for_caller = if suppress_actions {
+        Vec::new()
+    } else {
+        match active_stack {
+            Some(stack) if stack.owner_participant_id.as_deref() == Some(caller_participant_id) => {
+                cheap_legal_actions_for_stack_runtime(
+                    &runtime.battle_id,
+                    battle.current_round,
+                    &runtime.state.stacks,
+                    stack,
+                )
+            }
+            _ => Vec::new(),
+        }
+    };
+    let initiative_order = domm_game::initiative_order(&runtime.state, &runtime.battle_id)
+        .map_err(map_battle_error)?
+        .into_iter()
+        .map(|entry| entry.battle_stack_id)
+        .collect();
+
+    Ok(BattleView {
+        battle_id: battle.battle_id.clone(),
+        state: battle.state.clone(),
+        battle_type: battle.battle_type.clone(),
+        current_round: battle.current_round,
+        active_stack_id: battle.active_stack_id.clone(),
+        active_participant_id,
+        action_deadline_at: battle.action_deadline_at,
+        remaining_ms: battle
+            .action_deadline_at
+            .map(|deadline| deadline.saturating_sub(now_ms)),
+        grid: domm_game::BattleGridView {
+            width: battle.grid_width,
+            height: battle.grid_height,
+        },
+        obstacles: runtime
+            .state
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.battle_id == runtime.battle_id)
+            .map(|obstacle| domm_game::BattleObstacleView {
+                battle_obstacle_id: obstacle.battle_obstacle_id.clone(),
+                obstacle_type: obstacle.obstacle_type.clone(),
+                battle_x: obstacle.battle_x,
+                battle_y: obstacle.battle_y,
+                width: obstacle.width,
+                height: obstacle.height,
+                hp: obstacle.hp,
+                state: obstacle.state.clone(),
+            })
+            .collect(),
+        stacks: runtime
+            .state
+            .stacks
+            .iter()
+            .filter(|stack| stack.battle_id == runtime.battle_id)
+            .map(|stack| domm_game::BattleStackView {
+                battle_stack_id: stack.battle_stack_id.clone(),
+                unit_id: stack.unit_id.clone(),
+                side: stack.side.clone(),
+                owner_participant_id: stack.owner_participant_id.clone(),
+                battle_x: stack.battle_x,
+                battle_y: stack.battle_y,
+                quantity: stack.quantity,
+                front_hp: stack.front_hp,
+                shots_remaining: stack.shots_remaining,
+                champion_might: stack.champion_might,
+                champion_guard: stack.champion_guard,
+                attack: stack.attack,
+                defense: stack.defense,
+                damage_min: stack.damage_min,
+                damage_max: stack.damage_max,
+                max_hp: stack.max_hp,
+                speed: stack.speed,
+                initiative: stack.initiative,
+                ranged: stack.ranged,
+                flying: stack.flying,
+                acted_round: stack.acted_round,
+                waited_round: stack.waited_round,
+                defended_round: stack.defended_round,
+                status: stack.status.clone(),
+                status_keys: stack.status_keys.clone(),
+            })
+            .collect(),
+        initiative_order,
+        legal_actions_for_caller,
+        events: runtime
+            .state
+            .events
+            .iter()
+            .filter(|event| event.battle_id == runtime.battle_id)
+            .map(|event| domm_game::BattleEventView {
+                event_seq: event.event_seq,
+                event_key: event.event_key.clone(),
+                event_type: event.event_type.clone(),
+                subject_id_text: event.subject_id_text.clone(),
+                payload: event.payload.clone(),
+            })
+            .collect(),
+        next_event_seq: runtime
+            .state
+            .events
+            .iter()
+            .filter(|event| event.battle_id == runtime.battle_id)
+            .map(|event| event.event_seq)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1),
+        morale_luck_policy: domm_game::v1_morale_luck_policy(),
+    })
 }
 
 fn battle_action_submit_grace_applies(
@@ -370,6 +568,124 @@ fn cheap_legal_actions_for_stack_rows(
     ]
 }
 
+fn cheap_legal_actions_for_stack_runtime(
+    battle_id: &str,
+    current_round: u16,
+    stacks: &[BattleStackRecord],
+    stack: &BattleStackRecord,
+) -> Vec<LegalBattleAction> {
+    let can_act =
+        stack.status == "active" && stack.quantity > 0 && stack.acted_round < current_round;
+    let move_path = cheap_move_candidates_for_stack_runtime(battle_id, stacks, stack, can_act);
+    let enemies = stacks
+        .iter()
+        .filter(|target| {
+            target.battle_id == battle_id
+                && target.side != stack.side
+                && target.status == "active"
+                && target.quantity > 0
+        })
+        .collect::<Vec<_>>();
+    let adjacent_targets = enemies
+        .iter()
+        .filter(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y) == 1
+        })
+        .map(|target| target.battle_stack_id.clone())
+        .collect::<Vec<_>>();
+    let ranged_targets = enemies
+        .iter()
+        .filter(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y) > 1
+        })
+        .map(|target| target.battle_stack_id.clone())
+        .collect::<Vec<_>>();
+    vec![
+        LegalBattleAction {
+            action: "Move".to_string(),
+            ability_key: None,
+            enabled: !move_path.is_empty(),
+            disabled_reason: move_path
+                .is_empty()
+                .then(|| "no_reachable_tile".to_string()),
+            targets: Vec::new(),
+            path: move_path,
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "MeleeAttack".to_string(),
+            ability_key: None,
+            enabled: can_act && !adjacent_targets.is_empty(),
+            disabled_reason: adjacent_targets
+                .is_empty()
+                .then(|| "no_adjacent_enemy".to_string()),
+            targets: adjacent_targets,
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "RangedAttack".to_string(),
+            ability_key: None,
+            enabled: can_act && stack.ranged && !ranged_targets.is_empty(),
+            disabled_reason: (!stack.ranged)
+                .then(|| "stack_not_ranged".to_string())
+                .or_else(|| {
+                    ranged_targets
+                        .is_empty()
+                        .then(|| "no_non_adjacent_enemy".to_string())
+                }),
+            targets: ranged_targets,
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Defend".to_string(),
+            ability_key: None,
+            enabled: can_act,
+            disabled_reason: None,
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Wait".to_string(),
+            ability_key: None,
+            enabled: can_act && stack.waited_round < current_round,
+            disabled_reason: None,
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "CastAbility".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("no_learned_battle_spell".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Retreat".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("retreat_deferred_v1_no_rehire_flow".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+        LegalBattleAction {
+            action: "Surrender".to_string(),
+            ability_key: None,
+            enabled: false,
+            disabled_reason: Some("surrender_deferred_v1_no_payment_terms".to_string()),
+            targets: Vec::new(),
+            path: Vec::new(),
+            damage_preview: None,
+        },
+    ]
+}
+
 fn cheap_move_candidates_for_stack_rows(
     stacks: &[BattleStack],
     stack: &BattleStack,
@@ -400,6 +716,52 @@ fn cheap_move_candidates_for_stack_rows(
     );
     if candidates.is_empty() {
         push_straight_line_move_candidates(
+            stacks,
+            stack,
+            &mut candidates,
+            std::cmp::Ordering::Equal,
+            target.battle_y.cmp(&stack.battle_y),
+        );
+    }
+    candidates
+}
+
+fn cheap_move_candidates_for_stack_runtime(
+    battle_id: &str,
+    stacks: &[BattleStackRecord],
+    stack: &BattleStackRecord,
+    can_act: bool,
+) -> Vec<BattleCoord> {
+    if !can_act || stack.speed == 0 {
+        return Vec::new();
+    }
+    let Some(target) = stacks
+        .iter()
+        .filter(|target| {
+            target.battle_id == battle_id
+                && target.side != stack.side
+                && target.status == "active"
+                && target.quantity > 0
+        })
+        .min_by_key(|target| {
+            stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y)
+        })
+    else {
+        return Vec::new();
+    };
+
+    let mut candidates = Vec::new();
+    push_straight_line_move_candidates_runtime(
+        battle_id,
+        stacks,
+        stack,
+        &mut candidates,
+        target.battle_x.cmp(&stack.battle_x),
+        std::cmp::Ordering::Equal,
+    );
+    if candidates.is_empty() {
+        push_straight_line_move_candidates_runtime(
+            battle_id,
             stacks,
             stack,
             &mut candidates,
@@ -457,6 +819,55 @@ fn push_straight_line_move_candidates(
     }
 }
 
+fn push_straight_line_move_candidates_runtime(
+    battle_id: &str,
+    stacks: &[BattleStackRecord],
+    stack: &BattleStackRecord,
+    candidates: &mut Vec<BattleCoord>,
+    x_order: std::cmp::Ordering,
+    y_order: std::cmp::Ordering,
+) {
+    let dx = match x_order {
+        std::cmp::Ordering::Greater => 1_i16,
+        std::cmp::Ordering::Less => -1_i16,
+        std::cmp::Ordering::Equal => 0_i16,
+    };
+    let dy = match y_order {
+        std::cmp::Ordering::Greater => 1_i16,
+        std::cmp::Ordering::Less => -1_i16,
+        std::cmp::Ordering::Equal => 0_i16,
+    };
+    if dx == 0 && dy == 0 {
+        return;
+    }
+
+    let mut x = i16::from(stack.battle_x);
+    let mut y = i16::from(stack.battle_y);
+    for _ in 0..stack.speed {
+        x = x.saturating_add(dx);
+        y = y.saturating_add(dy);
+        if x < 0
+            || y < 0
+            || x >= i16::from(domm_game::BATTLE_GRID_WIDTH)
+            || y >= i16::from(domm_game::BATTLE_GRID_HEIGHT)
+        {
+            break;
+        }
+        let coord = BattleCoord::new(x as u8, y as u8);
+        if stacks.iter().any(|other| {
+            other.battle_id == battle_id
+                && other.battle_stack_id != stack.battle_stack_id
+                && other.status == "active"
+                && other.quantity > 0
+                && other.battle_x == coord.x
+                && other.battle_y == coord.y
+        }) {
+            break;
+        }
+        candidates.push(coord);
+    }
+}
+
 #[allow(dead_code)]
 fn enrich_battle_spell_actions_from_rows(
     _session: &GameSession,
@@ -480,7 +891,7 @@ fn enrich_battle_spell_actions_from_rows(
     if caster_participant_id.as_deref() != Some(participant_id) {
         return Ok(());
     }
-    let spell_slugs = battle_spell_slugs_for_stack(caster_stack)?;
+    let spell_slugs = battle_spell_slugs_from_status_keys(&caster_stack.status_keys);
     if spell_slugs.is_empty() {
         return Ok(());
     }
@@ -522,15 +933,84 @@ fn enrich_battle_spell_actions_from_rows(
     Ok(())
 }
 
-fn battle_spell_slugs_for_stack(stack: &BattleStack) -> Result<Vec<String>, ApiError> {
-    let slugs = stack
-        .status_keys
+fn enrich_battle_spell_actions_from_runtime(
+    runtime: &BattleRuntime,
+    view: &mut BattleView,
+    participant_id: &str,
+) -> Result<(), ApiError> {
+    let battle = runtime
+        .state
+        .battle(&runtime.battle_id)
+        .map_err(map_battle_error)?;
+    let Some(active_stack_id) = view.active_stack_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(caster_stack) = runtime
+        .state
+        .stacks
+        .iter()
+        .find(|stack| stack.battle_stack_id == active_stack_id)
+    else {
+        return Ok(());
+    };
+    if caster_stack.owner_participant_id.as_deref() != Some(participant_id) {
+        return Ok(());
+    }
+    let spell_slugs = battle_spell_slugs_from_status_keys(&caster_stack.status_keys);
+    if spell_slugs.is_empty() {
+        return Ok(());
+    }
+
+    let targets = runtime
+        .state
+        .stacks
+        .iter()
+        .filter(|stack| {
+            stack.battle_id == runtime.battle_id
+                && stack.side != caster_stack.side
+                && stack.status == "active"
+                && stack.quantity > 0
+        })
+        .map(|stack| stack.battle_stack_id.clone())
+        .collect::<Vec<_>>();
+    let mut spell_actions = Vec::new();
+    for spell_slug in spell_slugs {
+        if !is_supported_battle_spell(&spell_slug) {
+            continue;
+        }
+        let disabled_reason = if caster_stack.cast_round >= battle.current_round {
+            Some("battle_stack_already_cast".to_string())
+        } else if targets.is_empty() {
+            Some("battle_target_not_legal".to_string())
+        } else {
+            None
+        };
+        spell_actions.push(domm_game::LegalBattleAction {
+            action: "CastAbility".to_string(),
+            ability_key: Some(format!("spell:{spell_slug}")),
+            enabled: disabled_reason.is_none(),
+            disabled_reason,
+            targets: targets.clone(),
+            path: Vec::new(),
+            damage_preview: None,
+        });
+    }
+    if !spell_actions.is_empty() {
+        view.legal_actions_for_caller
+            .retain(|action| action.action != "CastAbility" || action.ability_key.is_some());
+        view.legal_actions_for_caller.extend(spell_actions);
+    }
+    Ok(())
+}
+
+fn battle_spell_slugs_from_status_keys(status_keys: &[String]) -> Vec<String> {
+    let slugs = status_keys
         .iter()
         .filter_map(|key| key.strip_prefix("battle_spell:"))
         .filter(|slug| !slug.is_empty())
         .map(str::to_string)
         .collect::<BTreeSet<_>>();
-    Ok(slugs.into_iter().collect())
+    slugs.into_iter().collect()
 }
 
 fn is_supported_battle_spell(spell_slug: &str) -> bool {
@@ -706,6 +1186,14 @@ fn normalize_battle_action_input(
     let mut normalized = input.clone();
     normalized.target_stack_id = Some(target.battle_stack_id.clone());
     Ok(normalized)
+}
+
+fn mirror_battle_runtime_from_state(
+    session: &GameSession,
+    state: &domm_game::BattleState,
+) -> Result<(), ApiError> {
+    battle_runtime::replace_runtime_from_state(session, state.clone())?;
+    Ok(())
 }
 
 pub(crate) fn sync_battle(
@@ -1419,7 +1907,8 @@ fn apply_player_action(
             &state,
             Some(response_participant_id),
             events,
-        )
+        )?;
+        mirror_battle_runtime_from_state(session, &state)
     })?;
     changed_subjects.push(command_response::changed(
         "battle",
@@ -1619,6 +2108,7 @@ fn apply_cast_ability_command(
         response_participant_id,
         events,
     )?;
+    mirror_battle_runtime_from_state(session, &state)?;
     changed_subjects.push(command_response::changed(
         "battle",
         &input.battle_id,
@@ -1731,6 +2221,7 @@ fn recover_applying_battle_commands(
                         response_participant_id,
                         events,
                     )?;
+                    mirror_battle_runtime_from_state(session, &state)?;
                     battle_aftermath::apply_resolved_battle_aftermath(
                         session,
                         command.id(),
@@ -1783,6 +2274,7 @@ fn recover_applying_battle_commands(
                     response_participant_id,
                     events,
                 )?;
+                mirror_battle_runtime_from_state(session, &state)?;
                 battle_aftermath::apply_resolved_battle_aftermath(
                     session,
                     command.id(),
@@ -1834,6 +2326,7 @@ fn recover_applying_battle_commands(
                     response_participant_id,
                     events,
                 )?;
+                mirror_battle_runtime_from_state(session, &state)?;
                 battle_aftermath::apply_resolved_battle_aftermath(
                     session,
                     command.id(),
@@ -2001,6 +2494,7 @@ fn apply_timeout_command(
         response_participant_id,
         events,
     )?;
+    mirror_battle_runtime_from_state(session, &state)?;
     battle_aftermath::apply_resolved_battle_aftermath(
         session,
         command.id(),
@@ -2121,6 +2615,7 @@ fn apply_round_auto_defend_command(
         response_participant_id,
         events,
     )?;
+    mirror_battle_runtime_from_state(session, &state)?;
     battle_aftermath::apply_resolved_battle_aftermath(
         session,
         command.id(),

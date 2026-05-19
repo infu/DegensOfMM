@@ -275,3 +275,21 @@ Concrete code-driven adjustments:
 - `normalize_battle_action_input` reloads full state for `auto:enemy`; that should resolve from runtime in Gate 1.
 
 Updated conclusion: build the first runtime path around the submit/sync/readiness/event/status/aftermath boundary, not only around `battle_rows`. Add phase tracing around the existing blocks first, then cut the row-backed tactical path. If Gate 1 does not clear `<10B`, skip cosmetic repo tracing and remove the durable command/event/job/readiness costs next.
+
+### Runtime `get_battle_state`
+
+Moved active `get_battle_state` reads onto `BattleRuntime` while keeping the current row-backed submit path compatible.
+
+Checkpoint scope:
+
+- `get_battle_state` now checks the heap active runtime first when the runtime belongs to the requested session, and falls back to durable rows when runtime is missing.
+- Existing row-backed active battles are adopted on first `get_battle_state` access.
+- Runtime battle views intentionally expose the same conservative canister legal-action shape as the old row view while submit is still row-backed. This prevents the API read path from advertising actions that the current mutation path may reject.
+- Row-backed battle mutation paths now mirror their persisted `BattleState` back into the heap runtime, so runtime reads do not go stale during the migration window.
+- Full Candid serialization of the runtime graph was replaced with a compact upgrade reference snapshot. The full graph pushed the canister code section above the PocketIC/IC Wasm code limit; compact refs rehydrate active battles from durable rows after upgrade for now.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`

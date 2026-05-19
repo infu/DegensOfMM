@@ -12,19 +12,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use candid::CandidType;
 use canic_cdk::structures::{
     Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
 };
 use domm_degens_schema::schema::{Battle, GameSession};
-use domm_game::{ApiEventView, BattleState, CommandResponse, CommandStatusView};
-use icydb::traits::EntityValue;
+use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
+use icydb::{
+    traits::{EntityKey, EntityValue},
+    types::{Id, Ulid},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::repos::{battles as battle_repo, sessions as session_repo};
 
 use super::battle_rows;
 
 pub(crate) const BATTLE_RUNTIME_MEMORY_ID: u8 = 23;
 const MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES: u32 = 32 * 1024 * 1024;
+const UPGRADE_REFS_MAGIC: &str = "DOMM_BATTLE_RUNTIME_REFS_V1";
 
 struct BattleRuntimeStableCell;
 
@@ -72,7 +77,7 @@ thread_local! {
     ));
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntime {
     pub session_id: String,
     pub battle_id: String,
@@ -187,6 +192,32 @@ pub(crate) fn build_runtime_from_loaded_state(
     runtime
 }
 
+pub(crate) fn build_runtime_from_state(
+    session: &GameSession,
+    state: BattleState,
+) -> Result<BattleRuntime, ApiError> {
+    let battle = state
+        .battles
+        .first()
+        .ok_or_else(|| ApiError::new("battle_not_found", "battle runtime state is empty", true))?;
+    let battle_id = battle.battle_id.clone();
+    let deadline_ms = battle.action_deadline_at;
+    let mut runtime = BattleRuntime::new(
+        session.id().to_string(),
+        battle_id.clone(),
+        state,
+        session.next_event_seq,
+    );
+    runtime.deadline = BattleRuntimeDeadline {
+        action_deadline_at_ms: deadline_ms,
+        timeout_job_key: deadline_ms
+            .map(|deadline| format!("battle_timeout:{battle_id}:{deadline}")),
+        round_job_key: None,
+    };
+    hydrate_participant_audience_keys(&mut runtime);
+    Ok(runtime)
+}
+
 pub(crate) fn hydrate_runtime_from_rows(
     session: &GameSession,
     battle: Battle,
@@ -211,6 +242,24 @@ pub(crate) fn adopt_active_battle_from_rows(
     Ok(true)
 }
 
+pub(crate) fn replace_runtime_from_state(
+    session: &GameSession,
+    state: BattleState,
+) -> Result<bool, ApiError> {
+    let Some(battle) = state.battles.first() else {
+        return Ok(false);
+    };
+    let battle_id = battle.battle_id.clone();
+    if battle.state != "active" {
+        remove_runtime(&battle_id);
+        return Ok(false);
+    }
+
+    let runtime = build_runtime_from_state(session, state)?;
+    insert_runtime(runtime);
+    Ok(true)
+}
+
 fn hydrate_participant_audience_keys(runtime: &mut BattleRuntime) {
     let participant_ids = runtime
         .state
@@ -226,7 +275,7 @@ fn hydrate_participant_audience_keys(runtime: &mut BattleRuntime) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeAudience {
     pub participant_key: String,
     pub player_key: Option<String>,
@@ -244,7 +293,7 @@ impl BattleRuntimeAudience {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeCommandReceipt {
     pub command_id: String,
     pub command_type: String,
@@ -261,35 +310,43 @@ impl BattleRuntimeCommandReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeNonceKey {
     pub actor_participant_id: String,
     pub client_nonce: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeEvent {
     pub command_id: Option<String>,
     pub event: ApiEventView,
     pub flushed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeReadyKey {
     pub participant_id: String,
     pub round_number: u16,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeDeadline {
     pub action_deadline_at_ms: Option<u64>,
     pub timeout_job_key: Option<String>,
     pub round_job_key: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeSnapshot {
     pub runtimes: Vec<BattleRuntime>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BattleRuntimeUpgradeRef {
+    session_id: String,
+    battle_id: String,
+    session_event_sequence_cursor: u64,
+    dirty_generation: u64,
 }
 
 thread_local! {
@@ -358,9 +415,8 @@ pub(crate) fn clear_all_for_tests() {
 }
 
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
-    let snapshot = snapshot_for_upgrade();
-    let bytes = candid::encode_one(snapshot)
-        .map_err(|error| format!("battle runtime Candid encode failed: {error}"))?;
+    let refs = upgrade_refs_for_active_runtimes();
+    let bytes = encode_upgrade_refs(&refs);
     if bytes.len() > MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES as usize {
         return Err(format!(
             "battle runtime snapshot exceeds {} bytes: {}",
@@ -381,13 +437,127 @@ pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
         return Ok(());
     }
 
-    let snapshot = candid::decode_one::<BattleRuntimeSnapshot>(raw.as_bytes())
-        .map_err(|error| format!("battle runtime Candid decode failed: {error}"))?;
-    restore_from_upgrade(snapshot);
+    let refs = decode_upgrade_refs(raw.as_bytes())?;
+    for active_ref in refs {
+        restore_runtime_from_upgrade_ref(&active_ref)?;
+    }
     BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| {
         cell.borrow_mut().set(RawBattleRuntimeSnapshot::empty());
     });
     Ok(())
+}
+
+fn upgrade_refs_for_active_runtimes() -> Vec<BattleRuntimeUpgradeRef> {
+    ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .map(|runtime| BattleRuntimeUpgradeRef {
+                session_id: runtime.session_id.clone(),
+                battle_id: runtime.battle_id.clone(),
+                session_event_sequence_cursor: runtime.session_event_sequence_cursor,
+                dirty_generation: runtime.dirty_generation,
+            })
+            .collect()
+    })
+}
+
+fn encode_upgrade_refs(refs: &[BattleRuntimeUpgradeRef]) -> Vec<u8> {
+    let mut text = String::new();
+    text.push_str(UPGRADE_REFS_MAGIC);
+    text.push('\n');
+    for active_ref in refs {
+        text.push_str(&active_ref.session_id);
+        text.push('\t');
+        text.push_str(&active_ref.battle_id);
+        text.push('\t');
+        text.push_str(&active_ref.session_event_sequence_cursor.to_string());
+        text.push('\t');
+        text.push_str(&active_ref.dirty_generation.to_string());
+        text.push('\n');
+    }
+    text.into_bytes()
+}
+
+fn decode_upgrade_refs(bytes: &[u8]) -> Result<Vec<BattleRuntimeUpgradeRef>, String> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|error| format!("battle runtime snapshot is not UTF-8: {error}"))?;
+    let mut lines = text.lines();
+    match lines.next() {
+        Some(UPGRADE_REFS_MAGIC) => {}
+        Some(other) => {
+            return Err(format!(
+                "battle runtime snapshot magic mismatch: expected {UPGRADE_REFS_MAGIC}, got {other}"
+            ));
+        }
+        None => return Ok(Vec::new()),
+    }
+
+    let mut refs = Vec::new();
+    for (index, line) in lines.enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() != 4 {
+            return Err(format!(
+                "battle runtime snapshot line {} has {} fields",
+                index + 2,
+                fields.len()
+            ));
+        }
+        refs.push(BattleRuntimeUpgradeRef {
+            session_id: fields[0].to_string(),
+            battle_id: fields[1].to_string(),
+            session_event_sequence_cursor: fields[2].parse().map_err(|error| {
+                format!(
+                    "battle runtime snapshot line {} invalid event cursor: {error}",
+                    index + 2
+                )
+            })?,
+            dirty_generation: fields[3].parse().map_err(|error| {
+                format!(
+                    "battle runtime snapshot line {} invalid dirty generation: {error}",
+                    index + 2
+                )
+            })?,
+        });
+    }
+    Ok(refs)
+}
+
+fn restore_runtime_from_upgrade_ref(active_ref: &BattleRuntimeUpgradeRef) -> Result<(), String> {
+    let session_id = parse_text_id::<GameSession>(&active_ref.session_id, "session_id")?;
+    let battle_id = parse_text_id::<Battle>(&active_ref.battle_id, "battle_id")?;
+    let Some(session) = session_repo::load_session(session_id)
+        .map_err(|error| format!("load session for runtime restore failed: {}", error.message))?
+    else {
+        return Ok(());
+    };
+    let Some(battle) = battle_repo::load_battle(battle_id)
+        .map_err(|error| format!("load battle for runtime restore failed: {}", error.message))?
+    else {
+        return Ok(());
+    };
+    if battle.state != "active" {
+        return Ok(());
+    }
+
+    let mut runtime = hydrate_runtime_from_rows(&session, battle)
+        .map_err(|error| format!("hydrate runtime after upgrade failed: {}", error.message))?;
+    runtime.session_event_sequence_cursor = active_ref.session_event_sequence_cursor;
+    runtime.dirty_generation = active_ref.dirty_generation;
+    insert_runtime(runtime);
+    Ok(())
+}
+
+fn parse_text_id<E>(value: &str, field: &str) -> Result<Id<E>, String>
+where
+    E: EntityKey<Key = Ulid>,
+{
+    Ulid::from_str(value)
+        .map(Id::from_key)
+        .map_err(|_| format!("battle runtime snapshot has invalid {field}: {value}"))
 }
 
 #[cfg(test)]
@@ -478,20 +648,17 @@ mod tests {
     }
 
     #[test]
-    fn runtime_snapshot_candid_round_trips() {
-        let snapshot = BattleRuntimeSnapshot {
-            runtimes: vec![BattleRuntime::new(
-                "session:1",
-                "battle:1",
-                empty_state("s1", "b1"),
-                42,
-            )],
-        };
+    fn upgrade_refs_round_trip_without_full_runtime_encoding() {
+        let refs = vec![BattleRuntimeUpgradeRef {
+            session_id: "session:1".to_string(),
+            battle_id: "battle:1".to_string(),
+            session_event_sequence_cursor: 42,
+            dirty_generation: 7,
+        }];
 
-        let bytes = candid::encode_one(&snapshot).expect("snapshot should encode");
-        let decoded: BattleRuntimeSnapshot =
-            candid::decode_one(&bytes).expect("snapshot should decode");
+        let bytes = encode_upgrade_refs(&refs);
+        let decoded = decode_upgrade_refs(&bytes).expect("upgrade refs should decode");
 
-        assert_eq!(decoded, snapshot);
+        assert_eq!(decoded, refs);
     }
 }

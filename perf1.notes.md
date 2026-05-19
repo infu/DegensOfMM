@@ -966,3 +966,43 @@ Decision:
 
 - Keep `CastAbility` row-backed for now.
 - Revisit only if a benchmark scenario starts casting battle spells often enough to show up in method or phase summaries.
+
+## Focused Benchmark: Runtime Readiness Follow-Ups
+
+Ran a focused Gate K benchmark after runtime manual readiness, acted-state readiness, and the `CastAbility` fallback decision.
+
+```text
+run id: 20260519-071345-5515805-gate-k-runtime-readiness
+artifact: target/benchmarks/20260519-071345-5515805-gate-k-runtime-readiness/gate-k/summary.json
+command: DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=... cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows -- --nocapture
+```
+
+Gate K result:
+
+| status | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| passed | 84 | 118 | 228 | 1025 | 149889 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 25 | 0.2844B | 0.0025 MB | 0.0003T |
+| `sync_battle` | update | 28 | 9.8815B | 36.0580 MB | 0.0107T |
+
+Submit phase summary:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 25 | 0.1694B |
+| `readiness_schedule` | 25 | 0.0947B |
+| `event_fanout` | 25 | 0.0192B |
+| `apply_rules` | 25 | 0.0003B |
+| `load_battle_state` | 25 | 0.0002B |
+| `persist_battle_state` | 25 | 0B |
+
+Decision:
+
+- The acted-state readiness cut is behaviorally safe but not a large measured win; submit remains auth dominated.
+- Runtime occupancy/stack indexes are not justified yet because runtime `load_battle_state` and `apply_rules` phases are tiny.
+- No active-submit serialization/checkpointing remains visible in traces: `persist_battle_state` is 0B avg and memory delta is about 0.0025 MB.

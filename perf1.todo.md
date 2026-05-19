@@ -354,11 +354,11 @@ When a todo item is completed:
 
 ### 5. Gate 4: CPU And Runtime Data-Structure Pass
 
-- [ ] Add runtime indexes for occupancy by cell and stack id if scans remain visible in phase timings.
+- [x] Add runtime indexes for occupancy by cell and stack id if scans remain visible in phase timings. Decision: no runtime indexes needed yet; focused Gate K `20260519-071345-5515805-gate-k-runtime-readiness` still shows `load_battle_state` at 0.0002B and `apply_rules` at 0.0003B avg.
 - [x] Avoid full legal action generation for simple validation paths.
 - [x] Avoid reachability BFS unless the submitted action is `Move` or a read API actually needs move paths.
 - [x] Add a narrow two-slot active session caller cache for active runtime battle submits so auth/session lookup is not a stable-read tax on every action.
-- [ ] Remove or defer any remaining per-action serialization/checkpointing visible in traces.
+- [x] Remove or defer any remaining per-action serialization/checkpointing visible in traces. Focused Gate K `20260519-071345-5515805-gate-k-runtime-readiness` shows `persist_battle_state` at 0B avg and active submit memory delta at about 0.0025 MB.
 - [x] Run focused Gate K/L and decide whether Gate 4 reached around `0.3B`. Focused Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured `submit_battle_action` at 0.2846B avg.
 
 ### 6. Benchmark And Regression Discipline

@@ -82,6 +82,32 @@ Performance gates:
 
 If a gate is missed, do not treat the current design as fixed. Re-open the architecture and remove the next largest measured cost.
 
+## Smarter Strategy
+
+The first version of this plan was correct about the smell, but too conservative about the path to `0.3B`. A heap battle aggregate alone may not be enough if every submit still creates/updates durable commands, events, readiness rows, battle timeout jobs, battle headers, or Candid snapshots.
+
+The smarter plan is to make active battle execution progressively less durable on every single action. Durability comes from IC atomicity plus heap state during normal execution, and from upgrade serialization during upgrades. Stable/IcyDB writes should happen at battle start, battle end, explicit flush points, or for small public projections only when measurement proves they are affordable.
+
+Guiding rules:
+
+| rule | implication |
+| --- | --- |
+| Do not optimize around a bad write model | If per-action stable writes dominate, remove them rather than making them prettier. |
+| Measure before broad refactors | Add enough phase/repo tracing to rank costs; do not spend days instrumenting every repo before cutting obvious hot writes. |
+| Active battle state is authoritative while active | `BattleRuntime` owns stacks, occupancy, round, deadline, readiness, transient command receipts, and active battle events. |
+| Durable rows are projections | `Battle`, `GameCommand`, `GameEvent`, `SystemJob`, and tactical child rows should not be assumed authoritative for active battle internals. |
+| Public behavior must survive | If data moves to heap, public query APIs must read or merge heap state while active, then read durable rows after flush/finalization. |
+| Gate failures drive architecture changes | Missing a perf gate means removing the next largest measured cost, even if that means changing idempotency/event/job design. |
+
+Expected cuts by gate:
+
+| gate | primary cut | secondary cut |
+| --- | --- | --- |
+| Gate 1 | no active tactical child-row hydrate/diff/persist | `get_battle_state` reads runtime |
+| Gate 2 | no per-action `Battle` header, `SystemJob`, or readiness durable writes | battle deadlines/readiness live in runtime |
+| Gate 3 | active battle command receipts and battle events live in runtime, with durable flush/merge APIs | batch `GameSession.next_event_seq` or move active sequence into runtime |
+| Gate 4 | battle rule CPU/data-structure pass | action-specific validation, indexed runtime occupancy, no unnecessary reachability BFS |
+
 Secondary methods to watch:
 
 | method | why |
@@ -157,58 +183,67 @@ When a todo item is completed:
 - [x] Save the current `submit_battle_action` benchmark baseline in `perf1.todo.md` so aggregate-runtime work has a fixed comparison point.
 - [x] Set explicit performance gates in `perf1.todo.md` from the 26.9860B baseline toward the 0.3B normal target.
 - [x] Create `perf1.notes.md` as the running notes and decision log for this work.
-- [ ] Add benchmark-only repo operation tracing so each public endpoint call can report table/index operation counts, row counts returned/affected, and operation names.
-- [ ] Add benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
-- [ ] Run a fresh baseline benchmark after repo-op tracing lands and record the run ID plus `submit_battle_action` table/index counts in this file.
+- [x] Re-evaluate the whole plan and update it so it can plausibly reach the 0.3B target instead of stopping at a partial aggregate rewrite.
+- [ ] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
+- [ ] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
+- [ ] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
 
-### 1. Battle Aggregate Runtime
+### 1. Active Battle Runtime Authority
 
-- [ ] Define `BattleRuntime` as the active command-side aggregate containing the battle header, stacks, obstacles, occupancy, round/deadline state, and any runtime metadata needed to apply commands.
-- [ ] Choose and implement serialization for `BattleRuntime` snapshots. Candid is acceptable unless measurement shows it is too expensive.
-- [ ] Add an active battle store keyed by battle id. Prefer heap-resident active state with pre-upgrade/post-upgrade serialization.
-- [ ] Add a compact durable checkpoint/snapshot path for active battles. This can be per command, every N commands, or explicit milestone-based if the heap model is enough for the first pass.
+- [ ] Define the first `BattleRuntime` as `domm_game::BattleState` plus runtime metadata only where needed. Avoid a new rules model until measurement requires it.
+- [ ] Add a heap active battle store keyed by battle id.
+- [ ] Add `pre_upgrade`/`post_upgrade` serialization for active battles using a dedicated memory slot that does not collide with IcyDB memory IDs.
 - [ ] Implement loader compatibility so existing row-backed battles can be converted into `BattleRuntime` during migration or first access.
-- [ ] Implement finalization that projects resolved battle state into durable rows/history/events needed after the battle is over.
+- [ ] Make `get_battle_state` read active runtime directly and fall back to legacy rows only when runtime is absent.
+- [ ] Implement battle finalization that projects resolved runtime state into durable strategic rows/history/events needed after the battle is over.
 
-### 2. Battle Command Hot Path
+### 2. Gate 1: Remove Tactical Child-Row Hot Writes
 
-- [ ] Change `submit_battle_action` to load/mutate/save one `BattleRuntime` aggregate instead of loading/diffing `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows repeatedly.
-- [ ] Replace full child-row diff persistence with aggregate save/checkpoint semantics.
+- [ ] Change `submit_battle_action` to load/mutate/commit one heap `BattleRuntime` aggregate instead of loading/diffing `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows repeatedly.
+- [ ] Stop persisting active tactical changes to `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows per action.
 - [ ] Reuse the already-mutated aggregate for round readiness instead of reloading battle child state.
 - [ ] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
-- [ ] Keep command idempotency and command status durable so replay behavior remains stable.
-- [ ] Keep battle event emission durable, but decouple it from child-row persistence.
+- [ ] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
+- [ ] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`.
 
-### 3. Event And Projection Cleanup
+### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes
 
-- [ ] Batch event fanout so `GameSession.next_event_seq` is updated once per command, not once per audience event.
-- [ ] Cache involved battle participants for event fanout instead of reloading champion/town owners once per generated battle event.
-- [ ] Decide which battle read APIs should decode the active aggregate directly and which should read a projection.
-- [ ] Add or update projections needed by `get_battle_state`, `get_game_view`, and client probes.
-- [ ] Ensure public event feed and command status APIs keep their existing behavior.
+- [ ] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
+- [ ] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
+- [ ] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points.
+- [ ] Keep enough scheduling behavior to make timeout/round advancement work from heap state.
+- [ ] Run focused Gate K/L and decide whether Gate 2 cleared `<3B`.
 
-### 4. Benchmarks And Regression Gates
+### 4. Gate 3: Move Active Battle Commands And Events Out Of Per-Action Stable Writes
+
+- [ ] Add active battle command receipt/idempotency storage inside `BattleRuntime` for battle actions.
+- [ ] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
+- [ ] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
+- [ ] Flush or project runtime command/event data to durable rows at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
+- [ ] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands.
+- [ ] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`.
+
+### 5. Gate 4: CPU And Runtime Data-Structure Pass
+
+- [ ] Add runtime indexes for occupancy by cell and stack id if scans remain visible in phase timings.
+- [ ] Avoid full legal action generation for simple validation paths.
+- [ ] Avoid reachability BFS unless the submitted action is `Move` or a read API actually needs move paths.
+- [ ] Remove or defer any remaining per-action serialization/checkpointing visible in traces.
+- [ ] Run focused Gate K/L and decide whether Gate 4 reached around `0.3B`.
+
+### 6. Benchmark And Regression Discipline
 
 - [ ] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
 - [ ] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.
-- [ ] Run focused Gate K after the first battle aggregate submit path works.
-- [ ] Run focused Gate L after first-playable battle flow works through public endpoints.
-- [ ] Run full benchmark suite and compare against the baseline run.
-- [ ] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, and `get_events_after`.
+- [ ] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
 - [ ] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods.
 - [ ] Confirm no leftover PocketIC processes after full benchmark runs.
+- [ ] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands.
 
-### 5. Remove Row-Normalized Battle Hot State
-
-- [ ] Stop writing live tactical changes to `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows during active battle actions unless a projection explicitly requires it.
-- [ ] Delete or isolate obsolete row-diff helpers once all active battle callers use `BattleRuntime`.
-- [ ] Keep migration or compatibility helpers only where needed for old snapshots/tests.
-- [ ] Update tests that asserted row-level live battle internals to assert aggregate/projection behavior instead.
-
-### 6. Broader Aggregate Pattern
+### 7. Broader Aggregate Pattern
 
 - [ ] Review town command paths for the same live-row smell: buildings, recruit pools, and garrison.
 - [ ] Review champion command paths for the same live-row smell: army stacks, spells, artifacts, cooldowns, and map position.
@@ -218,7 +253,7 @@ When a todo item is completed:
 
 ## Expected Outcome
 
-The first successful battle aggregate checkpoint should reduce `submit_battle_action` by removing repeated stable row/index work. The likely win should come from eliminating:
+The first successful battle aggregate checkpoint should reduce `submit_battle_action` by removing repeated stable row/index work. The deeper target requires eliminating almost all per-action stable writes from active battle submit. The likely wins should come from eliminating:
 
 - repeated `BattleStack` list reads
 - repeated `BattleObstacle` list reads
@@ -226,5 +261,9 @@ The first successful battle aggregate checkpoint should reduce `submit_battle_ac
 - full child-row diff persistence
 - redundant battle state reload for readiness
 - excessive event/session write amplification
+- per-action battle timeout job upserts
+- per-action readiness rows
+- per-action durable command create/update when runtime receipts can answer active replays/status
+- per-action durable event fanout when runtime events can answer active feeds and flush later
 
-The benchmark should prove whether the new shape is actually better. If the aggregate model does not move `submit_battle_action` below 10B average instructions, repo-op and phase tracing should tell us whether the remaining cost is event feed writes, command/idempotency writes, Candid serialization, or battle rule CPU.
+The benchmark should prove whether each cut is actually better. If the active aggregate model does not move `submit_battle_action` below 10B average instructions, repo-op and phase tracing should tell us whether the remaining cost is event feed writes, command/idempotency writes, job/readiness writes, serialization, or battle rule CPU. Continue removing the largest measured cost until the endpoint is near `0.3B`.

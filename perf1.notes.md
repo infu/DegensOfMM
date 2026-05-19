@@ -77,3 +77,28 @@ Benchmark tracing:
 1. Implement benchmark-only repo operation tracing and phase markers.
 2. Run a traced baseline and record the run ID here and in `perf1.todo.md`.
 3. Use the traced baseline to choose the first code cut toward Gate 1.
+
+### Plan Evaluation And Update
+
+The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.
+
+Decision: treat the battle aggregate as Gate 1, not the finish line.
+
+Updated gate logic:
+
+| gate | intended architecture cut |
+| --- | --- |
+| Gate 1 | remove active tactical child-row hydrate/diff/persist |
+| Gate 2 | remove per-action durable battle header/job/readiness writes |
+| Gate 3 | move active battle command receipts and active battle events into runtime, with durable flush/merge behavior |
+| Gate 4 | optimize battle rule CPU and runtime data structures toward `0.3B` |
+
+Important implications:
+
+- Do not add a per-action durable `BattleRuntimeSnapshot` unless measurement proves it is cheap enough. Upgrade serialization is acceptable; per-action stable snapshots are suspicious until proven otherwise.
+- Do not spend too much time converting every repo to perfect tracing before Gate 1. Add targeted phase tracing and hot repo tracing first, then deepen instrumentation when a gate misses.
+- `GameCommand` and `GameEvent` are allowed to stop being the active battle command/event authority while a battle is active. Public APIs must still work by reading or merging runtime data.
+- `BattleParticipantRoundReady`, battle timeout `SystemJob`, and active `Battle` header fields are also candidates for runtime authority if they remain visible in traces.
+- If compatibility rows force high cost, update tests and projections rather than keeping the cost.
+
+The plan in `perf1.todo.md` was updated to reflect this. The target remains around `0.3B`; missing an intermediate gate should trigger another architectural cut, not a long polishing pass.

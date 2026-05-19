@@ -563,6 +563,57 @@ pub(crate) fn prepare_active_turn_runtime(
     Ok(Some(runtime))
 }
 
+pub(crate) fn prepare_active_turn_runtime_from_previous(
+    session: &mut GameSession,
+    previous_turn: u32,
+) -> Result<Option<SessionTurnRuntime>, ApiError> {
+    if session.state != "active"
+        || contains_runtime(&session.id().to_string(), session.current_turn)
+    {
+        return Ok(None);
+    }
+
+    let event_seq_block = reserve_event_seq_block_in_session(session)?;
+    let previous = with_runtime(&session.id().to_string(), previous_turn, Clone::clone);
+    let Some(previous) = previous else {
+        let mut runtime = SessionTurnRuntime::new(
+            session.id().to_string(),
+            session.current_turn,
+            timestamp_to_u64(session.turn_started_at),
+            timestamp_to_u64(session.turn_deadline_at),
+            u64::from(session.turn_duration_ms),
+        );
+        runtime.session = Some(session.clone());
+        runtime.event_seq_block = Some(event_seq_block);
+        hydrate_active_turn_rows(session, &mut runtime)?;
+        return Ok(Some(runtime));
+    };
+
+    let mut runtime = SessionTurnRuntime::new(
+        session.id().to_string(),
+        session.current_turn,
+        timestamp_to_u64(session.turn_started_at),
+        timestamp_to_u64(session.turn_deadline_at),
+        u64::from(session.turn_duration_ms),
+    );
+    runtime.session = Some(session.clone());
+    runtime.event_seq_block = Some(event_seq_block);
+    runtime.participants = previous
+        .participants
+        .into_iter()
+        .filter(|participant| participant.status == "active")
+        .collect();
+    runtime.champion_snapshots = previous.champion_snapshots;
+    runtime.occupancy_index = previous.occupancy_index;
+    runtime.contact_index = previous.contact_index;
+    runtime.dirty.participants = true;
+    runtime.dirty.champion_snapshots = true;
+    runtime.dirty.occupancy_index = true;
+    runtime.dirty.contact_index = true;
+    runtime.mark_dirty();
+    Ok(Some(runtime))
+}
+
 pub(crate) fn ensure_active_turn_runtime(session: &mut GameSession) -> Result<(), ApiError> {
     let Some(runtime) = prepare_active_turn_runtime(session)? else {
         return Ok(());

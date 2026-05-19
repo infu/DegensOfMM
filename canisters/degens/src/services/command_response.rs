@@ -102,25 +102,17 @@ pub(crate) fn begin_participant_command_guarded_tracked<F>(
 where
     F: FnOnce() -> Result<(), ApiError>,
 {
-    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
-        return Ok(GameCommandStart::Return(failed_response(
-            caller,
-            context,
-            command_type,
-            client_nonce_text,
-            payload_hash(
-                command_type,
-                &context.participant.id().to_string(),
-                client_nonce_text,
-                &payload_json,
-            ),
-            public_error(
-                "payload_too_large",
-                "game command payload is too large",
-                false,
-            ),
-        )));
+    if let Some(existing) = existing_participant_command_tracked(
+        caller,
+        context,
+        command_type,
+        client_nonce_text,
+        &payload_json,
+    )? {
+        return Ok(existing);
     }
+
+    new_command_guard()?;
 
     let client_nonce = nonce_u64(command_type, client_nonce_text);
     let hash = payload_hash(
@@ -129,37 +121,6 @@ where
         client_nonce_text,
         &payload_json,
     );
-    if let Some(existing) = commands_events_effects::find_game_command_by_idempotency(
-        context.session.id(),
-        "player",
-        &context.participant.id().to_string(),
-        client_nonce,
-    )? {
-        if existing.payload_hash != hash {
-            return Ok(GameCommandStart::Return(failed_response(
-                caller,
-                context,
-                command_type,
-                client_nonce_text,
-                hash,
-                public_error(
-                    "duplicate_nonce_payload_mismatch",
-                    format!("client nonce {client_nonce_text} was reused with a different payload"),
-                    false,
-                ),
-            )));
-        }
-        if is_recoverable_movement_command(command_type)
-            && matches!(existing.status.as_str(), "pending" | "applying")
-        {
-            return Ok(GameCommandStart::Apply(existing));
-        }
-        return response_from_command(caller, context, existing, client_nonce_text)
-            .map(GameCommandStart::Return);
-    }
-
-    new_command_guard()?;
-
     let command = commands_events_effects::create_game_command(
         context.session.id(),
         "player".to_string(),
@@ -174,6 +135,68 @@ where
         payload_json,
     )?;
     Ok(GameCommandStart::Apply(command))
+}
+
+pub(crate) fn existing_participant_command_tracked(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    payload_json: &str,
+) -> Result<Option<GameCommandStart>, ApiError> {
+    let hash = payload_hash(
+        command_type,
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        return Ok(Some(GameCommandStart::Return(failed_response(
+            caller,
+            context,
+            command_type,
+            client_nonce_text,
+            hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        ))));
+    }
+
+    let client_nonce = nonce_u64(command_type, client_nonce_text);
+    let Some(existing) = commands_events_effects::find_game_command_by_idempotency(
+        context.session.id(),
+        "player",
+        &context.participant.id().to_string(),
+        client_nonce,
+    )?
+    else {
+        return Ok(None);
+    };
+    if existing.payload_hash != hash {
+        return Ok(Some(GameCommandStart::Return(failed_response(
+            caller,
+            context,
+            command_type,
+            client_nonce_text,
+            hash,
+            public_error(
+                "duplicate_nonce_payload_mismatch",
+                format!("client nonce {client_nonce_text} was reused with a different payload"),
+                false,
+            ),
+        ))));
+    }
+    if is_recoverable_movement_command(command_type)
+        && matches!(existing.status.as_str(), "pending" | "applying")
+    {
+        return Ok(Some(GameCommandStart::Apply(existing)));
+    }
+    response_from_command(caller, context, existing, client_nonce_text)
+        .map(GameCommandStart::Return)
+        .map(Some)
 }
 
 pub(crate) fn ensure_map_turn_accepts_new_command(

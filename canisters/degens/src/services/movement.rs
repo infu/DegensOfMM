@@ -47,7 +47,7 @@ pub(crate) fn preview_move_path(
     _now_ms: u64,
 ) -> Result<MovementPreview, ApiError> {
     validate_path_limit(&path)?;
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = require_runtime_current_active_session_caller(caller, &session_id)?;
     let champion = resolve_owned_champion(&context, &champion_id)?;
     validate_path_bounds(&context.session, &path)?;
     validate_path_adjacency(champion.x, champion.y, &path)?;
@@ -531,7 +531,7 @@ pub(crate) fn sync_session_turn(
         }
     }
 
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = require_runtime_current_active_session_caller(caller, &session_id)?;
     if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
         && runtime_has_no_ready_participants(&context.session)
     {
@@ -552,34 +552,110 @@ pub(crate) fn sync_session_turn(
             &payload_json,
         ));
     }
-    let command = match command_response::begin_participant_command_tracked(
-        caller,
-        &context,
+    let actor_participant_id = context.participant.id().to_string();
+    let command_payload_hash = command_response::payload_hash(
         "sync_session_turn",
+        &actor_participant_id,
         &client_nonce,
-        None,
-        payload_json,
-    )? {
-        GameCommandStart::Apply(command) => command,
-        GameCommandStart::Return(response) => return Ok(response),
+        &payload_json,
+    );
+    let client_nonce_u64 = command_response::nonce_u64("sync_session_turn", &client_nonce);
+    if let Some(existing) = session_turn_runtime::command_receipt_by_nonce(
+        &context.session.id().to_string(),
+        &actor_participant_id,
+        client_nonce_u64,
+    ) {
+        if existing.payload_hash != command_payload_hash {
+            return Ok(runtime_sync_failed_response(
+                caller,
+                &context,
+                Ulid::generate().to_string(),
+                &client_nonce,
+                command_payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce} was reused with a different payload"),
+                    false,
+                ),
+            ));
+        }
+        return Ok(existing.response);
+    }
+    let has_runtime = session_turn_runtime::contains_runtime(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+    );
+    let command = if has_runtime {
+        let command_key = Ulid::generate();
+        let command_id = Id::<GameCommand>::from_key(command_key);
+        SyncTurnCommand::Runtime {
+            id: command_id,
+            id_text: command_id.to_string(),
+            payload_hash: command_payload_hash,
+            client_nonce: client_nonce_u64,
+        }
+    } else {
+        if let Some(existing) = command_response::existing_participant_command_tracked(
+            caller,
+            &context,
+            "sync_session_turn",
+            &client_nonce,
+            &payload_json,
+        )? {
+            match existing {
+                GameCommandStart::Apply(command) => {
+                    return sync_session_turn_with_command(
+                        caller,
+                        context,
+                        client_nonce,
+                        SyncTurnCommand::Durable(command),
+                    );
+                }
+                GameCommandStart::Return(response) => return Ok(response),
+            }
+        }
+        match command_response::begin_participant_command_tracked(
+            caller,
+            &context,
+            "sync_session_turn",
+            &client_nonce,
+            None,
+            payload_json,
+        )? {
+            GameCommandStart::Apply(command) => SyncTurnCommand::Durable(command),
+            GameCommandStart::Return(response) => return Ok(response),
+        }
     };
+
+    sync_session_turn_with_command(caller, context, client_nonce, command)
+}
+
+fn sync_session_turn_with_command(
+    caller: CandidPrincipal,
+    mut context: session_context::SessionCallerContext,
+    client_nonce: String,
+    command: SyncTurnCommand,
+) -> Result<CommandResponse, ApiError> {
+    let command_id = command.id();
 
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
     let movement_complete = resolve_pending_movement(
         &mut context.session,
-        command.id(),
+        command_id,
+        command.persistence_mode(),
         &mut events,
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
-        reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
-        let response = command_response::apply_command(
+        if !command.is_runtime() {
+            reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
+        }
+        let response = complete_sync_command_response(
             caller,
             &context,
             command,
             &client_nonce,
-            command_response::result_json("sync_session_turn", context.session.current_turn),
             events,
             changed_subjects,
         )?;
@@ -592,10 +668,11 @@ pub(crate) fn sync_session_turn(
     let mut next_event_seq = context.session.next_event_seq;
     let income_events = materialize_income(
         &mut context.session,
-        command.id(),
+        command_id,
         &mut participant,
         income_turn,
         Some(&mut next_event_seq),
+        command.persistence_mode(),
     )?;
     if !income_events.is_empty() {
         events.extend(income_events);
@@ -610,18 +687,45 @@ pub(crate) fn sync_session_turn(
     participant = sessions::update_participant(participant)?;
     context.participant = participant;
 
-    complete_current_turn_jobs(context.session.id(), income_turn)?;
+    if !command.is_runtime() {
+        complete_current_turn_jobs(context.session.id(), income_turn)?;
+    }
     context.session.current_turn = context.session.current_turn.saturating_add(1);
     context.session.turn_started_at = Timestamp::now();
     context.session.turn_deadline_at = turn_deadline();
-    context.session.last_command_id = Some(command.id);
-    economy_expansion::materialize_weekly_economy(&context.session, command.id())?;
+    context.session.last_command_id = Some(command_id.key());
+    if domm_game::week_for_turn(context.session.current_turn)
+        != domm_game::week_for_turn(income_turn)
+    {
+        economy_expansion::materialize_weekly_economy(&context.session, command_id)?;
+    }
     let final_event_seq = next_event_seq;
-    context.session.next_event_seq = next_event_seq.saturating_add(1);
-    let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut context.session)?;
+    if !command.is_runtime() {
+        context.session.next_event_seq = next_event_seq.saturating_add(1);
+    }
+    let prepared_runtime = if command.is_runtime() {
+        session_turn_runtime::prepare_active_turn_runtime_from_previous(
+            &mut context.session,
+            income_turn,
+        )?
+    } else {
+        session_turn_runtime::prepare_active_turn_runtime(&mut context.session)?
+    };
     context.session = sessions::update_session(context.session)?;
     if let Some(runtime) = prepared_runtime {
         session_turn_runtime::insert_runtime(runtime);
+    }
+    if command.is_runtime() {
+        let session_id = context.session.id().to_string();
+        let participant = session_turn_participant(&context);
+        session_turn_runtime::with_runtime_mut(
+            &session_id,
+            context.session.current_turn,
+            |runtime| {
+                runtime.session = Some(context.session.clone());
+                runtime.upsert_participant(participant);
+            },
+        );
     }
     changed_subjects.push(command_response::changed(
         "session",
@@ -631,50 +735,184 @@ pub(crate) fn sync_session_turn(
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
-    let event = append_reserved_public_event(
-        &mut context.session,
-        command.id(),
-        final_event_seq,
-        format!("sync_turn:{session_id_text}:{current_turn}"),
-        "session_turn_synced".to_string(),
-        Some("session".to_string()),
-        Some(session_id_text),
-        format!(r#"{{"current_turn":{current_turn}}}"#),
-    )?;
+    let event = if command.is_runtime() {
+        append_movement_public_event(
+            &mut context.session,
+            command_id,
+            command.persistence_mode(),
+            format!("sync_turn:{session_id_text}:{current_turn}"),
+            "session_turn_synced".to_string(),
+            Some("session".to_string()),
+            Some(session_id_text),
+            format!(r#"{{"current_turn":{current_turn}}}"#),
+        )?
+    } else {
+        append_reserved_public_event(
+            &mut context.session,
+            command_id,
+            final_event_seq,
+            format!("sync_turn:{session_id_text}:{current_turn}"),
+            "session_turn_synced".to_string(),
+            Some("session".to_string()),
+            Some(session_id_text),
+            format!(r#"{{"current_turn":{current_turn}}}"#),
+        )?
+    };
     events.push(event);
 
-    let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-        job_key: format!(
-            "turn_deadline:{}:{}",
-            context.session.id(),
-            context.session.current_turn
-        ),
-        job_kind: "turn_deadline".to_string(),
-        session_id: context.session.id(),
-        battle_id: None,
-        turn_number: Some(context.session.current_turn),
-        due_at: context.session.turn_deadline_at,
-        command_id: Some(command.id()),
-        cursor_json: None,
-    })?;
-    changed_subjects.push(command_response::changed(
-        "system_job",
-        &job.id().to_string(),
-        "upsert",
-    ));
-    scenario_progress::schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
+    if !command.is_runtime() {
+        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: format!(
+                "turn_deadline:{}:{}",
+                context.session.id(),
+                context.session.current_turn
+            ),
+            job_kind: "turn_deadline".to_string(),
+            session_id: context.session.id(),
+            battle_id: None,
+            turn_number: Some(context.session.current_turn),
+            due_at: context.session.turn_deadline_at,
+            command_id: Some(command_id),
+            cursor_json: None,
+        })?;
+        changed_subjects.push(command_response::changed(
+            "system_job",
+            &job.id().to_string(),
+            "upsert",
+        ));
+        scenario_progress::schedule_turn_maintenance_jobs(&context.session, Some(command_id))?;
+    }
 
-    let response = command_response::apply_command(
+    let response = complete_sync_command_response(
         caller,
         &context,
         command,
         &client_nonce,
-        command_response::result_json("sync_session_turn", context.session.current_turn),
         events,
         changed_subjects,
     )?;
     session_context::remember_active_session_caller(caller, &context);
     Ok(response)
+}
+
+fn complete_sync_command_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command: SyncTurnCommand,
+    client_nonce: &str,
+    events: Vec<domm_game::ApiEventView>,
+    changed_subjects: Vec<domm_game::ChangedSubject>,
+) -> Result<CommandResponse, ApiError> {
+    let event_count = events.len() as u32;
+    match command {
+        SyncTurnCommand::Durable(command) => command_response::apply_command(
+            caller,
+            context,
+            command,
+            client_nonce,
+            command_response::result_json("sync_session_turn", context.session.current_turn),
+            events,
+            changed_subjects,
+        ),
+        SyncTurnCommand::Runtime {
+            id_text,
+            payload_hash,
+            client_nonce: client_nonce_u64,
+            ..
+        } => {
+            let response = command_response::runtime_command_response(
+                caller,
+                context,
+                id_text.clone(),
+                "sync_session_turn".to_string(),
+                client_nonce,
+                payload_hash.clone(),
+                CommandStatus::Applied,
+                CommandPhase::Complete,
+                false,
+                events,
+                changed_subjects,
+                CommandResult::StrategicReceipt(StrategicCommandReceipt {
+                    command_kind: "sync_session_turn".to_string(),
+                    command_id: id_text.clone(),
+                    current_turn: context.session.current_turn,
+                    command_count: 1,
+                    event_count,
+                }),
+                None,
+            );
+            remember_runtime_sync_receipt(
+                context,
+                id_text,
+                client_nonce.to_string(),
+                client_nonce_u64,
+                payload_hash,
+                response.clone(),
+            );
+            Ok(response)
+        }
+    }
+}
+
+fn remember_runtime_sync_receipt(
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce_text: String,
+    client_nonce: u64,
+    payload_hash: String,
+    response: CommandResponse,
+) {
+    let session_id = context.session.id().to_string();
+    let receipt = session_turn_runtime::SessionTurnCommandReceipt {
+        command_id,
+        command_type: "sync_session_turn".to_string(),
+        actor_participant_id: context.participant.id().to_string(),
+        client_nonce_text,
+        client_nonce,
+        payload_hash,
+        response,
+    };
+    let inserted = session_turn_runtime::with_runtime_mut(
+        &session_id,
+        context.session.current_turn,
+        |runtime| {
+            runtime.insert_command_receipt(receipt.clone());
+        },
+    )
+    .is_some();
+    if !inserted && context.session.current_turn > 0 {
+        session_turn_runtime::with_runtime_mut(
+            &session_id,
+            context.session.current_turn.saturating_sub(1),
+            |runtime| runtime.insert_command_receipt(receipt),
+        );
+    }
+}
+
+fn runtime_sync_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
+        caller,
+        context,
+        command_id,
+        "sync_session_turn".to_string(),
+        client_nonce,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    )
 }
 
 fn sync_turn_not_due_response(
@@ -747,6 +985,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let movement_complete = resolve_pending_movement(
         &mut session,
         command.id(),
+        MovementPersistenceMode::DurableBridge,
         &mut events,
         &mut changed_subjects,
     )?;
@@ -778,6 +1017,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
             &mut participant,
             income_turn,
             None,
+            MovementPersistenceMode::DurableBridge,
         )?;
         events.extend(income_events);
         participant.last_action_turn = income_turn;
@@ -788,7 +1028,9 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     session.turn_started_at = Timestamp::now();
     session.turn_deadline_at = turn_deadline();
     session.last_command_id = Some(command.id);
-    economy_expansion::materialize_weekly_economy(&session, command.id())?;
+    if domm_game::week_for_turn(session.current_turn) != domm_game::week_for_turn(income_turn) {
+        economy_expansion::materialize_weekly_economy(&session, command.id())?;
+    }
     let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
     session = sessions::update_session(session)?;
     if let Some(runtime) = prepared_runtime {
@@ -874,12 +1116,145 @@ fn ensure_system_turn_command(
 
 #[derive(Clone)]
 struct PendingMovement {
-    intent: MovementIntent,
+    intent: PendingMovementIntent,
     champion: Champion,
     participant: GameParticipant,
     path: Vec<MoveCoord>,
     start: MoveCoord,
     resolved: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MovementPersistenceMode {
+    DurableBridge,
+    RuntimeOnly,
+}
+
+enum SyncTurnCommand {
+    Durable(GameCommand),
+    Runtime {
+        id: Id<GameCommand>,
+        id_text: String,
+        payload_hash: String,
+        client_nonce: u64,
+    },
+}
+
+impl SyncTurnCommand {
+    fn id(&self) -> Id<GameCommand> {
+        match self {
+            Self::Durable(command) => command.id(),
+            Self::Runtime { id, .. } => *id,
+        }
+    }
+
+    fn persistence_mode(&self) -> MovementPersistenceMode {
+        match self {
+            Self::Durable(_) => MovementPersistenceMode::DurableBridge,
+            Self::Runtime { .. } => MovementPersistenceMode::RuntimeOnly,
+        }
+    }
+
+    fn is_runtime(&self) -> bool {
+        matches!(self, Self::Runtime { .. })
+    }
+}
+
+#[derive(Clone)]
+struct PendingMovementIntent {
+    id_text: String,
+    durable: Option<MovementIntent>,
+    session_id: Id<GameSession>,
+    turn_number: u32,
+    actor_participant_id: Id<GameParticipant>,
+    champion_id: Id<Champion>,
+    command_id: Id<GameCommand>,
+    status: String,
+    path_json: String,
+    path_hash: String,
+}
+
+impl PendingMovementIntent {
+    fn from_durable(intent: MovementIntent) -> Self {
+        Self {
+            id_text: intent.id().to_string(),
+            session_id: Id::<GameSession>::from_key(intent.session_id),
+            turn_number: intent.turn_number,
+            actor_participant_id: Id::<GameParticipant>::from_key(intent.actor_participant_id),
+            champion_id: Id::<Champion>::from_key(intent.champion_id),
+            command_id: Id::<GameCommand>::from_key(intent.command_id),
+            status: intent.status.clone(),
+            path_json: intent.path_json.clone(),
+            path_hash: intent.path_hash.clone(),
+            durable: Some(intent),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn runtime(
+        id_text: String,
+        session_id: Id<GameSession>,
+        turn_number: u32,
+        actor_participant_id: Id<GameParticipant>,
+        champion_id: Id<Champion>,
+        command_id: Id<GameCommand>,
+        status: String,
+        path_json: String,
+        path_hash: String,
+    ) -> Self {
+        Self {
+            id_text,
+            durable: None,
+            session_id,
+            turn_number,
+            actor_participant_id,
+            champion_id,
+            command_id,
+            status,
+            path_json,
+            path_hash,
+        }
+    }
+
+    fn id_text(&self) -> &str {
+        &self.id_text
+    }
+
+    fn durable_id(&self) -> Option<Id<MovementIntent>> {
+        self.durable.as_ref().map(|intent| intent.id())
+    }
+
+    fn mark_resolved(&mut self) -> Result<(), ApiError> {
+        self.status = "resolved".to_string();
+        if let Some(intent) = self.durable.take() {
+            let intent = movement::mark_intent_resolved(intent)?;
+            self.path_json = intent.path_json.clone();
+            self.path_hash = intent.path_hash.clone();
+            self.durable = Some(intent);
+        }
+        Ok(())
+    }
+
+    fn update_remaining_path(
+        &mut self,
+        champion_id_text: &str,
+        remaining_text: String,
+    ) -> Result<(), ApiError> {
+        self.path_hash = command_response::payload_hash(
+            "movement_remaining_path",
+            champion_id_text,
+            &self.id_text,
+            &remaining_text,
+        );
+        self.path_json = remaining_text;
+        if let Some(mut intent) = self.durable.take() {
+            intent.path_json = self.path_json.clone();
+            intent.path_hash = self.path_hash.clone();
+            intent = movement::update_movement_intent(intent)?;
+            self.durable = Some(intent);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -900,17 +1275,147 @@ struct ObjectInteractionOutcome {
     object_changed: bool,
 }
 
+struct MovementOccupant {
+    occupant_id_text: String,
+    blocking: bool,
+}
+
+fn runtime_occupant_at(
+    session: &GameSession,
+    coord: MoveCoord,
+    layer: &str,
+) -> Option<Option<MovementOccupant>> {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        runtime
+            .occupancy_index
+            .iter()
+            .find(|cell| cell.x == coord.x && cell.y == coord.y && cell.layer == layer)
+            .map(|cell| MovementOccupant {
+                occupant_id_text: cell.occupant_id_text.clone(),
+                blocking: cell.blocking,
+            })
+    })
+}
+
+fn occupant_at(
+    session: &GameSession,
+    coord: MoveCoord,
+    layer: &str,
+) -> Result<Option<MovementOccupant>, ApiError> {
+    if let Some(runtime_result) = runtime_occupant_at(session, coord, layer) {
+        return Ok(runtime_result);
+    }
+    Ok(
+        map_visibility_occupancy::find_occupancy_cell(session.id(), coord.x, coord.y, layer)?.map(
+            |cell| MovementOccupant {
+                occupant_id_text: cell.occupant_id_text,
+                blocking: cell.blocking,
+            },
+        ),
+    )
+}
+
+fn runtime_contact_present(
+    session: &GameSession,
+    coord: MoveCoord,
+    subject_kind: &str,
+) -> Option<bool> {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        runtime
+            .contact_index
+            .iter()
+            .any(|cell| cell.x == coord.x && cell.y == coord.y && cell.subject_kind == subject_kind)
+    })
+}
+
+fn world_object_at(
+    session: &GameSession,
+    coord: MoveCoord,
+) -> Result<Option<WorldObject>, ApiError> {
+    if runtime_contact_present(session, coord, "world_object") == Some(false) {
+        return Ok(None);
+    }
+    map_visibility_occupancy::find_world_object_by_session_xy(session.id(), coord.x, coord.y)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_movement_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    persistence_mode: MovementPersistenceMode,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+        let session_id = session.id().to_string();
+        let runtime_result =
+            session_turn_runtime::with_runtime_mut(&session_id, session.current_turn, |runtime| {
+                if let Some(existing) = runtime
+                    .active_events
+                    .iter()
+                    .find(|event| {
+                        !event.flushed
+                            && event.event.event_key == event_key
+                            && event.event.audience_key == "public"
+                    })
+                    .map(|event| event.event.clone())
+                {
+                    return Ok(existing);
+                }
+                let event_seq = session_turn_runtime::reserve_session_event_seq(runtime, session)?;
+                let event = domm_game::ApiEventView {
+                    session_id: session_id.clone(),
+                    event_seq,
+                    event_key: event_key.clone(),
+                    audience_key: "public".to_string(),
+                    turn_number: session.current_turn,
+                    event_type: event_type.clone(),
+                    subject_kind: subject_kind.clone(),
+                    subject_id_text: subject_id_text.clone(),
+                    payload: Some(payload_json.clone()),
+                    redacted: false,
+                };
+                runtime.push_event(session_turn_runtime::SessionTurnEvent {
+                    command_id: Some(command_id.to_string()),
+                    event: event.clone(),
+                    flushed: false,
+                });
+                Ok(event)
+            });
+        if let Some(result) = runtime_result {
+            return result;
+        }
+    }
+
+    command_response::append_public_event(
+        session,
+        command_id,
+        event_key,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
 fn resolve_pending_movement(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
-    let mut pending = load_pending_movements(session)?;
+    let mut pending = load_pending_movements(session, persistence_mode)?;
     if let Some(complete) = resolve_two_movement_crossing_fast(
         session,
         command_id,
         &mut pending,
+        persistence_mode,
         events,
         changed_subjects,
     )? {
@@ -920,6 +1425,7 @@ fn resolve_pending_movement(
         session,
         command_id,
         &mut pending,
+        persistence_mode,
         events,
         changed_subjects,
     )? {
@@ -938,6 +1444,7 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
+                persistence_mode,
                 events,
                 changed_subjects,
             )?;
@@ -962,6 +1469,7 @@ fn resolve_pending_movement(
             &mut pending,
             &mut active,
             step_index,
+            persistence_mode,
             events,
             changed_subjects,
         )?;
@@ -971,6 +1479,7 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
+                persistence_mode,
                 events,
                 changed_subjects,
             )?;
@@ -982,6 +1491,7 @@ fn resolve_pending_movement(
             &mut pending,
             &mut active,
             step_index,
+            persistence_mode,
             events,
             changed_subjects,
         )?;
@@ -991,6 +1501,7 @@ fn resolve_pending_movement(
                 command_id,
                 &mut pending,
                 step_index,
+                persistence_mode,
                 events,
                 changed_subjects,
             )?;
@@ -1002,6 +1513,7 @@ fn resolve_pending_movement(
             &mut pending,
             active,
             step_index,
+            persistence_mode,
             events,
             changed_subjects,
         )?;
@@ -1048,6 +1560,7 @@ fn resolve_single_long_movement_fast(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<Option<bool>, ApiError> {
@@ -1065,9 +1578,10 @@ fn resolve_single_long_movement_fast(
     {
         return Ok(None);
     }
-    let partial_event = command_response::append_public_event(
+    let partial_event = append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!(
             "movement_sync_incomplete:{}:{}:fast",
             session.id(),
@@ -1083,12 +1597,7 @@ fn resolve_single_long_movement_fast(
     )?;
     events.push(partial_event);
 
-    if let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
-        session.id(),
-        final_coord.x,
-        final_coord.y,
-        "champion",
-    )? {
+    if let Some(blocker) = occupant_at(session, final_coord, "champion")? {
         let moving_id = pending[0].champion.id().to_string();
         if blocker.blocking && blocker.occupant_id_text != moving_id {
             let (stop_step, stop_coord, movement_cost, remaining_after) =
@@ -1106,6 +1615,7 @@ fn resolve_single_long_movement_fast(
                     0,
                     &mut blocker_champion,
                     final_coord,
+                    persistence_mode,
                 )?
                 else {
                     return Ok(Some(false));
@@ -1154,11 +1664,7 @@ fn resolve_single_long_movement_fast(
         }
     }
 
-    if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
-        session.id(),
-        final_coord.x,
-        final_coord.y,
-    )? {
+    if let Some(object) = world_object_at(session, final_coord)? {
         if let Some(neutral_id) = object.guarded_neutral_army_id {
             let neutral_id = Id::<NeutralArmy>::from_key(neutral_id);
             let (stop_step, stop_coord, movement_cost, remaining_after) =
@@ -1171,6 +1677,7 @@ fn resolve_single_long_movement_fast(
                 neutral_id,
                 object.id().to_string(),
                 final_coord,
+                persistence_mode,
             )? {
                 events.push(event);
                 let start_coord = pending[0].start;
@@ -1223,6 +1730,7 @@ fn resolve_single_long_movement_fast(
         &mut pending[0].participant,
         &pending[0].champion,
         final_coord,
+        persistence_mode,
     )?;
     if let Some(event) = interaction.event {
         events.push(event);
@@ -1256,12 +1764,12 @@ fn resolve_single_long_movement_fast(
         },
         None,
     )?;
-    pending[0].intent = movement::mark_intent_resolved(pending[0].intent.clone())?;
+    pending[0].intent.mark_resolved()?;
     mirror_runtime_pending_movement(session, &pending[0]);
     pending[0].resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
-        &pending[0].intent.id().to_string(),
+        pending[0].intent.id_text(),
         "resolve",
     ));
     changed_subjects.push(command_response::changed(
@@ -1277,32 +1785,24 @@ fn fast_path_final_contact_exists(
     pending_move: &PendingMovement,
     final_coord: MoveCoord,
 ) -> Result<bool, ApiError> {
-    if map_visibility_occupancy::find_world_object_by_session_xy(
-        session.id(),
-        final_coord.x,
-        final_coord.y,
-    )?
-    .and_then(|object| object.guarded_neutral_army_id)
-    .is_some()
+    if world_object_at(session, final_coord)?
+        .and_then(|object| object.guarded_neutral_army_id)
+        .is_some()
     {
         return Ok(true);
     }
-    let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
-        session.id(),
-        final_coord.x,
-        final_coord.y,
-        "champion",
-    )?
-    else {
-        return Ok(false);
-    };
-    Ok(blocker.blocking && blocker.occupant_id_text != pending_move.champion.id().to_string())
+    Ok(
+        occupant_at(session, final_coord, "champion")?.is_some_and(|blocker| {
+            blocker.blocking && blocker.occupant_id_text != pending_move.champion.id().to_string()
+        }),
+    )
 }
 
 fn resolve_two_movement_crossing_fast(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<Option<bool>, ApiError> {
@@ -1331,9 +1831,10 @@ fn resolve_two_movement_crossing_fast(
             continue;
         }
 
-        let event = command_response::append_public_event(
+        let event = append_movement_public_event(
             session,
             command_id,
+            persistence_mode,
             format!(
                 "movement_sync_incomplete:{}:{}:crossing-fast",
                 session.id(),
@@ -1359,8 +1860,15 @@ fn resolve_two_movement_crossing_fast(
         let right_remaining =
             apply_fast_path_position(session, command_id, &mut pending[1], right_from, right_cost);
 
-        let Some(event) =
-            mark_champion_encounter_pending(session, command_id, pending, 0, 1, left_to)?
+        let Some(event) = mark_champion_encounter_pending(
+            session,
+            command_id,
+            pending,
+            0,
+            1,
+            left_to,
+            persistence_mode,
+        )?
         else {
             return Ok(Some(false));
         };
@@ -1506,12 +2014,12 @@ fn stop_candidate_fast(
         pending_move.start,
         &pending_move.champion,
     )?;
-    pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
+    pending_move.intent.mark_resolved()?;
     mirror_runtime_pending_movement(session, pending_move);
     pending_move.resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
-        &pending_move.intent.id().to_string(),
+        pending_move.intent.id_text(),
         "resolve",
     ));
     Ok(())
@@ -1703,8 +2211,11 @@ fn validate_no_friendly_champion_blocker_from_runtime(
     .flatten()
 }
 
-fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>, ApiError> {
-    if let Some(pending) = runtime_pending_movements_for_session(session)? {
+fn load_pending_movements(
+    session: &GameSession,
+    persistence_mode: MovementPersistenceMode,
+) -> Result<Vec<PendingMovement>, ApiError> {
+    if let Some(pending) = runtime_pending_movements_for_session(session, persistence_mode)? {
         return Ok(pending);
     }
     let items = pending_movement_intents_for_session(session)?;
@@ -1718,7 +2229,7 @@ fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>,
         pending.push(PendingMovement {
             path: parse_path_text(&intent.path_json)?,
             start: MoveCoord::new(champion.x, champion.y),
-            intent,
+            intent: PendingMovementIntent::from_durable(intent),
             champion,
             participant,
             resolved: false,
@@ -1775,11 +2286,16 @@ fn pending_movement_intents_for_session(
 
 fn runtime_pending_movements_for_session(
     session: &GameSession,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<Option<Vec<PendingMovement>>, ApiError> {
     let session_id = session.id().to_string();
     match session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
         if runtime.intents.is_empty() {
-            return Ok(None);
+            return if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+                Ok(Some(Vec::new()))
+            } else {
+                Ok(None)
+            };
         }
         let mut pending = Vec::new();
         for runtime_intent in runtime
@@ -1787,8 +2303,8 @@ fn runtime_pending_movements_for_session(
             .iter()
             .filter(|intent| intent.status == "pending")
         {
-            let intent = materialize_runtime_movement_intent(session, runtime_intent)?;
-            if intent.session_id != session.id().key()
+            let intent = pending_intent_from_runtime(session, runtime_intent, persistence_mode)?;
+            if intent.session_id != session.id()
                 || intent.turn_number != session.current_turn
                 || intent.status != "pending"
             {
@@ -1802,10 +2318,10 @@ fn runtime_pending_movements_for_session(
             };
             if participant.session_id != session.id().key()
                 || participant.status != "active"
-                || participant.id().key() != intent.actor_participant_id
+                || participant.id() != intent.actor_participant_id
                 || champion.session_id != session.id().key()
                 || champion.participant_id != participant.id().key()
-                || champion.id().key() != intent.champion_id
+                || champion.id() != intent.champion_id
             {
                 return Ok(None);
             }
@@ -1872,6 +2388,37 @@ fn materialize_runtime_movement_intent(
     .map_err(Into::into)
 }
 
+fn pending_intent_from_runtime(
+    session: &GameSession,
+    runtime_intent: &session_turn_runtime::RuntimeMovementIntent,
+    persistence_mode: MovementPersistenceMode,
+) -> Result<PendingMovementIntent, ApiError> {
+    if persistence_mode == MovementPersistenceMode::DurableBridge {
+        return materialize_runtime_movement_intent(session, runtime_intent)
+            .map(PendingMovementIntent::from_durable);
+    }
+
+    let champion_id =
+        session_context::parse_id::<Champion>(&runtime_intent.champion_id, "champion_id")?;
+    let actor_participant_id = session_context::parse_id::<GameParticipant>(
+        &runtime_intent.actor_participant_id,
+        "participant_id",
+    )?;
+    let command_id =
+        session_context::parse_id::<GameCommand>(&runtime_intent.command_id, "command_id")?;
+    Ok(PendingMovementIntent::runtime(
+        runtime_intent.intent_id.clone(),
+        session.id(),
+        session.current_turn,
+        actor_participant_id,
+        champion_id,
+        command_id,
+        runtime_intent.status.clone(),
+        runtime_intent.path_json.clone(),
+        runtime_intent.path_hash.clone(),
+    ))
+}
+
 fn runtime_pending_movement_intents_for_session(
     session: &GameSession,
     active_participants_by_id: &BTreeMap<Ulid, GameParticipant>,
@@ -1917,12 +2464,25 @@ fn mirror_runtime_pending_movement(session: &GameSession, pending_move: &Pending
             owner_participant_id: Some(pending_move.participant.id().to_string()),
             blocking: pending_move.champion.status == "active",
         });
-        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
-            pending_move.intent.clone(),
-            pending_move.champion.clone(),
-            pending_move.participant.clone(),
-        ));
+        runtime.upsert_intent(runtime_intent_from_pending(pending_move));
     });
+}
+
+fn runtime_intent_from_pending(
+    pending_move: &PendingMovement,
+) -> session_turn_runtime::RuntimeMovementIntent {
+    session_turn_runtime::RuntimeMovementIntent {
+        intent_id: pending_move.intent.id_text.clone(),
+        command_id: pending_move.intent.command_id.to_string(),
+        actor_participant_id: pending_move.intent.actor_participant_id.to_string(),
+        champion_id: pending_move.intent.champion_id.to_string(),
+        path_json: pending_move.intent.path_json.clone(),
+        path_hash: pending_move.intent.path_hash.clone(),
+        status: pending_move.intent.status.clone(),
+        durable_intent: pending_move.intent.durable.clone(),
+        champion: Some(pending_move.champion.clone()),
+        participant: Some(pending_move.participant.clone()),
+    }
 }
 
 fn movement_candidates(
@@ -2014,6 +2574,7 @@ fn resolve_crossing_conflicts(
     pending: &mut [PendingMovement],
     active: &mut BTreeMap<usize, MoveCandidate>,
     step_index: u16,
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
@@ -2043,6 +2604,7 @@ fn resolve_crossing_conflicts(
                         left.pending_index,
                         right.pending_index,
                         left.to,
+                        persistence_mode,
                     )?
                     else {
                         return Ok(false);
@@ -2115,6 +2677,7 @@ fn resolve_blockers_and_guarded_objects(
     pending: &mut [PendingMovement],
     active: &mut BTreeMap<usize, MoveCandidate>,
     step_index: u16,
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
@@ -2138,11 +2701,7 @@ fn resolve_blockers_and_guarded_objects(
             continue;
         }
 
-        if let Some(object) = map_visibility_occupancy::find_world_object_by_session_xy(
-            session.id(),
-            candidate.to.x,
-            candidate.to.y,
-        )? {
+        if let Some(object) = world_object_at(session, candidate.to)? {
             if let Some(neutral_id) = object.guarded_neutral_army_id {
                 active.remove(&key);
                 let neutral_id = Id::<NeutralArmy>::from_key(neutral_id);
@@ -2154,6 +2713,7 @@ fn resolve_blockers_and_guarded_objects(
                     neutral_id,
                     object.id().to_string(),
                     candidate.to,
+                    persistence_mode,
                 )?
                 else {
                     return Ok(false);
@@ -2184,12 +2744,7 @@ fn resolve_blockers_and_guarded_objects(
             }
         }
 
-        if let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
-            session.id(),
-            candidate.to.x,
-            candidate.to.y,
-            "champion",
-        )? {
+        if let Some(blocker) = occupant_at(session, candidate.to, "champion")? {
             let moving_id = pending[candidate.pending_index].champion.id().to_string();
             if blocker.blocking && blocker.occupant_id_text != moving_id {
                 active.remove(&key);
@@ -2223,6 +2778,7 @@ fn resolve_blockers_and_guarded_objects(
                             candidate.pending_index,
                             blocker_index,
                             candidate.to,
+                            persistence_mode,
                         )?
                         else {
                             return Ok(false);
@@ -2239,6 +2795,7 @@ fn resolve_blockers_and_guarded_objects(
                         candidate.pending_index,
                         &mut blocker_champion,
                         candidate.to,
+                        persistence_mode,
                     )?
                     else {
                         return Ok(false);
@@ -2285,12 +2842,7 @@ fn resolve_blockers_and_guarded_objects(
             }
         }
 
-        if let Some(town) = map_visibility_occupancy::find_occupancy_cell(
-            session.id(),
-            candidate.to.x,
-            candidate.to.y,
-            "town",
-        )? {
+        if let Some(town) = occupant_at(session, candidate.to, "town")? {
             if town.blocking {
                 active.remove(&key);
                 let town_row = load_town_by_text(session, &town.occupant_id_text)?;
@@ -2315,9 +2867,10 @@ fn resolve_blockers_and_guarded_objects(
                         champions_artifacts::update_champion(
                             pending[candidate.pending_index].champion.clone(),
                         )?;
-                    let event = command_response::append_public_event(
+                    let event = append_movement_public_event(
                         session,
                         command_id,
+                        persistence_mode,
                         format!(
                             "town_contact:{}:{}:{}",
                             pending[candidate.pending_index].champion.id(),
@@ -2381,6 +2934,7 @@ fn commit_active_moves(
     pending: &mut [PendingMovement],
     active: BTreeMap<usize, MoveCandidate>,
     step_index: u16,
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -2401,6 +2955,7 @@ fn commit_active_moves(
             &mut pending[candidate.pending_index].participant,
             &pending[candidate.pending_index].champion,
             candidate.to,
+            persistence_mode,
         )?;
         if let Some(event) = interaction.event {
             events.push(event);
@@ -2409,8 +2964,6 @@ fn commit_active_moves(
             pending[candidate.pending_index]
                 .participant
                 .last_action_turn = session.current_turn;
-            pending[candidate.pending_index].participant =
-                sessions::update_participant(pending[candidate.pending_index].participant.clone())?;
             changed_subjects.push(command_response::changed(
                 "participant",
                 &pending[candidate.pending_index]
@@ -2549,7 +3102,7 @@ fn mark_pending_resolved(
     }
     pending_move.champion = champions_artifacts::update_champion(pending_move.champion.clone())?;
     update_champion_occupancy(
-        Id::<GameSession>::from_key(pending_move.intent.session_id),
+        pending_move.intent.session_id,
         command_id,
         pending_move.start,
         &pending_move.champion,
@@ -2562,14 +3115,14 @@ fn mark_pending_resolved(
             "update",
         ));
     }
-    pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
+    pending_move.intent.mark_resolved()?;
     pending_move.resolved = true;
     pending_move.participant.last_action_turn = pending_move.intent.turn_number;
     pending_move.participant = sessions::update_participant(pending_move.participant.clone())?;
     mirror_runtime_pending_movement(session, pending_move);
     changed_subjects.push(command_response::changed(
         "movement_intent",
-        &pending_move.intent.id().to_string(),
+        pending_move.intent.id_text(),
         "resolve",
     ));
     Ok(())
@@ -2580,6 +3133,7 @@ fn park_partial_movements(
     command_id: Id<GameCommand>,
     pending: &mut [PendingMovement],
     consumed_steps: u16,
+    persistence_mode: MovementPersistenceMode,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -2631,21 +3185,16 @@ fn park_partial_movements(
 
         let remaining_path = pending_move.path[consumed..].to_vec();
         let remaining_text = path_text(&remaining_path);
-        pending_move.intent.path_json = remaining_text.clone();
-        pending_move.intent.path_hash = command_response::payload_hash(
-            "movement_remaining_path",
-            &pending_move.champion.id().to_string(),
-            &pending_move.intent.id().to_string(),
-            &remaining_text,
-        );
-        pending_move.intent = movement::update_movement_intent(pending_move.intent.clone())?;
+        pending_move
+            .intent
+            .update_remaining_path(&pending_move.champion.id().to_string(), remaining_text)?;
         pending_move.path = remaining_path;
         pending_move.start = partial_to;
         mirror_runtime_pending_movement(session, pending_move);
         parked = parked.saturating_add(1);
         changed_subjects.push(command_response::changed(
             "movement_intent",
-            &pending_move.intent.id().to_string(),
+            pending_move.intent.id_text(),
             "partial",
         ));
         changed_subjects.push(command_response::changed(
@@ -2655,9 +3204,10 @@ fn park_partial_movements(
         ));
     }
 
-    let event = command_response::append_public_event(
+    let event = append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!(
             "movement_sync_incomplete:{}:{}:{}",
             session.id(),
@@ -2785,6 +3335,9 @@ fn update_champion_occupancy(
     if old.x == champion.x && old.y == champion.y {
         return Ok(());
     }
+    if session_turn_runtime::latest_turn_number_for_session(&session_id.to_string()).is_some() {
+        return Ok(());
+    }
     let occupant_id = champion.id().to_string();
     let old_occupancy =
         map_visibility_occupancy::find_occupancy_cell(session_id, old.x, old.y, "champion")?;
@@ -2842,14 +3395,16 @@ fn record_movement_snapshot(
     outcome: &str,
     stop: Option<MovementPathStop>,
 ) -> Result<(), ApiError> {
+    let Some(intent_id) = pending_move.intent.durable_id() else {
+        return Ok(());
+    };
     let interaction_kind = stop.as_ref().map(|stop| stop.subject_kind.clone());
     let interaction_id_text = stop.as_ref().map(|stop| stop.subject_id_text.clone());
-    if movement::find_movement_snapshot(command_id, pending_move.intent.id(), step_index)?.is_none()
-    {
+    if movement::find_movement_snapshot(command_id, intent_id, step_index)?.is_none() {
         movement::create_movement_snapshot(
             session.id(),
             command_id,
-            pending_move.intent.id(),
+            intent_id,
             pending_move.champion.id(),
             pending_move.participant.id(),
             session.current_turn,
@@ -2876,6 +3431,7 @@ fn mark_champion_encounter_pending(
     attacker_index: usize,
     defender_index: usize,
     coord: MoveCoord,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<Option<domm_game::ApiEventView>, ApiError> {
     let Some(battle) = battle_start::start_champion_battle(
         session,
@@ -2895,9 +3451,10 @@ fn mark_champion_encounter_pending(
         pending[index].champion =
             champions_artifacts::update_champion(pending[index].champion.clone())?;
     }
-    command_response::append_public_event(
+    append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!(
             "champion_contact:{}:{}:{}",
             pending[attacker_index].champion.id(),
@@ -2926,6 +3483,7 @@ fn mark_stationary_champion_encounter_pending(
     attacker_index: usize,
     defender: &mut Champion,
     coord: MoveCoord,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<Option<domm_game::ApiEventView>, ApiError> {
     let Some(battle) = battle_start::start_champion_battle(
         session,
@@ -2945,9 +3503,10 @@ fn mark_stationary_champion_encounter_pending(
     defender.in_battle_id = Some(battle.id().key());
     defender.last_command_id = Some(command_id.key());
     champions_artifacts::update_champion(defender.clone())?;
-    command_response::append_public_event(
+    append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!(
             "champion_contact:{}:{}:{}",
             pending[attacker_index].champion.id(),
@@ -2977,6 +3536,7 @@ fn mark_neutral_encounter_pending(
     neutral_id: Id<NeutralArmy>,
     object_id: String,
     coord: MoveCoord,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<Option<domm_game::ApiEventView>, ApiError> {
     let Some(battle) = start_neutral_battle(
         session,
@@ -2994,9 +3554,10 @@ fn mark_neutral_encounter_pending(
     pending[pending_index].champion.last_command_id = Some(command_id.key());
     pending[pending_index].champion =
         champions_artifacts::update_champion(pending[pending_index].champion.clone())?;
-    command_response::append_public_event(
+    append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!(
             "neutral_contact:{}:{}:{}",
             pending[pending_index].champion.id(),
@@ -3431,10 +3992,9 @@ fn apply_world_object_at(
     participant: &mut GameParticipant,
     champion: &Champion,
     coord: MoveCoord,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<ObjectInteractionOutcome, ApiError> {
-    let Some(mut object) =
-        map_visibility_occupancy::find_world_object_by_session_xy(session.id(), coord.x, coord.y)?
-    else {
+    let Some(mut object) = world_object_at(session, coord)? else {
         return Ok(ObjectInteractionOutcome {
             event: None,
             stop_path: false,
@@ -3514,9 +4074,10 @@ fn apply_world_object_at(
         session.current_turn,
     )?;
     map_visibility_occupancy::update_world_object(object.clone())?;
-    let event = command_response::append_public_event(
+    let event = append_movement_public_event(
         session,
         command_id,
+        persistence_mode,
         format!("object_visit:{}:{}", participant.id(), object.id()),
         event_type.to_string(),
         Some("world_object".to_string()),
@@ -3569,6 +4130,7 @@ fn materialize_income(
     participant: &mut GameParticipant,
     turn_number: u32,
     reserved_event_seq: Option<&mut u64>,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
     if participant.last_income_turn >= turn_number {
         return Ok(Vec::new());
@@ -3614,7 +4176,18 @@ fn materialize_income(
     let subject_kind = Some("participant".to_string());
     let subject_id_text = Some(participant.id().to_string());
     let payload_json = format!(r#"{{"gold":{gold_income}}}"#);
-    let event = if let Some(next_event_seq) = reserved_event_seq {
+    let event = if persistence_mode == MovementPersistenceMode::RuntimeOnly {
+        append_movement_public_event(
+            session,
+            command_id,
+            persistence_mode,
+            event_key,
+            event_type,
+            subject_kind,
+            subject_id_text,
+            payload_json,
+        )?
+    } else if let Some(next_event_seq) = reserved_event_seq {
         append_public_event_with_local_seq(
             session,
             command_id,

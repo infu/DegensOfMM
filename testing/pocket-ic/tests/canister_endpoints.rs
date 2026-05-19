@@ -5797,9 +5797,20 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
         row_count(&pickup_storage, "ResourceLedgerEntry")
             > row_count(&active_storage, "ResourceLedgerEntry")
     );
+    let pickup_events = gate_query_as::<ApiEventPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 64_u32),
+    )
+    .expect("runtime pickup event should be readable");
+    metrics.observe_event_page(&pickup_events);
     assert!(
-        row_count(&pickup_storage, "MovementSnapshot")
-            > row_count(&active_storage, "MovementSnapshot")
+        pickup_events
+            .events
+            .iter()
+            .any(|event| event.event_type == "resource_picked_up")
     );
 
     let built = gate_update_as::<CommandResponse>(
@@ -5916,10 +5927,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let crystal_storage =
         gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
     assert!(
-        row_count(&crystal_storage, "MovementSnapshot")
-            > row_count(&recruit_storage, "MovementSnapshot")
-    );
-    assert!(
         row_count(&crystal_storage, "ParticipantObjectVisit")
             > row_count(&recruit_storage, "ParticipantObjectVisit")
     );
@@ -6002,10 +6009,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     assert!(row_count(&final_storage, "BattleStack") > 0);
     assert!(row_count(&final_storage, "BattleOccupancy") > 0);
     assert!(row_count(&final_storage, "BattleObstacle") > 0);
-    assert!(
-        row_count(&final_storage, "MovementSnapshot")
-            > row_count(&income_storage, "MovementSnapshot")
-    );
     assert!(final_storage.total_rows > initial_storage.total_rows);
     assert!(final_storage.stable_memory_pages >= initial_storage.stable_memory_pages);
 

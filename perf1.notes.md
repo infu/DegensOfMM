@@ -2726,3 +2726,54 @@ Decision:
 - Keep this cut. `submit_move_intent` is now close to the requested `0.3B-0.6B` band and no longer pays durable session/champion/occupancy reads in the measured route.
 - Do not force the last `~0.7B -> 0.3B-0.6B` step with a local guard skip. The stale-turn regression already showed the durable job guard has real closure semantics. The next safe submit improvement is Gate 5E: runtime-owned turn/deadline/job state.
 - Immediate perf focus should move to `sync_session_turn`, which remains `12.5752B` and now dominates the movement route.
+
+## Checkpoint: Runtime Sync Receipts, Events, And Empty-Intent Fast Path
+
+Implemented the Gate 5C sync cut in one batched checkpoint:
+
+- Fresh active `sync_session_turn` now uses runtime command receipts instead of durable `GameCommand` create/update.
+- Active runtime sync no longer probes durable game-command idempotency; runtime receipts own replay/mismatch for the active path.
+- Runtime movement intents stay runtime-only during active sync, so fresh runtime sync no longer writes durable `MovementIntent` or `MovementSnapshot` rows.
+- Movement sync events can be emitted from `SessionTurnRuntime.active_events`, and `get_events_after` already merges them.
+- Manual runtime sync no longer reschedules/completes durable turn jobs; job rows are treated as wakeup hints for this path.
+- Turn advance can prepare the next active turn runtime by copying the current runtime's participants, champion snapshots, occupancy, and contact indexes instead of rehydrating players/towns/world objects from durable rows.
+- Same-week economy growth is skipped instead of re-reading town/recruit/tavern state on every turn advance.
+- Runtime occupancy is authoritative for movement, so durable champion occupancy rows are not updated while an active turn runtime exists.
+- Gate J benchmark expectations now validate runtime-visible movement events instead of requiring old durable `MovementSnapshot` growth on fresh runtime sync.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run`
+- Focused Gate J `20260519-runtime-sync-empty-intents-gate-j` passed in `217.28s`
+- Post-run PocketIC cleanup killed the leftover server and confirmed no remaining PocketIC processes.
+
+Measured delta versus the accepted Gate 5B.4 baseline `20260519-runtime-context-champion-submit-gate-j`:
+
+| metric | Gate 5B.4 | Gate 5C | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 284.6370B | 196.2456B | -31.1% |
+| `sync_session_turn` avg | 12.5752B | 3.9270B | -68.8% |
+| `submit_move_intent` avg | 0.7110B | 0.7110B | flat |
+| `commands.game_command_idempotency` calls | 11 sync-route calls plus submit/town/lobby baseline | 3 non-runtime calls in the route summary | removed from active runtime sync |
+| `movement.create_snapshot` / `movement.update_intent` runtime sync bridge | present on compatibility calls | absent from final route summary | removed from active runtime sync |
+
+Measured progression within this checkpoint:
+
+| run | `sync_session_turn` avg | Gate J scenario instructions | note |
+| --- | ---: | ---: | --- |
+| `20260519-runtime-sync-batch-gate-j` | 5.0430B | 209.6861B | runtime sync commands/events/job cuts, but durable sync idempotency still present |
+| `20260519-runtime-sync-no-idempotency-gate-j` | 4.0424B | 197.6731B | skipped durable idempotency for active runtime sync |
+| `20260519-runtime-sync-empty-intents-gate-j` | 3.9270B | 196.2456B | empty runtime intent list avoids durable pending-intent/participant scan |
+
+Remaining measured blockers:
+
+- `submit_move_intent` is still about `0.711B`; the remaining visible cost is the durable map-turn job guard.
+- Non-battle movement sync calls still write durable champion/resource/object/visibility/session/participant rows, so Gate 5D must move these into runtime deltas and query overlays.
+- Guarded neutral contact still starts battles through durable battle rows/stacks/obstacles/effects/jobs. The largest sync calls are now battle handoff calls: `7.39B`, `5.68B`, `4.26B`, `11.06B`, and `3.08B`.
+
+Decision:
+
+- Gate 5C is complete because the active sync average is now below the documented `4B` target.
+- Next implementation should not spend time polishing command/event mechanics. The biggest wins now are Gate 5D runtime deltas for champion/resources/objects and Gate 5F runtime-first battle/town/neutral contact.

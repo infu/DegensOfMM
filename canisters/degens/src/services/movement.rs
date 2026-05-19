@@ -71,10 +71,11 @@ pub(crate) fn submit_move_intent(
     validate_path_adjacency(champion.x, champion.y, &path)?;
     validate_path_cost(&context.session, &champion, &path)?;
     validate_no_friendly_champion_blocker(&context, &champion, &path)?;
+    let path_text = path_text(&path);
     let payload_json = format!(
         r#"{{"champion_id":"{}","path":"{}"}}"#,
         command_response::escape_json(&champion_id),
-        command_response::escape_json(&path_text(&path))
+        command_response::escape_json(&path_text)
     );
     let command = match command_response::begin_participant_command(
         caller,
@@ -91,7 +92,7 @@ pub(crate) fn submit_move_intent(
         "movement_path",
         &champion.id().to_string(),
         &client_nonce,
-        &path_text(&path),
+        &path_text,
     );
     let intent = match movement::find_movement_intent(
         context.session.id(),
@@ -102,7 +103,7 @@ pub(crate) fn submit_move_intent(
             intent.command_id = command.id;
             intent.actor_participant_id = context.participant.id().key();
             intent.status = "pending".to_string();
-            intent.path_json = path_text(&path);
+            intent.path_json = path_text.clone();
             intent.path_hash = path_hash;
             intent.resolved_at = None;
             movement::update_movement_intent(intent)?
@@ -114,7 +115,7 @@ pub(crate) fn submit_move_intent(
             champion.id(),
             command.id(),
             "pending".to_string(),
-            path_text(&path),
+            path_text,
             path_hash,
         )?,
     };
@@ -308,9 +309,6 @@ pub(crate) fn sync_session_turn(
         &mut events,
         &mut changed_subjects,
     )?;
-    if let Some(updated_participant) = sessions::load_participant(context.participant.id())? {
-        context.participant = updated_participant;
-    }
     if !movement_complete || should_yield_after_movement_events(&events) {
         reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         return command_response::apply_command(
@@ -322,6 +320,9 @@ pub(crate) fn sync_session_turn(
             events,
             changed_subjects,
         );
+    }
+    if let Some(updated_participant) = sessions::load_participant(context.participant.id())? {
+        context.participant = updated_participant;
     }
 
     let income_turn = context.session.current_turn;

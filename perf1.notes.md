@@ -1131,3 +1131,41 @@ Next aggregate:
 - Initial shape should be a session-turn runtime keyed by `(session_id, turn_number)` containing active movement intents, participant ready state, champion position/movement deltas, occupancy deltas, event buffer, and due-job/deadline hints.
 - Keep durable rows as projections/history/checkpoints while the turn is active, similar to the battle runtime pattern.
 - First benchmark target should be reducing `sync_session_turn` below 5B and `submit_move_intent` below 5B before pushing toward sub-1B.
+
+## Checkpoint: Movement Small Cut And Code-Size Blocker
+
+Implemented the first session-turn/champion-movement checkpoint that still fits in the benchmark canister.
+
+What changed:
+
+- `submit_move_intent` now serializes `path_text` once and reuses it for payload, hash, and `MovementIntent.path_json`.
+- `sync_session_turn` no longer reloads the caller participant before returning a partial movement sync. The reload is still kept before income/turn advancement, where updated participant resources can matter.
+
+Attempted but backed out:
+
+- Benchmark phase attribution around movement submit/sync. PocketIC install failed because the benchmark Wasm code section became `12,603,857` bytes, which is `20,945` bytes over the IC limit.
+- Replacing per-champion pending intent lookups with the existing indexed `movement.intents_by_session_turn_status` page. PocketIC install failed because the benchmark Wasm code section became `12,598,630` bytes, which is `15,718` bytes over the IC limit.
+
+Focused Gate J result:
+
+```text
+run id: 20260519-085429-movement-small-gate-j
+artifact: target/benchmarks/20260519-085429-movement-small-gate-j/summary.md
+command: DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Comparison against full-suite Gate J baseline `20260519-081911-fe84689`:
+
+| metric | baseline | checkpoint | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 404.0368B | 399.1517B | -1.2% |
+| `submit_move_intent` avg instructions | 15.363B | 15.3598B | flat |
+| `sync_session_turn` avg instructions | 18.4665B | 18.0194B | -2.4% |
+| `sessions.load_participant` repo calls | 15 | 8 | -46.7% |
+| `sessions.load_participant` total instructions | 10.5675B | 5.6409B | -46.6% |
+
+Decision:
+
+- Keep the small checkpoint because it is safe and measurable.
+- Treat the movement aggregate as blocked on code-size headroom before adding new benchmark phases, new generic IcyDB movement queries, or a larger heap turn runtime.
+- The next practical work is freeing roughly 20 KB of benchmark Wasm code section or moving diagnostic/benchmark surface out of the main canister. After that, retry indexed pending movement loading first, then the heap session-turn runtime if the indexed cut is not enough.

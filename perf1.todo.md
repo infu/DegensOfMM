@@ -381,6 +381,17 @@ When a todo item is completed:
 - [x] Pick the next aggregate after battle based on benchmark cost and code complexity. Next target should be a session-turn/champion-movement aggregate because full-suite Gate K/L show `submit_move_intent` around 15.4-15.6B and `sync_session_turn` around 19.3B, both more frequent than town commands and now far above active battle submit.
 - [ ] Repeat the same benchmark discipline before and after each aggregate migration.
 
+### 8. Gate 5: Session-Turn / Champion-Movement Aggregate
+
+- [x] Anchor the next aggregate baseline with the current full-suite and focused Gate J numbers. Baseline suite `20260519-081911-fe84689` measured Gate J `submit_move_intent` at 15.363B avg and `sync_session_turn` at 18.4665B avg; Gate K/L measured `sync_session_turn` around 19.3B avg.
+- [x] Apply a first code-size-safe movement checkpoint: serialize submit movement path text once per `submit_move_intent`, and skip the caller participant reload on partial `sync_session_turn` responses that return before income/turn advancement.
+- [x] Run focused Gate J after the checkpoint and compare against baseline. Run `20260519-085429-movement-small-gate-j` passed; scenario instructions moved 404.0368B -> 399.1517B, `sync_session_turn` moved 18.4665B -> 18.0194B avg, and `sessions.load_participant` repo calls moved 15 -> 8. `submit_move_intent` stayed essentially flat at 15.3598B avg.
+- [x] Record the immediate code-size blockers before larger movement/runtime work. Benchmark phase attribution failed to install at code section 12,603,857 bytes, 20,945 over the IC limit; the indexed pending-intent lookup checkpoint failed at 12,598,630 bytes, 15,718 over the limit.
+- [ ] Free at least about 20 KB of benchmark Wasm code section, or move enough benchmark/debug surface out of the main canister, before adding new movement runtime/query instantiations.
+- [ ] Re-attempt indexed pending movement loading, or replace active turn movement with a heap session-turn runtime, once the code-size headroom exists.
+- [ ] Drive `sync_session_turn` below 5B average instructions, then below 1B if the heap turn aggregate behaves like the battle runtime.
+- [ ] Drive `submit_move_intent` below 5B average instructions by moving active turn intent/idempotency/event state out of per-submit stable writes.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint should reduce `submit_battle_action` by removing repeated stable row/index work. The deeper target requires eliminating almost all per-action stable writes from active battle submit. The likely wins should come from eliminating:

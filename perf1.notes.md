@@ -218,6 +218,31 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
 
+### Movement Intent Effect Cleanup
+
+Finished the in-progress low-risk movement micro-cut before starting the session-turn runtime rewrite.
+
+What changed:
+
+- `submit_move_intent` no longer writes the redundant `movement_intent` `CommandEffect` row.
+- The durable `MovementIntent` row, the public `movement_intent_submitted` event, changed subjects, and command idempotency still carry the public and replay-relevant state.
+- The now-unused direct `create_command_effect` helper was removed from `command_response.rs`, leaving the shared idempotent `ensure_command_effect` helper for paths that still need effect rows.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-123422-movement-intent-effect-gate-j` passed in `689.81s`.
+
+Measured update-method delta versus `20260519-113052-movement-turn-effect-gate-j`:
+
+| method | previous avg instructions | new avg instructions | change | previous avg memory | new avg memory | change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `submit_move_intent` | 13.7537B | 13.2749B | -3.5% | 53.4375 MB | 21.4375 MB | -59.9% |
+| `sync_session_turn` | 14.7341B | 14.7336B | ~0.0% | 125.2443 MB | 125.2443 MB | 0.0% |
+
+Caveat: this direct focused run did not persist the query log into the artifact, so query instruction deltas show as `n/a` and scenario-level instruction totals are not comparable. Use the benchmark script or an absolute query-log path for the next query/projection claim.
+
 ### Runtime Finalization Projection
 
 Added the projection guard needed before active battle submit stops writing tactical rows per action.

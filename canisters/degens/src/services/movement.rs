@@ -129,29 +129,6 @@ pub(crate) fn submit_move_intent(
         ),
     };
 
-    let effect_key = format!("movement_intent:{}", intent.id());
-    let effect_payload = format!(r#"{{"intent_id":"{}"}}"#, intent.id());
-    if command_is_fresh {
-        command_response::create_command_effect(
-            context.session.id(),
-            command.id(),
-            effect_key,
-            "movement_intent".to_string(),
-            "champion".to_string(),
-            champion.id().to_string(),
-            effect_payload,
-        )?;
-    } else {
-        command_response::ensure_command_effect(
-            context.session.id(),
-            command.id(),
-            effect_key,
-            "movement_intent".to_string(),
-            "champion".to_string(),
-            champion.id().to_string(),
-            effect_payload,
-        )?;
-    }
     let mut session = context.session.clone();
     let event_key = format!(
         "movement_intent:{}:{}",

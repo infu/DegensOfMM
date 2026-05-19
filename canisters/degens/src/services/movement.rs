@@ -579,7 +579,7 @@ pub(crate) fn sync_session_turn(
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
-    let event = command_response::append_public_event(
+    let event = command_response::append_new_public_event(
         &mut context.session,
         command.id(),
         format!("sync_turn:{session_id_text}:{current_turn}"),

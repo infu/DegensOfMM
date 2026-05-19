@@ -2139,3 +2139,27 @@ Measured delta versus `20260519-162235-runtime-empty-ready-gate-j`:
 Decision:
 
 - Keep this cut. It is small, safe by construction, and directly reduces submit-side stable reads without changing durable fallback behavior.
+
+## Checkpoint: Final Sync New Event
+
+Changed the final successful `sync_session_turn` event append for `session_turn_synced` to create the deterministic public event directly and fall back to the existing key lookup only if creation reports a conflict. This is deliberately not the broad sync-event shortcut rejected earlier: partial movement sync events can legitimately reuse business keys, so they still use the idempotent `append_public_event` path. The shortcut is scoped to the final `sync_turn:{session}:{turn}` event after the session turn has advanced.
+
+Verified:
+
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo fmt && cargo check -p domm-degens-canister && cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Focused Gate J `20260519-164028-final-sync-new-event-gate-j` passed in `230.87s`.
+
+Measured delta versus `20260519-163253-runtime-champion-submit-gate-j`:
+
+| metric | runtime champion submit | final sync new event | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 320.1759B | 319.4200B | -0.2% |
+| `sync_session_turn` avg | 12.1716B | 12.1032B | -0.6% |
+| `submit_move_intent` avg | 11.0394B | 11.0396B | flat |
+| `events.by_session_event_key` calls | 19 | 18 | -5.3% |
+| `events.by_session_event_key` total | 13.3775B | 12.6727B | -5.3% |
+
+Decision:
+
+- Keep this cut. It is a small but real stable-read removal on the final sync path, and it does not move work into submit or weaken idempotency for the partial movement events that previously failed under the broad fresh-sync shortcut.

@@ -1872,4 +1872,19 @@ Test caveat:
 
 Measurement note:
 
-- No full Gate J benchmark was run for this narrow bridge cut. The expected measured effect is fewer or zero `movement.intents_by_session_turn_status` repo calls after the runtime submit path has populated intents. Confirm in the next batched Gate J run before claiming aggregate instruction savings.
+- Focused Gate J `20260519-135856-movement-runtime-pending-gate-j` passed in `685.12s`; artifact `target/benchmarks/20260519-135856-movement-runtime-pending-gate-j/summary.json`.
+
+Measured delta versus `20260519-132615-movement-runtime-submit-gate-j`:
+
+| metric | runtime submit | runtime pending source | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 275.6421B | 272.1560B | -1.3% |
+| `submit_move_intent` avg instructions | 11.0412B | 11.5097B | +4.2% |
+| `sync_session_turn` avg instructions | 14.2859B | 13.8411B | -3.1% |
+| `movement.intents_by_session_turn_status` calls | 16 | 6 | -62.5% |
+| `movement.intents_by_session_turn_status` total instructions | 5.6276B | 2.1084B | -62.5% |
+
+Decision:
+
+- Keep this bridge cut because it reduces the whole Gate J route and removes most of the repeated pending-intent scans.
+- The one-time durable pending-intent hydration moved cost onto `submit_move_intent` (+4.2%). That is acceptable as a compatibility guard for now, but the next sync-runtime checkpoint should either avoid submit-side hydration in new sessions or make active turn sync fully runtime-owned so the durable pending-intent projection stops being a hot path.

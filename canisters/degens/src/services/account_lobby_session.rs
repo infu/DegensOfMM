@@ -1314,13 +1314,8 @@ fn append_session_event_with_command(
     subject_id_text: Option<String>,
     payload_json: String,
 ) -> Result<GameEvent, ApiError> {
-    if let Some(event) = commands_events_effects::find_event_by_key(session.id(), event_key)? {
-        bump_event_seq_after_existing(session, event.event_seq)?;
-        return Ok(event);
-    }
-
     let event_seq = session.next_event_seq;
-    let event = commands_events_effects::create_game_event(
+    match commands_events_effects::create_game_event(
         session.id(),
         command_id,
         None,
@@ -1332,10 +1327,23 @@ fn append_session_event_with_command(
         subject_kind.map(str::to_string),
         subject_id_text,
         payload_json,
-    )?;
-    session.next_event_seq = event_seq.saturating_add(1);
-    *session = sessions::update_session(session.clone())?;
-    Ok(event)
+    ) {
+        Ok(event) => {
+            session.next_event_seq = event_seq.saturating_add(1);
+            *session = sessions::update_session(session.clone())?;
+            Ok(event)
+        }
+        Err(error) => {
+            if let Some(event) =
+                commands_events_effects::find_event_by_key(session.id(), event_key)?
+            {
+                bump_event_seq_after_existing(session, event.event_seq)?;
+                Ok(event)
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 fn bump_event_seq_after_existing(

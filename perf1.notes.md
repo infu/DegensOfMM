@@ -2301,3 +2301,28 @@ Measured delta versus `20260519-town-no-effects-gate-j`:
 Decision:
 
 - Keep this cut. It is small but removes another duplicate stable write from the row-backed movement bridge and leaves the higher-risk neutral battle-start guard intact.
+
+## Checkpoint: Fresh Lobby Setup Events
+
+Changed lobby setup event append to create first and fall back to key lookup on conflict. This covers the fresh `session_created`, `participant_joined`, and `participant_ready` events emitted by `create_session`, `join_session`, and `mark_ready`. Normal nonce replay still returns from the durable `LobbyCommand` before the event append runs; duplicate ready commands with a new nonce can still fall back to the existing event.
+
+Verified:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-lobby-new-events-gate-j` passed in `231.56s`.
+
+Measured delta versus `20260519-movement-partial-no-effects-gate-j`:
+
+| metric | partial movement no effects | lobby new events | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 313.9172B | 310.8836B | -1.0% |
+| scenario cycles | 0.4132T | 0.4103T | -0.7% |
+| `create_session` avg | 12.7030B | 11.9966B | -5.6% |
+| `join_session` avg | 8.0180B | 7.3116B | -8.8% |
+| `mark_ready` avg | 6.6117B | 5.9041B | -10.7% |
+| `events.by_session_event_key` calls | 14 | 10 | -28.6% |
+
+Decision:
+
+- Keep this cut. It removes four fresh event absence reads from the route without changing replay behavior. The remaining sync event lookups are mostly movement-incomplete events that can be reused by later fresh sync commands, so they should wait for the runtime event-buffer rewrite.

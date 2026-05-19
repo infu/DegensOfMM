@@ -1655,3 +1655,30 @@ Decision:
 
 - Keep this cut because the seeded recovery regression passed and the redundant effect writes were a measured sync cost.
 - The remaining effect count is now mostly submit-side and other command effects. Next small cut should remove `movement_intent` command effects from `submit_move_intent`, then reassess whether micro-cuts have plateaued before starting heap active-turn intent runtime.
+
+## Decision: Shift Perf1 To Whole-Game Fast Path
+
+The battle runtime work proved the architecture: hot gameplay commands should mutate a command-side heap aggregate, while IcyDB should be durable projection/history/fallback/boundary storage. `submit_battle_action` reached the intended range, but tests and real play still spend most of their route cost before or around battle: session setup, movement, turn sync, map/object/champion views, towns, economy, jobs, and projections.
+
+Updated strategy:
+
+| priority | target | reason |
+| --- | --- | --- |
+| 1 | session-turn/champion-movement runtime | Gate J still has `submit_move_intent` around `13.75B` and `sync_session_turn` around `14.73B`; every battle route depends on movement/turn state. |
+| 2 | setup/session/view projections | test and client routes repeatedly read session, participant, champion, visible map/object, and game state before the core command under test. |
+| 3 | town/economy aggregate | town build/recruit are still early gameplay commands around `16B-21B`. |
+| 4 | champion aggregate | champion state is split across movement, battle aftermath, spells, army, artifacts, map occupancy, and views. |
+| 5 | remaining battle boundary work | runtime archive flush and `CastAbility` are real work, but less important than the route-wide bottlenecks now. |
+
+Testing decision:
+
+- Do not run the full slow suite after every architecture edit.
+- Use compile checks and focused PocketIC gates for the edit loop.
+- Use full `scripts/run-benchmarks.sh` only after meaningful aggregate checkpoints.
+- Use parallel PocketIC gates with separate namespaces/output dirs when validating a stable checkpoint.
+
+Implementation decision:
+
+- Stop polishing row-level movement/town/champion paths unless the cut is trivial, already in hand, or frees code-size headroom.
+- The next serious implementation target is `SessionTurnRuntime`, not another long sequence of small stable-row shortcuts.
+- If the in-progress `movement_intent` effect deletion is finished, treat it as the last small movement micro-cut before switching to the runtime rewrite.

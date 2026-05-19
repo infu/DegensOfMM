@@ -41,6 +41,34 @@ The target is a command-side aggregate model with query-side projections:
 
 IcyDB remains useful for command idempotency, event feeds, lookup rows, history, diagnostics, and projections. It should not be the main live object model for every tactical field update.
 
+## Current Strategy Update: Whole-Game Fast Path
+
+`submit_battle_action` proved the architectural direction. The recorded Gate K/L average moved from `26.9860B` to `0.2789B` instructions once active battle submit stopped using normalized IcyDB rows as the live mutation model.
+
+That win is not enough by itself. Real tests and real gameplay must still pass through setup, session/world views, movement, turn sync, towns, champions, economy, jobs, and projections before battle. Optimizing only the battle endpoint now gives diminishing returns because the rest of the game path still spends many billions of instructions moving through row-backed live state.
+
+The new perf1 goal is therefore scenario-level speed, not one endpoint vanity. Use the battle runtime as the proof pattern and modernize the next highest-impact systems quickly.
+
+Priority order:
+
+| priority | target | why now | first target |
+| --- | --- | --- | --- |
+| 1 | session-turn/champion-movement runtime | Gate J still has `submit_move_intent` around `13.75B` and `sync_session_turn` around `14.73B`; every battle route must pass through movement/turn state | get both below `5B`, then push toward sub-`1B` |
+| 2 | setup/session/view projections | tests and client routes repeatedly touch session, participant, champion, visible map/object, and game view reads before gameplay reaches battle | reduce scenario totals and test wall time |
+| 3 | town/economy aggregate | town build/recruit commands are still around `16B-21B` and are early gameplay actions | command-side town aggregate with durable projection |
+| 4 | champion aggregate | champion state spans army, spells, artifacts, movement, aftermath, map occupancy, mana/status, and town interactions | one command-side champion aggregate/projection contract |
+| 5 | remaining battle boundary work | runtime archive flush, `CastAbility`, and final boundary projection still need cleanup | finish after code-size headroom or split/debug surface exists |
+
+Modernization rule:
+
+| smell | default fix |
+| --- | --- |
+| A hot command reads/writes several IcyDB child rows as its live object model | move the command-side state into a heap aggregate |
+| A command writes durable command/event/effect rows only to answer immediate replay/status/feed during active gameplay | answer from runtime receipt/event buffers first, durable-flush later |
+| A job row is updated every action to model live state | make the job a wakeup hint; runtime owns the authority |
+| A query rehydrates many rows that were just mutated by an active aggregate | merge/read runtime projection first, durable fallback second |
+| A micro-cut saves less than the cost of a real aggregate rewrite and does not unblock code size | skip it unless it is already in hand and low risk |
+
 ## Measurement Plan
 
 Use the benchmark suite added under `scripts/run-benchmarks.sh` as the main performance yardstick.
@@ -272,15 +300,27 @@ Trace conclusion: the next cut should remove repeated active battle row loads/pe
 
 ## Testing Policy
 
-Roll fast here. Use focused tests during implementation and full benchmark/regression runs only at meaningful checkpoints.
+Roll fast here. Use focused tests during implementation and full benchmark/regression runs only at meaningful checkpoints. The goal is not to run every slow PocketIC route after every edit; the goal is to use small compile checks and focused gates while architecture is moving, then spend the full-suite cost only when a broad checkpoint is worth measuring.
 
 | checkpoint type | minimum testing |
 | --- | --- |
 | doc/planning only | no tests required |
 | compile-affecting refactor | `cargo check` or targeted package test |
 | battle aggregate checkpoint | Gate K or Gate L targeted PocketIC test |
+| movement/session-turn aggregate checkpoint | Gate J focused PocketIC test first |
+| town/economy aggregate checkpoint | endpoint-surface or focused route that exercises build/recruit |
+| query/projection checkpoint | endpoint-surface plus the smallest route that reads the affected projection |
 | benchmark claim | full `scripts/run-benchmarks.sh` |
-| broad aggregate pattern change | Gate J/K/L, and Gate M if API/client behavior may change |
+| broad aggregate pattern change | Gate J/K/L, and Gate M only if API/client behavior may change |
+
+Parallel policy:
+
+| test group | parallelization rule |
+| --- | --- |
+| independent PocketIC gates | run with separate lock namespaces and output dirs when measuring a stable checkpoint |
+| Rust package checks/tests | run independent package checks in parallel when they do not share target-dir contention badly |
+| full benchmark suite | use `DOMM_BENCH_JOBS` and keep it for meaningful gates, not every micro-edit |
+| slow recovery regressions | keep as focused checkpoint tests, not part of every inner loop |
 
 When a todo item is completed:
 
@@ -373,15 +413,23 @@ When a todo item is completed:
 - [x] Confirm no leftover PocketIC processes after focused benchmark runs.
 - [x] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands. Suite `20260519-081911-fe84689` passed endpoint-surface plus Gate J/K/L/M in parallel with `DOMM_BENCH_JOBS=5`.
 
-### 7. Broader Aggregate Pattern
+### 7. Whole-Game Fast-Path Strategy
 
+- [x] Change perf1 strategy from `submit_battle_action`-only optimization to whole-game path modernization after the battle runtime reached the `0.3B` target.
+- [x] Treat the battle runtime result as architectural proof: command-side heap aggregates for hot live state, IcyDB for projections/history/fallback/boundaries.
+- [ ] Rank aggregate work by scenario-level cost and route criticality before each major checkpoint, not by which endpoint has the nicest isolated number.
+- [ ] Prefer broad aggregate rewrites over more row-level movement/town/champion micro-cuts unless a micro-cut is trivial, already in hand, or frees code-size headroom.
+- [ ] Keep full benchmark runs for major architecture gates; use focused gates and compile checks for the fast edit loop.
 - [x] Review town command paths for the same live-row smell: buildings, recruit pools, and garrison. Town build/recruit still reads and writes `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows directly; `get_town_view` is now real-row-backed, so the API is truthful but the command path remains an aggregate candidate.
 - [x] Review champion command paths for the same live-row smell: army stacks, spells, artifacts, cooldowns, and map position. Champion state is spread across `Champion`, `ChampionArmyStack`, `ChampionSpell`, artifact/equipment rows, map occupancy, battle aftermath, and movement updates.
 - [x] Review session/world turn sync paths for aggregate or shard opportunities. `submit_move_intent` and `sync_session_turn` remain high-cost, high-frequency row workflows around movement intents, participants, champions, occupancy, turn-ready rows, system jobs, income, and session updates.
 - [x] Pick the next aggregate after battle based on benchmark cost and code complexity. Next target should be a session-turn/champion-movement aggregate because full-suite Gate K/L show `submit_move_intent` around 15.4-15.6B and `sync_session_turn` around 19.3B, both more frequent than town commands and now far above active battle submit.
+- [ ] Define a setup/query projection pass if Gate J/K/L still spend too much time before reaching the core gameplay endpoint being optimized.
+- [ ] Define a town/economy aggregate once session-turn movement is no longer the dominant route cost, or sooner if endpoint-surface/full-suite shows town dominates setup.
+- [ ] Define a champion aggregate/projection contract that movement, aftermath, town, spells, and views can share.
 - [ ] Repeat the same benchmark discipline before and after each aggregate migration.
 
-### 8. Gate 5: Session-Turn / Champion-Movement Aggregate
+### 8. Gate 5: Session-Turn / Champion-Movement Runtime
 
 - [x] Anchor the next aggregate baseline with the current full-suite and focused Gate J numbers. Baseline suite `20260519-081911-fe84689` measured Gate J `submit_move_intent` at 15.363B avg and `sync_session_turn` at 18.4665B avg; Gate K/L measured `sync_session_turn` around 19.3B avg.
 - [x] Apply a first code-size-safe movement checkpoint: serialize submit movement path text once per `submit_move_intent`, and skip the caller participant reload on partial `sync_session_turn` responses that return before income/turn advancement.
@@ -398,12 +446,21 @@ When a todo item is completed:
 - [x] Free benchmark Wasm headroom before the next movement cuts by turning benchmark phase markers into pass-through wrappers while keeping public method and repo-operation metrics. Phase summaries were useful for the original battle investigation, but the current movement work is driven by method and repo-op metrics. Benchmark Wasm code section is now 12,564,045 bytes with 18,867 bytes of headroom, freeing 12,459 bytes versus the scheduled guard checkpoint.
 - [x] Remove redundant `CommandEffect` projection writes from movement snapshots. `MovementSnapshot` rows already provide the durable projection and idempotent `(command_id, intent_id, step_index)` replay guard, so `record_movement_snapshot` no longer writes a duplicate `movement_snapshot` command effect. Focused Gate J `20260519-112144-movement-snapshot-effect-gate-j` passed; versus `20260519-110341-movement-scheduled-guard-gate-j`, scenario instructions moved 365.2604B -> 361.7712B (-1.0%), `sync_session_turn` moved 15.3986B -> 15.0796B avg (-2.1%), `effects.command_effect_by_command_key` calls moved 7 -> 4, and `effects.create_applied_command_effect` calls moved 18 -> 15. Service regression `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` passed.
 - [x] Remove the top-level `turn_resolution` `CommandEffect` from `resolve_pending_movement`. Command idempotency, movement snapshot idempotency, event keys, and intent status already guard replay/recovery, so the extra effect row was redundant. Focused Gate J `20260519-113052-movement-turn-effect-gate-j` passed; versus `20260519-112144-movement-snapshot-effect-gate-j`, scenario instructions moved 361.7712B -> 357.9811B (-1.0%), `sync_session_turn` moved 15.0796B -> 14.7341B avg (-2.3%), scenario memory moved 6,326.1875 MB -> 6,190.125 MB (-2.2%), and `effects.create_applied_command_effect` calls moved 15 -> 7. Service regression `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` passed. Benchmark Wasm code section is 12,560,886 bytes with 22,026 bytes of headroom.
+- [ ] Decide whether to keep, finish, or abandon the in-progress `movement_intent` command-effect deletion as the last row-level movement micro-cut before the runtime rewrite.
+- [ ] Design `SessionTurnRuntime`: active movement intents, participant readiness, champion deltas, occupancy deltas, event buffer, command receipts, deadline/job hints, query merge, upgrade/adoption, and durable boundary projection.
+- [ ] Make active `submit_move_intent` use runtime receipts/intents/events first, with durable `MovementIntent` projection deferred or bounded.
+- [ ] Make active `sync_session_turn` resolve from runtime state and apply champion/occupancy/resource deltas without repeated row hydration.
+- [ ] Make `get_game_view`, `get_events_after`, `get_champion_view`, and object/map views merge active turn runtime state before durable fallback.
+- [ ] Treat turn deadline/resolution `SystemJob` rows as wakeup hints while runtime owns active turn authority.
+- [ ] Flush/checkpoint active turn projections at turn boundary, battle start handoff, explicit checkpoint, upgrade, or finalization.
 - [ ] Drive `sync_session_turn` below 5B average instructions, then below 1B if the heap turn aggregate behaves like the battle runtime.
 - [ ] Drive `submit_move_intent` below 5B average instructions by moving active turn intent/idempotency/event state out of per-submit stable writes.
 
 ## Expected Outcome
 
-The first successful battle aggregate checkpoint should reduce `submit_battle_action` by removing repeated stable row/index work. The deeper target requires eliminating almost all per-action stable writes from active battle submit. The likely wins should come from eliminating:
+The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.
+
+For battle, the wins came from eliminating:
 
 - repeated `BattleStack` list reads
 - repeated `BattleObstacle` list reads
@@ -416,4 +473,12 @@ The first successful battle aggregate checkpoint should reduce `submit_battle_ac
 - per-action durable command create/update when runtime receipts can answer active replays/status
 - per-action durable event fanout when runtime events can answer active feeds and flush later
 
-The benchmark should prove whether each cut is actually better. If the active aggregate model does not move `submit_battle_action` below 10B average instructions, repo-op and phase tracing should tell us whether the remaining cost is event feed writes, command/idempotency writes, job/readiness writes, serialization, or battle rule CPU. Continue removing the largest measured cost until the endpoint is near `0.3B`.
+For the rest of perf1, the likely wins should come from eliminating the same shape in movement, session-turn, town, champion, and view code:
+
+- per-command durable intent/command/event/effect rows when runtime receipts and event buffers can answer active gameplay
+- repeated champion/participant/map row hydration during turn sync
+- repeated town child-row loads and diffs during build/recruit
+- query routes that rebuild the same active state from stable rows instead of reading runtime projections
+- job rows that model live gameplay authority instead of acting as wakeup hints
+
+The benchmark should prove whether each aggregate migration is actually better. If a runtime aggregate does not move scenario totals enough, repo-op/method summaries should tell us whether the remaining cost is event feed writes, command/idempotency writes, job/readiness writes, query projection, serialization, or rule CPU. Continue removing the largest measured cost until the whole game route is fast, not just one endpoint.

@@ -1921,3 +1921,45 @@ Decision:
 - Reject the broad shortcut and restore idempotent `append_public_event` on manual sync movement events.
 - The flaw is architectural: a fresh sync command does not prove the business event key is fresh. `movement_sync_incomplete:{session}:{turn}:fast`, `movement_sync_incomplete:{session}:{turn}:crossing-fast`, and step-cursor incomplete keys can legitimately be reached by more than one fresh sync continuation in the same turn.
 - Do not spend more code-size headroom on this row-level micro-cut. The better fix is the full runtime sync/event-buffer path, where runtime owns active event identity and durable event projection can be batched or skipped on the hot path.
+
+## Rejected Experiment: Runtime Ready-Set Cache
+
+Tried a small pre-deadline `sync_session_turn` shortcut around `all_participants_ready_for_turn`.
+
+Eager version:
+
+- Hydrated durable `ParticipantTurnReady` rows when creating `SessionTurnRuntime`.
+- Mirrored `end_turn` into runtime ready state.
+- Used a hydrated empty ready set to return `false` before scanning active participants.
+- Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, `cargo check -p domm-degens-canister`, `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`, native PocketIC `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` in `187.53s`, and focused Gate J `20260519-144234-runtime-ready-shortcut-gate-j`.
+
+Result versus `20260519-135856-movement-runtime-pending-gate-j`:
+
+| metric | runtime pending | eager ready cache | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 272.1560B | 270.6890B | -0.5% |
+| `sync_session_turn` avg | 13.8411B | 13.5809B | -1.9% |
+| `submit_move_intent` avg | 11.5097B | 11.9766B | +4.1% |
+| `sessions.participants_by_session_status` calls | 36 | 32 | -11.1% |
+
+Lazy version:
+
+- Removed submit-time ready hydration.
+- Cached ready rows only after a durable sync ready check already happened.
+- Verified with the same compile/unit checks, native PocketIC `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` in `188.24s`, and focused Gate J `20260519-145905-runtime-ready-lazy-gate-j`.
+
+Result versus `20260519-135856-movement-runtime-pending-gate-j`:
+
+| metric | runtime pending | lazy ready cache | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 272.1560B | 272.1154B | ~0.0% |
+| `sync_session_turn` avg | 13.8411B | 13.8385B | ~0.0% |
+| `submit_move_intent` avg | 11.5097B | 11.5079B | ~0.0% |
+| `sessions.participants_by_session_status` calls | 36 | 36 | unchanged |
+| `turn_ready.by_session_turn` calls | 6 | 6 | unchanged |
+
+Decision:
+
+- Reject both versions and drop the code.
+- The eager version just moved cost from sync to submit, and the lazy version was measurement noise.
+- The next performance work should stop trying to shave this row-backed readiness path and instead move active `sync_session_turn` authority into the runtime aggregate.

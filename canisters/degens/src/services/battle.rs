@@ -1031,6 +1031,9 @@ pub(crate) fn submit_battle_action(
     let battle = crate::metrics::benchmark_phase("submit_battle_action", "load_battle", || {
         battle_rows::load_battle_row(&context.session, &input.battle_id)
     })?;
+    if battle.state == "active" {
+        battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
+    }
     let command =
         match crate::metrics::benchmark_phase("submit_battle_action", "command_begin", || {
             let payload_json = battle_action_payload_json(&input);
@@ -1168,7 +1171,14 @@ fn normalize_battle_action_input(
     if input.target_stack_id.as_deref() != Some(AUTO_ENEMY_TARGET_ID) {
         return Ok(input.clone());
     }
-    let state = battle_rows::load_battle_state(session, &input.battle_id)?;
+    let state = battle_runtime::with_runtime(&input.battle_id, |runtime| {
+        (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
+    })
+    .flatten()
+    .map_or_else(
+        || battle_rows::load_battle_state(session, &input.battle_id),
+        Ok,
+    )?;
     let caster = state
         .stack(&input.battle_stack_id)
         .map_err(map_battle_error)?;
@@ -1603,7 +1613,15 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         if current_battle.state != "active" || current_battle.current_round != round_number {
             break;
         }
-        let state = battle_rows::load_battle_state_from_row(&session, current_battle)?;
+        let battle_id_text = battle_id.to_string();
+        let state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+            (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
+        })
+        .flatten()
+        .map_or_else(
+            || battle_rows::load_battle_state_from_row(&session, current_battle),
+            Ok,
+        )?;
         let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id.to_string())
             .map_err(map_battle_error)?
         else {
@@ -1666,15 +1684,21 @@ fn recompute_battle_round_readiness_and_schedule(
         });
     }
 
-    let state = battle_rows::load_battle_state_from_row(
-        &sessions::load_session(session_id)?.ok_or_else(|| {
-            public_error(
-                "session_not_found",
-                "session was not found while recomputing battle readiness",
-                true,
-            )
-        })?,
-        battle.clone(),
+    let session = sessions::load_session(session_id)?.ok_or_else(|| {
+        public_error(
+            "session_not_found",
+            "session was not found while recomputing battle readiness",
+            true,
+        )
+    })?;
+    let battle_id_text = battle.id().to_string();
+    let state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+        (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
+    })
+    .flatten()
+    .map_or_else(
+        || battle_rows::load_battle_state_from_row(&session, battle.clone()),
+        Ok,
     )?;
     let mut changed_subjects = mark_auto_ready_participants(session_id, battle, &state)?;
     let participant_ids = alive_battle_participant_ids(&state, &battle.id().to_string())?;
@@ -1897,6 +1921,25 @@ fn apply_player_action(
             commands_events_effects::update_game_command(command)
         })?;
 
+    if input.action != "CastAbility"
+        && let Some(runtime) =
+            crate::metrics::benchmark_phase("submit_battle_action", "load_battle_state", || {
+                battle_runtime::with_runtime(&input.battle_id, Clone::clone)
+            })
+    {
+        return apply_player_action_from_runtime(
+            session,
+            participant_id,
+            command,
+            input,
+            now_ms,
+            response_participant_id,
+            events,
+            changed_subjects,
+            runtime,
+        );
+    }
+
     let mut state =
         crate::metrics::benchmark_phase("submit_battle_action", "load_battle_state", || {
             battle_rows::load_battle_state(session, &input.battle_id)
@@ -1956,6 +1999,81 @@ fn apply_player_action(
     ));
 
     battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_player_action_from_runtime(
+    session: &mut GameSession,
+    participant_id: &str,
+    command: GameCommand,
+    input: &BattleActionInput,
+    now_ms: u64,
+    response_participant_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+    mut runtime: BattleRuntime,
+) -> Result<BattleActionReceipt, ApiError> {
+    crate::metrics::benchmark_phase("submit_battle_action", "validate_action", || {
+        validate_player_action(
+            &runtime.state,
+            participant_id,
+            input,
+            now_ms,
+            CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
+        )
+    })?;
+    let battle_command = battle_rows::battle_action_command(
+        &command,
+        &input.battle_id,
+        Some(participant_id.to_string()),
+        input.battle_stack_id.clone(),
+        input.action.clone(),
+        input.target_stack_id.clone(),
+        input.destination,
+        false,
+    );
+    runtime.state.commands.push(battle_command);
+    crate::metrics::benchmark_phase("submit_battle_action", "apply_rules", || {
+        domm_game::apply_battle_command_by_id(&mut runtime.state, &command.id().to_string(), now_ms)
+            .map_err(map_battle_error)
+    })?;
+    crate::metrics::benchmark_phase("submit_battle_action", "persist_battle_state", || {
+        battle_rows::persist_battle_header_from_state(&runtime.state, command.id()).map(|_| ())
+    })?;
+    crate::metrics::benchmark_phase("submit_battle_action", "event_fanout", || {
+        append_new_battle_events(
+            session,
+            command.id(),
+            &runtime.state,
+            Some(response_participant_id),
+            events,
+        )
+    })?;
+    refresh_runtime_metadata_from_state(&mut runtime, session, &input.battle_id)?;
+    let receipt = battle_action_receipt(&runtime.state, &command.id().to_string())
+        .map_err(map_battle_error)?;
+    battle_runtime::insert_runtime(runtime);
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &input.battle_id,
+        "update",
+    ));
+    Ok(receipt)
+}
+
+fn refresh_runtime_metadata_from_state(
+    runtime: &mut BattleRuntime,
+    session: &GameSession,
+    battle_id: &str,
+) -> Result<(), ApiError> {
+    let battle = runtime.state.battle(battle_id).map_err(map_battle_error)?;
+    runtime.deadline.action_deadline_at_ms = battle.action_deadline_at;
+    runtime.deadline.timeout_job_key = battle
+        .action_deadline_at
+        .map(|deadline| format!("battle_timeout:{battle_id}:{deadline}"));
+    runtime.session_event_sequence_cursor = session.next_event_seq;
+    runtime.mark_dirty();
+    Ok(())
 }
 
 fn apply_cast_ability_command(
@@ -2487,6 +2605,63 @@ fn begin_timeout_command(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_system_battle_action_from_runtime(
+    session: &mut GameSession,
+    command: &GameCommand,
+    battle_id: Id<Battle>,
+    stack_id: String,
+    action: &str,
+    deadline_base_ms: u64,
+    response_participant_id: Option<&str>,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+    mut runtime: BattleRuntime,
+    changed_action: &str,
+) -> Result<(), ApiError> {
+    let battle_id_text = battle_id.to_string();
+    let battle_command = battle_rows::battle_action_command(
+        command,
+        &battle_id_text,
+        None,
+        stack_id,
+        action.to_string(),
+        None,
+        None,
+        true,
+    );
+    runtime.state.commands.push(battle_command);
+    domm_game::apply_battle_command_by_id(
+        &mut runtime.state,
+        &command.id().to_string(),
+        deadline_base_ms,
+    )
+    .map_err(map_battle_error)?;
+    battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
+    append_new_battle_events(
+        session,
+        command.id(),
+        &runtime.state,
+        response_participant_id,
+        events,
+    )?;
+    refresh_runtime_metadata_from_state(&mut runtime, session, &battle_id_text)?;
+    battle_runtime::insert_runtime(runtime);
+    apply_resolved_battle_aftermath_with_runtime_projection(
+        session,
+        command.id(),
+        battle_id,
+        events,
+        changed_subjects,
+    )?;
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &battle_id_text,
+        changed_action,
+    ));
+    Ok(())
+}
+
 fn apply_timeout_command(
     session: &mut GameSession,
     mut command: GameCommand,
@@ -2504,43 +2679,64 @@ fn apply_timeout_command(
     command.phase = "applying".to_string();
     command = commands_events_effects::update_game_command(command)?;
 
-    let battle = battles::load_battle(battle_id)?.ok_or_else(|| {
-        public_error(
-            "battle_not_found",
-            "battle not found during timeout apply",
+    if let Some(runtime) = battle_runtime::with_runtime(&battle_id.to_string(), Clone::clone) {
+        apply_system_battle_action_from_runtime(
+            session,
+            &command,
+            battle_id,
+            active_stack_id,
+            "AutoDefend",
+            deadline_ms,
+            response_participant_id,
+            events,
+            changed_subjects,
+            runtime,
+            "timeout",
+        )?;
+    } else {
+        let battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+            public_error(
+                "battle_not_found",
+                "battle not found during timeout apply",
+                true,
+            )
+        })?;
+        let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
+        let battle_command = battle_rows::battle_action_command(
+            &command,
+            &battle_id.to_string(),
+            None,
+            active_stack_id,
+            "AutoDefend".to_string(),
+            None,
+            None,
             true,
-        )
-    })?;
-    let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
-    let battle_command = battle_rows::battle_action_command(
-        &command,
-        &battle_id.to_string(),
-        None,
-        active_stack_id,
-        "AutoDefend".to_string(),
-        None,
-        None,
-        true,
-    );
-    state.commands.push(battle_command);
-    domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), deadline_ms)
-        .map_err(map_battle_error)?;
-    battle_rows::persist_battle_state(&state, command.id())?;
-    append_new_battle_events(
-        session,
-        command.id(),
-        &state,
-        response_participant_id,
-        events,
-    )?;
-    mirror_battle_runtime_from_state(session, &state)?;
-    apply_resolved_battle_aftermath_with_runtime_projection(
-        session,
-        command.id(),
-        battle_id,
-        events,
-        changed_subjects,
-    )?;
+        );
+        state.commands.push(battle_command);
+        domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), deadline_ms)
+            .map_err(map_battle_error)?;
+        battle_rows::persist_battle_state(&state, command.id())?;
+        append_new_battle_events(
+            session,
+            command.id(),
+            &state,
+            response_participant_id,
+            events,
+        )?;
+        mirror_battle_runtime_from_state(session, &state)?;
+        apply_resolved_battle_aftermath_with_runtime_projection(
+            session,
+            command.id(),
+            battle_id,
+            events,
+            changed_subjects,
+        )?;
+        changed_subjects.push(command_response::changed(
+            "battle",
+            &battle_id.to_string(),
+            "timeout",
+        ));
+    }
     command.status = "applied".to_string();
     command.phase = "complete".to_string();
     command.result_json = Some(command_response::result_json(
@@ -2549,11 +2745,6 @@ fn apply_timeout_command(
     ));
     command.applied_at = Some(Timestamp::now());
     commands_events_effects::update_game_command(command)?;
-    changed_subjects.push(command_response::changed(
-        "battle",
-        &battle_id.to_string(),
-        "timeout",
-    ));
     Ok(())
 }
 
@@ -2632,36 +2823,61 @@ fn apply_round_auto_defend_command(
         commands_events_effects::update_game_command(command)?;
         return Ok(());
     }
-    let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
-    let battle_command = battle_rows::battle_action_command(
-        &command,
-        &battle_id.to_string(),
-        None,
-        stack_id.clone(),
-        "RoundAutoDefend".to_string(),
-        None,
-        None,
-        true,
-    );
-    state.commands.push(battle_command);
-    domm_game::apply_battle_command_by_id(&mut state, &command.id().to_string(), deadline_base_ms)
+    if let Some(runtime) = battle_runtime::with_runtime(&battle_id.to_string(), Clone::clone) {
+        apply_system_battle_action_from_runtime(
+            session,
+            &command,
+            battle_id,
+            stack_id.clone(),
+            "RoundAutoDefend",
+            deadline_base_ms,
+            response_participant_id,
+            events,
+            changed_subjects,
+            runtime,
+            "round_auto_defend",
+        )?;
+    } else {
+        let mut state = battle_rows::load_battle_state_from_row(session, battle)?;
+        let battle_command = battle_rows::battle_action_command(
+            &command,
+            &battle_id.to_string(),
+            None,
+            stack_id.clone(),
+            "RoundAutoDefend".to_string(),
+            None,
+            None,
+            true,
+        );
+        state.commands.push(battle_command);
+        domm_game::apply_battle_command_by_id(
+            &mut state,
+            &command.id().to_string(),
+            deadline_base_ms,
+        )
         .map_err(map_battle_error)?;
-    battle_rows::persist_battle_state(&state, command.id())?;
-    append_new_battle_events(
-        session,
-        command.id(),
-        &state,
-        response_participant_id,
-        events,
-    )?;
-    mirror_battle_runtime_from_state(session, &state)?;
-    apply_resolved_battle_aftermath_with_runtime_projection(
-        session,
-        command.id(),
-        battle_id,
-        events,
-        changed_subjects,
-    )?;
+        battle_rows::persist_battle_state(&state, command.id())?;
+        append_new_battle_events(
+            session,
+            command.id(),
+            &state,
+            response_participant_id,
+            events,
+        )?;
+        mirror_battle_runtime_from_state(session, &state)?;
+        apply_resolved_battle_aftermath_with_runtime_projection(
+            session,
+            command.id(),
+            battle_id,
+            events,
+            changed_subjects,
+        )?;
+        changed_subjects.push(command_response::changed(
+            "battle",
+            &battle_id.to_string(),
+            "round_auto_defend",
+        ));
+    }
     command.status = "applied".to_string();
     command.phase = "complete".to_string();
     command.result_json = Some(command_response::result_json(
@@ -2670,11 +2886,6 @@ fn apply_round_auto_defend_command(
     ));
     command.applied_at = Some(Timestamp::now());
     commands_events_effects::update_game_command(command)?;
-    changed_subjects.push(command_response::changed(
-        "battle",
-        &battle_id.to_string(),
-        "round_auto_defend",
-    ));
     Ok(())
 }
 
@@ -2715,24 +2926,32 @@ fn validate_player_action(
     if input.action == "CastAbility" {
         return validate_cast_ability_action(state, input);
     }
-    let legal_actions = legal_actions_for_stack(state, &input.battle_id, &input.battle_stack_id)
-        .map_err(map_battle_error)?;
-    let Some(action) = legal_actions
-        .iter()
-        .find(|action| action.action == input.action && action.enabled)
-    else {
+    if !stack.is_living() || stack.acted_round >= battle.current_round {
         return Err(public_error(
             "battle_action_not_legal",
             format!("battle action is not legal: {}", input.action),
             false,
         ));
-    };
+    }
     match input.action.as_str() {
         "Move" => {
             let Some(destination) = input.destination else {
                 return Err(public_error(
                     "battle_destination_required",
                     "move action requires a destination",
+                    false,
+                ));
+            };
+            let legal_actions =
+                legal_actions_for_stack(state, &input.battle_id, &input.battle_stack_id)
+                    .map_err(map_battle_error)?;
+            let Some(action) = legal_actions
+                .iter()
+                .find(|action| action.action == "Move" && action.enabled)
+            else {
+                return Err(public_error(
+                    "battle_action_not_legal",
+                    "battle action is not legal: Move",
                     false,
                 ));
             };
@@ -2745,23 +2964,18 @@ fn validate_player_action(
             }
         }
         "MeleeAttack" | "RangedAttack" | "Attack" => {
-            let Some(target) = input.target_stack_id.as_deref() else {
+            validate_attack_action_without_reachability(state, stack, input)?;
+        }
+        "Defend" => {}
+        "Wait" => {
+            if stack.waited_round >= battle.current_round {
                 return Err(public_error(
-                    "battle_target_required",
-                    "attack action requires a target stack",
-                    false,
-                ));
-            };
-            if !action.targets.iter().any(|candidate| candidate == target) {
-                return Err(public_error(
-                    "battle_target_not_legal",
-                    "attack target is not legal",
+                    "battle_action_not_legal",
+                    "battle action is not legal: Wait",
                     false,
                 ));
             }
         }
-        "Defend" | "Wait" => {}
-        "CastAbility" => {}
         other => {
             return Err(public_error(
                 "battle_action_not_supported",
@@ -2769,6 +2983,81 @@ fn validate_player_action(
                 false,
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_attack_action_without_reachability(
+    state: &domm_game::BattleState,
+    stack: &BattleStackRecord,
+    input: &BattleActionInput,
+) -> Result<(), ApiError> {
+    let Some(target_id) = input.target_stack_id.as_deref() else {
+        return Err(public_error(
+            "battle_target_required",
+            "attack action requires a target stack",
+            false,
+        ));
+    };
+    let target = state.stack(target_id).map_err(map_battle_error)?;
+    if target.battle_id != input.battle_id || target.side == stack.side || !target.is_living() {
+        return Err(public_error(
+            "battle_target_not_legal",
+            "attack target is not legal",
+            false,
+        ));
+    }
+
+    let distance =
+        stack.battle_x.abs_diff(target.battle_x) + stack.battle_y.abs_diff(target.battle_y);
+    match input.action.as_str() {
+        "MeleeAttack" => {
+            if distance != 1 {
+                return Err(public_error(
+                    "battle_target_not_legal",
+                    "melee target must be adjacent",
+                    false,
+                ));
+            }
+        }
+        "RangedAttack" => validate_ranged_attack_without_reachability(state, stack, distance)?,
+        "Attack" => {
+            if distance == 1 {
+                return Ok(());
+            }
+            validate_ranged_attack_without_reachability(state, stack, distance)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_ranged_attack_without_reachability(
+    state: &domm_game::BattleState,
+    stack: &BattleStackRecord,
+    distance: u8,
+) -> Result<(), ApiError> {
+    if !stack.ranged || distance <= 1 || stack.shots_remaining == 0 {
+        return Err(public_error(
+            "battle_target_not_legal",
+            "ranged target is not legal",
+            false,
+        ));
+    }
+    let adjacent_enemy = state.stacks.iter().any(|candidate| {
+        candidate.battle_id == stack.battle_id
+            && candidate.side != stack.side
+            && candidate.is_living()
+            && stack.battle_x.abs_diff(candidate.battle_x)
+                + stack.battle_y.abs_diff(candidate.battle_y)
+                == 1
+    });
+    if adjacent_enemy {
+        return Err(public_error(
+            "battle_target_not_legal",
+            "ranged attack is blocked by an adjacent enemy",
+            false,
+        ));
     }
     Ok(())
 }

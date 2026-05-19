@@ -74,6 +74,18 @@ pub(crate) fn persist_battle_state(
     state: &BattleState,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
+    let row = persist_battle_header_from_state(state, command_id)?;
+    let battle_id = row.id();
+
+    persist_stacks(state, battle_id, command_id)?;
+    persist_occupancy(state, battle_id, command_id)?;
+    Ok(())
+}
+
+pub(crate) fn persist_battle_header_from_state(
+    state: &BattleState,
+    command_id: Id<GameCommand>,
+) -> Result<Battle, ApiError> {
     let battle = state
         .battles
         .first()
@@ -114,11 +126,7 @@ pub(crate) fn persist_battle_state(
         .or_else(|| (battle.state == "resolved" && row.resolved_at.is_none()).then(Timestamp::now));
     row.cleanup_after_turn = battle.cleanup_after_turn;
     row.last_command_id = Some(command_id.key());
-    battles::update_battle(row)?;
-
-    persist_stacks(state, battle_id, command_id)?;
-    persist_occupancy(state, battle_id, command_id)?;
-    Ok(())
+    battles::update_battle(row)
 }
 
 pub(crate) fn battle_action_command(

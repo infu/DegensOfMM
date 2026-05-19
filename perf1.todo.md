@@ -317,12 +317,13 @@ When a todo item is completed:
 
 ### 2. Gate 1: Remove Tactical Child-Row Hot Writes
 
-- [ ] Change `submit_battle_action` to load/mutate/commit one heap `BattleRuntime` aggregate instead of loading/diffing `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows repeatedly.
-- [ ] Stop persisting active tactical changes to `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows per action.
-- [ ] Resolve `auto:enemy` target normalization from active runtime instead of loading full row-backed state.
-- [ ] Reuse the already-mutated aggregate for round readiness instead of reloading battle child state.
-- [ ] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
-- [ ] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
+- [x] Change non-spell active `submit_battle_action` to load/mutate/commit one heap `BattleRuntime` aggregate instead of loading/diffing `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows repeatedly.
+- [x] Stop persisting active tactical changes to `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows per non-spell player action, timeout auto-defend, and round auto-defend.
+- [x] Resolve `auto:enemy` target normalization from active runtime instead of loading full row-backed state.
+- [x] Reuse the already-mutated aggregate for round readiness instead of reloading battle child state.
+- [x] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
+- [x] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
+- [ ] Move `CastAbility` off the row-backed tactical persist path or explicitly benchmark/document it as a rare fallback.
 - [ ] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`.
 
 ### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes

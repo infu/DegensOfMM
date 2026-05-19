@@ -235,6 +235,25 @@ Verified:
 - `cargo check -p domm-degens-canister`
 - `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_render_projection_tracks_battle_aftermath_objects -- --nocapture`
 
+### Gate 1 Runtime Submit Cut
+
+Moved the common active battle action path off repeated tactical child-row hydration and persistence.
+
+Checkpoint scope:
+
+- Active non-spell `submit_battle_action` now clones the heap `BattleRuntime`, validates and applies the battle command against runtime `BattleState`, persists only the durable `Battle` header for compatibility, appends the existing durable event fanout, then commits the runtime back to heap.
+- Active timeout auto-defend and round auto-defend now mutate runtime state when runtime is present, with the same battle-header-only projection.
+- Round readiness now prefers runtime `BattleState`, so it does not reload stale `BattleStack`/`BattleObstacle`/`BattleOccupancy` rows after runtime actions.
+- `auto:enemy` target normalization now resolves from runtime state when available.
+- Validation is now action-specific: attack/defend/wait do not compute full move reachability; only `Move` calls `legal_actions_for_stack` for reachable tiles.
+- Durable `GameCommand` and `GameEvent` behavior is intentionally still in place for this Gate 1 measurement. That cost should move in Gate 3.
+- Remaining exception: `CastAbility` still uses the row-backed tactical persist path because it also touches champion mana/effects. Move it to runtime or measure/document it as a rare fallback before closing Gate 1 completely.
+
+Verified:
+
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

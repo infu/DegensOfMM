@@ -2469,3 +2469,39 @@ Incremental delta versus `20260519-sync-final-reserved-event-gate-j`:
 Decision:
 
 - Keep this cut. It removes the remaining event-sequence session write from the successful manual sync path while leaving partial movement, object event, recovered event, and system-job sync behavior on the older conservative path.
+
+## Gate 5 Hard Target Replan
+
+User target tightened the remaining perf1 work to `0.3B-0.6B` instructions where unavoidable. I launched three focused subagents across `submit_move_intent`, `sync_session_turn`, and town/view/economy. They independently reached the same conclusion: the current row-level cuts are not enough. Each durable stable read/write is roughly `0.35B-0.70B`, so endpoints still doing live command/event/session/movement/town/resource/job writes cannot land near `0.3B-0.6B`.
+
+Current anchor artifact: `target/benchmarks/20260519-sync-income-reserved-event-gate-j/summary.json`.
+
+| endpoint | current avg | target |
+| --- | ---: | ---: |
+| `submit_move_intent` | `11.2538B` | `0.3B-0.6B` |
+| `sync_session_turn` | `11.4681B` | `0.3B-0.6B` |
+| `submit_build_town_structure` | `16.9975B` | `0.3B-0.6B` |
+| `submit_recruit_units` | `12.5294B` | `0.3B-0.6B` |
+| `get_visible_objects` | `4.950B` | `0.3B-0.8B` |
+| `get_champion_view` | `4.939B` | `0.3B-0.8B` |
+| `get_town_view` | `4.226B` | `0.3B-0.8B` |
+| `get_visible_map_chunks` | `3.520B` | `0.3B-0.8B` |
+
+Decision:
+
+- Stop treating `5B` or `1B` as acceptable final targets for movement/sync/town hot paths.
+- Make `SessionTurnRuntime` authoritative before hot commands run, not lazily hydrated during submit/sync.
+- Make fresh `submit_move_intent` a pure heap mutation: runtime auth, runtime champion/occupancy/contact indexes, runtime receipts/events, pre-reserved event sequence block, no durable `MovementIntent` write.
+- Make fresh `sync_session_turn` consume runtime intents/snapshots/events and mutate runtime champion/occupancy/object/resource/session/job deltas. Durable rows become checkpoint/flush output.
+- Add `TownRuntime`/`TownProjection` for buildings, recruit pools, garrison, tavern/growth, and town command receipts/events/resources. Build/recruit commands should mutate runtime first and flush durable child rows later.
+- Runtime query overlays are mandatory before removing durable live writes. Active runtime state must win for game/session/participant/champion/map/object/town/event/status views.
+- Add `flush_barrier(reason)` for turn advance, battle handoff, upgrade, runtime eviction, and strong read paths. Flush must be idempotent because deferred projection can be retried.
+
+Risks to keep front of mind:
+
+- The previous cached champion shortcut regressed `CastAbility`, so champion snapshots need an invalidation/version contract or a real champion overlay before submit/preview trusts them.
+- Event sequence blocks must share one allocator with durable `GameSession.next_event_seq`; lazy or split allocation risks collisions.
+- Timer jobs become wakeup hints only after runtime owns turn authority. Until then, stale durable jobs can still affect correctness.
+- Query overlays are the correctness boundary. If one public view misses runtime state, the DB can be correct while the API lies.
+
+No tests were run for this planning-only checkpoint. The todo was updated to record the hard-target gates and to make future checkboxes measurable against `0.3B-0.6B`.

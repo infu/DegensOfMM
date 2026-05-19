@@ -55,7 +55,7 @@ Priority order:
 
 | priority | target | why now | first target |
 | --- | --- | --- | --- |
-| 1 | session-turn/champion-movement runtime | Gate J still has `submit_move_intent` around `13.75B` and `sync_session_turn` around `14.73B`; every battle route must pass through movement/turn state | get both below `5B`, then push toward sub-`1B` |
+| 1 | session-turn/champion-movement runtime | Gate J still has `submit_move_intent` around `11.25B` and `sync_session_turn` around `11.47B`; every battle route must pass through movement/turn state | make hot submit/sync runtime-only and drive toward `0.3B-0.6B`, not just `5B`/`1B` |
 | 2 | setup/session/view projections | tests and client routes repeatedly touch session, participant, champion, visible map/object, and game view reads before gameplay reaches battle | reduce scenario totals and test wall time |
 | 3 | town/economy aggregate | town build/recruit commands are still around `16B-21B` and are early gameplay actions | command-side town aggregate with durable projection |
 | 4 | champion aggregate | champion state spans army, spells, artifacts, movement, aftermath, map occupancy, mana/status, and town interactions | one command-side champion aggregate/projection contract |
@@ -70,6 +70,10 @@ Modernization rule:
 | A job row is updated every action to model live state | make the job a wakeup hint; runtime owns the authority |
 | A query rehydrates many rows that were just mutated by an active aggregate | merge/read runtime projection first, durable fallback second |
 | A micro-cut saves less than the cost of a real aggregate rewrite and does not unblock code size | skip it unless it is already in hand and low risk |
+
+Hard target rule:
+
+- Any checkpoint that leaves a hot endpoint above `1B` instructions must name the remaining stable read/write category and remove or justify it in the next checkpoint. Durable live-state operations are assumed guilty until proven unavoidable.
 
 ## Measurement Plan
 
@@ -473,12 +477,36 @@ When a todo item is completed:
 - [x] Add a cache-only fast path for immediate pre-deadline `sync_session_turn` retries when the cached active session context exists and the active turn runtime proves no participant is ready. All other sync cases still reload durable session state. Verified with `cargo fmt`, `cargo check -p domm-degens-canister --features benchmark`, and focused Gate J `20260519-sync-not-due-cache-gate-j` in `227.73s`. Versus `20260519-town-batch-events-gate-j`, `sessions.load_session` calls moved 20 -> 18, two not-due sync calls moved to about 0.0001B instructions, `sync_session_turn` moved 12.0021B -> 11.6196B avg (-3.2%), and scenario instructions moved 309.9352B -> 305.7282B (-1.4%).
 - [x] Remove the redundant successful-sync participant reload and reserve the final `session_turn_synced` event sequence inside the same session update that advances the turn. This keeps conflict fallback for recovered final events but removes one normal `sessions.update_session` write and one `sessions.load_participant` read from the successful turn-advance path. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, `cargo check -p domm-degens-canister`, `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`, and focused Gate J `20260519-sync-final-reserved-event-gate-j` in `696.40s`. Versus `20260519-sync-not-due-cache-gate-j`, `sync_session_turn` moved 11.6196B -> 11.5131B avg (-0.9%), update-only Gate J instructions moved 236.5752B -> 235.4024B (-0.5%), the successful turn-advance sync call moved 23.1070B -> 21.9392B (-5.1%), `sessions.update_session` calls moved 16 -> 15, and `sessions.load_participant` calls moved 1 -> 0. Full scenario instruction totals are not compared for this direct run because the query instruction fields were not populated in the generated artifact.
 - [x] Batch the successful-sync `income_materialized` event sequence with the same turn-advance session update instead of updating `GameSession.next_event_seq` immediately inside `materialize_income`. The system-job path keeps the existing idempotent event append. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, `cargo check -p domm-degens-canister`, `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`, and focused Gate J `20260519-sync-income-reserved-event-gate-j` in `228.58s` test time / `245s` wall time. Versus `20260519-sync-not-due-cache-gate-j`, `sync_session_turn` moved 11.6196B -> 11.4681B avg (-1.3%), full Gate J scenario instructions moved 305.7282B -> 304.0763B (-0.5%), `sessions.update_session` calls moved 16 -> 14, and `sessions.load_participant` calls stayed 1 -> 0 from the previous successful-sync cut. Versus `20260519-sync-final-reserved-event-gate-j`, the incremental income event batch removed one more `sessions.update_session` call and moved `sync_session_turn` 11.5131B -> 11.4681B (-0.4%).
-- [ ] Make active `sync_session_turn` resolve from runtime state and apply champion/occupancy/resource deltas without repeated row hydration.
-- [ ] Make `get_game_view`, `get_events_after`, `get_champion_view`, and object/map views merge active turn runtime state before durable fallback.
-- [ ] Treat turn deadline/resolution `SystemJob` rows as wakeup hints while runtime owns active turn authority.
-- [ ] Flush/checkpoint active turn projections at turn boundary, battle start handoff, explicit checkpoint, upgrade, or finalization.
-- [ ] Drive `sync_session_turn` below 5B average instructions, then below 1B if the heap turn aggregate behaves like the battle runtime.
-- [ ] Drive `submit_move_intent` below 5B average instructions by moving active turn intent/idempotency/event state out of per-submit stable writes.
+- [x] Re-plan Gate 5 around hard `0.3B-0.6B` targets after subagent review. Decision: micro-cuts are now insufficient; remaining hot endpoints must follow the battle-runtime pattern by removing stable command/event/session/movement/job/town/resource live writes from hot paths.
+
+#### Gate 5 Hard Target Replan
+
+Current measured state from `20260519-sync-income-reserved-event-gate-j`:
+
+| endpoint | current avg | hard target | required shape |
+| --- | ---: | ---: | --- |
+| `submit_move_intent` | `11.2538B` | `0.3B-0.6B` | pure `SessionTurnRuntime` mutation |
+| `sync_session_turn` | `11.4681B` | `0.3B-0.6B` | runtime resolver and turn advance, durable flush only at boundaries |
+| `submit_build_town_structure` | `16.9975B` | `0.3B-0.6B` | `TownRuntime` plus runtime resource mutation |
+| `submit_recruit_units` | `12.5294B` | `0.3B-0.6B` | `TownRuntime` garrison/pool mutation |
+| `get_visible_objects`, `get_champion_view`, `get_town_view`, `get_visible_map_chunks` | `3.5B-5.0B` | `0.3B-0.8B` | runtime projection caches plus durable fallback |
+
+- [ ] Gate 5A: create/adopt `SessionTurnRuntime` at session start and every turn advance, with participant auth, champion snapshots, runtime occupancy/contact indexes, ready set, deadline/closing hints, and pre-reserved event sequence block before any hot command runs.
+- [ ] Gate 5B: make fresh `submit_move_intent` a pure runtime command: no `sessions.load_session`, no `champions.load_champion`, no `SystemJob` guard scan, no durable `MovementIntent`, no durable event/session update, and no stable occupancy/blocker reads. Target `0.3B-0.6B`.
+- [ ] Gate 5C: make fresh `sync_session_turn` use runtime command receipts/events and runtime movement intents/snapshots/partial cursor; stop durable `GameCommand`, `GameEvent`, `MovementIntent`, `MovementSnapshot`, and `CommandEffect` writes on the active path. Target below `4B`.
+- [ ] Gate 5D: move movement resolver mutation of champion position/status, occupancy, visibility, object visits/captures, known objects, participant resources, income summaries, and resource ledgers into runtime deltas. Target `sync_session_turn` below `1.5B`.
+- [ ] Gate 5E: make turn advance runtime-owned: next runtime turn, deadline, ready state, and job/deadline hints live in heap; durable `GameSession`, `GameParticipant`, and `SystemJob` rows flush/checkpoint later. Target `sync_session_turn` `0.6B-0.9B`.
+- [ ] Gate 5F: make movement battle/town/neutral contact runtime-first so sync does not create full durable battle stacks/occupancy/obstacles or battle-start effects. Target `sync_session_turn` `0.3B-0.6B` average, including contact calls.
+- [ ] Gate 5G: implement runtime query merge/caches for `preview_move_path`, `get_game_view`, `get_session`, `get_my_participant`, `get_my_champions`, `get_champion_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_object_view`, `get_events_after`, and command status so active runtime state always wins over stale durable rows.
+- [ ] Gate 5H: add `flush_barrier(reason)` for `TurnAdvance`, `BattleHandoff`, `Upgrade`, `RuntimeEviction`, and `StrongRead`, with idempotent durable projection of commands/events/intents/snapshots/champions/occupancy/visibility/objects/resources/jobs.
+
+### 9. Gate 6: Town/Economy Runtime And Projection
+
+- [ ] Add `TownRuntime`/`TownProjection` keyed by `(session_id, town_id)` with buildings, recruit pools, garrison, tavern offers/growth, and last command metadata; hydrate once from rows and snapshot/restore on upgrade.
+- [ ] Make `preview_build_town_structure`, `preview_recruit_units`, `submit_build_town_structure`, and `submit_recruit_units` read/mutate runtime town/resource projection first, with durable fallback only when no runtime exists.
+- [ ] Move town command receipts/events/resource deltas into `SessionTurnRuntime`; defer `GameCommand`, `GameEvent`, `CommandEffect`, `ResourceLedgerEntry`, `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` writes to flush.
+- [ ] Make `get_town_view` render runtime buildings/pools/garrison first and durable rows only as fallback. Target `get_town_view` below `0.8B`, then `0.3B-0.6B` if projection caching works.
+- [ ] Drive `submit_build_town_structure` and `submit_recruit_units` toward `0.3B-0.6B` average; do not accept `2B+` as final.
 
 ## Expected Outcome
 

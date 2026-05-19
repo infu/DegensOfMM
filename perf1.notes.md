@@ -2350,3 +2350,40 @@ Measured delta versus `20260519-lobby-new-events-gate-j`:
 Decision:
 
 - Keep this cut. It is a small write-amplification reduction in the town bridge path and preserves event replay fallback behavior.
+
+## Checkpoint: Cached Not-Due Sync Fast Path
+
+Added a narrow cache-only fast path for `sync_session_turn` before durable session loading. It fires only when:
+
+- the caller/session pair is already in the active-session caller cache;
+- `now_ms` is before the cached session deadline;
+- the active `SessionTurnRuntime` exists for that session/turn;
+- the runtime ready set is empty.
+
+In that case all-ready is impossible, so the endpoint can return the existing in-memory `turn_not_due` command response without loading the durable session. Any missing cache, missing runtime, ready participant, or due/after-deadline call falls back to the existing durable path. `submit_move_intent` now remembers its active session caller context after a successful runtime-backed submit, which seeds the immediate retry case.
+
+Verified:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-sync-not-due-cache-gate-j` passed in `227.73s`.
+
+Measured delta versus `20260519-town-batch-events-gate-j`:
+
+| metric | town batch events | cached not-due sync | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 309.9352B | 305.7282B | -1.4% |
+| scenario cycles | 0.4093T | 0.4051T | -1.0% |
+| `sync_session_turn` avg | 12.0021B | 11.6196B | -3.2% |
+| `submit_move_intent` avg | 11.2569B | 11.2527B | flat |
+| `sessions.load_session` calls | 20 | 18 | -10.0% |
+
+Per-call confirmation:
+
+- `sync_session_turn` sequence 81 moved to `55,179` instructions with no repo ops.
+- `sync_session_turn` sequence 215 moved to `55,782` instructions with no repo ops.
+- Other sync calls still loaded durable session state, as intended.
+
+Decision:
+
+- Keep this cut. It is deliberately narrow and avoids the stale-session hazards seen in the earlier broad movement cache experiment.

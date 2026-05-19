@@ -80,6 +80,13 @@ pub(crate) fn require_cached_active_session_caller(
     Ok(context)
 }
 
+pub(crate) fn cached_active_session_caller_context(
+    caller: CandidPrincipal,
+    session_id: &str,
+) -> Option<SessionCallerContext> {
+    cached_active_session_caller(&caller.to_text(), session_id)
+}
+
 pub(crate) fn remember_active_session_caller(
     caller: CandidPrincipal,
     context: &SessionCallerContext,

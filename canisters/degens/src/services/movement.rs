@@ -171,7 +171,7 @@ pub(crate) fn submit_move_intent(
         intent.id(),
         path.len()
     );
-    session_turn_runtime::with_runtime_mut(
+    let response = session_turn_runtime::with_runtime_mut(
         &canonical_session_id,
         context.session.current_turn,
         |runtime| {
@@ -257,7 +257,9 @@ pub(crate) fn submit_move_intent(
             "active turn runtime was not available",
             true,
         )
-    })?
+    })??;
+    session_context::remember_active_session_caller(caller, &context);
+    Ok(response)
 }
 
 fn ensure_session_turn_runtime(
@@ -482,11 +484,26 @@ pub(crate) fn sync_session_turn(
     now_ms: u64,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let payload_json = format!(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)
     );
+    if let Some(context) =
+        session_context::cached_active_session_caller_context(caller, &session_id)
+    {
+        if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
+            && runtime_has_no_ready_participants(&context.session)
+        {
+            return Ok(sync_turn_not_due_response(
+                caller,
+                &context,
+                &client_nonce,
+                &payload_json,
+            ));
+        }
+    }
+
+    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
         && runtime_has_no_ready_participants(&context.session)
     {

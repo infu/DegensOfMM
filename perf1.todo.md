@@ -108,6 +108,21 @@ Expected cuts by gate:
 | Gate 3 | active battle command receipts and battle events live in runtime, with durable flush/merge APIs | batch `GameSession.next_event_seq` or move active sequence into runtime |
 | Gate 4 | battle rule CPU/data-structure pass | action-specific validation, indexed runtime occupancy, no unnecessary reachability BFS |
 
+## Codebase Reality Check
+
+Re-reading the canister code confirms the direction, but tightens the implementation shape:
+
+| code path | current behavior | plan impact |
+| --- | --- | --- |
+| `submit_battle_action` | loads the `Battle` row, creates/updates `GameCommand`, scans applying commands, applies due timeouts, loads full tactical rows, persists tactical diffs, fans out events, reloads session, recomputes readiness, schedules jobs, updates command complete | phase tracing should wrap these exact blocks; do not spend time on generic tracing before these are visible |
+| `battle_rows::load_battle_state*` / `persist_battle_state` | repeatedly converts row sets to `domm_game::BattleState`, then updates `Battle`, changed `BattleStack`s, and occupancy diffs | Gate 1 is valid and should remove this from the active submit path |
+| `recompute_battle_round_readiness_and_schedule` | reloads full battle state, reads readiness rows, writes auto-ready rows, and may call full legal-action generation per participant | Gate 2 must replace readiness with runtime state, not just move rows |
+| event fanout | writes public and participant `GameEvent`s and updates `GameSession.next_event_seq` once per audience event | Gate 3 needs a heap event sequence allocator or batched reservation to avoid collisions |
+| command status | `get_command_status` and nonce lookup read durable `GameCommand` rows | Gate 3 must merge active runtime command receipts, not only `get_events_after` |
+| aftermath | `apply_resolved_battle_aftermath` reads `Battle` and survivor `BattleStack` rows | runtime finalization must project survivor rows before calling existing aftermath or rewrite aftermath to consume runtime survivors directly |
+
+Therefore the first runtime cannot be only `domm_game::BattleState`. It should wrap `BattleState` with the active metadata that the canister currently stores in several durable tables: command receipts, active events, participant audiences, readiness, deadlines, and a session event sequence cursor.
+
 Secondary methods to watch:
 
 | method | why |
@@ -184,23 +199,29 @@ When a todo item is completed:
 - [x] Set explicit performance gates in `perf1.todo.md` from the 26.9860B baseline toward the 0.3B normal target.
 - [x] Create `perf1.notes.md` as the running notes and decision log for this work.
 - [x] Re-evaluate the whole plan and update it so it can plausibly reach the 0.3B target instead of stopping at a partial aggregate rewrite.
+- [x] Re-evaluate the updated plan against the actual battle, event, command-status, readiness, and aftermath code paths.
 - [ ] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
 - [ ] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
 - [ ] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
+- [ ] Document the active runtime merge contract for `get_battle_state`, `sync_battle`, `end_battle_turn`, `get_events_after`, `get_command_status`, `get_command_status_by_nonce`, timeout jobs, round jobs, and aftermath.
 
 ### 1. Active Battle Runtime Authority
 
-- [ ] Define the first `BattleRuntime` as `domm_game::BattleState` plus runtime metadata only where needed. Avoid a new rules model until measurement requires it.
+- [ ] Define the first `BattleRuntime` as `domm_game::BattleState` plus canister runtime metadata: session id, battle id, participant audience keys, command receipts, active event buffer, readiness set, deadline state, and session event sequence cursor.
 - [ ] Add a heap active battle store keyed by battle id.
 - [ ] Add `pre_upgrade`/`post_upgrade` serialization for active battles using a dedicated memory slot that does not collide with IcyDB memory IDs.
+- [ ] Create/adopt active runtime during battle start paths before the first player action, with compatibility hydration from existing row-backed active battles.
 - [ ] Implement loader compatibility so existing row-backed battles can be converted into `BattleRuntime` during migration or first access.
 - [ ] Make `get_battle_state` read active runtime directly and fall back to legacy rows only when runtime is absent.
+- [ ] Decide whether active runtime events use a heap session event sequence overlay or a stable batch reservation; prevent collisions with stable `GameSession.next_event_seq`.
 - [ ] Implement battle finalization that projects resolved runtime state into durable strategic rows/history/events needed after the battle is over.
+- [ ] Ensure finalization either projects survivor `BattleStack` rows before calling existing aftermath or rewrites aftermath to read survivors from runtime.
 
 ### 2. Gate 1: Remove Tactical Child-Row Hot Writes
 
 - [ ] Change `submit_battle_action` to load/mutate/commit one heap `BattleRuntime` aggregate instead of loading/diffing `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows repeatedly.
 - [ ] Stop persisting active tactical changes to `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows per action.
+- [ ] Resolve `auto:enemy` target normalization from active runtime instead of loading full row-backed state.
 - [ ] Reuse the already-mutated aggregate for round readiness instead of reloading battle child state.
 - [ ] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
 - [ ] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
@@ -211,6 +232,8 @@ When a todo item is completed:
 - [ ] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
 - [ ] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
 - [ ] Stop updating the `Battle` row header for active round/active stack/deadline changes; update the durable `Battle` row at start/end or explicit projection points.
+- [ ] Replace readiness recompute with runtime alive/acted tracking; avoid `legal_actions_for_stack` during readiness except for a measured edge case.
+- [ ] Move `end_battle_turn` onto runtime readiness so manual readiness does not keep `BattleParticipantRoundReady` hot.
 - [ ] Keep enough scheduling behavior to make timeout/round advancement work from heap state.
 - [ ] Run focused Gate K/L and decide whether Gate 2 cleared `<3B`.
 
@@ -218,7 +241,9 @@ When a todo item is completed:
 
 - [ ] Add active battle command receipt/idempotency storage inside `BattleRuntime` for battle actions.
 - [ ] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
+- [ ] Make `get_command_status` and `get_command_status_by_nonce` merge active runtime command receipts before falling back to durable `GameCommand` rows.
 - [ ] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
+- [ ] Precompute participant audience keys in runtime so event fanout does not load champion/town owners per event.
 - [ ] Flush or project runtime command/event data to durable rows at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
 - [ ] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands.
 - [ ] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`.

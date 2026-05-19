@@ -459,62 +459,6 @@ pub(crate) fn append_public_event(
     )
 }
 
-pub(crate) fn append_new_public_event(
-    session: &mut GameSession,
-    command_id: Id<GameCommand>,
-    event_key: String,
-    event_type: String,
-    subject_kind: Option<String>,
-    subject_id_text: Option<String>,
-    payload_json: String,
-) -> Result<ApiEventView, ApiError> {
-    append_new_event_for_audience(
-        session,
-        command_id,
-        event_key,
-        "public".to_string(),
-        event_type,
-        subject_kind,
-        subject_id_text,
-        payload_json,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn append_new_event_for_audience(
-    session: &mut GameSession,
-    command_id: Id<GameCommand>,
-    event_key: String,
-    audience_key: String,
-    event_type: String,
-    subject_kind: Option<String>,
-    subject_id_text: Option<String>,
-    payload_json: String,
-) -> Result<ApiEventView, ApiError> {
-    let lookup_key = event_key.clone();
-    match create_event_for_audience(
-        session,
-        command_id,
-        event_key,
-        audience_key,
-        event_type,
-        subject_kind,
-        subject_id_text,
-        payload_json,
-    ) {
-        Ok(event) => Ok(event),
-        Err(error) => {
-            if let Some(event) =
-                commands_events_effects::find_event_by_key(session.id(), &lookup_key)?
-            {
-                Ok(api_event_view(event))
-            } else {
-                Err(error)
-            }
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn append_event_for_audience(
     session: &mut GameSession,

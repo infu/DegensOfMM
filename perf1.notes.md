@@ -2387,3 +2387,45 @@ Per-call confirmation:
 Decision:
 
 - Keep this cut. It is deliberately narrow and avoids the stale-session hazards seen in the earlier broad movement cache experiment.
+
+## Checkpoint: Successful Sync Turn-Advance Write Cut
+
+Tightened the successful `sync_session_turn` path:
+
+- removed the post-movement `sessions.load_participant` reload when movement completed without events;
+- reserved the final `session_turn_synced` event sequence before the turn-advance `sessions.update_session`;
+- created the final sync event with that reserved sequence, with lookup/update fallback only for recovered conflicts;
+- removed the now-unused generic `append_new_public_event` helpers from `command_response.rs`.
+
+Reasoning:
+
+- If `resolve_pending_movement` produced movement/object events, the endpoint already yields before income and turn advancement.
+- The full turn-advance path therefore does not need a second durable participant read; `require_active_session_caller` already loaded the caller participant at command start.
+- The final sync event was doing a second session update only to advance `next_event_seq`. Reserving the sequence in the same session update that advances `current_turn` preserves normal event ordering and removes one write from the hot success path.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Focused Gate J `20260519-sync-final-reserved-event-gate-j` passed in `696.40s`.
+
+Measured delta versus `20260519-sync-not-due-cache-gate-j`:
+
+| metric | cached not-due sync | final reserved event | change |
+| --- | ---: | ---: | ---: |
+| update-only Gate J instructions | 236.5752B | 235.4024B | -0.5% |
+| `sync_session_turn` avg | 11.6196B | 11.5131B | -0.9% |
+| successful turn-advance sync call | 23.1070B | 21.9392B | -5.1% |
+| `sessions.update_session` calls | 16 | 15 | -6.3% |
+| `sessions.load_participant` calls | 1 | 0 | -100.0% |
+| `sessions.update_session` instructions | 7.6311B | 7.1577B | -0.4734B |
+
+Caveat:
+
+- The direct run wrote the query log through the same `tee` target used for stdout, so query instruction fields were blank in `run.json`/`summary.json`. Do not compare full scenario instruction totals from this artifact. Use update-only totals for this checkpoint, and run future direct gates with `> "$log" 2>&1` or the benchmark script's per-gate log handling instead of `tee`.
+
+Decision:
+
+- Keep this cut. It removes two stable operations from the normal successful sync path and does not change the movement partial, object-event, income, or recovered-event semantics.

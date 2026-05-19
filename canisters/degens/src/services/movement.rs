@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
-    Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
-    NeutralArmy, SystemJob, Town, UnitDefinition, WorldObject,
+    Battle, BattleStack, Champion, GameCommand, GameEvent, GameParticipant, GameSession,
+    MovementIntent, NeutralArmy, SystemJob, Town, UnitDefinition, WorldObject,
 };
 use domm_game::{
     ApiError, CommandPhase, CommandResponse, CommandResult, CommandStatus, MoveCoord,
@@ -556,9 +556,6 @@ pub(crate) fn sync_session_turn(
             changed_subjects,
         );
     }
-    if let Some(updated_participant) = sessions::load_participant(context.participant.id())? {
-        context.participant = updated_participant;
-    }
 
     let income_turn = context.session.current_turn;
     let mut participant = context.participant.clone();
@@ -587,6 +584,8 @@ pub(crate) fn sync_session_turn(
     context.session.turn_deadline_at = turn_deadline();
     context.session.last_command_id = Some(command.id);
     economy_expansion::materialize_weekly_economy(&context.session, command.id())?;
+    let final_event_seq = context.session.next_event_seq;
+    context.session.next_event_seq = final_event_seq.saturating_add(1);
     context.session = sessions::update_session(context.session)?;
     changed_subjects.push(command_response::changed(
         "session",
@@ -596,9 +595,10 @@ pub(crate) fn sync_session_turn(
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
-    let event = command_response::append_new_public_event(
+    let event = append_reserved_public_event(
         &mut context.session,
         command.id(),
+        final_event_seq,
         format!("sync_turn:{session_id_text}:{current_turn}"),
         "session_turn_synced".to_string(),
         Some("session".to_string()),
@@ -3481,6 +3481,62 @@ fn materialize_income(
         format!(r#"{{"gold":{gold_income}}}"#),
     )
     .map(|event| vec![event])
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_reserved_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_seq: u64,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    match commands_events_effects::create_game_event(
+        session.id(),
+        Some(command_id),
+        None,
+        session.current_turn,
+        event_seq,
+        event_key.clone(),
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    ) {
+        Ok(event) => Ok(api_event_view(event)),
+        Err(error) => {
+            if let Some(event) =
+                commands_events_effects::find_event_by_key(session.id(), &event_key)?
+            {
+                if session.next_event_seq <= event.event_seq {
+                    session.next_event_seq = event.event_seq.saturating_add(1);
+                    *session = sessions::update_session(session.clone())?;
+                }
+                Ok(api_event_view(event))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn api_event_view(event: GameEvent) -> domm_game::ApiEventView {
+    domm_game::ApiEventView {
+        session_id: Id::<GameSession>::from_key(event.session_id).to_string(),
+        event_seq: event.event_seq,
+        event_key: event.event_key,
+        audience_key: event.audience_key,
+        turn_number: event.turn_number,
+        event_type: event.event_type,
+        subject_kind: event.subject_kind,
+        subject_id_text: event.subject_id_text,
+        payload: Some(event.payload_json),
+        redacted: false,
+    }
 }
 
 fn apply_reward_json(

@@ -19,6 +19,7 @@ use crate::repos::{
 use super::{
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
+    session_turn_runtime,
 };
 
 pub(crate) fn get_tavern_offers(
@@ -443,7 +444,9 @@ fn apply_hire_command(
                 0,
             )?;
             champion.last_command_id = Some(command.id().key());
-            champions_artifacts::update_champion(champion)?
+            let champion = champions_artifacts::update_champion(champion)?;
+            session_turn_runtime::mirror_champion_update(&champion);
+            champion
         }
     };
     context.participant =

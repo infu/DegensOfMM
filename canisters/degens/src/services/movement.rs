@@ -76,7 +76,7 @@ pub(crate) fn submit_move_intent(
     _now_ms: u64,
 ) -> Result<CommandResponse, ApiError> {
     validate_path_limit(&path)?;
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context = require_runtime_current_active_session_caller(caller, &session_id)?;
     let champion = resolve_owned_champion(&context, &champion_id)?;
     validate_path_bounds(&context.session, &path)?;
     validate_path_adjacency(champion.x, champion.y, &path)?;
@@ -280,10 +280,39 @@ fn ensure_session_turn_runtime(
         timestamp_to_u64(context.session.turn_deadline_at),
         u64::from(context.session.turn_duration_ms),
     );
+    runtime.session = Some(context.session.clone());
     hydrate_runtime_pending_movement_intents(&context.session, &mut runtime)?;
     runtime.upsert_participant(participant);
     session_turn_runtime::insert_runtime(runtime);
     Ok(())
+}
+
+fn require_runtime_current_active_session_caller(
+    caller: CandidPrincipal,
+    session_id: &str,
+) -> Result<session_context::SessionCallerContext, ApiError> {
+    if let Some(context) = session_context::cached_active_session_caller_context(caller, session_id)
+    {
+        let context_session_id = context.session.id().to_string();
+        if session_turn_runtime::latest_turn_number_for_session(&context_session_id)
+            == Some(context.session.current_turn)
+        {
+            return Ok(context);
+        }
+    }
+    if let Some((session, participant)) =
+        session_turn_runtime::caller_context_rows(&caller.to_text(), session_id)
+    {
+        let context = session_context::SessionCallerContext {
+            session,
+            participant,
+        };
+        session_context::remember_active_session_caller(caller, &context);
+        return Ok(context);
+    }
+    let context = session_context::require_active_session_caller(caller, session_id)?;
+    session_context::remember_active_session_caller(caller, &context);
+    Ok(context)
 }
 
 fn hydrate_runtime_pending_movement_intents(
@@ -336,6 +365,7 @@ fn session_turn_participant(
         principal_text: None,
         slot_index: context.participant.slot_index,
         status: context.participant.status.clone(),
+        participant: Some(context.participant.clone()),
     }
 }
 
@@ -544,7 +574,7 @@ pub(crate) fn sync_session_turn(
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
         reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
-        return command_response::apply_command(
+        let response = command_response::apply_command(
             caller,
             &context,
             command,
@@ -552,7 +582,9 @@ pub(crate) fn sync_session_turn(
             command_response::result_json("sync_session_turn", context.session.current_turn),
             events,
             changed_subjects,
-        );
+        )?;
+        session_context::remember_active_session_caller(caller, &context);
+        return Ok(response);
     }
 
     let income_turn = context.session.current_turn;
@@ -632,7 +664,7 @@ pub(crate) fn sync_session_turn(
     ));
     scenario_progress::schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
 
-    command_response::apply_command(
+    let response = command_response::apply_command(
         caller,
         &context,
         command,
@@ -640,7 +672,9 @@ pub(crate) fn sync_session_turn(
         command_response::result_json("sync_session_turn", context.session.current_turn),
         events,
         changed_subjects,
-    )
+    )?;
+    session_context::remember_active_session_caller(caller, &context);
+    Ok(response)
 }
 
 fn sync_turn_not_due_response(
@@ -3858,6 +3892,9 @@ fn resolve_owned_champion(
     context: &session_context::SessionCallerContext,
     champion_id: &str,
 ) -> Result<Champion, ApiError> {
+    if let Some(champion) = resolve_owned_champion_from_runtime(context, champion_id)? {
+        return Ok(champion);
+    }
     let champion = resolve_champion(&context.session, champion_id)?;
     if champion.participant_id != context.participant.id().key() {
         return Err(public_error(
@@ -3874,6 +3911,46 @@ fn resolve_owned_champion(
         ));
     }
     Ok(champion)
+}
+
+fn resolve_owned_champion_from_runtime(
+    context: &session_context::SessionCallerContext,
+    champion_id: &str,
+) -> Result<Option<Champion>, ApiError> {
+    if Ulid::from_str(champion_id).is_err() {
+        return Ok(None);
+    }
+    let session_id = context.session.id().to_string();
+    let champion =
+        session_turn_runtime::with_runtime(&session_id, context.session.current_turn, |runtime| {
+            runtime
+                .champion_snapshots
+                .iter()
+                .find(|champion| champion.id().to_string() == champion_id)
+                .cloned()
+        })
+        .flatten();
+    let Some(champion) = champion else {
+        return Ok(None);
+    };
+    if champion.session_id != context.session.id().key() {
+        return Ok(None);
+    }
+    if champion.participant_id != context.participant.id().key() {
+        return Err(public_error(
+            "not_champion_owner",
+            "caller does not own this champion",
+            false,
+        ));
+    }
+    if champion.status != "active" {
+        return Err(public_error(
+            "champion_not_active",
+            "champion is not active for movement",
+            false,
+        ));
+    }
+    Ok(Some(champion))
 }
 
 fn resolve_champion(

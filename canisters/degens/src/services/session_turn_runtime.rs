@@ -27,6 +27,7 @@ pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 pub(crate) struct SessionTurnRuntime {
     pub session_id: String,
     pub turn_number: u32,
+    pub session: Option<GameSession>,
     pub turn_started_at_ms: u64,
     pub turn_deadline_at_ms: u64,
     pub turn_duration_ms: u64,
@@ -61,6 +62,7 @@ impl SessionTurnRuntime {
         Self {
             session_id: session_id.into(),
             turn_number,
+            session: None,
             turn_started_at_ms,
             turn_deadline_at_ms,
             turn_duration_ms,
@@ -150,6 +152,19 @@ impl SessionTurnRuntime {
         self.mark_dirty();
     }
 
+    pub(crate) fn remove_occupancy_for_occupant(&mut self, layer: &str, occupant_id_text: &str) {
+        let before = self.occupancy_index.len();
+        self.occupancy_index.retain(|existing| {
+            !(existing.layer == layer
+                && existing.occupant_kind == "champion"
+                && existing.occupant_id_text == occupant_id_text)
+        });
+        if self.occupancy_index.len() != before {
+            self.dirty.occupancy_index = true;
+            self.mark_dirty();
+        }
+    }
+
     pub(crate) fn upsert_contact_cell(&mut self, cell: RuntimeContactCell) {
         if let Some(existing) = self.contact_index.iter_mut().find(|existing| {
             existing.x == cell.x
@@ -224,6 +239,7 @@ pub(crate) struct SessionTurnParticipant {
     pub principal_text: Option<String>,
     pub slot_index: u8,
     pub status: String,
+    pub participant: Option<GameParticipant>,
 }
 
 #[derive(Clone)]
@@ -426,6 +442,70 @@ pub(crate) fn active_runtime_count() -> usize {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().len())
 }
 
+pub(crate) fn latest_turn_number_for_session(session_id: &str) -> Option<u32> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .map(|runtime| runtime.turn_number)
+            .max()
+    })
+}
+
+pub(crate) fn caller_context_rows(
+    caller_text: &str,
+    session_id: &str,
+) -> Option<(GameSession, GameParticipant)> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                let session = runtime.session.clone()?;
+                if session.state != "active" {
+                    return None;
+                }
+                let participant = runtime.participants.iter().find(|participant| {
+                    participant.status == "active"
+                        && participant.principal_text.as_deref() == Some(caller_text)
+                })?;
+                participant.participant.clone().map(|row| (session, row))
+            })
+    })
+}
+
+pub(crate) fn mirror_champion_update(champion: &Champion) {
+    let session_id = Id::<GameSession>::from_key(champion.session_id).to_string();
+    let champion_id = champion.id().to_string();
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        for runtime in runtimes
+            .values_mut()
+            .filter(|runtime| runtime.session_id == session_id)
+        {
+            runtime.upsert_champion_snapshot(champion.clone());
+            if matches!(champion.status.as_str(), "active" | "in_battle") {
+                runtime.upsert_occupancy_for_occupant(RuntimeOccupancyCell {
+                    x: champion.x,
+                    y: champion.y,
+                    layer: "champion".to_string(),
+                    occupant_kind: "champion".to_string(),
+                    occupant_id_text: champion_id.clone(),
+                    owner_participant_id: Some(
+                        Id::<GameParticipant>::from_key(champion.participant_id).to_string(),
+                    ),
+                    blocking: champion.status == "active",
+                });
+            } else {
+                runtime.remove_occupancy_for_occupant("champion", &champion_id);
+            }
+        }
+    });
+}
+
 pub(crate) fn insert_runtime(runtime: SessionTurnRuntime) -> Option<SessionTurnRuntime> {
     ACTIVE_SESSION_TURN_RUNTIMES
         .with(|runtimes| runtimes.borrow_mut().insert(runtime.key(), runtime))
@@ -477,6 +557,7 @@ pub(crate) fn prepare_active_turn_runtime(
         timestamp_to_u64(session.turn_deadline_at),
         u64::from(session.turn_duration_ms),
     );
+    runtime.session = Some(session.clone());
     runtime.event_seq_block = Some(event_seq_block);
     hydrate_active_turn_rows(session, &mut runtime)?;
     Ok(Some(runtime))
@@ -546,6 +627,7 @@ fn hydrate_runtime_participants(
             principal_text,
             slot_index: participant.slot_index,
             status: participant.status.clone(),
+            participant: Some(participant.clone()),
         });
     }
     Ok(())

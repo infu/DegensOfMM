@@ -13,6 +13,7 @@ use crate::repos::{
 use super::{
     command_response, scenario_progress,
     session_context::{self, public_error},
+    session_turn_runtime,
 };
 
 pub(crate) fn apply_resolved_battle_aftermath(
@@ -134,6 +135,7 @@ fn apply_neutral_aftermath(
     champion.experience = champion.experience.saturating_add(250);
     champion.last_command_id = Some(command_id.key());
     champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     move_champion_occupancy(session.id(), command_id, &champion)?;
 
     if let Some(object) =
@@ -234,6 +236,7 @@ fn apply_town_aftermath(
     champion.chunk_y = chunk_coord(session, champion.y);
     champion.last_command_id = Some(command_id.key());
     champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     move_champion_occupancy(session.id(), command_id, &champion)?;
 
     let event = command_response::append_public_event(
@@ -304,6 +307,7 @@ fn apply_champion_aftermath(
     defeated.defeated_turn = battle.created_turn;
     defeated.last_command_id = Some(command_id.key());
     defeated = champions_artifacts::update_champion(defeated)?;
+    session_turn_runtime::mirror_champion_update(&defeated);
     cleanup_occupancy_by_occupant(session.id(), "champion", &defeated.id().to_string())?;
 
     let mut victor = victor;
@@ -315,6 +319,7 @@ fn apply_champion_aftermath(
     victor.chunk_y = chunk_coord(session, victor.y);
     victor.last_command_id = Some(command_id.key());
     victor = champions_artifacts::update_champion(victor)?;
+    session_turn_runtime::mirror_champion_update(&victor);
     move_champion_occupancy(session.id(), command_id, &victor)?;
     capture_artifacts(command_id, victor.id(), defeated.id())?;
 

@@ -11,6 +11,7 @@ use crate::repos::{champions_artifacts, commands_events_effects, content};
 use super::{
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
+    session_turn_runtime,
 };
 
 const SKILL_SOUR_SORCERY: &str = "sour_sorcery";
@@ -240,6 +241,7 @@ fn apply_level_choice(
     }
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     command_response::ensure_command_effect(
         context.session.id(),
         command.id(),
@@ -357,6 +359,7 @@ fn apply_spell_learning(
     )?;
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     command_response::ensure_command_effect(
         context.session.id(),
         command.id(),
@@ -465,6 +468,7 @@ fn apply_adventure_cast(
     }
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     command_response::ensure_command_effect(
         context.session.id(),
         command.id(),

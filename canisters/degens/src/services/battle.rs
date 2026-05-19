@@ -26,7 +26,7 @@ use super::{
     },
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
-    system_jobs as system_job_service,
+    session_turn_runtime, system_jobs as system_job_service,
 };
 
 const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
@@ -3027,7 +3027,8 @@ fn apply_cast_ability_command(
     champion.mana_turn = session.current_turn;
     champion.mana = available_mana - spell.mana_cost;
     champion.last_command_id = Some(command.id().key());
-    champions_artifacts::update_champion(champion)?;
+    let champion = champions_artifacts::update_champion(champion)?;
+    session_turn_runtime::mirror_champion_update(&champion);
     battle_rows::persist_battle_state(&state, command.id())?;
     command_response::ensure_command_effect(
         session.id(),

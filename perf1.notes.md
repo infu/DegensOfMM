@@ -2683,3 +2683,46 @@ Decision:
 
 - Keep this cut. It is the first Gate 5B change that attacks the hidden path-length multiplier rather than moving durable writes between submit and sync.
 - The remaining submit floor is now explicit: about `2.1B` measured repo instructions for durable session/champion/job reads plus endpoint overhead. The next safe route to `0.3B-0.6B` is runtime-auth/session/champion metadata with invalidation, and runtime job/deadline authority from Gate 5E.
+
+## Checkpoint: Runtime Context And Champion Submit Lookup
+
+Implemented a batched Gate 5B submit authority cut:
+
+- `SessionTurnRuntime` now keeps a session snapshot and full active participant rows alongside principal metadata.
+- Fresh `submit_move_intent` first resolves the caller context from active runtime/caller cache before falling back to durable `sessions.load_session` and participant lookup.
+- Movement submit now resolves owned active champions from the runtime champion snapshot before falling back to durable `champions.load_champion`.
+- Runtime champion snapshots are mirrored after known champion mutators: movement sync, champion magic, battle spell casting, battle aftermath, and tavern hire.
+- The previous unsafe job-guard shortcut remains rejected; submit still runs the durable map-turn job guard until Gate 5E owns turn/deadline/job authority.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260519-runtime-context-champion-submit-gate-j` passed in `229.22s`
+- Post-run PocketIC cleanup confirmed no leftover PocketIC/server processes.
+
+Measured delta versus Gate 5B.3 `20260519-runtime-blocker-check-gate-j`:
+
+| metric | runtime blocker check | runtime context/champion submit | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 293.0846B | 284.6370B | -2.9% |
+| `submit_move_intent` avg | 3.5293B | 0.7110B | -79.9% |
+| `submit_move_intent` avg memory | 0.0208 MB | 0.0417 MB | +0.0209 MB |
+| `sync_session_turn` avg | 12.5747B | 12.5752B | flat |
+| `sessions.load_session` calls | 18 | 15 | -3 |
+| `champions.load_champion` route summary | 3 calls | 0 calls | removed from Gate J route |
+
+Per-submit calls after the patch:
+
+| sequence | instructions | remaining measured repo ops |
+| ---: | ---: | --- |
+| 80 | 0.7223B | `system_jobs.by_session_status_due` x2 |
+| 160 | 0.7074B | `system_jobs.by_session_status_due` x2 |
+| 214 | 0.7033B | `system_jobs.by_session_status_due` x2 |
+
+Decision:
+
+- Keep this cut. `submit_move_intent` is now close to the requested `0.3B-0.6B` band and no longer pays durable session/champion/occupancy reads in the measured route.
+- Do not force the last `~0.7B -> 0.3B-0.6B` step with a local guard skip. The stale-turn regression already showed the durable job guard has real closure semantics. The next safe submit improvement is Gate 5E: runtime-owned turn/deadline/job state.
+- Immediate perf focus should move to `sync_session_turn`, which remains `12.5752B` and now dominates the movement route.

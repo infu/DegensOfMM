@@ -17,7 +17,9 @@ use domm_degens_schema::schema::{
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 use icydb::{traits::EntityValue, types::Id};
 
-use crate::repos::sessions;
+use crate::repos::{
+    champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
+};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 
@@ -32,6 +34,9 @@ pub(crate) struct SessionTurnRuntime {
     pub generation: u64,
     pub participants: Vec<SessionTurnParticipant>,
     pub ready_participants: BTreeSet<String>,
+    pub champion_snapshots: Vec<Champion>,
+    pub occupancy_index: Vec<RuntimeOccupancyCell>,
+    pub contact_index: Vec<RuntimeContactCell>,
     pub intents: Vec<RuntimeMovementIntent>,
     pub command_receipts: Vec<SessionTurnCommandReceipt>,
     pub active_events: Vec<SessionTurnEvent>,
@@ -63,6 +68,9 @@ impl SessionTurnRuntime {
             generation: 0,
             participants: Vec::new(),
             ready_participants: BTreeSet::new(),
+            champion_snapshots: Vec::new(),
+            occupancy_index: Vec::new(),
+            contact_index: Vec::new(),
             intents: Vec::new(),
             command_receipts: Vec::new(),
             active_events: Vec::new(),
@@ -91,11 +99,57 @@ impl SessionTurnRuntime {
             .iter_mut()
             .find(|existing| existing.participant_id == participant.participant_id)
         {
+            let principal_text = participant
+                .principal_text
+                .clone()
+                .or_else(|| existing.principal_text.clone());
             *existing = participant;
+            existing.principal_text = principal_text;
         } else {
             self.participants.push(participant);
         }
         self.dirty.participants = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_champion_snapshot(&mut self, champion: Champion) {
+        if let Some(existing) = self
+            .champion_snapshots
+            .iter_mut()
+            .find(|existing| existing.id() == champion.id())
+        {
+            *existing = champion;
+        } else {
+            self.champion_snapshots.push(champion);
+        }
+        self.dirty.champion_snapshots = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_occupancy_cell(&mut self, cell: RuntimeOccupancyCell) {
+        if let Some(existing) = self.occupancy_index.iter_mut().find(|existing| {
+            existing.x == cell.x && existing.y == cell.y && existing.layer == cell.layer
+        }) {
+            *existing = cell;
+        } else {
+            self.occupancy_index.push(cell);
+        }
+        self.dirty.occupancy_index = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_contact_cell(&mut self, cell: RuntimeContactCell) {
+        if let Some(existing) = self.contact_index.iter_mut().find(|existing| {
+            existing.x == cell.x
+                && existing.y == cell.y
+                && existing.subject_kind == cell.subject_kind
+                && existing.subject_id_text == cell.subject_id_text
+        }) {
+            *existing = cell;
+        } else {
+            self.contact_index.push(cell);
+        }
+        self.dirty.contact_index = true;
         self.mark_dirty();
     }
 
@@ -155,7 +209,30 @@ impl SessionTurnRuntime {
 pub(crate) struct SessionTurnParticipant {
     pub participant_id: String,
     pub player_id: String,
+    pub principal_text: Option<String>,
     pub slot_index: u8,
+    pub status: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeOccupancyCell {
+    pub x: u16,
+    pub y: u16,
+    pub layer: String,
+    pub occupant_kind: String,
+    pub occupant_id_text: String,
+    pub owner_participant_id: Option<String>,
+    pub blocking: bool,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeContactCell {
+    pub x: u16,
+    pub y: u16,
+    pub subject_kind: String,
+    pub subject_id_text: String,
+    pub owner_participant_id: Option<String>,
+    pub guarded_neutral_army_id: Option<String>,
     pub status: String,
 }
 
@@ -300,6 +377,9 @@ pub(crate) struct MovementCursor {
 pub(crate) struct SessionTurnDirtySets {
     pub participants: bool,
     pub ready: bool,
+    pub champion_snapshots: bool,
+    pub occupancy_index: bool,
+    pub contact_index: bool,
     pub intents: bool,
     pub command_receipts: bool,
     pub events: bool,
@@ -366,6 +446,210 @@ pub(crate) fn with_runtime_mut<R>(
         let mut runtimes = runtimes.borrow_mut();
         runtimes.get_mut(&key).map(mutate)
     })
+}
+
+pub(crate) fn prepare_active_turn_runtime(
+    session: &mut GameSession,
+) -> Result<Option<SessionTurnRuntime>, ApiError> {
+    if session.state != "active"
+        || contains_runtime(&session.id().to_string(), session.current_turn)
+    {
+        return Ok(None);
+    }
+
+    let event_seq_block = reserve_event_seq_block_in_session(session)?;
+    let mut runtime = SessionTurnRuntime::new(
+        session.id().to_string(),
+        session.current_turn,
+        timestamp_to_u64(session.turn_started_at),
+        timestamp_to_u64(session.turn_deadline_at),
+        u64::from(session.turn_duration_ms),
+    );
+    runtime.event_seq_block = Some(event_seq_block);
+    hydrate_active_turn_rows(session, &mut runtime)?;
+    Ok(Some(runtime))
+}
+
+pub(crate) fn ensure_active_turn_runtime(session: &mut GameSession) -> Result<(), ApiError> {
+    let Some(runtime) = prepare_active_turn_runtime(session)? else {
+        return Ok(());
+    };
+    *session = sessions::update_session(session.clone())?;
+    insert_runtime(runtime);
+    Ok(())
+}
+
+fn reserve_event_seq_block_in_session(
+    session: &mut GameSession,
+) -> Result<SessionTurnEventSeqBlock, ApiError> {
+    let start = session.next_event_seq;
+    let end = start
+        .checked_add(SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE)
+        .ok_or_else(|| {
+            ApiError::new(
+                "event_sequence_exhausted",
+                "session event sequence cannot reserve another active turn block",
+                true,
+            )
+        })?;
+    session.next_event_seq = end;
+    Ok(SessionTurnEventSeqBlock {
+        next_event_seq: start,
+        exclusive_end_event_seq: end,
+    })
+}
+
+fn hydrate_active_turn_rows(
+    session: &GameSession,
+    runtime: &mut SessionTurnRuntime,
+) -> Result<(), ApiError> {
+    let participants = sessions::page_participants_by_session_status(
+        session.id(),
+        "active",
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items;
+    hydrate_runtime_participants(runtime, &participants)?;
+    hydrate_runtime_ready_rows(session, runtime)?;
+    hydrate_runtime_champions_and_occupancy(session, runtime, &participants)?;
+    hydrate_runtime_town_contacts(session, runtime)?;
+    hydrate_runtime_world_object_contacts(session, runtime)?;
+    Ok(())
+}
+
+fn hydrate_runtime_participants(
+    runtime: &mut SessionTurnRuntime,
+    participants: &[GameParticipant],
+) -> Result<(), ApiError> {
+    for participant in participants {
+        let principal_text = players::load_player_account(Id::from_key(participant.player_id))?
+            .map(|player| player.account_principal.to_string());
+        runtime.upsert_participant(SessionTurnParticipant {
+            participant_id: participant.id().to_string(),
+            player_id: Id::<domm_degens_schema::schema::PlayerAccount>::from_key(
+                participant.player_id,
+            )
+            .to_string(),
+            principal_text,
+            slot_index: participant.slot_index,
+            status: participant.status.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn hydrate_runtime_ready_rows(
+    session: &GameSession,
+    runtime: &mut SessionTurnRuntime,
+) -> Result<(), ApiError> {
+    for ready in turn_ready::page_turn_ready_by_session_turn(
+        session.id(),
+        session.current_turn,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    {
+        runtime.mark_ready(Id::<GameParticipant>::from_key(ready.participant_id).to_string());
+    }
+    Ok(())
+}
+
+fn hydrate_runtime_champions_and_occupancy(
+    session: &GameSession,
+    runtime: &mut SessionTurnRuntime,
+    participants: &[GameParticipant],
+) -> Result<(), ApiError> {
+    for participant in participants {
+        for status in ["active", "in_battle"] {
+            for champion in champions_artifacts::list_champions_by_session_owner_status(
+                session.id(),
+                participant.id(),
+                status,
+                domm_game::MAX_LIST_LIMIT,
+            )? {
+                let champion_id = champion.id().to_string();
+                runtime.upsert_occupancy_cell(RuntimeOccupancyCell {
+                    x: champion.x,
+                    y: champion.y,
+                    layer: "champion".to_string(),
+                    occupant_kind: "champion".to_string(),
+                    occupant_id_text: champion_id,
+                    owner_participant_id: Some(participant.id().to_string()),
+                    blocking: champion.status == "active",
+                });
+                runtime.upsert_champion_snapshot(champion);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn hydrate_runtime_town_contacts(
+    session: &GameSession,
+    runtime: &mut SessionTurnRuntime,
+) -> Result<(), ApiError> {
+    for town in towns::page_towns_by_session_status(
+        session.id(),
+        "active",
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    {
+        let town_id = town.id().to_string();
+        let owner_participant_id = town
+            .owner_participant_id
+            .map(|id| Id::<GameParticipant>::from_key(id).to_string());
+        runtime.upsert_occupancy_cell(RuntimeOccupancyCell {
+            x: town.x,
+            y: town.y,
+            layer: "town".to_string(),
+            occupant_kind: "town".to_string(),
+            occupant_id_text: town_id.clone(),
+            owner_participant_id: owner_participant_id.clone(),
+            blocking: true,
+        });
+        runtime.upsert_contact_cell(RuntimeContactCell {
+            x: town.x,
+            y: town.y,
+            subject_kind: "town".to_string(),
+            subject_id_text: town_id,
+            owner_participant_id,
+            guarded_neutral_army_id: None,
+            status: town.status.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn hydrate_runtime_world_object_contacts(
+    session: &GameSession,
+    runtime: &mut SessionTurnRuntime,
+) -> Result<(), ApiError> {
+    for object in map_visibility_occupancy::page_world_objects_by_session(
+        session.id(),
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?
+    .items
+    {
+        runtime.upsert_contact_cell(RuntimeContactCell {
+            x: object.x,
+            y: object.y,
+            subject_kind: "world_object".to_string(),
+            subject_id_text: object.id().to_string(),
+            owner_participant_id: object
+                .owner_participant_id
+                .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
+            guarded_neutral_army_id: object
+                .guarded_neutral_army_id
+                .map(|id| Id::<domm_degens_schema::schema::NeutralArmy>::from_key(id).to_string()),
+            status: object.state.clone(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) fn reserve_session_event_seq(
@@ -475,6 +759,10 @@ pub(crate) fn restore_from_upgrade(snapshot: SessionTurnRuntimeSnapshot) {
 
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
+}
+
+fn timestamp_to_u64(timestamp: icydb::types::Timestamp) -> u64 {
+    timestamp.as_millis().try_into().unwrap_or(0)
 }
 
 #[cfg(test)]

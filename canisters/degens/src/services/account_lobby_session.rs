@@ -22,7 +22,7 @@ use crate::repos::{
     system_jobs as system_job_repo,
 };
 
-use super::{first_playable_setup, system_jobs as system_job_service};
+use super::{first_playable_setup, session_turn_runtime, system_jobs as system_job_service};
 
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
@@ -567,6 +567,7 @@ pub(crate) fn start_session(
                     session = updated;
                 }
             }
+            session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
             let setup_complete = session.state == "active";
             let session_view = session_view(&session)?;
             apply_lobby_command(
@@ -1081,7 +1082,11 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
     if setup_complete {
         session.state = "active".to_string();
+        let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
         session = sessions::update_session(session)?;
+        if let Some(runtime) = prepared_runtime {
+            session_turn_runtime::insert_runtime(runtime);
+        }
         system_job_repo::complete_system_job(job)?;
         system_job_service::schedule_job(system_job_repo::SystemJobDraft {
             job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),

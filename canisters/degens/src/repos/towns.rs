@@ -15,6 +15,13 @@ pub(crate) const TOWNS_BY_OWNER_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
 };
 
+pub(crate) const TOWNS_BY_SESSION_STATUS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "towns.by_session_status",
+    entity: "Town",
+    indexed_fields: &["session_id", "chunk_x", "chunk_y", "status"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const TOWN_BUILDINGS_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "towns.buildings_by_town",
     entity: "TownBuilding",
@@ -143,6 +150,27 @@ pub(crate) fn page_towns_by_owner(
             .load::<Town>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
             .filter(FieldRef::new("owner_participant_id").eq(owner_participant_id.key()))
+            .order_asc("id"),
+        limit,
+        cursor,
+    )
+}
+
+pub(crate) fn page_towns_by_session_status(
+    session_id: Id<GameSession>,
+    status: &str,
+    limit: u32,
+    cursor: Option<String>,
+) -> RepoResult<RepositoryPage<Town>> {
+    let limit = foundation::validate_list_limit(limit)?;
+    foundation::execute_page(
+        TOWNS_BY_SESSION_STATUS_LOOKUP.name,
+        crate::db()
+            .load::<Town>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("status").eq(status))
+            .order_asc("chunk_y")
+            .order_asc("chunk_x")
             .order_asc("id"),
         limit,
         cursor,

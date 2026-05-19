@@ -265,6 +265,8 @@ pub(crate) fn submit_move_intent(
 fn ensure_session_turn_runtime(
     context: &session_context::SessionCallerContext,
 ) -> Result<(), ApiError> {
+    let mut session = context.session.clone();
+    session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
     let session_id = context.session.id().to_string();
     let turn_number = context.session.current_turn;
     let participant = session_turn_participant(context);
@@ -336,6 +338,7 @@ fn session_turn_participant(
     session_turn_runtime::SessionTurnParticipant {
         participant_id: context.participant.id().to_string(),
         player_id: context.participant.player_id.to_string(),
+        principal_text: None,
         slot_index: context.participant.slot_index,
         status: context.participant.status.clone(),
     }
@@ -588,7 +591,11 @@ pub(crate) fn sync_session_turn(
     economy_expansion::materialize_weekly_economy(&context.session, command.id())?;
     let final_event_seq = next_event_seq;
     context.session.next_event_seq = next_event_seq.saturating_add(1);
+    let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut context.session)?;
     context.session = sessions::update_session(context.session)?;
+    if let Some(runtime) = prepared_runtime {
+        session_turn_runtime::insert_runtime(runtime);
+    }
     changed_subjects.push(command_response::changed(
         "session",
         &context.session.id().to_string(),
@@ -753,7 +760,11 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     session.turn_deadline_at = turn_deadline();
     session.last_command_id = Some(command.id);
     economy_expansion::materialize_weekly_economy(&session, command.id())?;
+    let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
     session = sessions::update_session(session)?;
+    if let Some(runtime) = prepared_runtime {
+        session_turn_runtime::insert_runtime(runtime);
+    }
 
     let session_id_text = session.id().to_string();
     let current_turn = session.current_turn;

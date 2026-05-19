@@ -2505,3 +2505,45 @@ Risks to keep front of mind:
 - Query overlays are the correctness boundary. If one public view misses runtime state, the DB can be correct while the API lies.
 
 No tests were run for this planning-only checkpoint. The todo was updated to record the hard-target gates and to make future checkboxes measurable against `0.3B-0.6B`.
+
+## Checkpoint: Gate 5A Active Turn Runtime Bootstrap
+
+Implemented the first hard-target runtime authority checkpoint:
+
+- `SessionTurnRuntime` now has participant principal/auth metadata, champion snapshots, runtime occupancy cells, and town/world-object contact cells.
+- Active turn runtime can be prepared from durable rows with a pre-reserved `GameSession.next_event_seq` block before hot commands need to append runtime events.
+- Session activation creates the first active runtime after setup completes.
+- Manual `sync_session_turn` and system `turn_resolution` create the next turn runtime while advancing the durable turn.
+- The old submit-side `ensure_session_turn_runtime` now falls through to the shared bootstrap helper, so cold compatibility still works but normal started sessions should already have the runtime.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture` passed in `236.45s`
+- Focused Gate J `20260519-gate5a-runtime-bootstrap-gate-j` passed in `682.30s`
+
+Measured update-method delta versus `20260519-sync-income-reserved-event-gate-j`:
+
+| metric | before | Gate 5A | change |
+| --- | ---: | ---: | ---: |
+| `submit_move_intent` avg | 11.2538B | 10.4920B | -6.8% |
+| `sync_session_turn` avg | 11.4681B | 11.9816B | +4.5% |
+| `submit_build_town_structure` avg | 16.9975B | 17.0050B | flat |
+| `submit_recruit_units` avg | 12.5294B | 12.5245B | flat |
+| `movement.intents_by_session_turn_status` calls | 6 | 2 | -66.7% |
+| `sessions.update_session` calls | 14 | 12 | -14.3% |
+| `players.load_player_account` calls | 0 | 2 | +2 bootstrap reads |
+| `towns.by_session_status` calls | 0 | 2 | +2 bootstrap reads |
+| `map.world_objects_by_session` calls | 0 | 2 | +2 bootstrap reads |
+
+Caveat:
+
+- Full scenario/query instruction totals from `20260519-gate5a-runtime-bootstrap-gate-j` are not comparable because the direct test command was not redirected to `test-output.log`; query methods recorded as `n/a`. The update-method metrics and repo-op counts were captured in `summary.json` and are the valid comparison for this checkpoint.
+- The sync regression is expected for this gate: runtime hydration moved from submit-side lazy paths into the turn boundary. The next checkpoints must spend that cost by removing durable submit/sync live-state operations; otherwise this bootstrap is just extra work.
+
+Decision:
+
+- Keep Gate 5A. It establishes the heap authority that Gate 5B and Gate 5C need, and it already removes most durable pending-intent scans from the route. Do not optimize around the `+4.5%` sync regression with another row micro-cut; make `submit_move_intent` and fresh `sync_session_turn` consume the pre-seeded runtime directly.

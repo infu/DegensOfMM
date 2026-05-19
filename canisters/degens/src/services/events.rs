@@ -12,7 +12,10 @@ use sha2::{Digest, Sha256};
 
 use crate::repos::{commands_events_effects, foundation};
 
-use super::session_context::{self, public_error};
+use super::{
+    battle_runtime,
+    session_context::{self, public_error},
+};
 
 const LOBBY_COMMAND_TYPES: &[&str] = &[
     "register_player",
@@ -56,14 +59,14 @@ pub(crate) fn get_events_after(
     authorize_audience(&context, &audience_key)?;
 
     let fetch_limit = limit.saturating_add(1).min(MAX_LIST_LIMIT);
-    let mut events = commands_events_effects::events_after(
+    let mut durable_events = commands_events_effects::events_after(
         context.session.id(),
         "public",
         events_after_seq,
         fetch_limit,
     )?;
     if audience_key != "public" {
-        events.extend(commands_events_effects::events_after(
+        durable_events.extend(commands_events_effects::events_after(
             context.session.id(),
             &audience_key,
             events_after_seq,
@@ -71,11 +74,43 @@ pub(crate) fn get_events_after(
         )?);
     }
 
-    events.sort_by_key(|event| (event.event_seq, event.id()));
-    events.dedup_by_key(|event| event.id());
-    let has_more = events.len() > limit as usize;
-    events.truncate(limit as usize);
-    let views = events.into_iter().map(api_event_view).collect::<Vec<_>>();
+    durable_events.sort_by_key(|event| (event.event_seq, event.id()));
+    durable_events.dedup_by_key(|event| event.id());
+    let mut views = durable_events
+        .into_iter()
+        .map(api_event_view)
+        .collect::<Vec<_>>();
+    let canonical_session_id = context.session.id().to_string();
+    views.extend(battle_runtime::active_events_after(
+        &canonical_session_id,
+        "public",
+        events_after_seq,
+    ));
+    if audience_key != "public" {
+        views.extend(battle_runtime::active_events_after(
+            &canonical_session_id,
+            &audience_key,
+            events_after_seq,
+        ));
+    }
+
+    views.sort_by(|left, right| {
+        (
+            left.event_seq,
+            left.event_key.as_str(),
+            left.audience_key.as_str(),
+        )
+            .cmp(&(
+                right.event_seq,
+                right.event_key.as_str(),
+                right.audience_key.as_str(),
+            ))
+    });
+    views.dedup_by(|left, right| {
+        left.event_key == right.event_key && left.audience_key == right.audience_key
+    });
+    let has_more = views.len() > limit as usize;
+    views.truncate(limit as usize);
 
     Ok(ApiEventPage {
         page_info: EventPageInfo {

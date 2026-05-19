@@ -372,6 +372,8 @@ thread_local! {
         RefCell::new(BTreeMap::new());
     static ACTIVE_SESSION_EVENT_SEQ_BLOCKS: RefCell<BTreeMap<String, BattleRuntimeEventSeqBlock>> =
         RefCell::new(BTreeMap::new());
+    static ARCHIVED_SESSION_RUNTIME_EVENTS: RefCell<BTreeMap<String, Vec<BattleRuntimeEvent>>> =
+        RefCell::new(BTreeMap::new());
 }
 
 pub(crate) fn contains_runtime(battle_id: &str) -> bool {
@@ -453,6 +455,67 @@ pub(crate) fn with_runtime_mut<R>(
     })
 }
 
+pub(crate) fn active_events_after(
+    session_id: &str,
+    audience_key: &str,
+    events_after_seq: u64,
+) -> Vec<ApiEventView> {
+    let mut events = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .flat_map(|runtime| runtime.active_events.iter())
+            .filter(|runtime_event| !runtime_event.flushed)
+            .map(|runtime_event| &runtime_event.event)
+            .filter(|event| {
+                event.audience_key == audience_key && event.event_seq > events_after_seq
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    ARCHIVED_SESSION_RUNTIME_EVENTS.with(|archived| {
+        if let Some(archived_events) = archived.borrow().get(session_id) {
+            events.extend(
+                archived_events
+                    .iter()
+                    .filter(|runtime_event| !runtime_event.flushed)
+                    .map(|runtime_event| &runtime_event.event)
+                    .filter(|event| {
+                        event.audience_key == audience_key && event.event_seq > events_after_seq
+                    })
+                    .cloned(),
+            );
+        }
+    });
+    events
+}
+
+pub(crate) fn archive_runtime_events(runtime: &BattleRuntime) {
+    let events = runtime
+        .active_events
+        .iter()
+        .filter(|event| !event.flushed)
+        .cloned()
+        .collect::<Vec<_>>();
+    if events.is_empty() {
+        return;
+    }
+    ARCHIVED_SESSION_RUNTIME_EVENTS.with(|archived| {
+        let mut archived = archived.borrow_mut();
+        let session_events = archived.entry(runtime.session_id.clone()).or_default();
+        let mut existing_keys = session_events
+            .iter()
+            .map(|event| event.event.event_key.clone())
+            .collect::<BTreeSet<_>>();
+        for event in events {
+            if existing_keys.insert(event.event.event_key.clone()) {
+                session_events.push(event);
+            }
+        }
+    });
+}
+
 pub(crate) fn snapshot_for_upgrade() -> BattleRuntimeSnapshot {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| BattleRuntimeSnapshot {
         runtimes: runtimes.borrow().values().cloned().collect(),
@@ -472,6 +535,7 @@ pub(crate) fn restore_from_upgrade(snapshot: BattleRuntimeSnapshot) {
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
     ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| blocks.borrow_mut().clear());
+    ARCHIVED_SESSION_RUNTIME_EVENTS.with(|events| events.borrow_mut().clear());
 }
 
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {

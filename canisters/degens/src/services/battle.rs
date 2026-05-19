@@ -21,7 +21,7 @@ use crate::repos::{
 
 use super::{
     battle_aftermath, battle_rows,
-    battle_runtime::{self, BattleRuntime, BattleRuntimeReadyKey},
+    battle_runtime::{self, BattleRuntime, BattleRuntimeEvent, BattleRuntimeReadyKey},
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
     system_jobs as system_job_service,
@@ -1239,21 +1239,22 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
     let battle_id_text = battle_id.to_string();
-    if let Some(state) =
-        battle_runtime::with_runtime(&battle_id_text, |runtime| runtime.state.clone())
-    {
-        let is_resolved = state
+    if let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) {
+        let is_resolved = runtime
+            .state
             .battle(&battle_id_text)
             .map_err(map_battle_error)?
             .state
             == "resolved";
         if is_resolved {
-            battle_rows::persist_battle_state(&state, command_id)?;
+            battle_rows::persist_battle_state(&runtime.state, command_id)?;
+            battle_runtime::archive_runtime_events(&runtime);
             changed_subjects.push(command_response::changed(
                 "battle",
                 &battle_id_text,
                 "runtime_projection",
             ));
+            battle_runtime::insert_runtime(runtime);
         }
     }
 
@@ -2308,10 +2309,10 @@ fn apply_player_action_from_runtime(
         battle_rows::persist_battle_header_from_state(&runtime.state, command.id()).map(|_| ())
     })?;
     crate::metrics::benchmark_phase("submit_battle_action", "event_fanout", || {
-        append_new_battle_events(
+        append_new_runtime_battle_events(
             session,
             command.id(),
-            &runtime.state,
+            &mut runtime,
             Some(response_participant_id),
             events,
         )
@@ -3046,10 +3047,10 @@ fn apply_system_battle_action_from_runtime(
     )
     .map_err(map_battle_error)?;
     battle_rows::persist_battle_header_from_state(&runtime.state, command.id())?;
-    append_new_battle_events(
+    append_new_runtime_battle_events(
         session,
         command.id(),
-        &runtime.state,
+        &mut runtime,
         response_participant_id,
         events,
     )?;
@@ -3638,6 +3639,98 @@ fn append_new_battle_events(
         events.push(public_event);
     }
     Ok(())
+}
+
+fn append_new_runtime_battle_events(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    runtime: &mut BattleRuntime,
+    response_participant_id: Option<&str>,
+    events: &mut Vec<domm_game::ApiEventView>,
+) -> Result<(), ApiError> {
+    let command_id_text = command_id.to_string();
+    let new_events = runtime
+        .state
+        .events
+        .iter()
+        .filter(|event| event.command_id == command_id_text)
+        .cloned()
+        .collect::<Vec<_>>();
+    for event in new_events {
+        let detailed_payload = format!(
+            r#"{{"battle_id":"{}","subject_id_text":"{}","payload":{}}}"#,
+            command_response::escape_json(&event.battle_id),
+            command_response::escape_json(&event.subject_id_text),
+            json_string(&event.payload)
+        );
+        for participant_id in involved_battle_participant_ids(&runtime.state, &event.battle_id)? {
+            let audience_key = format!("participant:{participant_id}");
+            let view = runtime_battle_event_view(
+                session,
+                format!(
+                    "battle:{}:{}:{}",
+                    event.battle_id, event.event_key, audience_key
+                ),
+                audience_key,
+                event.event_type.clone(),
+                Some("battle".to_string()),
+                Some(event.battle_id.clone()),
+                detailed_payload.clone(),
+            )?;
+            runtime.push_event(BattleRuntimeEvent {
+                command_id: Some(command_id_text.clone()),
+                event: view.clone(),
+                flushed: false,
+            });
+            if response_participant_id == Some(participant_id.as_str()) {
+                events.push(view);
+            }
+        }
+        let public_event = runtime_battle_event_view(
+            session,
+            format!("battle:{}:{}:public", event.battle_id, event.event_key),
+            "public".to_string(),
+            event.event_type.clone(),
+            Some("battle".to_string()),
+            Some(event.battle_id.clone()),
+            format!(
+                r#"{{"battle_id":"{}","event_type":"{}","redacted":true}}"#,
+                command_response::escape_json(&event.battle_id),
+                command_response::escape_json(&event.event_type)
+            ),
+        )?;
+        runtime.push_event(BattleRuntimeEvent {
+            command_id: Some(command_id_text.clone()),
+            event: public_event.clone(),
+            flushed: false,
+        });
+        events.push(public_event);
+    }
+    Ok(())
+}
+
+fn runtime_battle_event_view(
+    session: &mut GameSession,
+    event_key: String,
+    audience_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    let event_seq = battle_runtime::reserve_session_event_seq(session)?;
+    Ok(domm_game::ApiEventView {
+        session_id: session.id().to_string(),
+        event_seq,
+        event_key,
+        audience_key,
+        turn_number: session.current_turn,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload: Some(payload_json),
+        redacted: false,
+    })
 }
 
 fn involved_battle_participant_ids(

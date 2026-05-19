@@ -324,7 +324,7 @@ When a todo item is completed:
 - [x] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
 - [x] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
 - [ ] Move `CastAbility` off the row-backed tactical persist path or explicitly benchmark/document it as a rare fallback.
-- [x] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`. Gate K now passes, but Gate 1 did not clear `<10B`; `submit_battle_action` is still 20.3549B avg in the focused Gate K run, so the next cut must remove more durable per-action writes.
+- [x] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`. Gate K now passes and the active runtime event archive checkpoint brought `submit_battle_action` to 9.3621B avg, so the first `<10B` target is cleared. The remaining blocker is stable command/header/readiness/auth work, not tactical child-row mutation.
 
 ### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes
 
@@ -343,10 +343,11 @@ When a todo item is completed:
 - [ ] Add active battle command receipt/idempotency storage inside `BattleRuntime` for battle actions.
 - [ ] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
 - [ ] Make `get_command_status` and `get_command_status_by_nonce` merge active runtime command receipts before falling back to durable `GameCommand` rows.
-- [ ] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
+- [x] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
 - [ ] Precompute participant audience keys in runtime so event fanout does not load champion/town owners per event.
-- [ ] Flush or project runtime command/event data to durable rows at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
-- [ ] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands.
+- [x] Keep resolved-battle runtime events visible through an in-memory session archive after runtime removal; defer bulk durable event flushing because a one-shot finalization flush exceeded the 40B single-message limit.
+- [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
+- [x] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands by reserving active event sequence blocks.
 - [ ] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`.
 
 ### 5. Gate 4: CPU And Runtime Data-Structure Pass
@@ -359,14 +360,14 @@ When a todo item is completed:
 
 ### 6. Benchmark And Regression Discipline
 
-- [ ] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
+- [x] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
 - [x] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction. The measured blocker is now durable command/event/session/aftermath work after tactical row writes were reduced; continue into Gate 2/3 cuts.
 - [ ] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.
-- [ ] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
+- [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
 - [ ] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods.
-- [ ] Confirm no leftover PocketIC processes after full benchmark runs.
+- [x] Confirm no leftover PocketIC processes after focused benchmark runs.
 - [ ] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands.
 
 ### 7. Broader Aggregate Pattern

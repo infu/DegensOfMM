@@ -452,3 +452,66 @@ Decision:
 
 - Runtime readiness and runtime submit timeout reduced Gate K `submit_battle_action` from 20.3549B to 13.9983B avg.
 - The next blocker is unambiguous: durable `event_fanout` is ~5.95B avg by itself. Moving active battle events into runtime/response projection is the next cut toward `<10B`.
+
+### Runtime Event Archive Cut
+
+Moved active non-spell battle action events out of per-action durable `GameEvent` writes.
+
+Changes made:
+
+- Active runtime submit now appends battle action events into `BattleRuntime.active_events` and returns those `ApiEventView`s directly in the command response.
+- `get_events_after` now merges durable `GameEvent` rows with active runtime events for both `public` and participant audiences.
+- Active battle event sequence numbers use the existing session block reservation, so submit does not update `GameSession.next_event_seq` for each audience event.
+- Resolved battle runtime events are archived in heap before runtime removal so the final event feed can still include battle action events after aftermath.
+- A first attempt to flush every runtime battle event into durable rows during finalization exceeded the 40B single-message limit in `sync_battle`; durable command/event flush now needs a bounded batch design instead of a one-shot finalization write.
+
+Failed benchmark used for the decision:
+
+```text
+run id: 20260519-041145-gate-k-runtime-events
+result: failed in sync_battle with CanisterInstructionLimitExceeded while flushing active runtime events to durable GameEvent rows
+```
+
+Focused benchmark:
+
+```text
+run id: 20260519-041955-gate-k-runtime-event-archive
+artifact: target/benchmarks/20260519-041955-gate-k-runtime-event-archive/gate-k/summary.json
+note: summary git_sha is c4dd56b because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | elapsed | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| passed | 586.98s | 90 | 122 | 260 | 1025 | 168705 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 28 | 9.3621B | 9.9239B | 34.92 MB | 0.0094T |
+| `sync_battle` | update | 31 | 9.4893B | 36.1468B | 43.38 MB | 0.0101T |
+| `get_battle_state` | query | 52 | n/a | n/a | 0 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 28 | 2.1224B |
+| `event_fanout` | 28 | 1.2539B |
+| `readiness_schedule` | 28 | 1.2337B |
+| `command_begin` | 28 | 1.1903B |
+| `persist_battle_state` | 28 | 1.1804B |
+| `load_battle` | 28 | 0.7080B |
+| `recovery` | 28 | 0.7076B |
+| `final_response` | 28 | 0.4832B |
+| `mark_command_applying` | 28 | 0.4816B |
+| `apply_rules` | 28 | 0.0003B |
+
+Decision:
+
+- The first target is cleared: Gate K `submit_battle_action` moved from 13.9983B to 9.3621B avg.
+- Durable event fanout is no longer the top submit blocker; the remaining cost is mostly session/auth lookups plus durable command/header/readiness/status writes.
+- Do not reintroduce one-shot durable event flushing. The next design needs bounded flush batches or active command/event receipt persistence that is explicitly outside the submit hot path.

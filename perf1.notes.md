@@ -1028,3 +1028,20 @@ Verified:
 - `cargo fmt --check`
 - `cargo check -p domm-degens-canister`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-header cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round -- --nocapture`
+
+## Blocked Checkpoint: Runtime Archive Durable Flush
+
+Tried to implement bounded durable flushing for runtime command receipts and runtime events after battle resolution.
+
+Attempts:
+
+- Full command/event flush with a dedicated `runtime_battle_archive_flush` system job: canister install failed with code section `12,605,950` bytes, over the `12,582,912` byte IC limit by `23,038` bytes.
+- Slimmer command/event checkpoint without a new job kind: canister install failed with code section `12,598,075` bytes, over by `15,163` bytes.
+- Event-only bounded checkpoint with 45 added source lines: canister install failed with code section `12,590,248` bytes, over by `7,336` bytes.
+
+Decision:
+
+- Backed out the flush code because a canister that cannot install is not a valid checkpoint.
+- Leave the todo unchecked.
+- Keep using the current in-memory archive plus upgrade snapshot for runtime command receipts/events.
+- Revisit after freeing at least 10 KB of Wasm code section, moving debug/history flushing into a split canister, or replacing enough existing code with a smaller shared helper.

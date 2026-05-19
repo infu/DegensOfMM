@@ -348,7 +348,7 @@ When a todo item is completed:
 - [x] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
 - [x] Precompute/use participant audience keys in runtime so active event fanout does not load champion/town owners per event.
 - [x] Keep resolved-battle runtime events visible through an in-memory session archive after runtime removal; defer bulk durable event flushing because a one-shot finalization flush exceeded the 40B single-message limit.
-- [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
+- [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging. Blocked for now by the IC Wasm code-section limit: the full command/event job, a slimmer command/event checkpoint, and an event-only checkpoint all exceeded the limit. Keep runtime command receipts/events archived in heap and upgrade snapshot until code size is reduced or this moves to a split/debug canister.
 - [x] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands by reserving active event sequence blocks.
 - [x] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`. The command-receipt checkpoint alone did not clear Gate 3, but the later two-slot active auth cache run `20260519-062456-gate-k-two-slot-auth-cache` measured `submit_battle_action` at 0.2846B avg, so Gate 3 is now cleared.
 

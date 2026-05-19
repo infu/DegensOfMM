@@ -243,6 +243,23 @@ Measured update-method delta versus `20260519-113052-movement-turn-effect-gate-j
 
 Caveat: this direct focused run did not persist the query log into the artifact, so query instruction deltas show as `n/a` and scenario-level instruction totals are not comparable. Use the benchmark script or an absolute query-log path for the next query/projection claim.
 
+### SessionTurnRuntime Scaffold
+
+Added the inert heap runtime module for active session turns.
+
+Checkpoint scope:
+
+- `SessionTurnRuntime` stores active turn metadata, participants, ready set, movement intents, runtime command receipts, active events, event sequence block, champion/occupancy/visibility/object/resource deltas, and partial movement cursor state.
+- Heap store helpers are keyed by `(session_id, turn_number)` through `runtime_key`.
+- Runtime APIs now include insert/remove/read/mutate, active event filtering, command receipt lookup by id/nonce, snapshot/restore, and test cleanup.
+- No endpoint behavior changed in this checkpoint; durable rows remain authoritative until the next mirror/adoption patches.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo check -p domm-degens-canister --features benchmark`
+
 ### Runtime Finalization Projection
 
 Added the projection guard needed before active battle submit stops writing tactical rows per action.

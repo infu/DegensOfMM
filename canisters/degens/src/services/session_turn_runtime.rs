@@ -1,0 +1,528 @@
+//! Heap-resident active session-turn runtime state.
+//!
+//! This is the movement/session-turn counterpart to `BattleRuntime`. It starts
+//! as an inert aggregate shell so endpoint code can be moved onto it in small,
+//! testable checkpoints.
+
+#![allow(dead_code)]
+
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
+
+use domm_game::{ApiEventView, CommandResponse, CommandStatusView};
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnRuntime {
+    pub session_id: String,
+    pub turn_number: u32,
+    pub turn_started_at_ms: u64,
+    pub turn_deadline_at_ms: u64,
+    pub turn_duration_ms: u64,
+    pub closing: bool,
+    pub generation: u64,
+    pub participants: Vec<SessionTurnParticipant>,
+    pub ready_participants: BTreeSet<String>,
+    pub intents: Vec<RuntimeMovementIntent>,
+    pub command_receipts: Vec<SessionTurnCommandReceipt>,
+    pub active_events: Vec<SessionTurnEvent>,
+    pub event_seq_block: Option<SessionTurnEventSeqBlock>,
+    pub champion_deltas: Vec<ChampionTurnDelta>,
+    pub occupancy_deltas: Vec<OccupancyTurnDelta>,
+    pub visibility_deltas: Vec<VisibilityTurnDelta>,
+    pub object_deltas: Vec<ObjectTurnDelta>,
+    pub resource_deltas: Vec<ResourceTurnDelta>,
+    pub partial_cursor: Option<MovementCursor>,
+    pub dirty: SessionTurnDirtySets,
+}
+
+impl SessionTurnRuntime {
+    pub(crate) fn new(
+        session_id: impl Into<String>,
+        turn_number: u32,
+        turn_started_at_ms: u64,
+        turn_deadline_at_ms: u64,
+        turn_duration_ms: u64,
+    ) -> Self {
+        Self {
+            session_id: session_id.into(),
+            turn_number,
+            turn_started_at_ms,
+            turn_deadline_at_ms,
+            turn_duration_ms,
+            closing: false,
+            generation: 0,
+            participants: Vec::new(),
+            ready_participants: BTreeSet::new(),
+            intents: Vec::new(),
+            command_receipts: Vec::new(),
+            active_events: Vec::new(),
+            event_seq_block: None,
+            champion_deltas: Vec::new(),
+            occupancy_deltas: Vec::new(),
+            visibility_deltas: Vec::new(),
+            object_deltas: Vec::new(),
+            resource_deltas: Vec::new(),
+            partial_cursor: None,
+            dirty: SessionTurnDirtySets::default(),
+        }
+    }
+
+    pub(crate) fn key(&self) -> String {
+        runtime_key(&self.session_id, self.turn_number)
+    }
+
+    pub(crate) fn mark_dirty(&mut self) {
+        self.generation = self.generation.saturating_add(1);
+    }
+
+    pub(crate) fn upsert_participant(&mut self, participant: SessionTurnParticipant) {
+        if let Some(existing) = self
+            .participants
+            .iter_mut()
+            .find(|existing| existing.participant_id == participant.participant_id)
+        {
+            *existing = participant;
+        } else {
+            self.participants.push(participant);
+        }
+        self.dirty.participants = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn mark_ready(&mut self, participant_id: impl Into<String>) {
+        self.ready_participants.insert(participant_id.into());
+        self.dirty.ready = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_intent(&mut self, intent: RuntimeMovementIntent) {
+        if let Some(existing) = self
+            .intents
+            .iter_mut()
+            .find(|existing| existing.champion_id == intent.champion_id)
+        {
+            *existing = intent;
+        } else {
+            self.intents.push(intent);
+        }
+        self.dirty.intents = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn insert_command_receipt(&mut self, receipt: SessionTurnCommandReceipt) {
+        if let Some(existing) = self
+            .command_receipts
+            .iter_mut()
+            .find(|existing| existing.command_id == receipt.command_id)
+        {
+            *existing = receipt;
+        } else {
+            self.command_receipts.push(receipt);
+        }
+        self.dirty.command_receipts = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn command_receipt_by_nonce(
+        &self,
+        actor_participant_id: &str,
+        client_nonce: u64,
+    ) -> Option<&SessionTurnCommandReceipt> {
+        self.command_receipts.iter().find(|receipt| {
+            receipt.actor_participant_id == actor_participant_id
+                && receipt.client_nonce == client_nonce
+        })
+    }
+
+    pub(crate) fn push_event(&mut self, event: SessionTurnEvent) {
+        self.active_events.push(event);
+        self.dirty.events = true;
+        self.mark_dirty();
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnParticipant {
+    pub participant_id: String,
+    pub player_id: String,
+    pub slot_index: u8,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct RuntimeMovementIntent {
+    pub intent_id: String,
+    pub command_id: String,
+    pub actor_participant_id: String,
+    pub champion_id: String,
+    pub path_json: String,
+    pub path_hash: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnCommandReceipt {
+    pub command_id: String,
+    pub command_type: String,
+    pub actor_participant_id: String,
+    pub client_nonce_text: String,
+    pub client_nonce: u64,
+    pub payload_hash: String,
+    pub response: CommandResponse,
+}
+
+impl SessionTurnCommandReceipt {
+    pub(crate) fn status_view(&self) -> CommandStatusView {
+        self.response.status_view()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnEvent {
+    pub command_id: Option<String>,
+    pub event: ApiEventView,
+    pub flushed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnEventSeqBlock {
+    pub next_event_seq: u64,
+    pub exclusive_end_event_seq: u64,
+}
+
+impl SessionTurnEventSeqBlock {
+    pub(crate) fn take_event_seq(&mut self) -> Option<u64> {
+        if self.next_event_seq >= self.exclusive_end_event_seq {
+            return None;
+        }
+        let event_seq = self.next_event_seq;
+        self.next_event_seq = self.next_event_seq.saturating_add(1);
+        Some(event_seq)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ChampionTurnDelta {
+    pub champion_id: String,
+    pub x: u16,
+    pub y: u16,
+    pub movement_remaining: u16,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct OccupancyTurnDelta {
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub from_x: Option<u16>,
+    pub from_y: Option<u16>,
+    pub to_x: Option<u16>,
+    pub to_y: Option<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct VisibilityTurnDelta {
+    pub participant_id: String,
+    pub chunk_x: u16,
+    pub chunk_y: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ObjectTurnDelta {
+    pub subject_kind: String,
+    pub subject_id: String,
+    pub x: u16,
+    pub y: u16,
+    pub visible: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ResourceTurnDelta {
+    pub participant_id: String,
+    pub gold: i64,
+    pub wood: i64,
+    pub stone: i64,
+    pub iron: i64,
+    pub crystal: i64,
+    pub ember: i64,
+    pub aether: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MovementCursor {
+    pub consumed_steps: u32,
+    pub parked_intents: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnDirtySets {
+    pub participants: bool,
+    pub ready: bool,
+    pub intents: bool,
+    pub command_receipts: bool,
+    pub events: bool,
+    pub champion_deltas: bool,
+    pub occupancy_deltas: bool,
+    pub visibility_deltas: bool,
+    pub object_deltas: bool,
+    pub resource_deltas: bool,
+    pub cursor: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SessionTurnRuntimeSnapshot {
+    pub runtimes: Vec<SessionTurnRuntime>,
+}
+
+thread_local! {
+    static ACTIVE_SESSION_TURN_RUNTIMES: RefCell<BTreeMap<String, SessionTurnRuntime>> =
+        RefCell::new(BTreeMap::new());
+}
+
+pub(crate) fn runtime_key(session_id: &str, turn_number: u32) -> String {
+    format!("{session_id}:{turn_number}")
+}
+
+pub(crate) fn contains_runtime(session_id: &str, turn_number: u32) -> bool {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().contains_key(&key))
+}
+
+pub(crate) fn active_runtime_count() -> usize {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().len())
+}
+
+pub(crate) fn insert_runtime(runtime: SessionTurnRuntime) -> Option<SessionTurnRuntime> {
+    ACTIVE_SESSION_TURN_RUNTIMES
+        .with(|runtimes| runtimes.borrow_mut().insert(runtime.key(), runtime))
+}
+
+pub(crate) fn remove_runtime(session_id: &str, turn_number: u32) -> Option<SessionTurnRuntime> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().remove(&key))
+}
+
+pub(crate) fn with_runtime<R>(
+    session_id: &str,
+    turn_number: u32,
+    read: impl FnOnce(&SessionTurnRuntime) -> R,
+) -> Option<R> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let runtimes = runtimes.borrow();
+        runtimes.get(&key).map(read)
+    })
+}
+
+pub(crate) fn with_runtime_mut<R>(
+    session_id: &str,
+    turn_number: u32,
+    mutate: impl FnOnce(&mut SessionTurnRuntime) -> R,
+) -> Option<R> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        runtimes.get_mut(&key).map(mutate)
+    })
+}
+
+pub(crate) fn active_events_after(
+    session_id: &str,
+    audience_key: &str,
+    after_event_seq: u64,
+) -> Vec<ApiEventView> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .flat_map(|runtime| runtime.active_events.iter())
+            .filter(|runtime_event| !runtime_event.flushed)
+            .map(|runtime_event| &runtime_event.event)
+            .filter(|event| event.audience_key == audience_key && event.event_seq > after_event_seq)
+            .cloned()
+            .collect()
+    })
+}
+
+pub(crate) fn command_receipt_by_id(
+    session_id: &str,
+    command_id: &str,
+) -> Option<SessionTurnCommandReceipt> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .find_map(|runtime| {
+                runtime
+                    .command_receipts
+                    .iter()
+                    .find(|receipt| receipt.command_id == command_id)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn command_receipt_by_nonce(
+    session_id: &str,
+    actor_participant_id: &str,
+    client_nonce: u64,
+) -> Option<SessionTurnCommandReceipt> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .find_map(|runtime| {
+                runtime
+                    .command_receipt_by_nonce(actor_participant_id, client_nonce)
+                    .cloned()
+            })
+    })
+}
+
+pub(crate) fn snapshot_for_upgrade() -> SessionTurnRuntimeSnapshot {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| SessionTurnRuntimeSnapshot {
+        runtimes: runtimes.borrow().values().cloned().collect(),
+    })
+}
+
+pub(crate) fn restore_from_upgrade(snapshot: SessionTurnRuntimeSnapshot) {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        runtimes.clear();
+        for runtime in snapshot.runtimes {
+            runtimes.insert(runtime.key(), runtime);
+        }
+    });
+}
+
+pub(crate) fn clear_all_for_tests() {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn runtime() -> SessionTurnRuntime {
+        SessionTurnRuntime::new("session:1", 2, 100, 200, 100)
+    }
+
+    fn event(event_seq: u64, audience_key: &str) -> SessionTurnEvent {
+        SessionTurnEvent {
+            command_id: Some("command:1".to_string()),
+            event: ApiEventView {
+                session_id: "session:1".to_string(),
+                event_seq,
+                event_key: format!("event:{event_seq}"),
+                audience_key: audience_key.to_string(),
+                turn_number: 2,
+                event_type: "movement_intent_submitted".to_string(),
+                subject_kind: Some("champion".to_string()),
+                subject_id_text: Some("champion:1".to_string()),
+                payload: None,
+                redacted: false,
+            },
+            flushed: false,
+        }
+    }
+
+    #[test]
+    fn runtime_store_round_trips_by_session_turn_key() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.mark_ready("participant:1");
+
+        assert_eq!(active_runtime_count(), 0);
+        assert!(insert_runtime(runtime).is_none());
+        assert!(contains_runtime("session:1", 2));
+        assert_eq!(
+            with_runtime("session:1", 2, |runtime| runtime.ready_participants.len()),
+            Some(1)
+        );
+
+        with_runtime_mut("session:1", 2, |runtime| {
+            runtime.mark_ready("participant:2")
+        });
+        assert_eq!(
+            with_runtime("session:1", 2, |runtime| runtime.ready_participants.len()),
+            Some(2)
+        );
+        assert!(remove_runtime("session:1", 2).is_some());
+        assert_eq!(active_runtime_count(), 0);
+    }
+
+    #[test]
+    fn movement_intent_upsert_keeps_one_intent_per_champion() {
+        let mut runtime = runtime();
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:1".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:1".to_string(),
+            status: "pending".to_string(),
+        });
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:2".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;1,2".to_string(),
+            path_hash: "hash:2".to_string(),
+            status: "pending".to_string(),
+        });
+
+        assert_eq!(runtime.intents.len(), 1);
+        assert_eq!(runtime.intents[0].command_id, "command:2");
+        assert!(runtime.dirty.intents);
+    }
+
+    #[test]
+    fn active_events_filter_by_session_audience_and_sequence() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.push_event(event(10, "public"));
+        runtime.push_event(event(11, "participant:1"));
+        insert_runtime(runtime);
+
+        let events = active_events_after("session:1", "public", 9);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_seq, 10);
+        assert!(active_events_after("session:1", "public", 10).is_empty());
+        assert!(active_events_after("session:2", "public", 9).is_empty());
+    }
+
+    #[test]
+    fn snapshot_restores_all_active_turns() {
+        clear_all_for_tests();
+        insert_runtime(runtime());
+        insert_runtime(SessionTurnRuntime::new("session:1", 3, 200, 300, 100));
+
+        let snapshot = snapshot_for_upgrade();
+        clear_all_for_tests();
+        restore_from_upgrade(snapshot);
+
+        assert_eq!(active_runtime_count(), 2);
+        assert!(contains_runtime("session:1", 2));
+        assert!(contains_runtime("session:1", 3));
+    }
+
+    #[test]
+    fn event_sequence_block_hands_out_reserved_range_only() {
+        let mut block = SessionTurnEventSeqBlock {
+            next_event_seq: 4,
+            exclusive_end_event_seq: 6,
+        };
+
+        assert_eq!(block.take_event_seq(), Some(4));
+        assert_eq!(block.take_event_seq(), Some(5));
+        assert_eq!(block.take_event_seq(), None);
+    }
+}

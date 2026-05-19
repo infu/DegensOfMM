@@ -2547,3 +2547,49 @@ Caveat:
 Decision:
 
 - Keep Gate 5A. It establishes the heap authority that Gate 5B and Gate 5C need, and it already removes most durable pending-intent scans from the route. Do not optimize around the `+4.5%` sync regression with another row micro-cut; make `submit_move_intent` and fresh `sync_session_turn` consume the pre-seeded runtime directly.
+
+## Checkpoint: Runtime-Only Movement Submit Intent Bridge
+
+Implemented the first Gate 5B submit-side cut:
+
+- Fresh `submit_move_intent` now stores the pending movement intent only in `SessionTurnRuntime`.
+- The runtime intent carries command id text, actor participant id, champion id, path JSON/hash, and hydrated champion/participant rows.
+- Runtime receipts/events still answer active command status, nonce replay, and event feed reads.
+- The old durable `MovementIntent` create/update no longer happens inside submit.
+- The current row-backed `sync_session_turn` compatibility path now materializes the durable movement intent from the runtime intent when it needs to feed the existing resolver.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture` passed in `234.61s`
+- Focused Gate J `20260519-runtime-submit-no-durable-intent-gate-j` passed in `230.76s`
+
+Measured delta versus Gate 5A `20260519-gate5a-runtime-bootstrap-gate-j`:
+
+| metric | Gate 5A | submit runtime intent bridge | change |
+| --- | ---: | ---: | ---: |
+| `submit_move_intent` avg | 10.4920B | 9.3146B | -11.2% |
+| `submit_move_intent` avg memory | 13.5 MB | 0.1667 MB | -98.5% |
+| `sync_session_turn` avg | 11.9816B | 12.6262B | +5.4% |
+| `movement.create_intent` calls | present in prior submit-compatible path | 0 | removed from hot submit |
+| `movement.update_intent` calls | 4 | 9 | compatibility bridge cost moved into sync |
+
+Measured delta versus the hard-target anchor `20260519-sync-income-reserved-event-gate-j`:
+
+| metric | hard-target anchor | submit runtime intent bridge | change |
+| --- | ---: | ---: | ---: |
+| `submit_move_intent` avg | 11.2538B | 9.3146B | -17.2% |
+| scenario instructions | 304.0763B | 311.0029B | +2.3% |
+
+Caveat:
+
+- This is intentionally a partial bridge, not the final Gate 5B shape. It proves that removing the durable movement-intent write from submit is valuable, but the same durable row work still exists in `sync_session_turn` until Gate 5C/5D make sync runtime-owned.
+- Submit is still far above target because it still loads durable session/champion state, scans durable jobs for the map-turn guard, and reads stable occupancy/blocker state. Those stable categories must be removed next rather than hidden in another compatibility layer.
+
+Decision:
+
+- Keep the checkpoint. It improves the player-facing submit endpoint and gives a clean compatibility bridge while the runtime sync rewrite is still incomplete.
+- Next Gate 5B work should target the remaining submit stable reads in order: session/job guard, champion load, occupancy/blocker reads. Any cache shortcut must have an invalidation/version contract; the previous cached champion shortcut regressed battle legal actions.

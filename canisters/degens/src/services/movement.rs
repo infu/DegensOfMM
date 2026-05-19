@@ -126,39 +126,19 @@ pub(crate) fn submit_move_intent(
     }
     command_response::ensure_map_turn_accepts_new_command(&context, "submit_move_intent")?;
     ensure_session_turn_runtime(&context)?;
-    let command_id = Id::<GameCommand>::from_key(Ulid::generate());
-    let command_id_text = command_id.to_string();
+    let command_id_text = Ulid::generate().to_string();
     let path_hash = command_response::payload_hash(
         "movement_path",
         &champion.id().to_string(),
         &client_nonce,
         &path_text,
     );
-    let intent = match movement::find_movement_intent(
-        context.session.id(),
-        champion.id(),
+    let runtime_intent_id = format!(
+        "runtime:{}:{}:{}",
+        canonical_session_id,
         context.session.current_turn,
-    )? {
-        Some(mut intent) => {
-            intent.command_id = command_id.key();
-            intent.actor_participant_id = context.participant.id().key();
-            intent.status = "pending".to_string();
-            intent.path_json = path_text.clone();
-            intent.path_hash = path_hash;
-            intent.resolved_at = None;
-            movement::update_movement_intent(intent)?
-        }
-        None => movement::create_movement_intent(
-            context.session.id(),
-            context.session.current_turn,
-            context.participant.id(),
-            champion.id(),
-            command_id,
-            "pending".to_string(),
-            path_text,
-            path_hash,
-        )?,
-    };
+        champion.id()
+    );
 
     let mut session = context.session.clone();
     let event_key = format!(
@@ -168,18 +148,25 @@ pub(crate) fn submit_move_intent(
     );
     let event_payload = format!(
         r#"{{"intent_id":"{}","path_len":{}}}"#,
-        intent.id(),
+        runtime_intent_id,
         path.len()
     );
     let response = session_turn_runtime::with_runtime_mut(
         &canonical_session_id,
         context.session.current_turn,
         |runtime| {
-            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
-                intent.clone(),
-                champion.clone(),
-                context.participant.clone(),
-            ));
+            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent {
+                intent_id: runtime_intent_id.clone(),
+                command_id: command_id_text.clone(),
+                actor_participant_id: actor_participant_id.clone(),
+                champion_id: champion.id().to_string(),
+                path_json: path_text.clone(),
+                path_hash: path_hash.clone(),
+                status: "pending".to_string(),
+                durable_intent: None,
+                champion: Some(champion.clone()),
+                participant: Some(context.participant.clone()),
+            });
             let event = runtime
                 .active_events
                 .iter()
@@ -215,7 +202,7 @@ pub(crate) fn submit_move_intent(
                 )?;
             let changed_subjects = vec![command_response::changed(
                 "movement_intent",
-                &intent.id().to_string(),
+                &runtime_intent_id,
                 "upsert",
             )];
             let response = command_response::runtime_command_response(
@@ -1717,9 +1704,7 @@ fn runtime_pending_movements_for_session(
             .iter()
             .filter(|intent| intent.status == "pending")
         {
-            let Some(intent) = runtime_intent.durable_intent.clone() else {
-                return Ok(None);
-            };
+            let intent = materialize_runtime_movement_intent(session, runtime_intent)?;
             if intent.session_id != session.id().key()
                 || intent.turn_number != session.current_turn
                 || intent.status != "pending"
@@ -1761,6 +1746,47 @@ fn runtime_pending_movements_for_session(
         Some(result) => result,
         None => Ok(None),
     }
+}
+
+fn materialize_runtime_movement_intent(
+    session: &GameSession,
+    runtime_intent: &session_turn_runtime::RuntimeMovementIntent,
+) -> Result<MovementIntent, ApiError> {
+    if let Some(intent) = runtime_intent.durable_intent.clone() {
+        return Ok(intent);
+    }
+
+    let champion_id =
+        session_context::parse_id::<Champion>(&runtime_intent.champion_id, "champion_id")?;
+    let actor_participant_id = session_context::parse_id::<GameParticipant>(
+        &runtime_intent.actor_participant_id,
+        "participant_id",
+    )?;
+    let command_id =
+        session_context::parse_id::<GameCommand>(&runtime_intent.command_id, "command_id")?;
+    if let Some(mut existing) =
+        movement::find_movement_intent(session.id(), champion_id, session.current_turn)?
+    {
+        existing.command_id = command_id.key();
+        existing.actor_participant_id = actor_participant_id.key();
+        existing.status = runtime_intent.status.clone();
+        existing.path_json = runtime_intent.path_json.clone();
+        existing.path_hash = runtime_intent.path_hash.clone();
+        existing.resolved_at = None;
+        return movement::update_movement_intent(existing).map_err(Into::into);
+    }
+
+    movement::create_movement_intent(
+        session.id(),
+        session.current_turn,
+        actor_participant_id,
+        champion_id,
+        command_id,
+        runtime_intent.status.clone(),
+        runtime_intent.path_json.clone(),
+        runtime_intent.path_hash.clone(),
+    )
+    .map_err(Into::into)
 }
 
 fn runtime_pending_movement_intents_for_session(

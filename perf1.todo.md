@@ -345,7 +345,7 @@ When a todo item is completed:
 - [ ] Make replay of an active battle action return from runtime command receipts without durable `GameCommand` lookup/create/update.
 - [ ] Make `get_command_status` and `get_command_status_by_nonce` merge active runtime command receipts before falling back to durable `GameCommand` rows.
 - [x] Store active battle events in runtime and make `get_events_after` merge active runtime events with durable `GameEvent` rows.
-- [ ] Precompute participant audience keys in runtime so event fanout does not load champion/town owners per event.
+- [x] Precompute/use participant audience keys in runtime so active event fanout does not load champion/town owners per event.
 - [x] Keep resolved-battle runtime events visible through an in-memory session archive after runtime removal; defer bulk durable event flushing because a one-shot finalization flush exceeded the 40B single-message limit.
 - [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
 - [x] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands by reserving active event sequence blocks.

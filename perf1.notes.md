@@ -575,3 +575,54 @@ Decision:
 - Skipping active submit header projection is viable once submit guards use runtime round state.
 - The next largest submit costs are now auth/session lookup, event fanout owner lookup/response construction, runtime readiness scheduling, durable command begin, recovery scan, and command status updates.
 - Full removal of active durable `Battle` header updates still needs timeout/round/finalization review; this checkpoint only removes the player submit hot-path write.
+
+### Runtime Audience Fanout Cut
+
+Removed row-backed participant owner discovery from active runtime battle event fanout.
+
+Changes made:
+
+- Active runtime event fanout now uses participant IDs already present in `BattleRuntime` and the runtime battle stacks.
+- The legacy `involved_battle_participant_ids` path still exists for row-backed/cast/fallback paths, but active non-spell submit no longer loads champion/town owner rows just to fan out battle action events.
+
+Focused benchmark:
+
+```text
+run id: 20260519-045312-gate-k-runtime-audience
+artifact: target/benchmarks/20260519-045312-gate-k-runtime-audience/gate-k/summary.json
+note: summary git_sha is 01c0739 because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | elapsed | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| passed | 581.01s | 90 | 122 | 260 | 1025 | 168705 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 28 | 6.9312B | 8.0335B | 34.89 MB | 0.0069T |
+| `sync_battle` | update | 31 | 9.4787B | 36.1288B | 43.43 MB | 0.0101T |
+| `get_battle_state` | query | 52 | n/a | n/a | 0 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 28 | 2.1206B |
+| `readiness_schedule` | 28 | 1.2269B |
+| `command_begin` | 28 | 1.1889B |
+| `load_battle` | 28 | 0.7072B |
+| `recovery` | 28 | 0.7067B |
+| `final_response` | 28 | 0.4814B |
+| `mark_command_applying` | 28 | 0.4812B |
+| `event_fanout` | 28 | 0.0171B |
+| `persist_battle_state` | 28 | 0.0000B |
+
+Decision:
+
+- Event fanout is no longer a meaningful submit blocker: 1.2526B -> 0.0171B avg.
+- The next cuts should target durable command lifecycle (`command_begin`, `mark_command_applying`, `final_response`) and recovery scanning, or reduce auth/session lookup cost.

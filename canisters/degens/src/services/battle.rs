@@ -3667,7 +3667,7 @@ fn append_new_runtime_battle_events(
             command_response::escape_json(&event.subject_id_text),
             json_string(&event.payload)
         );
-        for participant_id in involved_battle_participant_ids(&runtime.state, &event.battle_id)? {
+        for participant_id in runtime_involved_battle_participant_ids(runtime, &event.battle_id) {
             let audience_key = format!("participant:{participant_id}");
             let view = runtime_battle_event_view(
                 session,
@@ -3735,6 +3735,21 @@ fn runtime_battle_event_view(
         payload: Some(payload_json),
         redacted: false,
     })
+}
+
+fn runtime_involved_battle_participant_ids(
+    runtime: &BattleRuntime,
+    battle_id: &str,
+) -> BTreeSet<String> {
+    let mut participant_ids = runtime
+        .state
+        .stacks
+        .iter()
+        .filter(|stack| stack.battle_id == battle_id)
+        .filter_map(|stack| stack.owner_participant_id.clone())
+        .collect::<BTreeSet<_>>();
+    participant_ids.extend(runtime.participant_audience_keys.keys().cloned());
+    participant_ids
 }
 
 fn involved_battle_participant_ids(

@@ -154,6 +154,20 @@ Top combined repo operations inside `submit_battle_action`:
 
 Decision from trace: focus Gate 1 on removing active tactical row load/persist first, but do not stop there. The largest measured phase is readiness/schedule, event fanout is second, and `apply_rules`/`validate_action` are tiny. If the runtime aggregate still writes events/readiness/jobs per action, it will not reach `0.3B`.
 
+### Active Runtime Merge Contract
+
+Documented the merge contract in `perf1.todo.md`.
+
+Decision highlights:
+
+- Runtime wins for active battle reads and commands.
+- Durable battle rows become shells/projections/history during active execution.
+- Missing runtime is recoverable by hydrating from durable active battle rows.
+- `get_battle_state`, `sync_battle`, `end_battle_turn`, event feed, command status, timeout jobs, round jobs, and aftermath all need explicit runtime merge/fallback behavior.
+- Runtime event sequence allocation should batch or defer durable `GameSession.next_event_seq` updates.
+- Runtime command receipts need enough data to satisfy command status and nonce replay before durable command rows are removed from the hot path.
+- Finalization must either project survivor `BattleStack` rows before existing aftermath or rewrite aftermath to consume runtime survivors directly.
+
 ### Plan Evaluation And Update
 
 The first plan was directionally right but too conservative. It treated the active battle aggregate as the main performance fix, but a heap aggregate alone probably cannot reach `0.3B` if each battle action still performs durable command writes, event fanout writes, battle timeout job upserts, readiness row writes, and battle header updates.

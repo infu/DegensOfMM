@@ -123,6 +123,54 @@ Re-reading the canister code confirms the direction, but tightens the implementa
 
 Therefore the first runtime cannot be only `domm_game::BattleState`. It should wrap `BattleState` with the active metadata that the canister currently stores in several durable tables: command receipts, active events, participant audiences, readiness, deadlines, and a session event sequence cursor.
 
+## Active Runtime Merge Contract
+
+While a battle is active, `BattleRuntime` is the command-side authority. Durable rows remain shells, indexes, history, projections, or post-resolution state. Public APIs must merge runtime data before falling back to durable rows so the client never sees stale row-backed battle state.
+
+Runtime identity and adoption:
+
+| area | contract |
+| --- | --- |
+| key | runtime store is keyed by durable `Battle.id` |
+| adoption | if an active battle row exists but runtime is missing, hydrate runtime from current `Battle`, `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows on first access |
+| upgrade | `pre_upgrade` serializes active runtimes; `post_upgrade` restores them before job repair/scheduling |
+| removal | runtime is removed only after resolution/finalization has projected required durable state and history |
+
+Endpoint merge rules:
+
+| endpoint/path | active-runtime behavior | fallback |
+| --- | --- | --- |
+| `get_battle_state` | build the `BattleView` from runtime `BattleState` and runtime metadata; include current active stack/round/deadline/readiness from runtime | row-backed `Battle` plus child rows when no runtime exists |
+| `submit_battle_action` | validate idempotency against runtime receipts first, mutate runtime, append runtime events, update runtime readiness/deadline/round state, and return from runtime receipt on replay | hydrate runtime from rows if missing, then use runtime path |
+| `sync_battle` | apply due runtime timeouts/auto-round actions, finalize if resolved, and return runtime-derived changed subjects/events | hydrate runtime if the active row exists but runtime is missing |
+| `end_battle_turn` | mark runtime readiness for the participant/round and advance runtime round when ready; do not make `BattleParticipantRoundReady` rows authoritative for active battles | hydrate runtime if needed; resolved/missing battle uses durable error/fallback path |
+| `get_events_after` | merge durable `GameEvent` rows with runtime active events whose `event_seq` is greater than `after_event_seq`; sort by sequence and avoid duplicates after flush | durable events only when no active runtime events exist for the session/audience |
+| `get_command_status` | check active runtime command receipts by command id before durable `GameCommand` rows | durable command rows |
+| `get_command_status_by_nonce` | check active runtime command receipts by participant/session/client nonce before durable idempotency rows | durable command/lobby rows |
+| timeout jobs | job wakeups load/adopt runtime and ask runtime deadline state what work is due; job rows are wakeup hints, not active battle authority | legacy row-backed timeout only for active rows that cannot hydrate |
+| round jobs | job wakeups load/adopt runtime and advance runtime auto-ready/auto-defend state; readiness rows are not active battle authority | legacy row-backed round advance only for active rows that cannot hydrate |
+| aftermath | finalization must either project runtime survivor stack rows before calling existing aftermath or call a rewritten aftermath function that consumes runtime survivors directly | durable survivor rows after runtime finalization |
+
+Event and command sequencing:
+
+| topic | contract |
+| --- | --- |
+| event sequence | runtime owns a session event sequence cursor for active battle events; durable `GameSession.next_event_seq` is advanced once per flush/finalization batch, not once per active event |
+| active event IDs | runtime events carry deterministic keys derived from battle id, command id, audience key, and runtime event sequence |
+| command receipt | runtime receipt stores command id, nonce, actor participant, status, result/error, retryability, changed subjects, event references, and payload hash |
+| replay | replay with the same nonce/payload returns the runtime receipt without remutating state; same nonce/different payload returns the existing idempotency error |
+| flush | flushing command/event history to durable rows must be idempotent and must not duplicate events already visible through runtime merge |
+
+Safety rules:
+
+| rule | implication |
+| --- | --- |
+| active runtime wins | active API reads must never synthesize state from stale child rows when runtime exists |
+| traps are rollback | per-action heap changes can rely on IC atomic rollback; durable writes during the same update must still be ordered so a trap cannot leave projected state ahead of runtime state |
+| projection is explicit | tactical child rows are projections/snapshots after Gate 1, not the active mutation model |
+| missing runtime is recoverable | hydrate from rows first, and only fail if both runtime and durable active rows are inconsistent |
+| benchmark gates decide durability | if command/event/job durable writes still dominate after Gate 1, Gate 2/3 move those responsibilities into runtime too |
+
 Secondary methods to watch:
 
 | method | why |
@@ -253,7 +301,7 @@ When a todo item is completed:
 - [x] Add targeted benchmark-only phase markers around `submit_battle_action`: auth/context, command begin, recovery, timeout, load/apply/persist, event fanout, readiness/schedule, final response.
 - [x] Add benchmark-only repo operation tracing for central wrappers and battle hot repos first; do not block Gate 1 on converting every repo module.
 - [x] Run a fresh traced baseline and record the run ID plus `submit_battle_action` phase/repo counts in this file and `perf1.notes.md`.
-- [ ] Document the active runtime merge contract for `get_battle_state`, `sync_battle`, `end_battle_turn`, `get_events_after`, `get_command_status`, `get_command_status_by_nonce`, timeout jobs, round jobs, and aftermath.
+- [x] Document the active runtime merge contract for `get_battle_state`, `sync_battle`, `end_battle_turn`, `get_events_after`, `get_command_status`, `get_command_status_by_nonce`, timeout jobs, round jobs, and aftermath.
 
 ### 1. Active Battle Runtime Authority
 

@@ -2000,3 +2000,39 @@ Decision:
 
 - Keep this cut. It is a true route-level win and it does not move cost into submit.
 - The next nearby cut is the map-turn command guard in `ensure_map_turn_accepts_new_command`, which still scans status pages separately in the post-deadline branch.
+
+## Checkpoint: One-Page Map Turn Guard
+
+Changed the post-deadline branch of `ensure_map_turn_accepts_new_command` from two status-specific session-job pages to one session job page with the same acceptance predicate:
+
+- running current-turn `turn_resolution` / `turn_deadline` blocks;
+- scheduled current-turn `turn_resolution` / `turn_deadline` blocks only when `due_at <= now`;
+- completed/failed/other jobs do not block.
+
+The pre-deadline branch is unchanged because it already uses a single scheduled-job page and only checks due scheduled closure jobs.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-map-turn-guard-page cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture` passed in `189.92s`.
+- First focused Gate J attempt `20260519-153602-map-turn-guard-page-gate-j` failed from a PocketIC/sandbox launcher crash (`Instance was deleted`), not from a canister assertion.
+- Focused Gate J rerun `20260519-153948-map-turn-guard-page-gate-j-rerun` passed in `567.83s`.
+
+Measured delta versus `20260519-151917-current-turn-job-page-gate-j`:
+
+| metric | current-turn job page | map-turn guard page | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 266.5048B | 264.4034B | -0.8% |
+| `submit_move_intent` avg | 11.5099B | 11.2709B | -2.1% |
+| `submit_build_town_structure` avg | 20.7640B | 20.0661B | -3.4% |
+| `submit_recruit_units` avg | 16.3014B | 15.5919B | -4.4% |
+| `sync_session_turn` avg | 13.3267B | 13.3287B | flat |
+| `system_jobs.by_session_status_due` calls | 32 | 26 | -18.8% |
+| `system_jobs.by_session_status_due` total | 11.2665B | 9.1537B | -18.8% |
+
+Decision:
+
+- Keep this cut. It improves every map-turn command in Gate J and leaves sync flat.
+- Combined with the previous checkpoint, job-scan calls are now 48 -> 26 and job-scan instructions are 16.8968B -> 9.1537B from the runtime-pending baseline.

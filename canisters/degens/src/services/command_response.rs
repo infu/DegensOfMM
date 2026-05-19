@@ -198,22 +198,26 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
             }
         }
     } else {
-        for status in [system_jobs::STATUS_RUNNING, system_jobs::STATUS_SCHEDULED] {
-            let page = system_jobs::page_system_jobs_by_session_status(
+        let mut cursor = None;
+        loop {
+            let page = system_jobs::page_system_jobs_by_session(
                 context.session.id(),
-                status,
                 domm_game::MAX_LIST_LIMIT,
-                None,
+                cursor,
             )?;
             for job in page.items {
                 if is_current_turn_closure_job(&job, context.session.current_turn) {
-                    let closure_accepted =
-                        job.status == system_jobs::STATUS_RUNNING || job.due_at <= now;
+                    let closure_accepted = job.status == system_jobs::STATUS_RUNNING
+                        || (job.status == system_jobs::STATUS_SCHEDULED && job.due_at <= now);
                     if closure_accepted {
                         return Err(current_turn_closing_error());
                     }
                 }
             }
+            let Some(next_cursor) = page.next_cursor else {
+                break;
+            };
+            cursor = Some(next_cursor);
         }
     }
     if command_type == "end_turn"

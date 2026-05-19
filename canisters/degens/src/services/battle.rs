@@ -33,6 +33,7 @@ const CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE: u32 = 1;
 const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
 const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
     (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
+const CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT: usize = 16;
 const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
 
 pub(crate) fn schedule_battle_timeout_job(
@@ -1286,21 +1287,39 @@ pub(crate) fn sync_battle(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
-    let sync_incomplete = match apply_due_timeouts(
+    let mut used_runtime_sync = false;
+    let sync_result = match apply_due_runtime_timeouts_for_sync(
         &mut context.session,
         battle.id(),
         now_ms,
         CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+        command.id(),
         Some(&response_participant_id),
         &mut events,
         &mut changed_subjects,
     ) {
+        Ok(Some((sync_incomplete, _applied))) => {
+            used_runtime_sync = true;
+            Ok(sync_incomplete)
+        }
+        Ok(None) => apply_due_timeouts(
+            &mut context.session,
+            battle.id(),
+            now_ms,
+            CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+            Some(&response_participant_id),
+            &mut events,
+            &mut changed_subjects,
+        ),
+        Err(error) => Err(error),
+    };
+    let sync_incomplete = match sync_result {
         Ok(sync_incomplete) => sync_incomplete,
         Err(error) => {
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
-    if let Some(updated_battle) = battles::load_battle(battle.id())? {
+    if !used_runtime_sync && let Some(updated_battle) = battles::load_battle(battle.id())? {
         let readiness = recompute_battle_round_readiness_and_schedule(
             context.session.id(),
             &updated_battle,
@@ -1309,14 +1328,16 @@ pub(crate) fn sync_battle(
         )?;
         changed_subjects.extend(readiness.changed_subjects);
     }
-    if let Err(error) = apply_resolved_battle_aftermath_with_runtime_projection(
-        &mut context.session,
-        command.id(),
-        battle.id(),
-        &mut events,
-        &mut changed_subjects,
-    ) {
-        return command_response::fail_command(caller, &context, command, &client_nonce, error);
+    if !used_runtime_sync {
+        if let Err(error) = apply_resolved_battle_aftermath_with_runtime_projection(
+            &mut context.session,
+            command.id(),
+            battle.id(),
+            &mut events,
+            &mut changed_subjects,
+        ) {
+            return command_response::fail_command(caller, &context, command, &client_nonce, error);
+        }
     }
     let active_stack_id = battles::load_battle(battle.id())?
         .and_then(|battle| battle.active_stack_id)
@@ -1334,9 +1355,6 @@ pub(crate) fn sync_battle(
         active_stack_id,
     };
 
-    if let Some(updated_session) = crate::repos::sessions::load_session(context.session.id())? {
-        context.session = updated_session;
-    }
     let result_json = battle_sync_result_json(&outcome);
     command_response::apply_command_with_result(
         caller,
@@ -2052,6 +2070,7 @@ fn apply_player_action_from_runtime(
     refresh_runtime_metadata_from_state(&mut runtime, session, &input.battle_id)?;
     let receipt = battle_action_receipt(&runtime.state, &command.id().to_string())
         .map_err(map_battle_error)?;
+    trim_runtime_transient_battle_history(&mut runtime);
     battle_runtime::insert_runtime(runtime);
     changed_subjects.push(command_response::changed(
         "battle",
@@ -2059,6 +2078,25 @@ fn apply_player_action_from_runtime(
         "update",
     ));
     Ok(receipt)
+}
+
+fn trim_runtime_transient_battle_history(runtime: &mut BattleRuntime) {
+    trim_to_recent(
+        &mut runtime.state.commands,
+        CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT,
+    );
+    trim_to_recent(
+        &mut runtime.state.events,
+        CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT,
+    );
+}
+
+fn trim_to_recent<T>(values: &mut Vec<T>, limit: usize) {
+    if values.len() <= limit {
+        return;
+    }
+    let keep_from = values.len().saturating_sub(limit);
+    values.drain(0..keep_from);
 }
 
 fn refresh_runtime_metadata_from_state(
@@ -2508,6 +2546,127 @@ fn recover_applying_battle_commands(
     Ok(recovered)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn apply_due_runtime_timeouts_for_sync(
+    session: &mut GameSession,
+    battle_id: Id<Battle>,
+    now_ms: u64,
+    max_timeout_actions: u32,
+    command_id: Id<GameCommand>,
+    _response_participant_id: Option<&str>,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+) -> Result<Option<(bool, u32)>, ApiError> {
+    let battle_id_text = battle_id.to_string();
+    let Some(mut runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
+        return Ok(None);
+    };
+    if runtime.session_id != session.id().to_string() {
+        return Ok(None);
+    }
+
+    let mut applied = 0_u32;
+    let mut needs_aftermath = false;
+    loop {
+        let battle = runtime
+            .state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .clone();
+        if battle.state != "active" {
+            needs_aftermath = true;
+            break;
+        }
+        let Some(deadline) = battle.action_deadline_at else {
+            break;
+        };
+        if deadline > now_ms {
+            break;
+        }
+        let Some(active_stack_id) = battle.active_stack_id else {
+            break;
+        };
+        if applied >= max_timeout_actions {
+            battle_runtime::insert_runtime(runtime);
+            return Ok(Some((true, applied)));
+        }
+
+        let timeout_command_id = command_id.to_string();
+        if runtime
+            .state
+            .events
+            .iter()
+            .any(|event| event.command_id == timeout_command_id)
+        {
+            break;
+        }
+        runtime.state.commands.push(domm_game::BattleCommandRecord {
+            command_id: timeout_command_id.clone(),
+            battle_id: battle_id_text.clone(),
+            actor_participant_id: None,
+            battle_stack_id: Some(active_stack_id),
+            client_nonce: format!("timeout:{battle_id_text}:{deadline}"),
+            payload_hash: "runtime_timeout_auto_defend".to_string(),
+            action: "AutoDefend".to_string(),
+            target_stack_id: None,
+            destination: None,
+            system: true,
+            status: "applying".to_string(),
+            created_at: deadline,
+            applied_at: None,
+            retryable_error: None,
+        });
+        domm_game::apply_battle_command_by_id(&mut runtime.state, &timeout_command_id, deadline)
+            .map_err(map_battle_error)?;
+        battle_rows::persist_battle_header_from_state(&runtime.state, command_id)?;
+        append_runtime_timeout_public_event(session, command_id, &battle_id_text, events)?;
+        refresh_runtime_metadata_from_state(&mut runtime, session, &battle_id_text)?;
+        trim_runtime_transient_battle_history(&mut runtime);
+        applied = applied.saturating_add(1);
+    }
+
+    battle_runtime::insert_runtime(runtime);
+    if needs_aftermath {
+        apply_resolved_battle_aftermath_with_runtime_projection(
+            session,
+            command_id,
+            battle_id,
+            events,
+            changed_subjects,
+        )?;
+    }
+    if applied > 0 {
+        changed_subjects.push(command_response::changed(
+            "battle",
+            &battle_id_text,
+            "timeout",
+        ));
+    }
+    Ok(Some((false, applied)))
+}
+
+fn append_runtime_timeout_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    battle_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+) -> Result<(), ApiError> {
+    let public_event = command_response::append_public_event(
+        session,
+        command_id,
+        format!("battle:{battle_id}:runtime_timeout:{command_id}:public"),
+        "battle_timeout_auto_defend".to_string(),
+        Some("battle".to_string()),
+        Some(battle_id.to_string()),
+        format!(
+            r#"{{"battle_id":"{}","event_type":"battle_timeout_auto_defend","redacted":true}}"#,
+            command_response::escape_json(battle_id)
+        ),
+    )?;
+    events.push(public_event);
+    Ok(())
+}
+
 fn apply_due_timeouts(
     session: &mut GameSession,
     battle_id: Id<Battle>,
@@ -2646,6 +2805,7 @@ fn apply_system_battle_action_from_runtime(
         events,
     )?;
     refresh_runtime_metadata_from_state(&mut runtime, session, &battle_id_text)?;
+    trim_runtime_transient_battle_history(&mut runtime);
     battle_runtime::insert_runtime(runtime);
     apply_resolved_battle_aftermath_with_runtime_projection(
         session,

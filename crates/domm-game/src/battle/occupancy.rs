@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::types::{
     BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH, BattleCoord, BattleError, BattleOccupancyRecord,
@@ -9,6 +9,12 @@ pub fn validate_battle_occupancy(state: &BattleState, battle_id: &str) -> Result
     let battle = state.battle(battle_id)?;
     let mut stack_keys = HashSet::new();
     let mut tile_keys = HashSet::new();
+    let stacks = state
+        .stacks
+        .iter()
+        .filter(|stack| stack.battle_id == battle_id)
+        .map(|stack| (stack.battle_stack_id.as_str(), stack))
+        .collect::<HashMap<_, _>>();
 
     for occupancy in state
         .occupancy
@@ -35,7 +41,11 @@ pub fn validate_battle_occupancy(state: &BattleState, battle_id: &str) -> Result
                 y: occupancy.battle_y,
             });
         }
-        let stack = state.stack(&occupancy.battle_stack_id)?;
+        let stack = stacks
+            .get(occupancy.battle_stack_id.as_str())
+            .ok_or_else(|| BattleError::StackNotFound {
+                battle_stack_id: occupancy.battle_stack_id.clone(),
+            })?;
         if stack.battle_x != occupancy.battle_x || stack.battle_y != occupancy.battle_y {
             return Err(BattleError::OccupancyCacheMismatch {
                 battle_stack_id: stack.battle_stack_id.clone(),

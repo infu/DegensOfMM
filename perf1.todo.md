@@ -324,7 +324,7 @@ When a todo item is completed:
 - [x] Make battle validation action-specific so attack/defend/wait do not compute full move reachability unless needed.
 - [x] Keep current durable command/event behavior only long enough to measure the Gate 1 delta.
 - [ ] Move `CastAbility` off the row-backed tactical persist path or explicitly benchmark/document it as a rare fallback.
-- [ ] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`.
+- [x] Run focused Gate K or a shorter battle benchmark and decide whether Gate 1 cleared `<10B`. Gate K now passes, but Gate 1 did not clear `<10B`; `submit_battle_action` is still 20.3549B avg in the focused Gate K run, so the next cut must remove more durable per-action writes.
 
 ### 3. Gate 2: Remove Per-Action Battle Job/Readiness/Header Writes
 
@@ -358,7 +358,7 @@ When a todo item is completed:
 ### 6. Benchmark And Regression Discipline
 
 - [ ] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
-- [ ] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction.
+- [x] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction. The measured blocker is now durable command/event/session/aftermath work after tactical row writes were reduced; continue into Gate 2/3 cuts.
 - [ ] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
 - [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.

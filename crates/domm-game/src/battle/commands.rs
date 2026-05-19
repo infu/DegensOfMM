@@ -156,6 +156,7 @@ pub fn apply_battle_command_by_id(
     let battle_id = command.battle_id.clone();
     let current_round = state.battle(&battle_id)?.current_round;
 
+    let mut should_validate_occupancy = false;
     match command.action.as_str() {
         "Defend" | "AutoDefend" | "RoundAutoDefend" => {
             let stack = state.stack_mut(&stack_id)?;
@@ -180,6 +181,7 @@ pub fn apply_battle_command_by_id(
             let stack = state.stack_mut(&stack_id)?;
             stack.acted_round = current_round;
             stack.last_command_id = Some(command.command_id.clone());
+            should_validate_occupancy = true;
         }
         "Move" => {
             let destination = command
@@ -197,6 +199,7 @@ pub fn apply_battle_command_by_id(
             let stack = state.stack_mut(&stack_id)?;
             stack.acted_round = current_round;
             stack.last_command_id = Some(command.command_id.clone());
+            should_validate_occupancy = true;
         }
         other => {
             return Err(BattleError::InvalidAction {
@@ -226,7 +229,9 @@ pub fn apply_battle_command_by_id(
     );
     mark_command_applied(state, &command.command_id, deadline_base_ms)?;
     advance_active_stack(state, &battle_id, deadline_base_ms)?;
-    validate_battle_occupancy(state, &battle_id)?;
+    if should_validate_occupancy {
+        validate_battle_occupancy(state, &battle_id)?;
+    }
     Ok(())
 }
 

@@ -352,3 +352,44 @@ Verified:
 
 - `cargo check -p domm-degens-canister`
 - `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+
+### Runtime Sync And Gate K Stabilization
+
+Follow-up after moving active non-spell submit onto runtime showed that full Gate K failed in `sync_battle`, not in `submit_battle_action`: resolved and timeout sync paths were still doing repeated expensive stable aftermath/readiness/session work.
+
+Changes made in this checkpoint:
+
+- `sync_battle` now tries the active `BattleRuntime` timeout path first and only falls back to row-backed timeout handling when runtime is missing.
+- Runtime timeout sync applies at most the existing per-update timeout budget, persists only the battle header, appends a compact public timeout event, and trims transient runtime command/event history to 16 records.
+- Runtime sync now applies resolved aftermath only when the runtime battle is non-active, avoiding no-op aftermath work on every active sync.
+- `sync_battle` skips the duplicate outer aftermath pass when runtime sync already handled the runtime state.
+- `sync_battle` no longer reloads the session after sync work; event append and victory finalization already mutate the same `context.session`.
+- Defend/wait/auto-defend battle commands no longer run full occupancy validation, and occupancy validation now uses a stack map instead of repeatedly scanning stacks.
+
+Focused benchmark:
+
+```text
+run id: 20260519-031342-gate-k-no-reload
+artifact: target/benchmarks/20260519-031342-gate-k-no-reload/gate-k/summary.json
+note: summary git_sha is 14b9505 because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | elapsed | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| passed | 606.25s | 84 | 118 | 327 | 1025 | 218625 |
+
+Key method summary from the focused run:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 25 | 20.3549B | 21.9646B | 175.16 MB | 0.0204T |
+| `sync_battle` | update | 28 | 9.8443B | 36.1433B | 34.33 MB | 0.0099T |
+| `get_battle_state` | query | 48 | n/a | n/a | 0 MB | 0T |
+
+Decision:
+
+- Gate K is playable/passing again after the runtime submit cut.
+- Perf Gate 1 did not clear `<10B`; `submit_battle_action` improved from the Gate K baseline of 27.4632B to 20.3549B, but durable command/event/session and aftermath-adjacent stable work still dominate.
+- Continue into Gate 2/3 style cuts rather than polishing tactical row persistence. The next likely wins are removing per-action durable battle header/job/readiness writes and moving active command receipts/events into runtime.

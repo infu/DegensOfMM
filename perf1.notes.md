@@ -879,3 +879,33 @@ Decision:
 - Gate 3 and Gate 4 are cleared in focused Gate K: `submit_battle_action` is now at the intended normal target of about 0.3B avg.
 - The p95 is still 1.1852B because cache misses and edge/fallback actions still pay a stable auth read. That is acceptable for this checkpoint but should be watched in the full suite.
 - `sync_battle` remains expensive at about 9.88B avg and is now the largest battle endpoint smell.
+
+Full benchmark suite after this checkpoint:
+
+```text
+run id: 20260519-063353-02c93e3
+artifact: target/benchmarks/20260519-063353-02c93e3/suite-summary.md
+command: DOMM_BENCH_JOBS=4 scripts/run-benchmarks.sh
+```
+
+Suite result:
+
+| gate | status | elapsed | instructions | memory | note |
+| --- | --- | ---: | ---: | ---: | --- |
+| Gate J | passed | 130s | 404.0368B | 6462.50 MB | strategic loop |
+| Gate K | passed | 207s | 929.2174B | 9314.25 MB | battle aftermath/victory |
+| Gate L | passed | 250s | 1152.7459B | 11228.00 MB | first-playable public route |
+| Gate M | passed | 485s | 809.2669B | 11912.00 MB | canister-backed client probe |
+
+Battle action in full suite:
+
+| gate | calls | avg instructions | p95 instructions | avg memory delta |
+| --- | ---: | ---: | ---: | ---: |
+| Gate K | 25 | 0.2846B | 1.1852B | 0.0025 MB |
+| Gate L | 26 | 0.2734B | 1.1851B | 0.0000 MB |
+
+Decision from full suite:
+
+- The focused Gate K improvement holds in the broader suite.
+- Required endpoint coverage is still intentionally partial per gate, so the "no missing endpoints" checklist remains open.
+- `sync_battle`, `sync_session_turn`, town/economy commands, and read APIs now dominate suite cost more than `submit_battle_action`.

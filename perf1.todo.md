@@ -371,7 +371,7 @@ When a todo item is completed:
 - [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
 - [ ] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods.
 - [x] Confirm no leftover PocketIC processes after focused benchmark runs.
-- [ ] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands.
+- [x] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands. Suite `20260519-063353-02c93e3` passed Gate J/K/L/M in parallel with `DOMM_BENCH_JOBS=4`.
 
 ### 7. Broader Aggregate Pattern
 

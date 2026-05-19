@@ -515,3 +515,63 @@ Decision:
 - The first target is cleared: Gate K `submit_battle_action` moved from 13.9983B to 9.3621B avg.
 - Durable event fanout is no longer the top submit blocker; the remaining cost is mostly session/auth lookups plus durable command/header/readiness/status writes.
 - Do not reintroduce one-shot durable event flushing. The next design needs bounded flush batches or active command/event receipt persistence that is explicitly outside the submit hot path.
+
+### Skip Active Submit Battle Header Projection
+
+Removed the durable `Battle` header update from active non-spell player `submit_battle_action`.
+
+Changes made:
+
+- Active player submit now mutates `BattleRuntime` and skips `battle_rows::persist_battle_header_from_state` during the submit hot path.
+- The battle-round submit guard now reads the current round from runtime when runtime exists. The first attempt at this cut failed because the guard still used stale durable `Battle.current_round` and rejected later actions as `battle_round_closed`.
+- Durable projection still happens during sync/finalization paths, so post-battle aftermath can keep using the existing row-backed projection.
+
+Failed benchmark used for the fix:
+
+```text
+run id: 20260519-043354-gate-k-no-submit-header
+result: failed with battle_round_closed from stale durable Battle.current_round in the submit guard
+```
+
+Focused benchmark:
+
+```text
+run id: 20260519-044140-gate-k-no-submit-header-guard
+artifact: target/benchmarks/20260519-044140-gate-k-no-submit-header-guard/gate-k/summary.json
+note: summary git_sha is a7d280c because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | elapsed | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| passed | 584.40s | 90 | 122 | 260 | 1025 | 168705 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 28 | 8.1771B | 8.7395B | 34.92 MB | 0.0082T |
+| `sync_battle` | update | 31 | 9.4910B | 36.1301B | 43.38 MB | 0.0101T |
+| `get_battle_state` | query | 52 | n/a | n/a | 0 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 28 | 2.1213B |
+| `event_fanout` | 28 | 1.2526B |
+| `readiness_schedule` | 28 | 1.2330B |
+| `command_begin` | 28 | 1.1899B |
+| `load_battle` | 28 | 0.7078B |
+| `recovery` | 28 | 0.7073B |
+| `final_response` | 28 | 0.4828B |
+| `mark_command_applying` | 28 | 0.4814B |
+| `persist_battle_state` | 28 | 0.0000B |
+
+Decision:
+
+- Skipping active submit header projection is viable once submit guards use runtime round state.
+- The next largest submit costs are now auth/session lookup, event fanout owner lookup/response construction, runtime readiness scheduling, durable command begin, recovery scan, and command status updates.
+- Full removal of active durable `Battle` header updates still needs timeout/round/finalization review; this checkpoint only removes the player submit hot-path write.

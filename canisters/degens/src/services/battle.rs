@@ -2109,11 +2109,15 @@ fn ensure_battle_round_accepts_new_action(
         if runtime.session_id != session_id.to_string() {
             return None;
         }
+        let runtime_round = match runtime.state.battle(&battle_id.to_string()) {
+            Ok(battle) => battle.current_round,
+            Err(error) => return Some(Err(map_battle_error(error))),
+        };
         if runtime
             .ready_participants
             .contains(&BattleRuntimeReadyKey {
                 participant_id: participant_id_text,
-                round_number,
+                round_number: runtime_round,
             })
         {
             return Some(Err(public_error(
@@ -2122,7 +2126,7 @@ fn ensure_battle_round_accepts_new_action(
                 false,
             )));
         }
-        let round_job_key = format!("battle_round_advance:{battle_id}:{round_number}");
+        let round_job_key = format!("battle_round_advance:{battle_id}:{runtime_round}");
         if runtime.deadline.round_job_key.as_deref() == Some(round_job_key.as_str()) {
             return Some(Err(public_error(
                 "battle_processing",
@@ -2306,7 +2310,7 @@ fn apply_player_action_from_runtime(
             .map_err(map_battle_error)
     })?;
     crate::metrics::benchmark_phase("submit_battle_action", "persist_battle_state", || {
-        battle_rows::persist_battle_header_from_state(&runtime.state, command.id()).map(|_| ())
+        Ok::<(), ApiError>(())
     })?;
     crate::metrics::benchmark_phase("submit_battle_action", "event_fanout", || {
         append_new_runtime_battle_events(

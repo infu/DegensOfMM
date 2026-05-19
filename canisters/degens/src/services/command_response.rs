@@ -1,5 +1,5 @@
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession};
+use domm_degens_schema::schema::{Champion, GameCommand, GameEvent, GameSession, SystemJob};
 use domm_game::{
     AdvancedScenarioReceipt, ApiError, ApiEventView, BattleActionReceipt, BattleSyncOutcome,
     ChampionMagicReceipt, ChangedSubject, CommandPhase, CommandResponse, CommandResult,
@@ -193,30 +193,35 @@ fn ensure_map_turn_accepts_new_command(
         return Ok(());
     }
     let now = Timestamp::now();
-    for status in [system_jobs::STATUS_RUNNING, system_jobs::STATUS_SCHEDULED] {
+    if now < context.session.turn_deadline_at {
         let page = system_jobs::page_system_jobs_by_session_status(
             context.session.id(),
-            status,
+            system_jobs::STATUS_SCHEDULED,
             domm_game::MAX_LIST_LIMIT,
             None,
         )?;
         for job in page.items {
-            if !matches!(job.job_kind.as_str(), "turn_resolution" | "turn_deadline") {
-                continue;
-            }
-            if job
-                .turn_number
-                .is_some_and(|turn| turn != context.session.current_turn)
+            if is_current_turn_closure_job(&job, context.session.current_turn) && job.due_at <= now
             {
-                continue;
+                return Err(current_turn_closing_error());
             }
-            let closure_accepted = job.status == system_jobs::STATUS_RUNNING || job.due_at <= now;
-            if closure_accepted {
-                return Err(public_error(
-                    "backend_work_pending",
-                    "the current turn is closing; refresh before submitting another turn action",
-                    true,
-                ));
+        }
+    } else {
+        for status in [system_jobs::STATUS_RUNNING, system_jobs::STATUS_SCHEDULED] {
+            let page = system_jobs::page_system_jobs_by_session_status(
+                context.session.id(),
+                status,
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
+            for job in page.items {
+                if is_current_turn_closure_job(&job, context.session.current_turn) {
+                    let closure_accepted =
+                        job.status == system_jobs::STATUS_RUNNING || job.due_at <= now;
+                    if closure_accepted {
+                        return Err(current_turn_closing_error());
+                    }
+                }
             }
         }
     }
@@ -235,6 +240,21 @@ fn ensure_map_turn_accepts_new_command(
         ));
     }
     Ok(())
+}
+
+#[inline(never)]
+fn is_current_turn_closure_job(job: &SystemJob, current_turn: u32) -> bool {
+    matches!(job.job_kind.as_str(), "turn_resolution" | "turn_deadline")
+        && !job.turn_number.is_some_and(|turn| turn != current_turn)
+}
+
+#[inline(never)]
+fn current_turn_closing_error() -> ApiError {
+    public_error(
+        "backend_work_pending",
+        "the current turn is closing; refresh before submitting another turn action",
+        true,
+    )
 }
 
 fn is_map_turn_sensitive_command(command_type: &str) -> bool {

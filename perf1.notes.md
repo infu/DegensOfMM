@@ -1471,3 +1471,48 @@ Decision:
 
 - Keep this cut because it removes the global nearest-job scans from the applied sync hot path while preserving timer behavior in the regression that matters.
 - Benchmark Wasm headroom is now only about 7 KB, so the next large active-turn aggregate likely needs another code-size freeing checkpoint or a split of benchmark/debug-only surface before adding new runtime structures.
+
+## Checkpoint: Pre-Deadline Scheduled Job Guard
+
+Narrowed the map-turn command guard before the session turn deadline.
+
+What changed:
+
+- Before `GameSession.turn_deadline_at`, `ensure_map_turn_accepts_new_command` now scans only scheduled system jobs for the session and blocks only when a current-turn `turn_resolution` or `turn_deadline` job is already due.
+- At or after the deadline, the older running+scheduled guard remains, so deadline closure still treats running jobs as backend work pending.
+- The implementation deliberately reuses the existing `page_system_jobs_by_session_status` repository path instead of adding a new due-only query helper. A due-only helper measured the same benchmark win but left only 112 bytes of benchmark Wasm headroom, which was not a good trade.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,576,504 bytes
+IC limit: 12,582,912 bytes
+headroom: 6,408 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-110341-movement-scheduled-guard-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-110341-movement-scheduled-guard-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-103739-movement-job-reschedule-gate-j`:
+
+| metric | job reschedule cut | scheduled guard cut | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 366.6428B | 365.2604B | -0.4% |
+| `submit_move_intent` avg instructions | 14.2054B | 13.7361B | -3.3% |
+| `sync_session_turn` avg instructions | 15.3974B | 15.3986B | flat |
+| `system_jobs.by_session_status_due` calls | 52 | 48 | -7.7% |
+| `system_jobs.by_session_status_due` total instructions | 18.2989B | 16.8852B | -7.7% |
+
+Decision:
+
+- Keep this cut because it removes four measured session-job guard reads from Gate J while preserving almost all remaining benchmark Wasm headroom.
+- The exact service regression passed but took 253.90s, confirming the guard safety case and reinforcing that this regression belongs in a slower focused group rather than every tiny edit loop.
+- This is still a row-level micro-cut. `submit_move_intent` is now under 14B but nowhere near the 5B target, so the next meaningful work remains a heap active-turn aggregate that stops writing durable intent/command/event state on every fresh movement submit.

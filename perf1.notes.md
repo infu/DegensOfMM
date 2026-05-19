@@ -1682,3 +1682,34 @@ Implementation decision:
 - Stop polishing row-level movement/town/champion paths unless the cut is trivial, already in hand, or frees code-size headroom.
 - The next serious implementation target is `SessionTurnRuntime`, not another long sequence of small stable-row shortcuts.
 - If the in-progress `movement_intent` effect deletion is finished, treat it as the last small movement micro-cut before switching to the runtime rewrite.
+
+## Checkpoint: SessionTurnRuntime Implementation Plan
+
+Launched four parallel explorer subagents to inspect:
+
+- movement/session-turn command flow;
+- query/projection/status merge requirements;
+- testing and benchmark strategy;
+- future town/champion/economy aggregate boundaries.
+
+Consolidated result is saved in `perf1.impl.md`.
+
+Key decisions:
+
+| decision | result |
+| --- | --- |
+| runtime order | Add runtime/projection plumbing first, mirror current durable behavior second, then make runtime authoritative. |
+| ownership | `SessionTurnRuntime` is a turn orchestration aggregate, not the first canonical owner of town/champion/economy state. |
+| query safety | Wire events/status/render/projection overlays before removing durable hot writes, otherwise APIs can lie while runtime is correct. |
+| current dirty edit | Decide whether to finish or abandon the in-progress `movement_intent` effect deletion before runtime implementation starts. Do not mix it into runtime commits. |
+| testing | Use compile checks and focused Gate J/regression tests for checkpoints; keep full benchmark suite for meaningful architecture gates. |
+| future aggregates | After `SessionTurnRuntime`, sequence `ChampionOverlay`, `EconomyRuntime`, `TownRuntime`, then aftermath/render cleanup. |
+
+Bug-prevention focus:
+
+- preserve nonce replay and mismatched-payload rejection;
+- keep event sequence monotonic across durable, battle runtime, and session-turn runtime;
+- keep one authoritative partial movement cursor;
+- make battle handoff a flush/pass boundary;
+- archive runtime receipts/events before runtime removal;
+- avoid resource double-spend while economy is still row-backed.

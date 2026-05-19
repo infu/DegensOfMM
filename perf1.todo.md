@@ -2,6 +2,8 @@
 
 Companion notes and decision log: `perf1.notes.md`.
 
+Implementation plan: `perf1.impl.md`.
+
 ## Problem
 
 The current gameplay hot paths use normalized IcyDB rows as the live mutation model. That means a single player action often hydrates many rows, mutates an in-memory shape, diffs child rows, updates several indexes, emits events, reloads related rows, and schedules background work.
@@ -417,16 +419,16 @@ When a todo item is completed:
 
 - [x] Change perf1 strategy from `submit_battle_action`-only optimization to whole-game path modernization after the battle runtime reached the `0.3B` target.
 - [x] Treat the battle runtime result as architectural proof: command-side heap aggregates for hot live state, IcyDB for projections/history/fallback/boundaries.
-- [ ] Rank aggregate work by scenario-level cost and route criticality before each major checkpoint, not by which endpoint has the nicest isolated number.
-- [ ] Prefer broad aggregate rewrites over more row-level movement/town/champion micro-cuts unless a micro-cut is trivial, already in hand, or frees code-size headroom.
-- [ ] Keep full benchmark runs for major architecture gates; use focused gates and compile checks for the fast edit loop.
+- [x] Rank aggregate work by scenario-level cost and route criticality before each major checkpoint, not by which endpoint has the nicest isolated number. Current order is session-turn/champion-movement runtime, setup/session/view projections, town/economy aggregate, champion aggregate, then remaining battle boundary work; see `perf1.impl.md`.
+- [x] Prefer broad aggregate rewrites over more row-level movement/town/champion micro-cuts unless a micro-cut is trivial, already in hand, or frees code-size headroom. `perf1.impl.md` treats the in-progress `movement_intent` effect removal as the last optional row-level movement micro-cut before runtime work.
+- [x] Keep full benchmark runs for major architecture gates; use focused gates and compile checks for the fast edit loop. `perf1.impl.md` records the focused Gate J and targeted regression matrix.
 - [x] Review town command paths for the same live-row smell: buildings, recruit pools, and garrison. Town build/recruit still reads and writes `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows directly; `get_town_view` is now real-row-backed, so the API is truthful but the command path remains an aggregate candidate.
 - [x] Review champion command paths for the same live-row smell: army stacks, spells, artifacts, cooldowns, and map position. Champion state is spread across `Champion`, `ChampionArmyStack`, `ChampionSpell`, artifact/equipment rows, map occupancy, battle aftermath, and movement updates.
 - [x] Review session/world turn sync paths for aggregate or shard opportunities. `submit_move_intent` and `sync_session_turn` remain high-cost, high-frequency row workflows around movement intents, participants, champions, occupancy, turn-ready rows, system jobs, income, and session updates.
 - [x] Pick the next aggregate after battle based on benchmark cost and code complexity. Next target should be a session-turn/champion-movement aggregate because full-suite Gate K/L show `submit_move_intent` around 15.4-15.6B and `sync_session_turn` around 19.3B, both more frequent than town commands and now far above active battle submit.
-- [ ] Define a setup/query projection pass if Gate J/K/L still spend too much time before reaching the core gameplay endpoint being optimized.
-- [ ] Define a town/economy aggregate once session-turn movement is no longer the dominant route cost, or sooner if endpoint-surface/full-suite shows town dominates setup.
-- [ ] Define a champion aggregate/projection contract that movement, aftermath, town, spells, and views can share.
+- [x] Define a setup/query projection pass if Gate J/K/L still spend too much time before reaching the core gameplay endpoint being optimized. `perf1.impl.md` lists runtime overlays for `get_game_view`, events/status, participant/champion/object/map views, and `preview_move_path`.
+- [x] Define a town/economy aggregate once session-turn movement is no longer the dominant route cost, or sooner if endpoint-surface/full-suite shows town dominates setup. `perf1.impl.md` sequences `EconomyRuntime` before `TownRuntime` after champion overlay work.
+- [x] Define a champion aggregate/projection contract that movement, aftermath, town, spells, and views can share. `perf1.impl.md` defines current `SessionTurnRuntime` champion deltas and defers full champion ownership to `ChampionOverlay`/`ChampionRuntime`.
 - [ ] Repeat the same benchmark discipline before and after each aggregate migration.
 
 ### 8. Gate 5: Session-Turn / Champion-Movement Runtime
@@ -447,7 +449,7 @@ When a todo item is completed:
 - [x] Remove redundant `CommandEffect` projection writes from movement snapshots. `MovementSnapshot` rows already provide the durable projection and idempotent `(command_id, intent_id, step_index)` replay guard, so `record_movement_snapshot` no longer writes a duplicate `movement_snapshot` command effect. Focused Gate J `20260519-112144-movement-snapshot-effect-gate-j` passed; versus `20260519-110341-movement-scheduled-guard-gate-j`, scenario instructions moved 365.2604B -> 361.7712B (-1.0%), `sync_session_turn` moved 15.3986B -> 15.0796B avg (-2.1%), `effects.command_effect_by_command_key` calls moved 7 -> 4, and `effects.create_applied_command_effect` calls moved 18 -> 15. Service regression `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` passed.
 - [x] Remove the top-level `turn_resolution` `CommandEffect` from `resolve_pending_movement`. Command idempotency, movement snapshot idempotency, event keys, and intent status already guard replay/recovery, so the extra effect row was redundant. Focused Gate J `20260519-113052-movement-turn-effect-gate-j` passed; versus `20260519-112144-movement-snapshot-effect-gate-j`, scenario instructions moved 361.7712B -> 357.9811B (-1.0%), `sync_session_turn` moved 15.0796B -> 14.7341B avg (-2.3%), scenario memory moved 6,326.1875 MB -> 6,190.125 MB (-2.2%), and `effects.create_applied_command_effect` calls moved 15 -> 7. Service regression `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` passed. Benchmark Wasm code section is 12,560,886 bytes with 22,026 bytes of headroom.
 - [ ] Decide whether to keep, finish, or abandon the in-progress `movement_intent` command-effect deletion as the last row-level movement micro-cut before the runtime rewrite.
-- [ ] Design `SessionTurnRuntime`: active movement intents, participant readiness, champion deltas, occupancy deltas, event buffer, command receipts, deadline/job hints, query merge, upgrade/adoption, and durable boundary projection.
+- [x] Design `SessionTurnRuntime`: active movement intents, participant readiness, champion deltas, occupancy deltas, event buffer, command receipts, deadline/job hints, query merge, upgrade/adoption, and durable boundary projection. Consolidated implementation plan is in `perf1.impl.md`.
 - [ ] Make active `submit_move_intent` use runtime receipts/intents/events first, with durable `MovementIntent` projection deferred or bounded.
 - [ ] Make active `sync_session_turn` resolve from runtime state and apply champion/occupancy/resource deltas without repeated row hydration.
 - [ ] Make `get_game_view`, `get_events_after`, `get_champion_view`, and object/map views merge active turn runtime state before durable fallback.

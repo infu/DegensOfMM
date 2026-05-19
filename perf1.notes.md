@@ -2326,3 +2326,27 @@ Measured delta versus `20260519-movement-partial-no-effects-gate-j`:
 Decision:
 
 - Keep this cut. It removes four fresh event absence reads from the route without changing replay behavior. The remaining sync event lookups are mostly movement-incomplete events that can be reused by later fresh sync commands, so they should wait for the runtime event-buffer rewrite.
+
+## Checkpoint: Batch Town Command Event Sequence Updates
+
+Changed town build/recruit event append so the private and public town events reserve consecutive in-memory sequence numbers and update the durable `GameSession.next_event_seq` once at the end. Event creation still uses create-first with lookup fallback on conflict, and both private/public events remain visible with the same payloads and audiences.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-town-batch-events-gate-j` passed in `232.87s`.
+
+Measured delta versus `20260519-lobby-new-events-gate-j`:
+
+| metric | lobby new events | town batch events | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 310.8836B | 309.9352B | -0.3% |
+| scenario cycles | 0.4103T | 0.4093T | -0.2% |
+| `submit_build_town_structure` avg | 17.4653B | 16.9903B | -2.7% |
+| `submit_recruit_units` avg | 12.9939B | 12.5197B | -3.6% |
+| `sessions.update_session` calls | 18 | 16 | -11.1% |
+
+Decision:
+
+- Keep this cut. It is a small write-amplification reduction in the town bridge path and preserves event replay fallback behavior.

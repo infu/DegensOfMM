@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, PlayerAccount, Town};
+use domm_degens_schema::schema::{
+    GameCommand, GameEvent, GameParticipant, GameSession, PlayerAccount, Town,
+};
 use domm_game::{
     ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
 };
@@ -10,7 +12,7 @@ use icydb::{
     types::{Id, Principal},
 };
 
-use crate::repos::{content, economy, players, sessions, towns};
+use crate::repos::{commands_events_effects, content, economy, players, sessions, towns};
 
 use super::{
     command_response::{self, GameCommandAction},
@@ -802,30 +804,102 @@ fn append_town_command_events(
     detailed_payload: String,
 ) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
     let audience_key = format!("participant:{participant_id}");
-    let private_event = command_response::append_new_event_for_audience(
+    let mut next_event_seq = session.next_event_seq;
+    let private_event = append_town_event(
         session,
         command_id,
+        &mut next_event_seq,
         format!("{event_key}:{audience_key}"),
         audience_key,
-        event_type.to_string(),
-        Some("town".to_string()),
-        Some(town_id.to_string()),
+        event_type,
+        town_id,
         detailed_payload,
     )?;
-    let public_event = command_response::append_new_public_event(
+    let public_event = match append_town_event(
         session,
         command_id,
+        &mut next_event_seq,
         format!("{event_key}:public"),
-        event_type.to_string(),
-        Some("town".to_string()),
-        Some(town_id.to_string()),
+        "public".to_string(),
+        event_type,
+        town_id,
         format!(
             r#"{{"town_id":"{}","event_type":"{}","redacted":true}}"#,
             command_response::escape_json(town_id),
             command_response::escape_json(event_type)
         ),
-    )?;
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            if session.next_event_seq != next_event_seq {
+                session.next_event_seq = next_event_seq;
+                *session = sessions::update_session(session.clone())?;
+            }
+            return Err(error);
+        }
+    };
+    if session.next_event_seq != next_event_seq {
+        session.next_event_seq = next_event_seq;
+        *session = sessions::update_session(session.clone())?;
+    }
     Ok(vec![private_event, public_event])
+}
+
+fn append_town_event(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+    next_event_seq: &mut u64,
+    event_key: String,
+    audience_key: String,
+    event_type: &str,
+    town_id: &str,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    match commands_events_effects::create_game_event(
+        session.id(),
+        Some(command_id),
+        None,
+        session.current_turn,
+        *next_event_seq,
+        event_key.clone(),
+        audience_key,
+        event_type.to_string(),
+        Some("town".to_string()),
+        Some(town_id.to_string()),
+        payload_json,
+    ) {
+        Ok(event) => {
+            *next_event_seq = next_event_seq.saturating_add(1);
+            Ok(api_event_view(event))
+        }
+        Err(error) => {
+            if let Some(event) =
+                commands_events_effects::find_event_by_key(session.id(), &event_key)?
+            {
+                if *next_event_seq <= event.event_seq {
+                    *next_event_seq = event.event_seq.saturating_add(1);
+                }
+                Ok(api_event_view(event))
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn api_event_view(event: GameEvent) -> domm_game::ApiEventView {
+    domm_game::ApiEventView {
+        session_id: Id::<GameSession>::from_key(event.session_id).to_string(),
+        event_seq: event.event_seq,
+        event_key: event.event_key,
+        audience_key: event.audience_key,
+        turn_number: event.turn_number,
+        event_type: event.event_type,
+        subject_kind: event.subject_kind,
+        subject_id_text: event.subject_id_text,
+        payload: Some(event.payload_json),
+        redacted: false,
+    }
 }
 
 fn ruleset_id() -> Result<Id<domm_degens_schema::schema::RulesetDefinition>, ApiError> {

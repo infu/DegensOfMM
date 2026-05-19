@@ -444,6 +444,27 @@ pub(crate) fn append_public_event(
     )
 }
 
+pub(crate) fn append_new_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
+    create_event_for_audience(
+        session,
+        command_id,
+        event_key,
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn append_event_for_audience(
     session: &mut GameSession,
@@ -455,29 +476,48 @@ pub(crate) fn append_event_for_audience(
     subject_id_text: Option<String>,
     payload_json: String,
 ) -> Result<ApiEventView, ApiError> {
-    let event = if let Some(event) =
-        commands_events_effects::find_event_by_key(session.id(), &event_key)?
-    {
-        event
-    } else {
-        let event_seq = session.next_event_seq;
-        let event = commands_events_effects::create_game_event(
-            session.id(),
-            Some(command_id),
-            None,
-            session.current_turn,
-            event_seq,
-            event_key,
-            audience_key,
-            event_type,
-            subject_kind,
-            subject_id_text,
-            payload_json,
-        )?;
-        session.next_event_seq = event_seq.saturating_add(1);
-        *session = sessions::update_session(session.clone())?;
-        event
-    };
+    if let Some(event) = commands_events_effects::find_event_by_key(session.id(), &event_key)? {
+        return Ok(api_event_view(event));
+    }
+    create_event_for_audience(
+        session,
+        command_id,
+        event_key,
+        audience_key,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn create_event_for_audience(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    audience_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
+    let event_seq = session.next_event_seq;
+    let event = commands_events_effects::create_game_event(
+        session.id(),
+        Some(command_id),
+        None,
+        session.current_turn,
+        event_seq,
+        event_key,
+        audience_key,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )?;
+    session.next_event_seq = event_seq.saturating_add(1);
+    *session = sessions::update_session(session.clone())?;
     Ok(api_event_view(event))
 }
 

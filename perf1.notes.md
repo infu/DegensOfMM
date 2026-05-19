@@ -1278,3 +1278,57 @@ Decision:
 - Keep this shortcut because it is small, fits the benchmark Wasm limit, and removes measured stable reads from fresh movement submits.
 - Do not extend active-session caller caching to movement while event sequence is stored on `GameSession`; that needs a heap event sequence block or aggregate-owned event writer first.
 - The remaining submit cost is still dominated by durable command/idempotency rows, public event/session updates, movement intent upsert, and system job guard scans. The next meaningful movement cut should be heap active-turn command receipts/intents/events rather than more row-level micro-optimizations.
+
+## Checkpoint: Fresh Movement Event Shortcut
+
+Added a narrow `append_new_public_event` helper and used it only for brand-new movement intent submissions. The helper creates the public event directly instead of first proving absence through `events.by_session_event_key`.
+
+Safety condition:
+
+- The shortcut is used only when `begin_participant_command_tracked` reports a fresh command and `find_movement_intent(session, champion, turn)` found no existing champion-turn intent before creation.
+- Existing intents, replacements, replay/recovery commands, and all other event paths still use `append_public_event`, which keeps the idempotent event-key lookup.
+- Movement intent rows are not deleted in the current flow, so an existing movement-intent event without an existing movement intent would indicate already-corrupt state. The shortcut should not hide normal idempotency cases.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,570,668 bytes
+IC limit: 12,582,912 bytes
+headroom: 12,244 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-100606-movement-new-event-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-100606-movement-new-event-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-095656-movement-effect-fresh-gate-j`:
+
+| metric | effect shortcut | event shortcut | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 391.3873B | 389.8865B | -0.4% |
+| `submit_move_intent` avg instructions | 14.6615B | 14.1924B | -3.2% |
+| `sync_session_turn` avg instructions | 17.5053B | 17.5045B | flat |
+| `events.by_session_event_key` calls | 22 | 20 | -9.1% |
+| `events.by_session_event_key` total instructions | 15.5007B | 14.0921B | -9.1% |
+| `effects.command_effect_by_command_key` calls | 15 | 15 | flat |
+
+Cumulative movement submit result versus indexed movement baseline `20260519-090940-movement-index-gate-j`:
+
+| metric | indexed baseline | current | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 393.4643B | 389.8865B | -0.9% |
+| `submit_move_intent` avg instructions | 15.3572B | 14.1924B | -7.6% |
+| `effects.command_effect_by_command_key` calls | 18 | 15 | -16.7% |
+| `events.by_session_event_key` calls | 22 | 20 | -9.1% |
+
+Decision:
+
+- Keep the shortcut because it is small, behaviorally narrow, and removes two measured stable index reads from Gate J.
+- Do not spread `append_new_public_event` broadly until each caller can prove a comparable freshness invariant.
+- The cost is still far above the 5B target. The next meaningful work should stop creating durable movement commands/intents/events on every active-turn operation, or introduce an active turn aggregate that owns fresh intent and event buffers like the battle runtime.

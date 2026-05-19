@@ -97,7 +97,7 @@ pub(crate) fn submit_move_intent(
         &client_nonce,
         &path_text,
     );
-    let intent = match movement::find_movement_intent(
+    let (intent, intent_is_fresh) = match movement::find_movement_intent(
         context.session.id(),
         champion.id(),
         context.session.current_turn,
@@ -109,18 +109,21 @@ pub(crate) fn submit_move_intent(
             intent.path_json = path_text.clone();
             intent.path_hash = path_hash;
             intent.resolved_at = None;
-            movement::update_movement_intent(intent)?
+            (movement::update_movement_intent(intent)?, false)
         }
-        None => movement::create_movement_intent(
-            context.session.id(),
-            context.session.current_turn,
-            context.participant.id(),
-            champion.id(),
-            command.id(),
-            "pending".to_string(),
-            path_text,
-            path_hash,
-        )?,
+        None => (
+            movement::create_movement_intent(
+                context.session.id(),
+                context.session.current_turn,
+                context.participant.id(),
+                champion.id(),
+                command.id(),
+                "pending".to_string(),
+                path_text,
+                path_hash,
+            )?,
+            true,
+        ),
     };
 
     let effect_key = format!("movement_intent:{}", intent.id());
@@ -152,19 +155,32 @@ pub(crate) fn submit_move_intent(
         champion.id(),
         context.session.current_turn
     );
-    let event = command_response::append_public_event(
-        &mut session,
-        command.id(),
-        event_key,
-        "movement_intent_submitted".to_string(),
-        Some("champion".to_string()),
-        Some(champion.id().to_string()),
-        format!(
-            r#"{{"intent_id":"{}","path_len":{}}}"#,
-            intent.id(),
-            path.len()
-        ),
-    )?;
+    let event_payload = format!(
+        r#"{{"intent_id":"{}","path_len":{}}}"#,
+        intent.id(),
+        path.len()
+    );
+    let event = if command_is_fresh && intent_is_fresh {
+        command_response::append_new_public_event(
+            &mut session,
+            command.id(),
+            event_key,
+            "movement_intent_submitted".to_string(),
+            Some("champion".to_string()),
+            Some(champion.id().to_string()),
+            event_payload,
+        )?
+    } else {
+        command_response::append_public_event(
+            &mut session,
+            command.id(),
+            event_key,
+            "movement_intent_submitted".to_string(),
+            Some("champion".to_string()),
+            Some(champion.id().to_string()),
+            event_payload,
+        )?
+    };
     command_response::apply_command(
         caller,
         &context,

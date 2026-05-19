@@ -1,5 +1,7 @@
 //! Repository boundary for rulesets and content definition rows.
 
+use std::{cell::RefCell, collections::BTreeMap};
+
 use domm_degens_schema::schema::{
     ArtifactDefinition, BuildingDefinition, ChampionClassDefinition, FactionDefinition,
     MapObjectDefinition, RulesetDefinition, SpellDefinition, TerrainDefinition, UnitDefinition,
@@ -8,7 +10,7 @@ use domm_game::{
     ArtifactContent, BuildingContent, ChampionClassContent, MapObjectContent, ResourceCost,
     SpellContent, TerrainContent, UnitContent,
 };
-use icydb::{Create, db::query::FieldRef, types::Id};
+use icydb::{Create, db::query::FieldRef, traits::EntityValue, types::Id};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult};
 
@@ -74,6 +76,29 @@ pub(crate) const MAP_OBJECT_SLUG_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     indexed_fields: &["ruleset_id", "slug"],
     bounded_limit: Some(1),
 };
+
+thread_local! {
+    static UNIT_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+fn cache_unit(row: &UnitDefinition) {
+    UNIT_CACHE.with(|cache| {
+        cache.borrow_mut().insert(row.id().to_string(), row.clone());
+    });
+}
+
+fn cached_unit(id: Id<UnitDefinition>) -> Option<UnitDefinition> {
+    UNIT_CACHE.with(|cache| cache.borrow().get(&id.to_string()).cloned())
+}
+
+fn cache_units(rows: &[UnitDefinition]) {
+    UNIT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        for row in rows {
+            cache.insert(row.id().to_string(), row.clone());
+        }
+    });
+}
 
 pub(crate) fn create_ruleset_definition(
     slug: String,
@@ -304,14 +329,16 @@ pub(crate) fn create_unit_definition(
         ability_keys: Some(unit.ability_keys),
     };
 
-    foundation::create("content.create_unit_definition", input)
+    let row = foundation::create("content.create_unit_definition", input)?;
+    cache_unit(&row);
+    Ok(row)
 }
 
 pub(crate) fn find_unit_by_ruleset_slug(
     ruleset_id: Id<RulesetDefinition>,
     slug: &str,
 ) -> RepoResult<Option<UnitDefinition>> {
-    foundation::storage_result(
+    let row = foundation::storage_result(
         UNIT_SLUG_LOOKUP.name,
         crate::db()
             .load::<UnitDefinition>()
@@ -321,24 +348,37 @@ pub(crate) fn find_unit_by_ruleset_slug(
             .order_asc("slug")
             .limit(1)
             .try_entity(),
-    )
+    )?;
+    if let Some(row) = &row {
+        cache_unit(row);
+    }
+    Ok(row)
 }
 
 pub(crate) fn load_unit(id: Id<UnitDefinition>) -> RepoResult<Option<UnitDefinition>> {
-    foundation::load_by_id("content.load_unit", id)
+    if let Some(row) = cached_unit(id) {
+        return Ok(Some(row));
+    }
+    let row = foundation::load_by_id("content.load_unit", id)?;
+    if let Some(row) = &row {
+        cache_unit(row);
+    }
+    Ok(row)
 }
 
 pub(crate) fn page_units_by_ruleset(
     ruleset_id: Id<RulesetDefinition>,
 ) -> RepoResult<Vec<UnitDefinition>> {
-    page_content_rows(
+    let rows = page_content_rows(
         "content.units_by_ruleset",
         crate::db()
             .load::<UnitDefinition>()
             .filter(FieldRef::new("ruleset_id").eq(ruleset_id.key()))
             .order_asc("slug")
             .order_asc("id"),
-    )
+    )?;
+    cache_units(&rows);
+    Ok(rows)
 }
 
 pub(crate) fn create_building_definition(

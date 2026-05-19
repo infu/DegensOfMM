@@ -2827,3 +2827,43 @@ Decision:
 
 - Keep this cut. It removes real durable row growth and drops `sync_session_turn` below `3B` without hollowing out behavior; Gate J still reaches pickup, build, recruit, crystal income, guarded neutral contact, battle row creation, and final event checks.
 - Gate 5D remains open because the target is `<1.5B`. The next meaningful cuts are runtime-owned battle/contact handoff, turn/session/job writes, and full runtime income/object projection so mine compatibility no longer needs a durable `WorldObject` update.
+
+## Checkpoint: Battle Start Unit Cache And Attacker Stage Collapse
+
+Implemented the first low-risk Gate 5F cut around battle/contact startup:
+
+- `content::load_unit` now uses a heap cache for immutable unit definitions. The cache is warmed by unit create/find/page/load paths, so first-playable setup warms battle-start unit rows before guarded contact.
+- Staged champion and neutral battle-start recovery still exists, but each state now reads only the stack side it needs. The old eager path paged attacker and defender stacks at the top of every state.
+- New champion and neutral battles create attacker stacks during the initial battle creation call and enter `starting_attacker`. Recovery from an older plain `starting` row still creates attacker stacks through the existing state machine.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260520-battle-start-cache-attacker-gate-j` passed in `214.53s`.
+- Removed the benchmark PocketIC server left with the hard TTL after the run. Other matched PocketIC processes were from an unrelated `reference/dex` path and were left alone.
+
+Measured delta versus Gate 5D.1 `20260520-gate5d-runtime-deltas-gate-j`:
+
+| metric | Gate 5D.1 | Gate 5F.1 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 180.8734B | 174.5569B | -3.5% |
+| Gate J memory | 5084.9375 MB | 5084.8750 MB | flat |
+| scenario calls | 55 | 54 | -1 |
+| row growth | 43 | 43 | flat |
+| `sync_session_turn` avg | 2.7653B | 2.4438B | -11.6% |
+| `submit_move_intent` avg | 0.7113B | 0.7108B | flat |
+
+Measured repo-operation movement:
+
+| operation | Gate 5D.1 calls | Gate 5F.1 calls | total instruction change |
+| --- | ---: | ---: | ---: |
+| `content.load_unit` | 3 | 0 | -2.1417B |
+| `battles.stacks_by_side` | 16 | 6 | -3.5225B |
+| `battles.by_attacker` | 6 | 5 | -0.6919B |
+| `battles.update_battle` | 4 | 4 | +0.0128B |
+
+Decision:
+
+- Keep this cut. It removes real stable reads and one normal-path startup sync call without hollowing out battle creation or hiding work in a new slow endpoint.
+- Gate 5F remains open. The remaining contact path is still row-backed: battle stacks, occupancy, obstacles, battle-start effects, timeout jobs, neutral state, and champion in-battle status are still durable startup writes/reads. The next large cut should move neutral/champion battle handoff into runtime first, then project durable rows only at the flush boundary.

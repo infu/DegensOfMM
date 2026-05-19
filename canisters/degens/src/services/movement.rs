@@ -3675,7 +3675,7 @@ fn start_neutral_battle(
         Timestamp::from_millis(Timestamp::now().as_millis().saturating_add(
             i64::try_from(domm_game::BATTLE_ACTION_DEADLINE_MS).unwrap_or(i64::MAX),
         ));
-    battles::create_battle(
+    let mut battle = battles::create_battle(
         session.id(),
         "starting".to_string(),
         "neutral".to_string(),
@@ -3692,6 +3692,9 @@ fn start_neutral_battle(
         Some(action_deadline_at),
         command_id,
     )?;
+    create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
+    battle.state = "starting_attacker".to_string();
+    battles::update_battle(battle)?;
     Ok(None)
 }
 
@@ -3703,20 +3706,14 @@ fn continue_neutral_battle_start(
     neutral_id: Id<NeutralArmy>,
     object_id: &str,
 ) -> Result<Option<Battle>, ApiError> {
-    let attacker_stacks = battles::page_battle_stacks_by_side(
-        battle.id(),
-        "attacker",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    let defender_stacks = battles::page_battle_stacks_by_side(
-        battle.id(),
-        "defender",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
     match battle.state.as_str() {
         "starting" => {
+            let attacker_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "attacker",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             if attacker_stacks.items.is_empty() {
                 create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
             }
@@ -3725,6 +3722,12 @@ fn continue_neutral_battle_start(
             return Ok(None);
         }
         "starting_attacker" => {
+            let defender_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "defender",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             if defender_stacks.items.is_empty() {
                 create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
             }
@@ -3739,6 +3742,18 @@ fn continue_neutral_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
+            let attacker_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "attacker",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
+            let defender_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "defender",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             let mut stacks = attacker_stacks.items;
             stacks.extend(defender_stacks.items);
             if let Some(active_stack) = select_initial_active_stack(session, &battle, &mut stacks) {

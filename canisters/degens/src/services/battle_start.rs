@@ -44,7 +44,15 @@ pub(crate) fn start_champion_battle(
         None,
         battle_seed(session, attacker, &defender.id().to_string(), coord),
     )?;
-    battle.state = "starting".to_string();
+    create_champion_side_stacks(
+        command_id,
+        battle.id(),
+        attacker.id(),
+        Some(Id::<GameParticipant>::from_key(attacker.participant_id)),
+        "attacker",
+        1,
+    )?;
+    battle.state = "starting_attacker".to_string();
     battles::update_battle(battle)?;
     Ok(None)
 }
@@ -56,20 +64,14 @@ fn continue_champion_battle_start(
     attacker: &Champion,
     defender: &Champion,
 ) -> Result<Option<Battle>, ApiError> {
-    let attacker_stacks = battles::page_battle_stacks_by_side(
-        battle.id(),
-        "attacker",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    let defender_stacks = battles::page_battle_stacks_by_side(
-        battle.id(),
-        "defender",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
     match battle.state.as_str() {
         "starting" => {
+            let attacker_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "attacker",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             if attacker_stacks.items.is_empty() {
                 create_champion_side_stacks(
                     command_id,
@@ -85,6 +87,12 @@ fn continue_champion_battle_start(
             Ok(None)
         }
         "starting_attacker" => {
+            let defender_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "defender",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             if defender_stacks.items.is_empty() {
                 create_champion_side_stacks(
                     command_id,
@@ -106,6 +114,18 @@ fn continue_champion_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
+            let attacker_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "attacker",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
+            let defender_stacks = battles::page_battle_stacks_by_side(
+                battle.id(),
+                "defender",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
             let mut stacks = attacker_stacks.items;
             stacks.extend(defender_stacks.items);
             battle.state = "active".to_string();

@@ -21,6 +21,14 @@ pub(crate) enum GameCommandAction {
     Return(CommandResponse),
 }
 
+pub(crate) enum GameCommandStart {
+    Apply {
+        command: GameCommand,
+        freshly_created: bool,
+    },
+    Return(CommandResponse),
+}
+
 pub(crate) fn begin_participant_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
@@ -30,6 +38,25 @@ pub(crate) fn begin_participant_command(
     payload_json: String,
 ) -> Result<GameCommandAction, ApiError> {
     begin_participant_command_guarded(
+        caller,
+        context,
+        command_type,
+        client_nonce_text,
+        champion_id,
+        payload_json,
+        || ensure_map_turn_accepts_new_command(context, command_type),
+    )
+}
+
+pub(crate) fn begin_participant_command_tracked(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    champion_id: Option<Id<Champion>>,
+    payload_json: String,
+) -> Result<GameCommandStart, ApiError> {
+    begin_participant_command_guarded_tracked(
         caller,
         context,
         command_type,
@@ -52,8 +79,34 @@ pub(crate) fn begin_participant_command_guarded<F>(
 where
     F: FnOnce() -> Result<(), ApiError>,
 {
+    match begin_participant_command_guarded_tracked(
+        caller,
+        context,
+        command_type,
+        client_nonce_text,
+        champion_id,
+        payload_json,
+        new_command_guard,
+    )? {
+        GameCommandStart::Apply { command, .. } => Ok(GameCommandAction::Apply(command)),
+        GameCommandStart::Return(response) => Ok(GameCommandAction::Return(response)),
+    }
+}
+
+pub(crate) fn begin_participant_command_guarded_tracked<F>(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    champion_id: Option<Id<Champion>>,
+    payload_json: String,
+    new_command_guard: F,
+) -> Result<GameCommandStart, ApiError>
+where
+    F: FnOnce() -> Result<(), ApiError>,
+{
     if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
-        return Ok(GameCommandAction::Return(failed_response(
+        return Ok(GameCommandStart::Return(failed_response(
             caller,
             context,
             command_type,
@@ -86,7 +139,7 @@ where
         client_nonce,
     )? {
         if existing.payload_hash != hash {
-            return Ok(GameCommandAction::Return(failed_response(
+            return Ok(GameCommandStart::Return(failed_response(
                 caller,
                 context,
                 command_type,
@@ -102,10 +155,13 @@ where
         if is_recoverable_movement_command(command_type)
             && matches!(existing.status.as_str(), "pending" | "applying")
         {
-            return Ok(GameCommandAction::Apply(existing));
+            return Ok(GameCommandStart::Apply {
+                command: existing,
+                freshly_created: false,
+            });
         }
         return response_from_command(caller, context, existing, client_nonce_text)
-            .map(GameCommandAction::Return);
+            .map(GameCommandStart::Return);
     }
 
     new_command_guard()?;
@@ -123,7 +179,10 @@ where
         hash,
         payload_json,
     )?;
-    Ok(GameCommandAction::Apply(command))
+    Ok(GameCommandStart::Apply {
+        command,
+        freshly_created: true,
+    })
 }
 
 fn ensure_map_turn_accepts_new_command(
@@ -443,6 +502,28 @@ pub(crate) fn ensure_command_effect(
             Timestamp::now(),
         )?;
     }
+    Ok(())
+}
+
+pub(crate) fn create_command_effect(
+    session_id: Id<GameSession>,
+    command_id: Id<GameCommand>,
+    effect_key: String,
+    effect_type: String,
+    target_kind: String,
+    target_id_text: String,
+    payload_json: String,
+) -> Result<(), ApiError> {
+    commands_events_effects::create_applied_command_effect(
+        session_id,
+        command_id,
+        effect_key,
+        effect_type,
+        target_kind,
+        target_id_text,
+        payload_json,
+        Timestamp::now(),
+    )?;
     Ok(())
 }
 

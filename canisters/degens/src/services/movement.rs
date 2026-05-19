@@ -19,7 +19,7 @@ use crate::repos::{
 
 use super::{
     battle as battle_service, battle_runtime, battle_start,
-    command_response::{self, GameCommandAction},
+    command_response::{self, GameCommandAction, GameCommandStart},
     economy_expansion, scenario_progress,
     session_context::{self, public_error},
     system_jobs as system_job_service,
@@ -77,7 +77,7 @@ pub(crate) fn submit_move_intent(
         command_response::escape_json(&champion_id),
         command_response::escape_json(&path_text)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, command_is_fresh) = match command_response::begin_participant_command_tracked(
         caller,
         &context,
         "submit_move_intent",
@@ -85,8 +85,11 @@ pub(crate) fn submit_move_intent(
         Some(champion.id()),
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        GameCommandStart::Apply {
+            command,
+            freshly_created,
+        } => (command, freshly_created),
+        GameCommandStart::Return(response) => return Ok(response),
     };
     let path_hash = command_response::payload_hash(
         "movement_path",
@@ -120,24 +123,39 @@ pub(crate) fn submit_move_intent(
         )?,
     };
 
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("movement_intent:{}", intent.id()),
-        "movement_intent".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        format!(r#"{{"intent_id":"{}"}}"#, intent.id()),
-    )?;
+    let effect_key = format!("movement_intent:{}", intent.id());
+    let effect_payload = format!(r#"{{"intent_id":"{}"}}"#, intent.id());
+    if command_is_fresh {
+        command_response::create_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "movement_intent".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            effect_payload,
+        )?;
+    } else {
+        command_response::ensure_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "movement_intent".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            effect_payload,
+        )?;
+    }
     let mut session = context.session.clone();
+    let event_key = format!(
+        "movement_intent:{}:{}",
+        champion.id(),
+        context.session.current_turn
+    );
     let event = command_response::append_public_event(
         &mut session,
         command.id(),
-        format!(
-            "movement_intent:{}:{}",
-            champion.id(),
-            context.session.current_turn
-        ),
+        event_key,
         "movement_intent_submitted".to_string(),
         Some("champion".to_string()),
         Some(champion.id().to_string()),

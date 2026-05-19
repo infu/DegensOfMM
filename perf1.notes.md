@@ -1235,3 +1235,46 @@ Decision:
 
 - Keep the indexed loader; it is small, benchmarked, and moves `sync_session_turn` in the right direction.
 - The result is nowhere near the 5B target, so the next meaningful cut needs to move active turn command/intents/events toward heap runtime state, not only query shape tuning.
+
+## Checkpoint: Fresh Movement Submit Effect Shortcut
+
+Added a narrow `create_command_effect` helper and used it only for freshly-created `submit_move_intent` commands. This skips the `effects.command_effect_by_command_key` absence read on the hot movement submit path while keeping the old idempotent `ensure_command_effect` path for replay/recovery commands.
+
+Rejected experiment:
+
+- I first tried using the active-session caller cache on movement submit/sync/end-turn. Focused Gate J exposed the problem: cached `GameSession.next_event_seq` can become stale across event-writing movement calls and caused `sync_session_turn` to fail with `events.create_game_event`. That cache change was removed before the final benchmark.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,569,998 bytes
+IC limit: 12,582,912 bytes
+headroom: 12,914 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-095656-movement-effect-fresh-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-095656-movement-effect-fresh-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result:
+
+| metric | indexed baseline | effect shortcut | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 393.4643B | 391.3873B | -0.5% |
+| `submit_move_intent` avg instructions | 15.3572B | 14.6615B | -4.5% |
+| `sync_session_turn` avg instructions | 17.5063B | 17.5053B | flat |
+| `effects.command_effect_by_command_key` calls | 18 | 15 | -16.7% |
+| `effects.command_effect_by_command_key` total instructions | 12.6539B | 10.5574B | -16.6% |
+
+Decision:
+
+- Keep this shortcut because it is small, fits the benchmark Wasm limit, and removes measured stable reads from fresh movement submits.
+- Do not extend active-session caller caching to movement while event sequence is stored on `GameSession`; that needs a heap event sequence block or aggregate-owned event writer first.
+- The remaining submit cost is still dominated by durable command/idempotency rows, public event/session updates, movement intent upsert, and system job guard scans. The next meaningful movement cut should be heap active-turn command receipts/intents/events rather than more row-level micro-optimizations.

@@ -175,8 +175,10 @@ pub(crate) fn submit_move_intent(
         &canonical_session_id,
         context.session.current_turn,
         |runtime| {
-            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
+            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
                 intent.clone(),
+                champion.clone(),
+                context.participant.clone(),
             ));
             let event = runtime
                 .active_events
@@ -298,8 +300,29 @@ fn hydrate_runtime_pending_movement_intents(
     )?
     .items
     {
-        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
+        let Some(participant) = sessions::load_participant(Id::<GameParticipant>::from_key(
+            intent.actor_participant_id,
+        ))?
+        else {
+            continue;
+        };
+        if participant.session_id != session.id().key() || participant.status != "active" {
+            continue;
+        }
+        let Some(champion) =
+            champions_artifacts::load_champion(Id::<Champion>::from_key(intent.champion_id))?
+        else {
+            continue;
+        };
+        if champion.session_id != session.id().key()
+            || champion.participant_id != participant.id().key()
+        {
+            continue;
+        }
+        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
             intent,
+            champion,
+            participant,
         ));
     }
     Ok(())
@@ -1146,7 +1169,7 @@ fn resolve_single_long_movement_fast(
         None,
     )?;
     pending[0].intent = movement::mark_intent_resolved(pending[0].intent.clone())?;
-    mirror_runtime_movement_intent(session, &pending[0].intent);
+    mirror_runtime_pending_movement(session, &pending[0]);
     pending[0].resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
@@ -1396,7 +1419,7 @@ fn stop_candidate_fast(
         &pending_move.champion,
     )?;
     pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
-    mirror_runtime_movement_intent(session, &pending_move.intent);
+    mirror_runtime_pending_movement(session, pending_move);
     pending_move.resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
@@ -1552,6 +1575,9 @@ fn validate_no_friendly_champion_blocker(
 }
 
 fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>, ApiError> {
+    if let Some(pending) = runtime_pending_movements_for_session(session)? {
+        return Ok(pending);
+    }
     let items = pending_movement_intents_for_session(session)?;
     let mut pending = Vec::new();
     for (intent, participant) in items {
@@ -1618,6 +1644,66 @@ fn pending_movement_intents_for_session(
     Ok(intents)
 }
 
+fn runtime_pending_movements_for_session(
+    session: &GameSession,
+) -> Result<Option<Vec<PendingMovement>>, ApiError> {
+    let session_id = session.id().to_string();
+    match session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        if runtime.intents.is_empty() {
+            return Ok(None);
+        }
+        let mut pending = Vec::new();
+        for runtime_intent in runtime
+            .intents
+            .iter()
+            .filter(|intent| intent.status == "pending")
+        {
+            let Some(intent) = runtime_intent.durable_intent.clone() else {
+                return Ok(None);
+            };
+            if intent.session_id != session.id().key()
+                || intent.turn_number != session.current_turn
+                || intent.status != "pending"
+            {
+                return Ok(None);
+            }
+            let (Some(champion), Some(participant)) = (
+                runtime_intent.champion.clone(),
+                runtime_intent.participant.clone(),
+            ) else {
+                return Ok(None);
+            };
+            if participant.session_id != session.id().key()
+                || participant.status != "active"
+                || participant.id().key() != intent.actor_participant_id
+                || champion.session_id != session.id().key()
+                || champion.participant_id != participant.id().key()
+                || champion.id().key() != intent.champion_id
+            {
+                return Ok(None);
+            }
+            pending.push(PendingMovement {
+                path: parse_path_text(&intent.path_json)?,
+                start: MoveCoord::new(champion.x, champion.y),
+                intent,
+                champion,
+                participant,
+                resolved: false,
+            });
+        }
+        pending.sort_by(|left, right| {
+            left.champion
+                .id()
+                .to_string()
+                .cmp(&right.champion.id().to_string())
+        });
+        Ok(Some(pending))
+    }) {
+        Some(result) => result,
+        None => Ok(None),
+    }
+}
+
 fn runtime_pending_movement_intents_for_session(
     session: &GameSession,
     active_participants_by_id: &BTreeMap<Ulid, GameParticipant>,
@@ -1650,11 +1736,13 @@ fn runtime_pending_movement_intents_for_session(
     .flatten()
 }
 
-fn mirror_runtime_movement_intent(session: &GameSession, intent: &MovementIntent) {
+fn mirror_runtime_pending_movement(session: &GameSession, pending_move: &PendingMovement) {
     let session_id = session.id().to_string();
     session_turn_runtime::with_runtime_mut(&session_id, session.current_turn, |runtime| {
-        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
-            intent.clone(),
+        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
+            pending_move.intent.clone(),
+            pending_move.champion.clone(),
+            pending_move.participant.clone(),
         ));
     });
 }
@@ -2297,10 +2385,10 @@ fn mark_pending_resolved(
         ));
     }
     pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
-    mirror_runtime_movement_intent(session, &pending_move.intent);
     pending_move.resolved = true;
     pending_move.participant.last_action_turn = pending_move.intent.turn_number;
     pending_move.participant = sessions::update_participant(pending_move.participant.clone())?;
+    mirror_runtime_pending_movement(session, pending_move);
     changed_subjects.push(command_response::changed(
         "movement_intent",
         &pending_move.intent.id().to_string(),
@@ -2373,9 +2461,9 @@ fn park_partial_movements(
             &remaining_text,
         );
         pending_move.intent = movement::update_movement_intent(pending_move.intent.clone())?;
-        mirror_runtime_movement_intent(session, &pending_move.intent);
         pending_move.path = remaining_path;
         pending_move.start = partial_to;
+        mirror_runtime_pending_movement(session, pending_move);
         parked = parked.saturating_add(1);
         changed_subjects.push(command_response::changed(
             "movement_intent",

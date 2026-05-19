@@ -2036,3 +2036,40 @@ Decision:
 
 - Keep this cut. It improves every map-turn command in Gate J and leaves sync flat.
 - Combined with the previous checkpoint, job-scan calls are now 48 -> 26 and job-scan instructions are 16.8968B -> 9.1537B from the runtime-pending baseline.
+
+## Checkpoint: Runtime-Hydrated Pending Movement
+
+Changed active session-turn runtime movement intents to carry the hydrated `Champion` and `GameParticipant` rows alongside the durable `MovementIntent` projection. `submit_move_intent` now stores the already-loaded champion/participant in the runtime, compatibility hydration fills those rows for pre-existing pending intents, and `load_pending_movements` now uses a runtime-first path when every pending runtime intent is complete and belongs to the active session/turn. Partial and resolved movement updates mirror the current champion/participant back into the runtime before later sync calls read it again.
+
+Fallback behavior:
+
+- If the active runtime is missing, has no intents, lacks a durable intent/champion/participant, or fails session/turn/owner/status checks, `sync_session_turn` falls back to the existing row-backed participant/intents/champion loading path.
+- Durable `MovementIntent`, champion, participant, movement snapshot, visibility, occupancy, event, and command writes still happen on the current path. This checkpoint only removes repeated row hydration for the active runtime read side.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-pending-hydrated cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync -- --nocapture` passed in `187.19s`.
+- Focused Gate J `20260519-160042-runtime-hydrated-pending-gate-j` passed in `681.74s`. The test wrote artifacts under `testing/pocket-ic/target/benchmarks/...` because the direct cargo test runs from the package cwd; the summary/run artifacts were copied to `target/benchmarks/20260519-160042-runtime-hydrated-pending-gate-j/` for consistency.
+
+Measured delta versus `20260519-153948-map-turn-guard-page-gate-j-rerun`:
+
+| metric | map-turn guard page | runtime-hydrated pending | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 264.4034B | 254.4790B | -3.8% |
+| scenario cycles | 0.4380T | 0.4245T | -3.1% |
+| `sync_session_turn` avg | 13.3287B | 12.4249B | -6.8% |
+| `submit_move_intent` avg | 11.2709B | 11.2759B | flat |
+| `sessions.participants_by_session_status` calls | 36 | 22 | -38.9% |
+| `sessions.participants_by_session_status` total | 12.7040B | 7.7619B | -38.9% |
+| `champions.load_champion` calls | 10 | 3 | -70.0% |
+| `champions.load_champion` total | 7.0721B | 2.1209B | -70.0% |
+| `movement.intents_by_session_turn_status` calls | 6 | 6 | unchanged |
+
+Decision:
+
+- Keep this cut. It gives a route-level win without shifting cost into `submit_move_intent`.
+- The remaining repeated `movement.intents_by_session_turn_status` scans show this is still a bridge, not the final active-turn aggregate. The next large step should make active `sync_session_turn` resolve from runtime-owned movement/champion/resource state and reserve durable projections for the boundary.

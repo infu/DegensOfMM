@@ -169,6 +169,8 @@ pub(crate) struct RuntimeMovementIntent {
     pub path_hash: String,
     pub status: String,
     pub durable_intent: Option<MovementIntent>,
+    pub champion: Option<Champion>,
+    pub participant: Option<GameParticipant>,
 }
 
 impl RuntimeMovementIntent {
@@ -183,7 +185,20 @@ impl RuntimeMovementIntent {
             path_hash: intent.path_hash.clone(),
             status: intent.status.clone(),
             durable_intent: Some(intent),
+            champion: None,
+            participant: None,
         }
+    }
+
+    pub(crate) fn from_pending(
+        intent: MovementIntent,
+        champion: Champion,
+        participant: GameParticipant,
+    ) -> Self {
+        let mut runtime_intent = Self::from_durable(intent);
+        runtime_intent.champion = Some(champion);
+        runtime_intent.participant = Some(participant);
+        runtime_intent
     }
 }
 
@@ -526,6 +541,8 @@ mod tests {
             path_hash: "hash:1".to_string(),
             status: "pending".to_string(),
             durable_intent: None,
+            champion: None,
+            participant: None,
         });
         runtime.upsert_intent(RuntimeMovementIntent {
             intent_id: "intent:1".to_string(),
@@ -536,6 +553,8 @@ mod tests {
             path_hash: "hash:2".to_string(),
             status: "pending".to_string(),
             durable_intent: None,
+            champion: None,
+            participant: None,
         });
 
         assert_eq!(runtime.intents.len(), 1);

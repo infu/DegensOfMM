@@ -55,20 +55,23 @@ if ! [[ "$benchmark_jobs" =~ ^[0-9]+$ ]] || ((benchmark_jobs < 1)); then
     benchmark_jobs=1
 fi
 
-GATES=("gate-j" "gate-k" "gate-l" "gate-m")
+GATES=("endpoint-surface" "gate-j" "gate-k" "gate-l" "gate-m")
 declare -A GATE_TEST_FILE=(
+    ["endpoint-surface"]="canister_endpoints"
     ["gate-j"]="canister_endpoints"
     ["gate-k"]="canister_endpoints"
     ["gate-l"]="canister_endpoints"
     ["gate-m"]="client_probe_canister"
 )
 declare -A GATE_TEST_NAME=(
+    ["endpoint-surface"]="pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint"
     ["gate-j"]="pocket_ic_gate_j_strategic_loop_persists_icydb_rows"
     ["gate-k"]="pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows"
     ["gate-l"]="pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state"
     ["gate-m"]="gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter"
 )
 declare -A GATE_DESCRIPTION=(
+    ["endpoint-surface"]="Required public endpoint surface"
     ["gate-j"]="Strategic loop persistence"
     ["gate-k"]="Battle aftermath and victory history"
     ["gate-l"]="First-playable public endpoint route"
@@ -215,15 +218,66 @@ gate_query_instruction_billions() {
     }' "$log"
 }
 
+suite_summary_files() {
+    local gate summary
+    for gate in "${GATES[@]}"; do
+        summary="$output_dir/$gate/summary.json"
+        if [[ -f "$summary" ]]; then
+            printf "%s\n" "$summary"
+        fi
+    done
+}
+
+suite_required_total() {
+    if ((jq_available == 0)) || (($# == 0)); then
+        printf "null"
+        return
+    fi
+    jq -s '[.[].required_game_endpoint_count] | max // 0' "$@"
+}
+
+suite_missing_required_json() {
+    if ((jq_available == 0)) || (($# == 0)); then
+        printf "[]"
+        return
+    fi
+    jq -s -c '
+        if length == 0 then
+            []
+        else
+            reduce .[].missing_required_endpoints as $missing
+                (.[0].missing_required_endpoints;
+                 map(select(. as $endpoint | $missing | index($endpoint))))
+        end
+    ' "$@"
+}
+
 write_suite_markdown() {
     local suite_md="$output_dir/suite-summary.md"
     local gate gate_dir gate_log status summary calls scenarios required row_growth stable_pages instructions cycles memory artifacts
+    local -a summary_files=()
+    while IFS= read -r summary; do
+        summary_files+=("$summary")
+    done < <(suite_summary_files)
 
     {
         printf "# DoMM Benchmark Suite %s\n\n" "$run_id"
         printf -- "- Git: \`%s\`\n" "$git_sha"
         printf -- "- Parallel gate jobs: %s\n" "$benchmark_jobs"
         printf -- "- Output: \`%s\`\n\n" "$output_dir"
+        if ((jq_available == 1)) && ((${#summary_files[@]} > 0)); then
+            local suite_required suite_missing_json suite_missing_count suite_covered suite_missing_text
+            suite_required="$(suite_required_total "${summary_files[@]}")"
+            suite_missing_json="$(suite_missing_required_json "${summary_files[@]}")"
+            suite_missing_count="$(jq 'length' <<<"$suite_missing_json")"
+            suite_covered="$((suite_required - suite_missing_count))"
+            printf -- "- Suite required endpoints covered: \`%s/%s\` (union across benchmark gates)\n" "$suite_covered" "$suite_required"
+            if ((suite_missing_count > 0)); then
+                suite_missing_text="$(jq -r 'join(", ")' <<<"$suite_missing_json")"
+                printf -- "- Suite missing required endpoints: %s\n" "$suite_missing_text"
+            fi
+            printf "\n"
+        fi
         printf "| Gate | Status | Calls | Scenarios | Required endpoints | Row growth | Stable pages | Instructions B | Cycles T | Memory MB | Artifacts |\n"
         printf "| --- | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | --- |\n"
 
@@ -287,6 +341,18 @@ json_escape() {
 write_suite_json() {
     local suite_json="$output_dir/suite-summary.json"
     local first=1 gate gate_dir gate_log status summary elapsed
+    local -a summary_files=()
+    while IFS= read -r summary; do
+        summary_files+=("$summary")
+    done < <(suite_summary_files)
+    local suite_required="null"
+    local suite_covered="null"
+    local suite_missing_json="[]"
+    if ((jq_available == 1)) && ((${#summary_files[@]} > 0)); then
+        suite_required="$(suite_required_total "${summary_files[@]}")"
+        suite_missing_json="$(suite_missing_required_json "${summary_files[@]}")"
+        suite_covered="$((suite_required - $(jq 'length' <<<"$suite_missing_json")))"
+    fi
 
     {
         printf '{\n'
@@ -294,6 +360,9 @@ write_suite_json() {
         printf '  "git_sha": "%s",\n' "$(json_escape "$git_sha")"
         printf '  "parallel_gate_jobs": %s,\n' "$benchmark_jobs"
         printf '  "output_dir": "%s",\n' "$(json_escape "$output_dir")"
+        printf '  "required_game_endpoint_count": %s,\n' "$suite_required"
+        printf '  "covered_required_endpoint_count": %s,\n' "$suite_covered"
+        printf '  "missing_required_endpoints": %s,\n' "$suite_missing_json"
         printf '  "gates": [\n'
         for gate in "${GATES[@]}"; do
             gate_dir="$output_dir/$gate"

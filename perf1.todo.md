@@ -369,16 +369,16 @@ When a todo item is completed:
 - [x] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
 - [x] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
 - [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
-- [ ] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods.
+- [x] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods. Added an `endpoint-surface` benchmark gate that records all 59 required public endpoints; focused run covered `59/59` endpoints with no update method missing `avg_instruction_delta`. `Inst change` can still be `n/a` on a first comparable run, which is expected.
 - [x] Confirm no leftover PocketIC processes after focused benchmark runs.
 - [x] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands. Suite `20260519-063353-02c93e3` passed Gate J/K/L/M in parallel with `DOMM_BENCH_JOBS=4`.
 
 ### 7. Broader Aggregate Pattern
 
-- [ ] Review town command paths for the same live-row smell: buildings, recruit pools, and garrison.
-- [ ] Review champion command paths for the same live-row smell: army stacks, spells, artifacts, cooldowns, and map position.
-- [ ] Review session/world turn sync paths for aggregate or shard opportunities.
-- [ ] Pick the next aggregate after battle based on benchmark cost and code complexity.
+- [x] Review town command paths for the same live-row smell: buildings, recruit pools, and garrison. Town build/recruit still reads and writes `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows directly; `get_town_view` is now real-row-backed, so the API is truthful but the command path remains an aggregate candidate.
+- [x] Review champion command paths for the same live-row smell: army stacks, spells, artifacts, cooldowns, and map position. Champion state is spread across `Champion`, `ChampionArmyStack`, `ChampionSpell`, artifact/equipment rows, map occupancy, battle aftermath, and movement updates.
+- [x] Review session/world turn sync paths for aggregate or shard opportunities. `submit_move_intent` and `sync_session_turn` remain high-cost, high-frequency row workflows around movement intents, participants, champions, occupancy, turn-ready rows, system jobs, income, and session updates.
+- [x] Pick the next aggregate after battle based on benchmark cost and code complexity. Next target should be a session-turn/champion-movement aggregate because full-suite Gate K/L show `submit_move_intent` around 15.4-15.6B and `sync_session_turn` around 19.3B, both more frequent than town commands and now far above active battle submit.
 - [ ] Repeat the same benchmark discipline before and after each aggregate migration.
 
 ## Expected Outcome

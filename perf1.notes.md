@@ -1045,3 +1045,70 @@ Decision:
 - Leave the todo unchecked.
 - Keep using the current in-memory archive plus upgrade snapshot for runtime command receipts/events.
 - Revisit after freeing at least 10 KB of Wasm code section, moving debug/history flushing into a split canister, or replacing enough existing code with a smaller shared helper.
+
+## Checkpoint: Benchmark Endpoint Coverage Gate
+
+Added a dedicated benchmark gate for required public endpoint coverage.
+
+What changed:
+
+- `scripts/run-benchmarks.sh` now runs `endpoint-surface` before Gate J/K/L/M.
+- The suite summary now reports union required-endpoint coverage across benchmark gates.
+- `pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint` records every required public endpoint through the benchmark recorder in one active two-player session.
+- The endpoint-surface route is a coverage/per-method-cost probe, not a perfect realistic workload for every endpoint. Some battle and movement calls intentionally hit typed error paths when setting up a full valid scenario would turn this into another long Gate L/K route.
+
+Focused endpoint-surface result:
+
+| metric | value |
+| --- | ---: |
+| status | passed |
+| elapsed | 466.47s |
+| benchmark calls | 150 |
+| required endpoints covered | 59/59 |
+| missing required endpoints | 0 |
+| update methods missing avg instructions | 0 |
+
+Update method examples from the coverage run:
+
+| method | calls | avg instructions | errors |
+| --- | ---: | ---: | ---: |
+| `submit_build_town_structure` | 1 | 20.7621B | 0 |
+| `claim_quest_reward` | 1 | 19.5705B | 0 |
+| `submit_dwelling_recruit` | 1 | 16.7474B | 0 |
+| `sync_advanced_victory` | 1 | 16.5134B | 0 |
+| `submit_recruit_units` | 1 | 16.2843B | 0 |
+| `submit_battle_action` | 1 | 2.1083B | 1 |
+
+Decision:
+
+- Mark required benchmark endpoint coverage done: all required public endpoints can now appear in one full benchmark run.
+- Treat `Inst change = n/a` as acceptable for first comparable runs; the important failure case was missing `Avg inst B` for update methods, and that is fixed for updates.
+- Query instruction capture should be evaluated through `scripts/run-benchmarks.sh`, which writes stdout directly to the query log. A manual `tee` launch can race the file reader and produce query `Avg inst B = n/a`, so do not use that launch shape for official benchmark artifacts.
+
+## Review: Broader Aggregate Pattern After Battle
+
+Town command paths:
+
+- `get_town_view` now reads real `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` child rows through `render_projection::town_view`, so the previous fake/synthesized town-view risk is gone.
+- `submit_build_town_structure` still loads content, built building ids, participant resources, command/effect/event rows, then creates or updates `TownBuilding`, `TownRecruitPool`, `Town`, and participant state.
+- `submit_recruit_units` still loads and updates `TownRecruitPool`, upserts `TownGarrisonStack`, mutates participant resources, and writes command/effect/event rows.
+- Full-suite Gate J/L measured town build around 20.8B and recruit around 16.4B, but these are lower frequency than movement/turn sync in current scenarios.
+
+Champion command paths:
+
+- `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` load/update `Champion`, `ChampionSpell`, content rows, command/effect rows, and public events.
+- Movement and battle aftermath also mutate champion rows, champion army stacks, map occupancy, status, movement remaining, mana/cooldown-like turn fields, and defeated/active state.
+- This is the same live-row smell, but the champion path is tightly coupled to movement and aftermath. It should be handled with the movement/session-turn aggregate rather than as an isolated small champion rewrite.
+
+Session/world turn sync paths:
+
+- `submit_move_intent` writes a durable `MovementIntent`, command/effect/event rows, and validates against champion state, path bounds/cost, blockers, and map state.
+- `sync_session_turn` loads pending movements by scanning participants and champion ids, hydrates champions and participants, resolves movement microsteps against occupancy/world objects/enemies, writes snapshots/occupancy/champions/participants/events, materializes income, updates session turn/deadline, and schedules jobs.
+- Full-suite Gate K/L measured `submit_move_intent` around 15.4-15.6B and `sync_session_turn` around 19.3B. These are now the obvious hot spots after active `submit_battle_action` reached about 0.28B.
+
+Next aggregate:
+
+- Pick session-turn/champion-movement as the next aggregate.
+- Initial shape should be a session-turn runtime keyed by `(session_id, turn_number)` containing active movement intents, participant ready state, champion position/movement deltas, occupancy deltas, event buffer, and due-job/deadline hints.
+- Keep durable rows as projections/history/checkpoints while the turn is active, similar to the battle runtime pattern.
+- First benchmark target should be reducing `sync_session_turn` below 5B and `submit_move_intent` below 5B before pushing toward sub-1B.

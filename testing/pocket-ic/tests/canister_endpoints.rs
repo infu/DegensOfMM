@@ -5095,6 +5095,569 @@ fn pocket_ic_visibility_redaction_keeps_private_payloads_private() {
 }
 
 #[test]
+fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-endpoint-surface-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-endpoint-surface-two");
+    let viewport = opening_viewport_for_slot(0);
+    let mut metrics = GateJMetrics::default();
+
+    metrics.reset_benchmark_canister(&fixture);
+    metrics.set_benchmark_scenario("diagnostics");
+    let initial_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
+
+    metrics.set_benchmark_scenario("endpoint_surface");
+    let session_id = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_one,
+        player_two,
+        "endpoint-surface",
+    );
+    let champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_one, &session_id);
+    let town_id = "town:west".to_string();
+    let dwelling_id = "dwelling:west-mudhook".to_string();
+
+    let _ = gate_query_as::<PlayerView>(&mut metrics, &fixture, player_one, "get_my_player", ());
+    let _ = gate_query_as::<SetupProgressView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_setup_progress",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<ParticipantView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_my_participant",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<MatchHistoryPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_match_history",
+        (0_u32, 10_u32),
+    );
+    let _ = gate_query_as::<GameView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_game_view",
+        (
+            session_id.clone(),
+            GameViewRequest {
+                viewport: viewport.clone(),
+                chunk_cursor: None,
+                chunk_limit: 2,
+                object_cursor: None,
+                object_limit: 4,
+                events_after_seq: 0,
+                event_limit: 4,
+                include_battle: false,
+            },
+        ),
+    );
+    let _ = gate_query_as::<MapChunkPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_map_chunks",
+        (session_id.clone(), viewport.clone(), None::<u32>, 4_u32),
+    );
+    let _ = gate_query_as::<ObjectViewPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_visible_objects",
+        (session_id.clone(), viewport.clone(), None::<u32>, 16_u32),
+    );
+    let _ = gate_query_as::<ObjectView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_object_view",
+        (
+            session_id.clone(),
+            "world_object".to_string(),
+            "pile:west-wood-1".to_string(),
+        ),
+    );
+    let _ = gate_query_as::<Vec<ChampionView>>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_my_champions",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<ChampionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_champion_view",
+        (session_id.clone(), champion_id.clone()),
+    );
+    let _ = gate_query_as::<ChampionProgressionView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_champion_progression",
+        (session_id.clone(), champion_id.clone()),
+    );
+
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "select_champion_level_up",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "sour_sorcery".to_string(),
+            "nonce:endpoint-surface:skill".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "learn_champion_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "spite-march".to_string(),
+            "nonce:endpoint-surface:learn".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "cast_adventure_spell",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            "spite-march".to_string(),
+            "nonce:endpoint-surface:cast".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+
+    let tavern_offer_key = gate_query_as::<TavernOffersView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_tavern_offers",
+        (session_id.clone(), town_id.clone()),
+    )
+    .ok()
+    .and_then(|offers| offers.offers.first().map(|offer| offer.offer_key.clone()))
+    .unwrap_or_else(|| "offer:missing".to_string());
+    let _ = gate_query_as::<ChampionHirePreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_hire_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer_key.clone(),
+        ),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "hire_tavern_champion",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            tavern_offer_key,
+            "nonce:endpoint-surface:hire".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    let _ = gate_query_as::<MarketTradePreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            2_500_u64,
+        ),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_market_trade",
+        (
+            session_id.clone(),
+            "gold".to_string(),
+            "crystal".to_string(),
+            2_500_u64,
+            "nonce:endpoint-surface:market".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    let _ = gate_query_as::<DwellingPoolView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_dwelling_pool",
+        (session_id.clone(), dwelling_id.clone()),
+    );
+    let _ = gate_query_as::<DwellingRecruitPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id.clone(),
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+        ),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_dwelling_recruit",
+        (
+            session_id.clone(),
+            dwelling_id,
+            "mudhook-levy".to_string(),
+            1_u32,
+            champion_id.clone(),
+            "nonce:endpoint-surface:dwelling".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+
+    let _ = gate_query_as::<ObjectiveProgressView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_objective_progress",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<ScenarioRulesView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_scenario_rules",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<WorldEventsView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_world_events",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<QuestPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_quest",
+        (session_id.clone(), OPENING_QUEST_KEY.to_string()),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "accept_quest",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:endpoint-surface:quest:accept".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "claim_quest_reward",
+        (
+            session_id.clone(),
+            OPENING_QUEST_KEY.to_string(),
+            "nonce:endpoint-surface:quest:claim".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    for (method, nonce) in [
+        ("sync_objectives", "nonce:endpoint-surface:objectives"),
+        ("sync_world_events", "nonce:endpoint-surface:world-events"),
+        ("sync_advanced_victory", "nonce:endpoint-surface:victory"),
+        ("sync_world_generation", "nonce:endpoint-surface:worldgen"),
+    ] {
+        if let Ok(response) = gate_update_as::<CommandResponse>(
+            &mut metrics,
+            &fixture,
+            player_one,
+            method,
+            (session_id.clone(), nonce.to_string()),
+        ) {
+            metrics.observe_command_response(&response);
+        }
+    }
+
+    let _ = gate_query_as::<SkirmishSettingsView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_skirmish_settings",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<ProceduralMapView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_procedural_map_state",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<NavalRoutesView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_naval_routes",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<SiegeRulesView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_siege_rules",
+        (session_id.clone(),),
+    );
+    let _ = gate_query_as::<ApiTownView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_town_view",
+        (session_id.clone(), town_id.clone()),
+    );
+    let _ = gate_query_as::<BattleView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_battle_state",
+        (
+            session_id.clone(),
+            "battle:endpoint-surface:missing".to_string(),
+        ),
+    );
+    let _ = gate_query_as::<ContentManifestResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_content_manifest",
+        (FIRST_PLAYABLE_RULESET_SLUG.to_string(), 1_u32),
+    );
+    let _ = gate_query_as::<ApiEventPage>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_events_after",
+        (session_id.clone(), "public".to_string(), 0_u64, 10_u32),
+    );
+    let _ = gate_query_as::<CommandStatusView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_command_status",
+        (
+            session_id.clone(),
+            "nonce:endpoint-surface:start".to_string(),
+        ),
+    );
+    let _ = gate_query_as::<CommandStatusView>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "get_command_status_by_nonce",
+        (
+            session_id.clone(),
+            "start_session".to_string(),
+            "nonce:endpoint-surface:start".to_string(),
+        ),
+    );
+    let _ = gate_query_as::<MovementPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_move_path",
+        (
+            session_id.clone(),
+            champion_id.clone(),
+            vec![MoveCoord::new(9, 23)],
+        ),
+    );
+    let _ = gate_query_as::<BuildPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+        ),
+    );
+    let _ = gate_query_as::<RecruitPreview>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "preview_recruit_units",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+        ),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_move_intent",
+        (
+            session_id.clone(),
+            champion_id,
+            vec![MoveCoord::new(9, 23)],
+            "nonce:endpoint-surface:move".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_build_town_structure",
+        (
+            session_id.clone(),
+            town_id.clone(),
+            "building:freehold-training-yard".to_string(),
+            "nonce:endpoint-surface:build".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_recruit_units",
+        (
+            session_id.clone(),
+            town_id,
+            "unit:mudhook-levy".to_string(),
+            1_u32,
+            RecruitTarget::TownGarrison { slot_index: None },
+            "nonce:endpoint-surface:recruit".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_session_turn",
+        (
+            session_id.clone(),
+            "nonce:endpoint-surface:sync-turn".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+
+    let missing_battle_id = "battle:endpoint-surface:missing".to_string();
+    let missing_battle_action = BattleActionInput {
+        battle_id: missing_battle_id.clone(),
+        battle_stack_id: "stack:endpoint-surface:missing".to_string(),
+        action: "Defend".to_string(),
+        ability_key: None,
+        target_stack_id: None,
+        destination: None,
+    };
+    let _ = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            missing_battle_id.clone(),
+            "nonce:endpoint-surface:sync-battle".to_string(),
+        ),
+    );
+    let _ = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "end_battle_turn",
+        (
+            session_id.clone(),
+            missing_battle_id,
+            "nonce:endpoint-surface:end-battle-turn".to_string(),
+        ),
+    );
+    let _ = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "submit_battle_action",
+        (
+            session_id.clone(),
+            missing_battle_action,
+            "nonce:endpoint-surface:battle-action".to_string(),
+        ),
+    );
+    if let Ok(response) = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "end_turn",
+        (
+            session_id.clone(),
+            "nonce:endpoint-surface:end-turn".to_string(),
+        ),
+    ) {
+        metrics.observe_command_response(&response);
+    }
+
+    metrics.set_benchmark_scenario("diagnostics");
+    let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
+    metrics.print_named_report(
+        "Endpoint Surface",
+        &initial_storage,
+        &final_storage,
+        &final_storage,
+    );
+    metrics.write_benchmark_artifacts("endpoint_surface", &initial_storage, &final_storage);
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");
@@ -7705,6 +8268,7 @@ fn format_scaled(value: f64) -> String {
 
 fn scenario_label(id: &str) -> &str {
     match id {
+        "endpoint_surface" => "Endpoint surface",
         "game_start" => "Game start",
         "opening_views" => "Opening views",
         "resource_town" => "Resource and town",
@@ -7756,6 +8320,7 @@ fn scenario_description(id: &str, calls: &[&BenchmarkCallRecord]) -> String {
     }
 
     let focus = match id {
+        "endpoint_surface" => "full public endpoint inventory with active session context",
         "game_start" => "register/create/join/ready/start active session",
         "opening_views" => "opening viewport, chunks, objects, participant, champions",
         "resource_town" => "resource pickup, town build, recruitment",

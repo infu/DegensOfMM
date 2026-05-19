@@ -2073,3 +2073,36 @@ Decision:
 
 - Keep this cut. It gives a route-level win without shifting cost into `submit_move_intent`.
 - The remaining repeated `movement.intents_by_session_turn_status` scans show this is still a bridge, not the final active-turn aggregate. The next large step should make active `sync_session_turn` resolve from runtime-owned movement/champion/resource state and reserve durable projections for the boundary.
+
+## Checkpoint: Runtime Empty-Ready Shortcut
+
+Added a pre-deadline `sync_session_turn` shortcut when the active `SessionTurnRuntime` exists and its ready set is empty. In that state all-ready is impossible, so the endpoint can return the existing runtime `turn_not_due` response without paging active participants and durable `ParticipantTurnReady` rows. `end_turn` now mirrors the participant id into the active runtime ready set, so the shortcut is disabled as soon as any participant has ended the turn; no-runtime and non-empty-runtime cases still use the durable all-ready check.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-ready-empty-shortcut cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture` passed in `184.32s`.
+- Focused Gate J `20260519-162235-runtime-empty-ready-gate-j` passed in `230.20s`.
+
+Measured delta versus `20260519-160042-runtime-hydrated-pending-gate-j`:
+
+| metric | runtime-hydrated pending | empty-ready shortcut | change |
+| --- | ---: | ---: | ---: |
+| update-only Gate J instructions | 254.4790B | 251.6616B | -1.1% |
+| `sync_session_turn` avg | 12.4249B | 12.1704B | -2.0% |
+| `submit_move_intent` avg | 11.2759B | 11.2728B | flat |
+| `sessions.participants_by_session_status` calls | 22 | 18 | -18.2% |
+| `sessions.participants_by_session_status` total | 7.7619B | 6.3500B | -18.2% |
+| `turn_ready.by_session_turn` calls | 6 | 2 | -66.6% |
+| `turn_ready.by_session_turn` total | 2.1066B | 0.7039B | -66.6% |
+
+Comparison caveat:
+
+- Do not compare full scenario instruction totals between these two direct runs. The empty-ready run used absolute `DOMM_BENCH_OUTPUT_DIR` / `DOMM_BENCH_QUERY_LOG_PATH` values and captured query instructions correctly; the previous direct run recorded query methods as zero. Use update-only totals and repo-op counts for this checkpoint.
+
+Decision:
+
+- Keep this cut. It removes durable scans from the common "sync before deadline and nobody is ready" case, keeps the all-ready durable path intact, and does not shift cost into submit.

@@ -394,6 +394,12 @@ pub(crate) fn end_turn(
         Some(command.id()),
         Timestamp::now(),
     )?;
+    let runtime_session_id = context.session.id().to_string();
+    session_turn_runtime::with_runtime_mut(
+        &runtime_session_id,
+        context.session.current_turn,
+        |runtime| runtime.mark_ready(context.participant.id().to_string()),
+    );
 
     let participants = sessions::page_participants_by_session_status(
         context.session.id(),
@@ -481,6 +487,16 @@ pub(crate) fn sync_session_turn(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)
     );
+    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
+        && runtime_has_no_ready_participants(&context.session)
+    {
+        return Ok(sync_turn_not_due_response(
+            caller,
+            &context,
+            &client_nonce,
+            &payload_json,
+        ));
+    }
     if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
         && !all_participants_ready_for_turn(&context.session)?
     {
@@ -954,6 +970,14 @@ fn all_participants_ready_for_turn(session: &GameSession) -> Result<bool, ApiErr
         None,
     )?;
     Ok(ready_rows.items.len() >= participants.items.len())
+}
+
+fn runtime_has_no_ready_participants(session: &GameSession) -> bool {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        runtime.ready_participants.is_empty()
+    })
+    .unwrap_or(false)
 }
 
 fn resolve_single_long_movement_fast(

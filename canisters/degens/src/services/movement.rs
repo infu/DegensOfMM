@@ -1382,15 +1382,9 @@ fn validate_no_friendly_champion_blocker(
 fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>, ApiError> {
     let items = pending_movement_intents_for_session(session)?;
     let mut pending = Vec::new();
-    for intent in items {
+    for (intent, participant) in items {
         let Some(champion) =
             champions_artifacts::load_champion(Id::<Champion>::from_key(intent.champion_id))?
-        else {
-            continue;
-        };
-        let Some(participant) = sessions::load_participant(Id::<GameParticipant>::from_key(
-            intent.actor_participant_id,
-        ))?
         else {
             continue;
         };
@@ -1414,18 +1408,18 @@ fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>,
 
 fn pending_movement_intents_for_session(
     session: &GameSession,
-) -> Result<Vec<MovementIntent>, ApiError> {
+) -> Result<Vec<(MovementIntent, GameParticipant)>, ApiError> {
     let active_participants = sessions::page_participants_by_session_status(
         session.id(),
         "active",
         domm_game::MAX_LIST_LIMIT,
         None,
     )?;
-    let active_participant_ids = active_participants
+    let active_participants_by_id = active_participants
         .items
-        .iter()
-        .map(|participant| participant.id().key())
-        .collect::<BTreeSet<_>>();
+        .into_iter()
+        .map(|participant| (participant.id().key(), participant))
+        .collect::<BTreeMap<_, _>>();
     let mut intents = movement::page_movement_intents_by_status(
         session.id(),
         session.current_turn,
@@ -1435,9 +1429,14 @@ fn pending_movement_intents_for_session(
     )?
     .items
     .into_iter()
-    .filter(|intent| active_participant_ids.contains(&intent.actor_participant_id))
+    .filter_map(|intent| {
+        active_participants_by_id
+            .get(&intent.actor_participant_id)
+            .cloned()
+            .map(|participant| (intent, participant))
+    })
     .collect::<Vec<_>>();
-    intents.sort_by(|left, right| left.champion_id.cmp(&right.champion_id));
+    intents.sort_by(|left, right| left.0.champion_id.cmp(&right.0.champion_id));
     Ok(intents)
 }
 

@@ -260,6 +260,24 @@ Verified:
 - `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
 - `cargo check -p domm-degens-canister --features benchmark`
 
+### Pending Movement Participant Reuse
+
+Removed one redundant stable read loop from `sync_session_turn`.
+
+What changed:
+
+- `pending_movement_intents_for_session` now returns each pending `MovementIntent` with the matching active `GameParticipant` row from the participant page it already had to load for filtering.
+- `load_pending_movements` no longer calls `sessions::load_participant` once per pending intent.
+- This keeps the same active-participant filtering semantics while cutting a stable participant load for every pending movement processed by sync.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister -- --nocapture` (`25 passed`, `250.60s`)
+
+Measurement note: no focused Gate J benchmark was run for this single small cut. The previous direct Gate J run took `689.81s`, so the next benchmark should batch this with the next runtime/movement checkpoint.
+
 ### Runtime Finalization Projection
 
 Added the projection guard needed before active battle submit stops writing tactical rows per action.

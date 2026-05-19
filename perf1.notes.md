@@ -1194,3 +1194,44 @@ Decision:
 
 - Mark the code-size headroom todo done.
 - Re-attempt the indexed pending movement loading checkpoint next; it previously needed about 15.7 KB beyond the prior build, so the current headroom should be enough.
+
+## Checkpoint: Indexed Pending Movement Loading
+
+Re-attempted the indexed pending movement loading cut after freeing benchmark Wasm headroom.
+
+What changed:
+
+- `pending_movement_intents_for_session` now pages pending `MovementIntent` rows through the existing `movement.intents_by_session_turn_status` index.
+- The function still filters to active participants and sorts by champion id before hydrating champion/participant rows, preserving behavior while avoiding per-champion pending-intent lookup shape.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,564,294 bytes
+IC limit: 12,582,912 bytes
+headroom: 18,618 bytes
+```
+
+Focused Gate J result:
+
+```text
+run id: 20260519-090940-movement-index-gate-j
+artifact: target/benchmarks/20260519-090940-movement-index-gate-j/summary.md
+command: DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Comparison against small movement checkpoint `20260519-085429-movement-small-gate-j`:
+
+| metric | previous | indexed | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 399.1517B | 393.4643B | -1.4% |
+| `submit_move_intent` avg instructions | 15.3598B | 15.3572B | flat |
+| `sync_session_turn` avg instructions | 18.0194B | 17.5063B | -2.8% |
+| `movement.intents_by_session_turn_status` repo calls | 0 visible | 16 | now measured |
+| `movement.intents_by_session_turn_status` total instructions | 0 visible | 5.6154B | now measured |
+
+Decision:
+
+- Keep the indexed loader; it is small, benchmarked, and moves `sync_session_turn` in the right direction.
+- The result is nowhere near the 5B target, so the next meaningful cut needs to move active turn command/intents/events toward heap runtime state, not only query shape tuning.

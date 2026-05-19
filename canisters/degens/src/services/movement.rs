@@ -1382,31 +1382,28 @@ fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>,
 fn pending_movement_intents_for_session(
     session: &GameSession,
 ) -> Result<Vec<MovementIntent>, ApiError> {
-    let participants = sessions::page_participants_by_session_status(
+    let active_participants = sessions::page_participants_by_session_status(
         session.id(),
         "active",
         domm_game::MAX_LIST_LIMIT,
         None,
     )?;
-    let mut intents = Vec::new();
-    for participant in participants.items {
-        for champion_id in participant.champion_ids {
-            let Some(intent) = movement::find_movement_intent(
-                session.id(),
-                Id::<Champion>::from_key(champion_id),
-                session.current_turn,
-            )?
-            else {
-                continue;
-            };
-            if intent.status == "pending" {
-                intents.push(intent);
-            }
-            if intents.len() >= domm_game::MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN as usize {
-                return Ok(intents);
-            }
-        }
-    }
+    let active_participant_ids = active_participants
+        .items
+        .iter()
+        .map(|participant| participant.id().key())
+        .collect::<BTreeSet<_>>();
+    let mut intents = movement::page_movement_intents_by_status(
+        session.id(),
+        session.current_turn,
+        "pending",
+        domm_game::MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN,
+        None,
+    )?
+    .items
+    .into_iter()
+    .filter(|intent| active_participant_ids.contains(&intent.actor_participant_id))
+    .collect::<Vec<_>>();
     intents.sort_by(|left, right| left.champion_id.cmp(&right.champion_id));
     Ok(intents)
 }

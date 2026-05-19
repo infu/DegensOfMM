@@ -369,9 +369,9 @@ When a todo item is completed:
 - [x] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
 - [x] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
 - [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
-- [x] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods. Added an `endpoint-surface` benchmark gate that records all 59 required public endpoints; focused run covered `59/59` endpoints with no update method missing `avg_instruction_delta`. `Inst change` can still be `n/a` on a first comparable run, which is expected.
+- [x] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods. Added an `endpoint-surface` benchmark gate that records all 59 required public endpoints; suite `20260519-081911-fe84689` covered `59/59` endpoints with no update or query method missing `avg_instruction_delta`. `Inst change` can still be `n/a` on a first comparable run, which is expected.
 - [x] Confirm no leftover PocketIC processes after focused benchmark runs.
-- [x] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands. Suite `20260519-063353-02c93e3` passed Gate J/K/L/M in parallel with `DOMM_BENCH_JOBS=4`.
+- [x] Run full benchmark suite only after a meaningful gate is reached or a broad API behavior change lands. Suite `20260519-081911-fe84689` passed endpoint-surface plus Gate J/K/L/M in parallel with `DOMM_BENCH_JOBS=5`.
 
 ### 7. Broader Aggregate Pattern
 

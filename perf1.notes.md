@@ -1057,16 +1057,35 @@ What changed:
 - `pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint` records every required public endpoint through the benchmark recorder in one active two-player session.
 - The endpoint-surface route is a coverage/per-method-cost probe, not a perfect realistic workload for every endpoint. Some battle and movement calls intentionally hit typed error paths when setting up a full valid scenario would turn this into another long Gate L/K route.
 
-Focused endpoint-surface result:
+Official full-suite result:
+
+```text
+run id: 20260519-081911-fe84689
+suite artifact: target/benchmarks/20260519-081911-fe84689/suite-summary.md
+command: DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh
+```
+
+Suite gate status:
 
 | metric | value |
 | --- | ---: |
-| status | passed |
-| elapsed | 466.47s |
+| endpoint-surface | passed in 108s |
+| gate-j | passed in 129s |
+| gate-k | passed in 206s |
+| gate-l | passed in 253s |
+| gate-m | passed in 462s |
+| suite required endpoints covered | 59/59 |
+| suite missing required endpoints | 0 |
+
+Endpoint-surface summary:
+
+| metric | value |
+| --- | ---: |
 | benchmark calls | 150 |
-| required endpoints covered | 59/59 |
-| missing required endpoints | 0 |
+| scenario instructions | 391.3676B |
+| scenario memory delta | 6029.0625 MB |
 | update methods missing avg instructions | 0 |
+| query methods missing avg instructions | 0 |
 
 Update method examples from the coverage run:
 
@@ -1083,7 +1102,7 @@ Decision:
 
 - Mark required benchmark endpoint coverage done: all required public endpoints can now appear in one full benchmark run.
 - Treat `Inst change = n/a` as acceptable for first comparable runs; the important failure case was missing `Avg inst B` for update methods, and that is fixed for updates.
-- Query instruction capture should be evaluated through `scripts/run-benchmarks.sh`, which writes stdout directly to the query log. A manual `tee` launch can race the file reader and produce query `Avg inst B = n/a`, so do not use that launch shape for official benchmark artifacts.
+- Query instruction capture should be evaluated through `scripts/run-benchmarks.sh`, which writes stdout directly to the query log. The official suite run captured query averages for every endpoint-surface query.
 
 ## Review: Broader Aggregate Pattern After Battle
 

@@ -1380,3 +1380,48 @@ Decision:
 - Keep this cut because it is narrow, preserves the public response shape, and removes durable command writes from three benchmarked manual sync retries.
 - This does not change the real sync hot path. The high-cost applied sync calls are still dominated by movement/battle/start/aftermath rows, events/effects, system-job scans, and command rows.
 - Next cuts should target applied `sync_session_turn`, especially durable command/effect/event/session writes and repeated system-job scans, rather than more not-due retry cleanup.
+
+## Checkpoint: Fresh Sync Command Effect Shortcut
+
+Switched manual `sync_session_turn` command start to the tracked command-begin helper and used the freshness bit to create the turn-resolution `CommandEffect` directly for fresh manual sync commands. Recovered pending sync commands and system-job sync commands still use `ensure_command_effect`.
+
+Safety condition:
+
+- Fresh manual sync commands have no existing `CommandEffect` for the newly-created command id, so the absence read is redundant.
+- Replays return from command idempotency before this path.
+- Seeded/recovered pending sync commands keep the idempotent effect lookup. This is covered by the service regression that seeds a pending `sync_session_turn` command and expects recovery to reuse its command id.
+- System-job turn resolution still uses the idempotent effect path because `ensure_system_turn_command` can return an existing durable command.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,572,384 bytes
+IC limit: 12,582,912 bytes
+headroom: 10,528 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-102824-movement-sync-effect-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-102824-movement-sync-effect-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-101910-movement-sync-precheck-gate-j`:
+
+| metric | sync precheck | sync effect shortcut | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 384.8650B | 379.3951B | -1.4% |
+| `submit_move_intent` avg instructions | 14.1979B | 14.2066B | flat |
+| `sync_session_turn` avg instructions | 17.0512B | 16.5509B | -2.9% |
+| `effects.command_effect_by_command_key` calls | 15 | 7 | -53.3% |
+| `effects.command_effect_by_command_key` total instructions | 10.5491B | 4.9217B | -53.3% |
+
+Decision:
+
+- Keep this cut because it is a direct extension of the already-proven fresh command/effect shortcut and it removes eight measured effect lookup reads from Gate J.
+- The remaining applied sync cost is still dominated by system-job scans, event/session writes, movement intent loading, participant/champion loads, and battle-start row work. The path still needs a real active turn aggregate to approach the 5B target.

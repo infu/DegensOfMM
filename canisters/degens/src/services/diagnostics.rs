@@ -15,23 +15,23 @@ use domm_degens_schema::schema::{
     TownRecruitPool, UnitDefinition, VisibilityChunk, WorldEventState, WorldObject,
 };
 use domm_game::ApiError;
-use icydb::{
-    db::PersistedRow,
-    traits::EntityValue,
-    types::{Id, Timestamp, Ulid},
-};
+#[cfg(not(feature = "benchmark"))]
+use icydb::types::{Id, Timestamp, Ulid};
+use icydb::{db::PersistedRow, traits::EntityValue};
 
 use crate::{
-    contract::{
-        DiagnosticRowCount, DiagnosticStorageSnapshot, DiagnosticSystemJobPage,
-        DiagnosticSystemJobView,
-    },
-    repos::{foundation, system_jobs},
-    services::system_jobs as system_job_service,
+    contract::{DiagnosticRowCount, DiagnosticStorageSnapshot},
+    repos::foundation,
 };
 
 #[cfg(feature = "benchmark")]
 use crate::contract::DiagnosticBenchmarkCallPage;
+#[cfg(not(feature = "benchmark"))]
+use crate::{
+    contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView},
+    repos::system_jobs,
+    services::system_jobs as system_job_service,
+};
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
 const MAX_DIAGNOSTIC_ROWS_PER_ENTITY: u32 = 512;
@@ -69,6 +69,7 @@ pub(crate) fn get_diagnostic_storage_snapshot(
     })
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn get_diagnostic_system_jobs(
     session_id: Option<String>,
     status: Option<String>,
@@ -122,6 +123,7 @@ pub(crate) fn get_diagnostic_benchmark_metrics(
     Ok(crate::metrics::benchmark_metrics_page(cursor, limit))
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn force_diagnostic_system_job_running(
     job_key: String,
     lease_expires_at_ms: u64,
@@ -148,6 +150,7 @@ pub(crate) fn force_diagnostic_system_job_running(
     Ok(system_job_view(&updated))
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError> {
     crate::auth::require_controller("run_diagnostic_system_jobs")?;
     if max_ticks == 0 || max_ticks > 32 {
@@ -160,6 +163,7 @@ pub(crate) fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError
     system_job_service::run_due_jobs_until_idle(max_ticks)
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
     crate::auth::require_controller("run_diagnostic_system_job")?;
     system_job_service::run_due_job_by_key(&job_key)
@@ -260,6 +264,7 @@ where
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn system_job_view(job: &SystemJob) -> DiagnosticSystemJobView {
     DiagnosticSystemJobView {
         job_key: job.job_key.clone(),
@@ -278,14 +283,17 @@ fn system_job_view(job: &SystemJob) -> DiagnosticSystemJobView {
     }
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn timestamp_ms(timestamp: Timestamp) -> u64 {
     u64::try_from(timestamp.as_millis()).unwrap_or(0)
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn u64_to_i64_saturating(value: u64) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn parse_session_id(value: &str) -> Result<Id<GameSession>, ApiError> {
     Ulid::from_str(value)
         .map(Id::from_key)

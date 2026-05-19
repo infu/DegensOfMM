@@ -1169,3 +1169,28 @@ Decision:
 - Keep the small checkpoint because it is safe and measurable.
 - Treat the movement aggregate as blocked on code-size headroom before adding new benchmark phases, new generic IcyDB movement queries, or a larger heap turn runtime.
 - The next practical work is freeing roughly 20 KB of benchmark Wasm code section or moving diagnostic/benchmark surface out of the main canister. After that, retry indexed pending movement loading first, then the heap session-turn runtime if the indexed cut is not enough.
+
+## Checkpoint: Benchmark Wasm Code-Size Headroom
+
+Freed benchmark canister code-section headroom by omitting diagnostic system-job control endpoints only when building with `feature = "benchmark"`.
+
+What changed:
+
+- `get_diagnostic_system_jobs`, `force_diagnostic_system_job_running`, `run_diagnostic_system_jobs`, and `run_diagnostic_system_job` remain available in normal canister builds.
+- The same endpoints are not exported in benchmark canister builds because Gate J/K/L/endpoint-surface use storage snapshots and benchmark metrics, not diagnostic system-job control.
+- This keeps production/regression diagnostics intact while making benchmark builds able to accept additional movement/runtime code again.
+
+Measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,547,075 bytes
+IC limit: 12,582,912 bytes
+headroom: 35,837 bytes
+freed vs prior benchmark build: 34,338 bytes
+```
+
+Decision:
+
+- Mark the code-size headroom todo done.
+- Re-attempt the indexed pending movement loading checkpoint next; it previously needed about 15.7 KB beyond the prior build, so the current headroom should be enough.

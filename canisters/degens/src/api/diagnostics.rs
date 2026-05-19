@@ -3,12 +3,12 @@
 use canic_cdk::{query, update};
 use domm_game::ApiError;
 
-use crate::contract::{
-    DiagnosticStorageSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView,
-};
+use crate::contract::DiagnosticStorageSnapshot;
 
 #[cfg(feature = "benchmark")]
 use crate::contract::DiagnosticBenchmarkCallPage;
+#[cfg(not(feature = "benchmark"))]
+use crate::contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView};
 
 #[query]
 fn get_diagnostic_storage_snapshot(
@@ -19,6 +19,7 @@ fn get_diagnostic_storage_snapshot(
     })
 }
 
+#[cfg(not(feature = "benchmark"))]
 #[query]
 fn get_diagnostic_system_jobs(
     session_id: Option<String>,
@@ -48,6 +49,7 @@ fn reset_diagnostic_benchmark_metrics() -> Result<(), ApiError> {
     crate::services::diagnostics::reset_diagnostic_benchmark_metrics()
 }
 
+#[cfg(not(feature = "benchmark"))]
 #[update]
 fn force_diagnostic_system_job_running(
     job_key: String,
@@ -56,11 +58,13 @@ fn force_diagnostic_system_job_running(
     crate::services::diagnostics::force_diagnostic_system_job_running(job_key, lease_expires_at_ms)
 }
 
+#[cfg(not(feature = "benchmark"))]
 #[update]
 fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError> {
     crate::services::diagnostics::run_diagnostic_system_jobs(max_ticks)
 }
 
+#[cfg(not(feature = "benchmark"))]
 #[update]
 fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
     crate::services::diagnostics::run_diagnostic_system_job(job_key)

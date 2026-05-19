@@ -77,6 +77,7 @@ pub(crate) fn run_due_jobs_until_idle(max_ticks: u32) -> Result<u32, ApiError> {
     Ok(total)
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn run_due_job_by_key(job_key: &str) -> Result<u32, ApiError> {
     run_job_by_key(job_key)
 }

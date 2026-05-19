@@ -2140,6 +2140,34 @@ Decision:
 
 - Keep this cut. It is small, safe by construction, and directly reduces submit-side stable reads without changing durable fallback behavior.
 
+## Reverted Checkpoint: Runtime Champion Submit Lookup
+
+The runtime champion submit shortcut was not safe. `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` failed after a champion spell/skill update was made outside the movement runtime: the later guarded movement used the cached runtime champion, started a neutral battle from stale champion state, and `CastAbility(spell:hex-spark)` disappeared from legal actions.
+
+Decision:
+
+- Revert `resolve_owned_champion` to always load the durable champion row for submit/preview validation.
+- Keep hydrated champion rows in pending runtime intents for `sync_session_turn`; those rows are still valuable for resolving the intent that created them.
+- Do not use cached runtime champions as broad current champion authority until there is an invalidation/version contract or a real champion overlay that owns spell/skill/army changes.
+
+Verified after revert:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture` passed in `241.60s`.
+- Focused Gate J `20260519-town-events-champion-revert-gate-j` passed in `232.32s`.
+
+Current measured effect versus `20260519-164028-final-sync-new-event-gate-j`:
+
+| metric | final sync new event | town events + champion revert | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 319.4200B | 317.2806B | -0.7% |
+| `submit_move_intent` avg | 11.0396B | 11.2751B | +2.1% |
+| `submit_build_town_structure` avg | 20.0597B | 18.6468B | -7.0% |
+| `submit_recruit_units` avg | 15.5931B | 14.1707B | -9.1% |
+| `events.by_session_event_key` calls | 18 | 14 | -22.2% |
+| `champions.load_champion` calls | 2 | 3 | +50.0% |
+
 ## Checkpoint: Final Sync New Event
 
 Changed the final successful `sync_session_turn` event append for `session_turn_synced` to create the deterministic public event directly and fall back to the existing key lookup only if creation reports a conflict. This is deliberately not the broad sync-event shortcut rejected earlier: partial movement sync events can legitimately reuse business keys, so they still use the idempotent `append_public_event` path. The shortcut is scoped to the final `sync_turn:{session}:{turn}` event after the session turn has advanced.

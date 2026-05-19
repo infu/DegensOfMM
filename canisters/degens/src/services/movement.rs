@@ -2400,7 +2400,7 @@ fn mark_pending_resolved(
         pending_move.start,
         &pending_move.champion,
     )?;
-    let visibility_rows = refresh_champion_visibility(session, command_id, pending_move)?;
+    let visibility_rows = refresh_champion_visibility(session, pending_move)?;
     if visibility_rows > 0 {
         changed_subjects.push(command_response::changed(
             "visibility",
@@ -2466,7 +2466,7 @@ fn park_partial_movements(
             pending_move.start,
             &pending_move.champion,
         )?;
-        let visibility_rows = refresh_champion_visibility(session, command_id, pending_move)?;
+        let visibility_rows = refresh_champion_visibility(session, pending_move)?;
         if visibility_rows > 0 {
             changed_subjects.push(command_response::changed(
                 "visibility",
@@ -2501,18 +2501,6 @@ fn park_partial_movements(
         ));
     }
 
-    command_response::ensure_command_effect(
-        session.id(),
-        command_id,
-        format!(
-            "movement_cursor:{}:{}",
-            session.current_turn, consumed_steps
-        ),
-        "movement_cursor".to_string(),
-        "session".to_string(),
-        session.id().to_string(),
-        format!(r#"{{"consumed_steps":{consumed_steps},"parked_intents":{parked}}}"#),
-    )?;
     let event = command_response::append_public_event(
         session,
         command_id,
@@ -2533,7 +2521,6 @@ fn park_partial_movements(
 
 fn refresh_champion_visibility(
     session: &GameSession,
-    command_id: Id<GameCommand>,
     pending_move: &PendingMovement,
 ) -> Result<u32, ApiError> {
     let mut by_chunk: BTreeMap<(u16, u16), Vec<(u16, u16)>> = BTreeMap::new();
@@ -2591,21 +2578,6 @@ fn refresh_champion_visibility(
         updated_rows = updated_rows.saturating_add(1);
     }
 
-    if updated_rows > 0 {
-        command_response::ensure_command_effect(
-            session.id(),
-            command_id,
-            format!(
-                "visibility:{}:{}",
-                pending_move.champion.id(),
-                session.current_turn
-            ),
-            "visibility_refresh".to_string(),
-            "participant".to_string(),
-            pending_move.participant.id().to_string(),
-            format!(r#"{{"visibility_rows":{updated_rows}}}"#),
-        )?;
-    }
     Ok(updated_rows)
 }
 

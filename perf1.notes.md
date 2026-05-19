@@ -2273,3 +2273,31 @@ Stable memory growth did not visibly move in this single route because stable-me
 Decision:
 
 - Keep this cut. It removes duplicate durable writes and aligns towns with the broader aggregate direction: command/event/projection rows should exist only when they carry unique replay, history, or query value.
+
+## Checkpoint: Remove Partial Movement Command Effects
+
+Removed the `movement_cursor` and `visibility_refresh` `CommandEffect` writes from partial movement sync. They were not read by recovery or query paths. The durable recovery/projection surface is already the `MovementSnapshot` row, updated `MovementIntent` path/hash, command nonce row, and deterministic movement event key.
+
+Kept the neutral `battle_started` effect. That path still uses `find_applied_command_effect_by_session_key` as a session-level guard around neutral battle start, so removing it belongs to the runtime battle-start rewrite rather than this low-hanging pass.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-movement-partial-no-effects-gate-j` passed in `231.98s`.
+
+Measured delta versus `20260519-town-no-effects-gate-j`:
+
+| metric | town no effects | partial movement no effects | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 315.0101B | 313.9172B | -0.3% |
+| scenario cycles | 0.4166T | 0.4132T | -0.8% |
+| scenario memory | 6314.4591 MB | 6180.1759 MB | -2.1% |
+| `sync_session_turn` avg | 12.1079B | 12.0140B | -0.8% |
+| `sync_session_turn` avg memory | 131.3103 MB | 117.5716 MB | -10.5% |
+| `effects.command_effect_by_command_key` calls | 2 | 1 | -50.0% |
+| `effects.create_applied_command_effect` calls | 2 | 1 | -50.0% |
+
+Decision:
+
+- Keep this cut. It is small but removes another duplicate stable write from the row-backed movement bridge and leaves the higher-risk neutral battle-start guard intact.

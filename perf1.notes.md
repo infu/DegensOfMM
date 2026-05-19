@@ -2191,3 +2191,30 @@ Measured delta versus `20260519-164028-final-sync-new-event-gate-j`:
 Decision:
 
 - Reject the shortcut and do not keep the code. In the measured route, each movement/town command that pays this guard starts a fresh current turn where no active `SessionTurnRuntime` exists yet. The proof cannot fire unless runtime creation moves earlier, and doing that as a guard micro-cut risks replacing a job scan with runtime hydration work. Handle this in the real active-turn aggregate instead.
+
+## Checkpoint: Fresh Town Command Events
+
+Added a generic `append_new_event_for_audience` helper and moved town build/recruit private plus public command events onto create-first event append. The old idempotent lookup remains as the fallback if create reports a conflict. This is scoped to fresh town command events after `begin_participant_command` has already handled nonce replay; build duplicates still fail before append, and recruit event keys include the fresh command id.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-town-new-events-gate-j` passed in `238.69s`.
+
+Measured delta versus `20260519-164028-final-sync-new-event-gate-j`:
+
+| metric | final sync new event | town new events | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 319.4200B | 316.5882B | -0.9% |
+| scenario cycles | 0.4210T | 0.4182T | -0.7% |
+| `submit_build_town_structure` avg | 20.0597B | 18.6468B | -7.0% |
+| `submit_recruit_units` avg | 15.5931B | 14.1707B | -9.1% |
+| `submit_move_intent` avg | 11.0396B | 11.0411B | flat |
+| `sync_session_turn` avg | 12.1032B | 12.1061B | flat |
+| `events.by_session_event_key` calls | 18 | 14 | -22.2% |
+| `events.by_session_event_key` total | 12.6727B | 9.8551B | -22.2% |
+
+Decision:
+
+- Keep this cut. It removes four stable event-key absence reads from the Gate J town path without changing replay fallback behavior or shifting work into movement/sync.

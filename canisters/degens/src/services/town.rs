@@ -820,7 +820,7 @@ fn append_town_command_events(
     detailed_payload: String,
 ) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
     let audience_key = format!("participant:{participant_id}");
-    let private_event = command_response::append_event_for_audience(
+    let private_event = command_response::append_new_event_for_audience(
         session,
         command_id,
         format!("{event_key}:{audience_key}"),
@@ -830,7 +830,7 @@ fn append_town_command_events(
         Some(town_id.to_string()),
         detailed_payload,
     )?;
-    let public_event = command_response::append_public_event(
+    let public_event = command_response::append_new_public_event(
         session,
         command_id,
         format!("{event_key}:public"),

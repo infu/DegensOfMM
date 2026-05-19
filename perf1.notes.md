@@ -2246,3 +2246,30 @@ Measured delta versus `20260519-164028-final-sync-new-event-gate-j`:
 Decision:
 
 - Keep this cut. It removes four stable event-key absence reads from the Gate J town path without changing replay fallback behavior or shifting work into movement/sync.
+
+## Checkpoint: Remove Town Command Effects
+
+Removed the `town_build` and `town_recruit` `CommandEffect` writes from `submit_build_town_structure` and `submit_recruit_units`. These rows duplicated state already represented by the durable `GameCommand`, town child rows, resource ledger entries, and deterministic game events. Nonce replay still returns from the command row before remutation, and the API view still reads the real town rows.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260519-town-no-effects-gate-j` passed in `230.50s`.
+
+Measured delta versus `20260519-town-events-champion-revert-gate-j`:
+
+| metric | town events + champion revert | no town effects | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 317.2806B | 315.0101B | -0.7% |
+| scenario cycles | 0.4189T | 0.4166T | -0.5% |
+| `submit_build_town_structure` avg | 18.6468B | 17.4740B | -6.3% |
+| `submit_recruit_units` avg | 14.1707B | 12.9995B | -8.3% |
+| `effects.command_effect_by_command_key` calls | 4 | 2 | -50.0% |
+| `effects.create_applied_command_effect` calls | 4 | 2 | -50.0% |
+
+Stable memory growth did not visibly move in this single route because stable-memory pages are allocated in coarse chunks, but the instruction and cycle savings are direct and repeatable for the town commands.
+
+Decision:
+
+- Keep this cut. It removes duplicate durable writes and aligns towns with the broader aggregate direction: command/event/projection rows should exist only when they carry unique replay, history, or query value.

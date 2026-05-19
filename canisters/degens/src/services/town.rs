@@ -312,15 +312,6 @@ pub(crate) fn submit_build_town_structure(
     town.last_command_id = Some(command.id);
     towns::update_town(town.clone())?;
 
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("build:{building_slug}:{}", town.id()),
-        "town_build".to_string(),
-        "town".to_string(),
-        town.id().to_string(),
-        format!(r#"{{"building_slug":"{}"}}"#, building_slug),
-    )?;
     let mut session = context.session.clone();
     let events = append_town_command_events(
         &mut session,
@@ -457,15 +448,6 @@ pub(crate) fn submit_recruit_units(
         quantity,
         target,
         command.id(),
-    )?;
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("recruit:{unit_slug}:{}", town.id()),
-        "town_recruit".to_string(),
-        "town".to_string(),
-        town.id().to_string(),
-        format!(r#"{{"unit_slug":"{}","quantity":{}}}"#, unit_slug, quantity),
     )?;
     let mut session = context.session.clone();
     let events = append_town_command_events(

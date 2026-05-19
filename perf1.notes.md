@@ -1602,3 +1602,56 @@ Decision:
 
 - Keep this cut because it removes redundant stable reads/writes, lowers scenario memory by 512 stable pages, and frees additional Wasm code.
 - The remaining effect candidates are top-level `turn_resolution` effects in `resolve_pending_movement` and movement-submit `movement_intent` effects. Both look unused, but they should be deleted as separate checkpoints so regressions and benchmark attribution stay clear.
+
+## Checkpoint: Remove Turn Resolution Command Effect
+
+Deleted the top-level `turn_resolution:{turn}` `CommandEffect` from `resolve_pending_movement`.
+
+What changed:
+
+- `sync_session_turn` still creates/replays the durable `GameCommand`.
+- Movement resolution still reads pending `MovementIntent` rows, writes first-class `MovementSnapshot` rows, updates champions/participants/map state, and emits public events.
+- The extra `CommandEffect` row for `turn_resolution` is no longer created or ensured.
+- `resolve_pending_movement` no longer needs the command-freshness flag, so the parameter and call-site plumbing were removed.
+
+Safety condition:
+
+- Seeded/recovered `sync_session_turn` recovery still passed and reused the seeded command id.
+- Per-step replay remains guarded by `MovementSnapshot` unique lookup.
+- Public event idempotency remains guarded by event keys.
+- I found no consumer of the `turn_resolution:{turn}` command effect.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,560,886 bytes
+IC limit: 12,582,912 bytes
+headroom: 22,026 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-113052-movement-turn-effect-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-113052-movement-turn-effect-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-112144-movement-snapshot-effect-gate-j`:
+
+| metric | snapshot effect removal | turn effect removal | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 361.7712B | 357.9811B | -1.0% |
+| scenario memory | 6,326.1875 MB | 6,190.125 MB | -2.2% |
+| `submit_move_intent` avg instructions | 13.7454B | 13.7537B | flat |
+| `sync_session_turn` avg instructions | 15.0796B | 14.7341B | -2.3% |
+| `effects.create_applied_command_effect` calls | 15 | 7 | -53.3% |
+| `effects.create_applied_command_effect` total instructions | 7.1335B | 3.3193B | -53.5% |
+
+Decision:
+
+- Keep this cut because the seeded recovery regression passed and the redundant effect writes were a measured sync cost.
+- The remaining effect count is now mostly submit-side and other command effects. Next small cut should remove `movement_intent` command effects from `submit_move_intent`, then reassess whether micro-cuts have plateaued before starting heap active-turn intent runtime.

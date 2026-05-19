@@ -325,7 +325,7 @@ pub(crate) fn sync_session_turn(
             &payload_json,
         ));
     }
-    let (command, command_is_fresh) = match command_response::begin_participant_command_tracked(
+    let command = match command_response::begin_participant_command_tracked(
         caller,
         &context,
         "sync_session_turn",
@@ -335,8 +335,8 @@ pub(crate) fn sync_session_turn(
     )? {
         GameCommandStart::Apply {
             command,
-            freshly_created,
-        } => (command, freshly_created),
+            freshly_created: _,
+        } => command,
         GameCommandStart::Return(response) => return Ok(response),
     };
 
@@ -345,7 +345,6 @@ pub(crate) fn sync_session_turn(
     let movement_complete = resolve_pending_movement(
         &mut context.session,
         command.id(),
-        command_is_fresh,
         &mut events,
         &mut changed_subjects,
     )?;
@@ -514,7 +513,6 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let movement_complete = resolve_pending_movement(
         &mut session,
         command.id(),
-        false,
         &mut events,
         &mut changed_subjects,
     )?;
@@ -662,34 +660,9 @@ struct ObjectInteractionOutcome {
 fn resolve_pending_movement(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
-    command_is_fresh: bool,
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<bool, ApiError> {
-    let effect_key = format!("turn_resolution:{}", session.current_turn);
-    let effect_payload = format!(r#"{{"turn_number":{}}}"#, session.current_turn);
-    if command_is_fresh {
-        command_response::create_command_effect(
-            session.id(),
-            command_id,
-            effect_key,
-            "turn_resolution".to_string(),
-            "session".to_string(),
-            session.id().to_string(),
-            effect_payload,
-        )?;
-    } else {
-        command_response::ensure_command_effect(
-            session.id(),
-            command_id,
-            effect_key,
-            "turn_resolution".to_string(),
-            "session".to_string(),
-            session.id().to_string(),
-            effect_payload,
-        )?;
-    }
-
     let mut pending = load_pending_movements(session)?;
     if let Some(complete) = resolve_two_movement_crossing_fast(
         session,

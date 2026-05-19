@@ -2623,3 +2623,63 @@ Decision:
 
 - Keep this cut because it removes repeated deterministic work and improves both submit and sync without changing gameplay state authority.
 - Do not over-invest in this layer. The remaining `submit_move_intent` per-call repo ops still include one `champions.load_champion`, one `sessions.load_session`, and two `system_jobs.by_session_status_due` reads. Those stable reads are the next Gate 5B target.
+
+## Rejected: Runtime-Open Submit Job Guard Shortcut
+
+Tried skipping `command_response::ensure_map_turn_accepts_new_command` for fresh movement submits when runtime looked open before the turn deadline.
+
+Result:
+
+- Rejected and reverted before commit.
+- `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` failed after `195.64s`; the timer path exceeded the 40B instruction limit and the test did not advance to turn 2.
+- The old durable job scan is still carrying real turn-closure semantics. A safe replacement needs runtime job/deadline authority, not a local "runtime looks open" check.
+
+Decision:
+
+- Do not skip the map-turn job guard from submit until Gate 5E owns turn/deadline/job state in runtime.
+- Continue with cuts that are provably state-local: runtime occupancy/blocker checks and runtime submit receipts/intents.
+
+## Checkpoint: Runtime Occupancy Blocker Check
+
+Moved the hidden submit path blocker cost into runtime:
+
+- `validate_no_friendly_champion_blocker` now tries the active `SessionTurnRuntime.occupancy_index` first.
+- If runtime occupancy cannot prove blocker ownership, it falls back to the old durable `MapOccupancy` reads.
+- Movement sync now mirrors the current champion snapshot and champion occupancy cell back into runtime when a pending movement is parked/resolved.
+- `SessionTurnRuntime` gained `upsert_occupancy_for_occupant`, which replaces the old cell for a moving occupant instead of leaving stale champion cells behind.
+
+Why this mattered:
+
+- The durable `MapOccupancy` lookup used by the blocker loop was not included in repo-operation metrics because that repository helper used a raw `storage_result` path.
+- Long movement submits were doing one raw stable lookup per path tile, which explains why 10-12 step submits were around `10B-12B` despite only showing about `2.1B` measured repo ops.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Focused Gate J `20260519-runtime-blocker-check-gate-j` passed in `229.24s`
+- Post-run PocketIC cleanup confirmed no leftover PocketIC/server processes.
+
+Measured delta versus Gate 5B.2 `20260519-first-playable-map-cache-gate-j`:
+
+| metric | map cache | runtime blocker check | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 310.0816B | 293.0846B | -5.5% |
+| `submit_move_intent` avg | 9.1776B | 3.5293B | -61.5% |
+| `submit_move_intent` avg memory | 0.1667 MB | 0.0208 MB | -87.5% |
+| `sync_session_turn` avg | 12.5783B | 12.5747B | flat |
+
+Per-submit calls after the patch:
+
+| sequence | instructions | remaining measured repo ops |
+| ---: | ---: | --- |
+| 80 | 3.5439B | `champions.load_champion`, `sessions.load_session`, `system_jobs.by_session_status_due` x2 |
+| 160 | 3.5211B | same |
+| 214 | 3.5229B | same |
+
+Decision:
+
+- Keep this cut. It is the first Gate 5B change that attacks the hidden path-length multiplier rather than moving durable writes between submit and sync.
+- The remaining submit floor is now explicit: about `2.1B` measured repo instructions for durable session/champion/job reads plus endpoint overhead. The next safe route to `0.3B-0.6B` is runtime-auth/session/champion metadata with invalidation, and runtime job/deadline authority from Gate 5E.

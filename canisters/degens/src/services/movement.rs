@@ -1599,6 +1599,11 @@ fn validate_no_friendly_champion_blocker(
     champion: &Champion,
     path: &[MoveCoord],
 ) -> Result<(), ApiError> {
+    if let Some(result) =
+        validate_no_friendly_champion_blocker_from_runtime(context, champion, path)
+    {
+        return result;
+    }
     for coord in path {
         let Some(blocker) = map_visibility_occupancy::find_occupancy_cell(
             context.session.id(),
@@ -1626,6 +1631,42 @@ fn validate_no_friendly_champion_blocker(
         }
     }
     Ok(())
+}
+
+fn validate_no_friendly_champion_blocker_from_runtime(
+    context: &session_context::SessionCallerContext,
+    champion: &Champion,
+    path: &[MoveCoord],
+) -> Option<Result<(), ApiError>> {
+    let session_id = context.session.id().to_string();
+    let champion_id = champion.id().to_string();
+    let participant_id = context.participant.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, context.session.current_turn, |runtime| {
+        for coord in path {
+            let Some(blocker) = runtime
+                .occupancy_index
+                .iter()
+                .find(|cell| cell.x == coord.x && cell.y == coord.y && cell.layer == "champion")
+            else {
+                continue;
+            };
+            if !blocker.blocking || blocker.occupant_id_text == champion_id {
+                continue;
+            }
+            let Some(owner_participant_id) = blocker.owner_participant_id.as_deref() else {
+                return None;
+            };
+            if owner_participant_id == participant_id {
+                return Some(Err(public_error(
+                    "friendly_champion_occupied",
+                    "movement path enters a tile occupied by an owned champion",
+                    false,
+                )));
+            }
+        }
+        Some(Ok(()))
+    })
+    .flatten()
 }
 
 fn load_pending_movements(session: &GameSession) -> Result<Vec<PendingMovement>, ApiError> {
@@ -1832,6 +1873,16 @@ fn runtime_pending_movement_intents_for_session(
 fn mirror_runtime_pending_movement(session: &GameSession, pending_move: &PendingMovement) {
     let session_id = session.id().to_string();
     session_turn_runtime::with_runtime_mut(&session_id, session.current_turn, |runtime| {
+        runtime.upsert_champion_snapshot(pending_move.champion.clone());
+        runtime.upsert_occupancy_for_occupant(session_turn_runtime::RuntimeOccupancyCell {
+            x: pending_move.champion.x,
+            y: pending_move.champion.y,
+            layer: "champion".to_string(),
+            occupant_kind: "champion".to_string(),
+            occupant_id_text: pending_move.champion.id().to_string(),
+            owner_participant_id: Some(pending_move.participant.id().to_string()),
+            blocking: pending_move.champion.status == "active",
+        });
         runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_pending(
             pending_move.intent.clone(),
             pending_move.champion.clone(),

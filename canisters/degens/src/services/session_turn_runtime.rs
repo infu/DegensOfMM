@@ -138,6 +138,18 @@ impl SessionTurnRuntime {
         self.mark_dirty();
     }
 
+    pub(crate) fn upsert_occupancy_for_occupant(&mut self, cell: RuntimeOccupancyCell) {
+        self.occupancy_index.retain(|existing| {
+            !(existing.layer == cell.layer
+                && (existing.x == cell.x && existing.y == cell.y
+                    || existing.occupant_kind == cell.occupant_kind
+                        && existing.occupant_id_text == cell.occupant_id_text))
+        });
+        self.occupancy_index.push(cell);
+        self.dirty.occupancy_index = true;
+        self.mark_dirty();
+    }
+
     pub(crate) fn upsert_contact_cell(&mut self, cell: RuntimeContactCell) {
         if let Some(existing) = self.contact_index.iter_mut().find(|existing| {
             existing.x == cell.x

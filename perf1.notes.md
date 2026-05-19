@@ -1845,3 +1845,31 @@ Decision:
 - Keep this checkpoint. It proves the session-turn runtime can cut the movement submit command/event/idempotency tax without breaking the current durable sync projection.
 - The endpoint is still far above the `<5B` target because it still does auth/session/map-turn checks and writes durable `MovementIntent`. The next large cut should make active `sync_session_turn` resolve from runtime state and then remove or batch the remaining movement-intent durable projection on the hot submit path.
 - Query/view costs are now visible in the same Gate J route (`get_champion_view`, `get_town_view`, `get_events_after`, visible map/object reads), so the route-wide low-hanging work after runtime sync is active projection overlays, not only update endpoints.
+
+## Checkpoint: Runtime Pending Movement Source
+
+Applied a small bridge cut before the full `sync_session_turn` runtime rewrite.
+
+What changed:
+
+- `RuntimeMovementIntent` now carries the durable `MovementIntent` clone produced by submit. The simple string fields remain for receipt/event/status code that does not need the entity.
+- When a session-turn runtime is first created, it hydrates any pre-existing durable pending movement intents for the active turn. This keeps mid-turn compatibility for intents created before the runtime existed.
+- `pending_movement_intents_for_session` still loads active participants once, but when the active runtime has submit-populated or hydrated intents it builds pending movement work from heap instead of scanning `movement.intents_by_session_turn_status`.
+- Partial sync path updates and resolved intent marks are mirrored back into `SessionTurnRuntime`, so later sync continuations see the current pending/resolved state without a status scan.
+- The durable `MovementIntent` row is still updated for compatibility. This checkpoint avoids repeated status-page reads; it does not yet remove durable movement-intent writes or row-backed champion/occupancy/resource updates.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-sync-intents-native2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_deadline_resolves_multistep_movement_without_sync -- --nocapture` passed in `193.27s`.
+
+Test caveat:
+
+- The same PocketIC test failed under `DOMM_CANISTER_FEATURES=benchmark` because the benchmark canister intentionally omits `get_diagnostic_system_jobs`; the failure was `CanisterMethodNotFound` for that diagnostic endpoint, not a movement/sync assertion.
+
+Measurement note:
+
+- No full Gate J benchmark was run for this narrow bridge cut. The expected measured effect is fewer or zero `movement.intents_by_session_turn_status` repo calls after the runtime submit path has populated intents. Confirm in the next batched Gate J run before claiming aggregate instruction savings.

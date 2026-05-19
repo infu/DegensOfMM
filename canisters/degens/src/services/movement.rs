@@ -125,7 +125,7 @@ pub(crate) fn submit_move_intent(
         return Ok(existing.response);
     }
     command_response::ensure_map_turn_accepts_new_command(&context, "submit_move_intent")?;
-    ensure_session_turn_runtime(&context);
+    ensure_session_turn_runtime(&context)?;
     let command_id = Id::<GameCommand>::from_key(Ulid::generate());
     let command_id_text = command_id.to_string();
     let path_hash = command_response::payload_hash(
@@ -175,15 +175,9 @@ pub(crate) fn submit_move_intent(
         &canonical_session_id,
         context.session.current_turn,
         |runtime| {
-            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent {
-                intent_id: intent.id().to_string(),
-                command_id: command_id_text.clone(),
-                actor_participant_id: actor_participant_id.clone(),
-                champion_id: champion.id().to_string(),
-                path_json: intent.path_json.clone(),
-                path_hash: intent.path_hash.clone(),
-                status: intent.status.clone(),
-            });
+            runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
+                intent.clone(),
+            ));
             let event = runtime
                 .active_events
                 .iter()
@@ -264,7 +258,9 @@ pub(crate) fn submit_move_intent(
     })?
 }
 
-fn ensure_session_turn_runtime(context: &session_context::SessionCallerContext) {
+fn ensure_session_turn_runtime(
+    context: &session_context::SessionCallerContext,
+) -> Result<(), ApiError> {
     let session_id = context.session.id().to_string();
     let turn_number = context.session.current_turn;
     let participant = session_turn_participant(context);
@@ -273,7 +269,7 @@ fn ensure_session_turn_runtime(context: &session_context::SessionCallerContext) 
     })
     .is_some()
     {
-        return;
+        return Ok(());
     }
 
     let mut runtime = session_turn_runtime::SessionTurnRuntime::new(
@@ -283,8 +279,30 @@ fn ensure_session_turn_runtime(context: &session_context::SessionCallerContext) 
         timestamp_to_u64(context.session.turn_deadline_at),
         u64::from(context.session.turn_duration_ms),
     );
+    hydrate_runtime_pending_movement_intents(&context.session, &mut runtime)?;
     runtime.upsert_participant(participant);
     session_turn_runtime::insert_runtime(runtime);
+    Ok(())
+}
+
+fn hydrate_runtime_pending_movement_intents(
+    session: &GameSession,
+    runtime: &mut session_turn_runtime::SessionTurnRuntime,
+) -> Result<(), ApiError> {
+    for intent in movement::page_movement_intents_by_status(
+        session.id(),
+        session.current_turn,
+        "pending",
+        domm_game::MAX_UNRESOLVED_MOVEMENT_INTENTS_PER_TURN,
+        None,
+    )?
+    .items
+    {
+        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
+            intent,
+        ));
+    }
+    Ok(())
 }
 
 fn session_turn_participant(
@@ -1128,6 +1146,7 @@ fn resolve_single_long_movement_fast(
         None,
     )?;
     pending[0].intent = movement::mark_intent_resolved(pending[0].intent.clone())?;
+    mirror_runtime_movement_intent(session, &pending[0].intent);
     pending[0].resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
@@ -1377,6 +1396,7 @@ fn stop_candidate_fast(
         &pending_move.champion,
     )?;
     pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
+    mirror_runtime_movement_intent(session, &pending_move.intent);
     pending_move.resolved = true;
     changed_subjects.push(command_response::changed(
         "movement_intent",
@@ -1565,6 +1585,12 @@ fn pending_movement_intents_for_session(
         .into_iter()
         .map(|participant| (participant.id().key(), participant))
         .collect::<BTreeMap<_, _>>();
+    if let Some(mut intents) =
+        runtime_pending_movement_intents_for_session(session, &active_participants_by_id)
+    {
+        intents.sort_by(|left, right| left.0.champion_id.cmp(&right.0.champion_id));
+        return Ok(intents);
+    }
     let mut intents = movement::page_movement_intents_by_status(
         session.id(),
         session.current_turn,
@@ -1583,6 +1609,47 @@ fn pending_movement_intents_for_session(
     .collect::<Vec<_>>();
     intents.sort_by(|left, right| left.0.champion_id.cmp(&right.0.champion_id));
     Ok(intents)
+}
+
+fn runtime_pending_movement_intents_for_session(
+    session: &GameSession,
+    active_participants_by_id: &BTreeMap<Ulid, GameParticipant>,
+) -> Option<Vec<(MovementIntent, GameParticipant)>> {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        if runtime.intents.is_empty() {
+            return None;
+        }
+        Some(
+            runtime
+                .intents
+                .iter()
+                .filter(|intent| intent.status == "pending")
+                .filter_map(|intent| intent.durable_intent.clone())
+                .filter(|intent| {
+                    intent.session_id == session.id().key()
+                        && intent.turn_number == session.current_turn
+                        && intent.status == "pending"
+                })
+                .filter_map(|intent| {
+                    active_participants_by_id
+                        .get(&intent.actor_participant_id)
+                        .cloned()
+                        .map(|participant| (intent, participant))
+                })
+                .collect::<Vec<_>>(),
+        )
+    })
+    .flatten()
+}
+
+fn mirror_runtime_movement_intent(session: &GameSession, intent: &MovementIntent) {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime_mut(&session_id, session.current_turn, |runtime| {
+        runtime.upsert_intent(session_turn_runtime::RuntimeMovementIntent::from_durable(
+            intent.clone(),
+        ));
+    });
 }
 
 fn movement_candidates(
@@ -2223,6 +2290,7 @@ fn mark_pending_resolved(
         ));
     }
     pending_move.intent = movement::mark_intent_resolved(pending_move.intent.clone())?;
+    mirror_runtime_movement_intent(session, &pending_move.intent);
     pending_move.resolved = true;
     pending_move.participant.last_action_turn = pending_move.intent.turn_number;
     pending_move.participant = sessions::update_participant(pending_move.participant.clone())?;
@@ -2298,6 +2366,7 @@ fn park_partial_movements(
             &remaining_text,
         );
         pending_move.intent = movement::update_movement_intent(pending_move.intent.clone())?;
+        mirror_runtime_movement_intent(session, &pending_move.intent);
         pending_move.path = remaining_path;
         pending_move.start = partial_to;
         parked = parked.saturating_add(1);

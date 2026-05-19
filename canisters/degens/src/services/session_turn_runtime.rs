@@ -11,8 +11,11 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
-use domm_degens_schema::schema::GameSession;
+use domm_degens_schema::schema::{
+    Champion, GameCommand, GameParticipant, GameSession, MovementIntent,
+};
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
+use icydb::{traits::EntityValue, types::Id};
 
 use crate::repos::sessions;
 
@@ -165,6 +168,23 @@ pub(crate) struct RuntimeMovementIntent {
     pub path_json: String,
     pub path_hash: String,
     pub status: String,
+    pub durable_intent: Option<MovementIntent>,
+}
+
+impl RuntimeMovementIntent {
+    pub(crate) fn from_durable(intent: MovementIntent) -> Self {
+        Self {
+            intent_id: intent.id().to_string(),
+            command_id: Id::<GameCommand>::from_key(intent.command_id).to_string(),
+            actor_participant_id: Id::<GameParticipant>::from_key(intent.actor_participant_id)
+                .to_string(),
+            champion_id: Id::<Champion>::from_key(intent.champion_id).to_string(),
+            path_json: intent.path_json.clone(),
+            path_hash: intent.path_hash.clone(),
+            status: intent.status.clone(),
+            durable_intent: Some(intent),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -505,6 +525,7 @@ mod tests {
             path_json: "1,1;2,1".to_string(),
             path_hash: "hash:1".to_string(),
             status: "pending".to_string(),
+            durable_intent: None,
         });
         runtime.upsert_intent(RuntimeMovementIntent {
             intent_id: "intent:1".to_string(),
@@ -514,6 +535,7 @@ mod tests {
             path_json: "1,1;1,2".to_string(),
             path_hash: "hash:2".to_string(),
             status: "pending".to_string(),
+            durable_intent: None,
         });
 
         assert_eq!(runtime.intents.len(), 1);

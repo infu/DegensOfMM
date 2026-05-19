@@ -692,3 +692,64 @@ Decision:
 - Durable command lifecycle is no longer a submit blocker: `command_begin`, `mark_command_applying`, `recovery`, and `final_response` dropped from about 2.8582B combined to effectively zero in the active runtime path.
 - The checkpoint did not clear the `<1B` Gate 3 target because `auth_context`, `readiness_schedule`, and `load_battle` still total about 4.0369B.
 - The next practical cuts are: avoid durable session/participant reload in auth for battle actions, stop loading the durable `Battle` row before runtime submit, and move timeout/round scheduling fully out of the per-action readiness path.
+
+### Runtime Submit Before Durable Battle Load
+
+Moved active non-spell battle submit to try the heap runtime before loading the durable `Battle` row.
+
+Changes made:
+
+- `submit_battle_action` now attempts the active runtime path immediately after auth for non-spell actions.
+- If runtime is absent, session mismatched, or timeout processing needs the legacy path, the endpoint falls back to the durable `Battle` row load/adopt flow.
+- Runtime command begin now gets the current round from `BattleRuntime`, so it no longer needs a row-backed `Battle` just to guard active submit.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-no-load-battle cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
+Focused benchmark:
+
+```text
+run id: 20260519-053230-gate-k-runtime-no-battle-load
+artifact: target/benchmarks/20260519-053230-gate-k-runtime-no-battle-load/gate-k/summary.json
+note: summary git_sha is eb61e31 because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| passed | 88 | 118 | 229 | 1025 | 150401 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 26 | 3.3426B | 3.7720B | 0.01 MB | 0.0034T |
+| `sync_battle` | update | 29 | 9.7493B | 36.1310B | 37.01 MB | 0.0102T |
+| `get_battle_state` | query | 50 | n/a | n/a | 0 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 26 | 2.1337B |
+| `readiness_schedule` | 26 | 1.1894B |
+| `event_fanout` | 26 | 0.0184B |
+| `apply_rules` | 26 | 0.0003B |
+| `load_battle_state` | 26 | 0.0003B |
+| `command_begin` | 26 | 0.0001B |
+| `validate_action` | 26 | 0.0001B |
+| `final_response` | 26 | 0.0000B |
+| `recovery` | 26 | 0.0000B |
+| `timeout` | 26 | 0.0000B |
+| `persist_battle_state` | 26 | 0.0000B |
+
+Decision:
+
+- The durable `Battle` load is gone from the active submit phase summary and `submit_battle_action` improved from 4.0563B to 3.3426B avg.
+- Gate 2 is still not cleared because `readiness_schedule` and `auth_context` dominate the endpoint.
+- The next cut should remove per-action timeout/round job scheduling from runtime readiness; that should get the endpoint below the 3B Gate 2 threshold before tackling auth/session caching.

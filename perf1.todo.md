@@ -330,6 +330,7 @@ When a todo item is completed:
 
 - [x] Move submit-time auto-ready bookkeeping to `BattleRuntime.ready_participants` and use runtime readiness for active submit/round-job checks, while preserving row-backed `end_battle_turn` compatibility for now.
 - [x] Route submit-time timeout checks through active runtime and remove the redundant submit response session reload.
+- [x] Try the active `BattleRuntime` submit path before loading the durable `Battle` row, falling back to row load/adoption only when runtime is absent or the action needs legacy handling.
 - [ ] Move battle readiness state into `BattleRuntime` for active battles; stop writing `BattleParticipantRoundReady` rows per battle action.
 - [ ] Move active battle deadlines/timeouts into `BattleRuntime`; stop upserting `SystemJob` rows on every battle action.
 - [x] Stop projecting the durable `Battle` row header for active non-spell player submissions; runtime is authoritative for active round/stack/deadline until sync/finalization projection.

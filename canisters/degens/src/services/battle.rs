@@ -1049,6 +1049,12 @@ pub(crate) fn submit_battle_action(
         crate::metrics::benchmark_phase("submit_battle_action", "auth_context", || {
             session_context::require_active_session_caller(caller, &session_id)
         })?;
+    if input.action != "CastAbility"
+        && let Some(response) =
+            submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
+    {
+        return Ok(response);
+    }
     let battle = crate::metrics::benchmark_phase("submit_battle_action", "load_battle", || {
         battle_rows::load_battle_row(&context.session, &input.battle_id)
     })?;
@@ -1057,14 +1063,8 @@ pub(crate) fn submit_battle_action(
     }
     if battle.state == "active"
         && input.action != "CastAbility"
-        && let Some(response) = submit_runtime_battle_action(
-            caller,
-            &mut context,
-            &battle,
-            &input,
-            &client_nonce,
-            now_ms,
-        )?
+        && let Some(response) =
+            submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
     {
         return Ok(response);
     }
@@ -1221,12 +1221,12 @@ enum RuntimeBattleCommandAction {
 fn submit_runtime_battle_action(
     caller: CandidPrincipal,
     context: &mut session_context::SessionCallerContext,
-    battle: &Battle,
     input: &BattleActionInput,
     client_nonce: &str,
     now_ms: u64,
 ) -> Result<Option<CommandResponse>, ApiError> {
-    let battle_id_text = battle.id().to_string();
+    let battle_id_text = input.battle_id.clone();
+    let battle_id = session_context::parse_id::<Battle>(&battle_id_text, "battle_id")?;
     let Some(runtime) =
         crate::metrics::benchmark_phase("submit_battle_action", "load_battle_state", || {
             battle_runtime::with_runtime(&battle_id_text, Clone::clone)
@@ -1243,7 +1243,7 @@ fn submit_runtime_battle_action(
 
     let command =
         match crate::metrics::benchmark_phase("submit_battle_action", "command_begin", || {
-            begin_runtime_battle_command(caller, context, battle, input, client_nonce)
+            begin_runtime_battle_command(caller, context, battle_id, &runtime, input, client_nonce)
         })? {
             RuntimeBattleCommandAction::Apply(command) => command,
             RuntimeBattleCommandAction::Return(response) => return Ok(Some(response)),
@@ -1280,7 +1280,7 @@ fn submit_runtime_battle_action(
             crate::metrics::benchmark_phase("submit_battle_action", "readiness_schedule", || {
                 if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
                     context.session.id(),
-                    battle.id(),
+                    battle_id,
                     None,
                     true,
                     true,
@@ -1342,7 +1342,8 @@ fn submit_runtime_battle_action(
 fn begin_runtime_battle_command(
     caller: CandidPrincipal,
     context: &session_context::SessionCallerContext,
-    battle: &Battle,
+    battle_id: Id<Battle>,
+    runtime: &BattleRuntime,
     input: &BattleActionInput,
     client_nonce_text: &str,
 ) -> Result<RuntimeBattleCommandAction, ApiError> {
@@ -1395,9 +1396,13 @@ fn begin_runtime_battle_command(
         return Ok(RuntimeBattleCommandAction::Return(existing.response));
     }
 
+    let battle = runtime
+        .state
+        .battle(&runtime.battle_id)
+        .map_err(map_battle_error)?;
     ensure_battle_round_accepts_new_action(
         context.session.id(),
-        battle.id(),
+        battle_id,
         context.participant.id(),
         battle.current_round,
     )?;

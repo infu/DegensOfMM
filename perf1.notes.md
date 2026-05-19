@@ -1548,3 +1548,57 @@ Decision:
 
 - Keep this as a benchmark-only enabler before deleting redundant movement effects or adding any active-turn runtime structure.
 - This does remove phase rows from future benchmark summaries. That is acceptable for perf1 because method-level and repo-operation summaries are now the source of truth.
+
+## Checkpoint: Remove Movement Snapshot Command Effects
+
+Deleted the duplicate `CommandEffect` projection from `record_movement_snapshot`.
+
+What changed:
+
+- `record_movement_snapshot` still uses `movement::find_movement_snapshot(command_id, intent_id, step_index)` as the replay/idempotency guard.
+- It still writes the first-class `MovementSnapshot` row when absent.
+- It no longer writes a second `movement_snapshot` `CommandEffect` with the same movement-step data.
+- The now-unused `movement_outcome_key` helper was removed.
+
+Safety condition:
+
+- Movement history and service tests read `MovementSnapshot` rows directly.
+- I found no reader that depends on `effect_type = "movement_snapshot"` or the `move_snap:*` effect key.
+- Replay safety for movement steps remains on the movement snapshot unique lookup, which is more specific than the deleted command effect projection.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,562,545 bytes
+IC limit: 12,582,912 bytes
+headroom: 20,367 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister
+cargo check -p domm-degens-canister --features benchmark
+cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture
+DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260519-112144-movement-snapshot-effect-gate-j DOMM_BENCH_QUERY_LOG_PATH=target/benchmarks/20260519-112144-movement-snapshot-effect-gate-j/test-output.log cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_gate_j_strategic_loop_persists_icydb_rows -- --nocapture
+```
+
+Focused Gate J result versus `20260519-110341-movement-scheduled-guard-gate-j`:
+
+| metric | scheduled guard cut | snapshot effect removal | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 365.2604B | 361.7712B | -1.0% |
+| scenario memory | 6,358.25 MB | 6,326.1875 MB | -0.5% |
+| `submit_move_intent` avg instructions | 13.7361B | 13.7454B | flat |
+| `sync_session_turn` avg instructions | 15.3986B | 15.0796B | -2.1% |
+| `effects.command_effect_by_command_key` calls | 7 | 4 | -42.9% |
+| `effects.create_applied_command_effect` calls | 18 | 15 | -16.7% |
+| `effects.command_effect_by_command_key` total instructions | 4.9219B | 2.8102B | -42.9% |
+| `effects.create_applied_command_effect` total instructions | 8.5600B | 7.1335B | -16.7% |
+
+Decision:
+
+- Keep this cut because it removes redundant stable reads/writes, lowers scenario memory by 512 stable pages, and frees additional Wasm code.
+- The remaining effect candidates are top-level `turn_resolution` effects in `resolve_pending_movement` and movement-submit `movement_intent` effects. Both look unused, but they should be deleted as separate checkpoints so regressions and benchmark attribution stay clear.

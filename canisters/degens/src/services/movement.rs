@@ -2458,57 +2458,7 @@ fn record_movement_snapshot(
         )?;
     }
 
-    let interaction_json = stop
-        .map(|stop| {
-            format!(
-                r#","interaction_kind":"{}","interaction_id_text":"{}""#,
-                command_response::escape_json(&stop.subject_kind),
-                command_response::escape_json(&stop.subject_id_text)
-            )
-        })
-        .unwrap_or_default();
-    command_response::ensure_command_effect(
-        session.id(),
-        command_id,
-        format!(
-            "move_snap:{}:{step_index}:{}",
-            pending_move.intent.id(),
-            movement_outcome_key(outcome)
-        ),
-        "movement_snapshot".to_string(),
-        "champion".to_string(),
-        pending_move.champion.id().to_string(),
-        format!(
-            r#"{{"intent_id":"{}","turn_number":{},"step_index":{},"from_x":{},"from_y":{},"to_x":{},"to_y":{},"movement_cost":{},"remaining_after":{},"outcome":"{}"{} }}"#,
-            pending_move.intent.id(),
-            session.current_turn,
-            step_index,
-            from.x,
-            from.y,
-            to.x,
-            to.y,
-            movement_cost,
-            remaining_after,
-            command_response::escape_json(outcome),
-            interaction_json
-        ),
-    )
-}
-
-fn movement_outcome_key(outcome: &str) -> &str {
-    match outcome {
-        "stopped_object_interaction" => "object",
-        "started_neutral_battle" => "neutral",
-        "started_champion_battle" => "champion",
-        "started_crossing_battle" => "cross_battle",
-        "started_town_battle" => "town_battle",
-        "stopped_crossing_conflict" => "cross",
-        "stopped_tile_conflict" => "tile",
-        "stopped_champion_blocker" => "blocker",
-        "stopped_town_interaction" => "town",
-        "stopped_budget_exhausted" => "budget",
-        _ => outcome,
-    }
+    Ok(())
 }
 
 fn mark_champion_encounter_pending(

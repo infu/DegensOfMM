@@ -2593,3 +2593,33 @@ Decision:
 
 - Keep the checkpoint. It improves the player-facing submit endpoint and gives a clean compatibility bridge while the runtime sync rewrite is still incomplete.
 - Next Gate 5B work should target the remaining submit stable reads in order: session/job guard, champion load, occupancy/blocker reads. Any cache shortcut must have an invalidation/version contract; the previous cached champion shortcut regressed battle legal actions.
+
+## Checkpoint: Cache First-Playable Movement Map
+
+Removed a repeated CPU rebuild from movement validation:
+
+- `flags_at` and `movement_cost_at` previously called `domm_game::build_first_playable_map_state()` for each first-playable map tile lookup.
+- `submit_move_intent` calls both functions for every path tile, and `sync_session_turn` also pays this path-cost tax while resolving movement.
+- Movement now keeps the deterministic first-playable map in a canister heap thread-local cache and reuses it for tile flag/cost reads.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260519-first-playable-map-cache-gate-j` passed in `230.24s`
+- Post-run PocketIC cleanup confirmed no leftover PocketIC/server processes.
+
+Measured delta versus Gate 5B.1 `20260519-runtime-submit-no-durable-intent-gate-j`:
+
+| metric | runtime intent bridge | first-playable map cache | change |
+| --- | ---: | ---: | ---: |
+| scenario instructions | 311.0029B | 310.0816B | -0.3% |
+| `submit_move_intent` avg | 9.3146B | 9.1776B | -1.5% |
+| `sync_session_turn` avg | 12.6262B | 12.5783B | -0.4% |
+| `submit_move_intent` avg memory | 0.1667 MB | 0.1667 MB | unchanged |
+
+Decision:
+
+- Keep this cut because it removes repeated deterministic work and improves both submit and sync without changing gameplay state authority.
+- Do not over-invest in this layer. The remaining `submit_move_intent` per-call repo ops still include one `champions.load_champion`, one `sessions.load_session`, and two `system_jobs.by_session_status_due` reads. Those stable reads are the next Gate 5B target.

@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
@@ -30,6 +33,11 @@ use super::{
 
 const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 1;
 const PARTIAL_TURN_RETRY_DELAY_MS: i64 = 60_000;
+
+thread_local! {
+    static FIRST_PLAYABLE_MAP_CACHE: RefCell<Option<domm_game::FirstPlayableMapState>> =
+        const { RefCell::new(None) };
+}
 
 pub(crate) fn preview_move_path(
     caller: CandidPrincipal,
@@ -4000,8 +4008,13 @@ fn static_first_playable_map_value(
     {
         return None;
     }
-    let map = domm_game::build_first_playable_map_state();
-    value(&map, coord)
+    FIRST_PLAYABLE_MAP_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.is_none() {
+            *cache = Some(domm_game::build_first_playable_map_state());
+        }
+        cache.as_ref().and_then(|map| value(map, coord))
+    })
 }
 
 fn chunk_cell_blob_value(

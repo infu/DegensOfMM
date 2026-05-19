@@ -909,3 +909,27 @@ Decision from full suite:
 - The focused Gate K improvement holds in the broader suite.
 - Required endpoint coverage is still intentionally partial per gate, so the "no missing endpoints" checklist remains open.
 - `sync_battle`, `sync_session_turn`, town/economy commands, and read APIs now dominate suite cost more than `submit_battle_action`.
+
+## Checkpoint: Runtime Manual Battle Readiness
+
+Moved active `end_battle_turn` manual readiness onto `BattleRuntime.ready_participants`.
+
+What changed:
+
+- Active battle rows are adopted into runtime before manual end-turn handling when needed.
+- `end_battle_turn` now checks active runtime stack ownership first, avoiding a durable `BattleStack` page when runtime exists.
+- For active runtime battles, manual end-turn marks `BattleRuntime.ready_participants` and reports a synthetic `battle_participant_round_ready` changed subject instead of creating/updating a `BattleParticipantRoundReady` row.
+- The existing durable `GameCommand` and public `GameEvent` response behavior remains in place for this checkpoint.
+
+Decision:
+
+- A fuller version that moved `end_battle_turn` command receipts and events into runtime crossed the IC Wasm code-section limit by about 2.3 KB during PocketIC install (`12585225` bytes vs max `12582912`).
+- The scoped version keeps the checkpoint inside the code-size limit and completes the todo goal of removing the manual readiness row hot path.
+- Runtime command/event migration for `end_battle_turn` should be revisited only with a broader code-size reduction or module split.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-end-turn3 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-end-turn2 cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_both_players_end_round_and_timer_catches_up -- --nocapture`

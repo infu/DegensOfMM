@@ -1706,6 +1706,9 @@ pub(crate) fn end_battle_turn(
 ) -> Result<CommandResponse, ApiError> {
     let mut context = session_context::require_active_session_caller(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
+    if battle.state == "active" {
+        battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
+    }
     let payload_json = format!(
         r#"{{"battle_id":"{}"}}"#,
         command_response::escape_json(&battle_id)
@@ -1722,12 +1725,38 @@ pub(crate) fn end_battle_turn(
         GameCommandAction::Return(response) => return Ok(response),
     };
 
-    let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?;
     let caller_participant_id = context.participant.id();
-    let caller_has_stack = stacks
-        .items
-        .iter()
-        .any(|stack| stack.owner_participant_id == Some(caller_participant_id.key()));
+    let battle_id_text = battle.id().to_string();
+    let caller_participant_text = caller_participant_id.to_string();
+    let runtime_round_and_visibility = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+        if runtime.session_id != context.session.id().to_string() {
+            return None;
+        }
+        let runtime_battle = runtime.state.battle(&battle_id_text).ok()?;
+        if runtime_battle.state != "active" {
+            return None;
+        }
+        let caller_has_stack = runtime.state.stacks.iter().any(|stack| {
+            stack.battle_id == battle_id_text
+                && stack.owner_participant_id.as_deref() == Some(caller_participant_text.as_str())
+        });
+        Some((runtime_battle.current_round, caller_has_stack))
+    })
+    .flatten();
+    let (round_number, caller_has_stack, use_runtime_readiness) =
+        if let Some((round_number, caller_has_stack)) = runtime_round_and_visibility {
+            (round_number, caller_has_stack, true)
+        } else {
+            let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?;
+            (
+                battle.current_round,
+                stacks
+                    .items
+                    .iter()
+                    .any(|stack| stack.owner_participant_id == Some(caller_participant_id.key())),
+                false,
+            )
+        };
     if !caller_has_stack {
         return command_response::fail_command(
             caller,
@@ -1742,25 +1771,38 @@ pub(crate) fn end_battle_turn(
         );
     }
 
-    let ready = battle_round_ready::mark_battle_round_ready(
-        context.session.id(),
-        battle.id(),
-        caller_participant_id,
-        battle.current_round,
-        Some(command.id()),
-        "player_end_turn".to_string(),
-        Timestamp::now(),
-    )?;
-    battle_runtime::with_runtime_mut(&battle.id().to_string(), |runtime| {
-        if runtime.session_id == context.session.id().to_string() {
-            runtime.mark_ready(caller_participant_id.to_string(), battle.current_round);
-        }
-    });
-    let mut changed_subjects = vec![command_response::changed(
-        "battle_participant_round_ready",
-        &ready.id().to_string(),
-        "upsert",
-    )];
+    let mut changed_subjects = if use_runtime_readiness {
+        battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+            if runtime.session_id == context.session.id().to_string() {
+                runtime.mark_ready(caller_participant_text.clone(), round_number);
+            }
+        });
+        vec![command_response::changed(
+            "battle_participant_round_ready",
+            &format!(
+                "runtime:{}:{}:{}",
+                battle.id(),
+                caller_participant_id,
+                round_number
+            ),
+            "upsert",
+        )]
+    } else {
+        let ready = battle_round_ready::mark_battle_round_ready(
+            context.session.id(),
+            battle.id(),
+            caller_participant_id,
+            battle.current_round,
+            Some(command.id()),
+            "player_end_turn".to_string(),
+            Timestamp::now(),
+        )?;
+        vec![command_response::changed(
+            "battle_participant_round_ready",
+            &ready.id().to_string(),
+            "upsert",
+        )]
+    };
     let readiness = recompute_runtime_battle_round_readiness_and_schedule(
         context.session.id(),
         battle.id(),
@@ -1790,7 +1832,7 @@ pub(crate) fn end_battle_turn(
         format!(
             "end_battle_turn:{}:{}:{}",
             battle.id(),
-            battle.current_round,
+            round_number,
             context.participant.id()
         ),
         "battle_participant_round_ready".to_string(),
@@ -1799,7 +1841,7 @@ pub(crate) fn end_battle_turn(
         format!(
             r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
             battle.id(),
-            battle.current_round,
+            round_number,
             ready_count,
             participant_count,
             all_ready
@@ -1815,7 +1857,7 @@ pub(crate) fn end_battle_turn(
             r#"{{"command_kind":"end_battle_turn","battle_id":"{}","current_turn":{},"round_number":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
             battle.id(),
             context.session.current_turn,
-            battle.current_round,
+            round_number,
             ready_count,
             participant_count,
             all_ready

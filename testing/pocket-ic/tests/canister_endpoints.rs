@@ -3347,6 +3347,13 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
                 .iter()
                 .any(|event| event.event_type == "battle_participant_round_ready")
         );
+        assert!(
+            ended_round.changed_subjects.iter().any(|subject| {
+                subject.subject_kind == "battle_participant_round_ready"
+                    && subject.subject_id_text.starts_with("runtime:")
+            }),
+            "active end_battle_turn should report runtime readiness instead of a durable ready row"
+        );
 
         let ended_round_replay = update_as::<CommandResponse>(
             &fixture,
@@ -3361,6 +3368,30 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
         .expect("end_battle_turn replay should decode")
         .expect("end_battle_turn replay should succeed");
         assert_eq!(ended_round_replay.command_id, ended_round.command_id);
+        let end_status_by_id = query_as::<CommandStatusView>(
+            &fixture,
+            player_one,
+            "get_command_status",
+            (session_id.clone(), ended_round.command_id.clone()),
+        )
+        .expect("end_battle_turn status by id should decode")
+        .expect("end_battle_turn status by id should load");
+        assert_eq!(end_status_by_id.status, CommandStatus::Applied);
+        assert_eq!(end_status_by_id.command_id, ended_round.command_id);
+        let end_status_by_nonce = query_as::<CommandStatusView>(
+            &fixture,
+            player_one,
+            "get_command_status_by_nonce",
+            (
+                session_id.clone(),
+                "end_battle_turn".to_string(),
+                "nonce:battle-ready:end-round".to_string(),
+            ),
+        )
+        .expect("end_battle_turn status by nonce should decode")
+        .expect("end_battle_turn status by nonce should load");
+        assert_eq!(end_status_by_nonce.status, CommandStatus::Applied);
+        assert_eq!(end_status_by_nonce.command_id, ended_round.command_id);
 
         let blocked_action = update_as::<CommandResponse>(
             &fixture,

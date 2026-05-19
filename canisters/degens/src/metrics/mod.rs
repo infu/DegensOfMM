@@ -21,8 +21,6 @@ const MAX_BENCHMARK_CALLS: usize = 4096;
 thread_local! {
     static BENCHMARK_CALLS: RefCell<VecDeque<DiagnosticBenchmarkCallView>> =
         RefCell::new(VecDeque::new());
-    static CURRENT_BENCHMARK_PHASES: RefCell<Vec<DiagnosticBenchmarkPhaseView>> =
-        RefCell::new(Vec::new());
     static CURRENT_BENCHMARK_REPO_OPS: RefCell<BTreeMap<&'static str, DiagnosticBenchmarkRepoOpView>> =
         RefCell::new(BTreeMap::new());
     static NEXT_BENCHMARK_SEQUENCE: Cell<u64> = const { Cell::new(1) };
@@ -92,25 +90,10 @@ pub(crate) fn benchmark_query<T>(
 #[cfg(feature = "benchmark")]
 pub(crate) fn benchmark_phase<T>(
     _method: &'static str,
-    phase: &'static str,
+    _phase: &'static str,
     body: impl FnOnce() -> T,
 ) -> T {
-    let stable_memory_pages_before = canic_cdk::api::stable_size();
-    let instruction_before = canic_cdk::api::instruction_counter();
-    let result = body();
-    let instruction_after = canic_cdk::api::instruction_counter();
-    let stable_memory_pages_after = canic_cdk::api::stable_size();
-
-    CURRENT_BENCHMARK_PHASES.with(|phases| {
-        phases.borrow_mut().push(DiagnosticBenchmarkPhaseView {
-            name: phase.to_string(),
-            instruction_delta: instruction_after.saturating_sub(instruction_before),
-            stable_memory_pages_before,
-            stable_memory_pages_after,
-        });
-    });
-
-    result
+    body()
 }
 
 #[cfg(feature = "benchmark")]
@@ -222,13 +205,12 @@ fn next_sequence() -> u64 {
 
 #[cfg(feature = "benchmark")]
 fn reset_current_call_details() {
-    CURRENT_BENCHMARK_PHASES.with(|phases| phases.borrow_mut().clear());
     CURRENT_BENCHMARK_REPO_OPS.with(|ops| ops.borrow_mut().clear());
 }
 
 #[cfg(feature = "benchmark")]
 fn take_current_phases() -> Vec<DiagnosticBenchmarkPhaseView> {
-    CURRENT_BENCHMARK_PHASES.with(|phases| std::mem::take(&mut *phases.borrow_mut()))
+    Vec::new()
 }
 
 #[cfg(feature = "benchmark")]

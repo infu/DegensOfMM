@@ -1516,3 +1516,35 @@ Decision:
 - Keep this cut because it removes four measured session-job guard reads from Gate J while preserving almost all remaining benchmark Wasm headroom.
 - The exact service regression passed but took 253.90s, confirming the guard safety case and reinforcing that this regression belongs in a slower focused group rather than every tiny edit loop.
 - This is still a row-level micro-cut. `submit_move_intent` is now under 14B but nowhere near the 5B target, so the next meaningful work remains a heap active-turn aggregate that stops writing durable intent/command/event state on every fresh movement submit.
+
+## Checkpoint: Disable Benchmark Phase Storage
+
+Freed benchmark Wasm headroom by turning `benchmark_phase` into a pass-through wrapper in benchmark builds.
+
+Rationale:
+
+- Phase attribution was useful while breaking down the original `submit_battle_action` path.
+- Current movement work is using public-method totals and repo-operation totals; the existing phase markers are battle-specific and do not drive the next movement decisions.
+- The benchmark harness already accepts empty phase lists, and repo-op tracking remains enabled.
+
+Code-size measurement:
+
+```text
+command: CARGO_TARGET_DIR=target/pocket-ic-endpoint-presence-benchmark cargo build -p domm-degens-canister --target wasm32-unknown-unknown --release --features benchmark
+code section: 12,564,045 bytes
+IC limit: 12,582,912 bytes
+headroom: 18,867 bytes
+freed vs scheduled guard checkpoint: 12,459 bytes
+```
+
+Verification:
+
+```text
+cargo fmt --check
+cargo check -p domm-degens-canister --features benchmark
+```
+
+Decision:
+
+- Keep this as a benchmark-only enabler before deleting redundant movement effects or adding any active-turn runtime structure.
+- This does remove phase rows from future benchmark summaries. That is acceptable for perf1 because method-level and repo-operation summaries are now the source of truth.

@@ -278,6 +278,23 @@ Verified:
 
 Measurement note: no focused Gate J benchmark was run for this single small cut. The previous direct Gate J run took `689.81s`, so the next benchmark should batch this with the next runtime/movement checkpoint.
 
+### SessionTurnRuntime Event And Status Overlay
+
+Wired the empty session-turn runtime into the existing event/status merge points.
+
+Checkpoint scope:
+
+- `get_events_after` now merges `SessionTurnRuntime` active events before the existing `BattleRuntime` active-event merge and durable fallback sorting/deduplication.
+- `get_command_status` checks session-turn runtime command receipts by command id before battle runtime and durable command rows.
+- `get_command_status` and `get_command_status_by_nonce` check session-turn runtime receipts for `submit_move_intent`, `end_turn`, and `sync_session_turn` nonces before durable command rows.
+- No endpoint writes populate this runtime yet, so this should be behavior-neutral until the next movement runtime checkpoint.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+
 ### Runtime Finalization Projection
 
 Added the projection guard needed before active battle submit stops writing tactical rows per action.

@@ -15,6 +15,7 @@ use crate::repos::{commands_events_effects, foundation};
 use super::{
     battle_runtime,
     session_context::{self, public_error},
+    session_turn_runtime,
 };
 
 const LOBBY_COMMAND_TYPES: &[&str] = &[
@@ -81,6 +82,18 @@ pub(crate) fn get_events_after(
         .map(api_event_view)
         .collect::<Vec<_>>();
     let canonical_session_id = context.session.id().to_string();
+    views.extend(session_turn_runtime::active_events_after(
+        &canonical_session_id,
+        "public",
+        events_after_seq,
+    ));
+    if audience_key != "public" {
+        views.extend(session_turn_runtime::active_events_after(
+            &canonical_session_id,
+            &audience_key,
+            events_after_seq,
+        ));
+    }
     views.extend(battle_runtime::active_events_after(
         &canonical_session_id,
         "public",
@@ -142,7 +155,7 @@ pub(crate) fn get_command_status(
     let lobby_candidates = lobby_command_type_candidates(&command_id_or_client_nonce);
     let game_candidates = game_command_type_candidates(&command_id_or_client_nonce);
     if lobby_candidates.is_empty() {
-        if let Some(status) = runtime_submit_battle_command_status_by_nonce(
+        if let Some(status) = runtime_game_command_status_by_nonce(
             &context,
             &command_id_or_client_nonce,
             game_candidates,
@@ -172,7 +185,7 @@ pub(crate) fn get_command_status(
         )? {
             return Ok(lobby_status_view(command));
         }
-        if let Some(status) = runtime_submit_battle_command_status_by_nonce(
+        if let Some(status) = runtime_game_command_status_by_nonce(
             &context,
             &command_id_or_client_nonce,
             game_candidates,
@@ -225,17 +238,10 @@ pub(crate) fn get_command_status_by_nonce(
         ));
     }
 
-    if command_type == "submit_battle_action" {
-        let nonce = nonce_u64(&command_type, &client_nonce);
-        let canonical_session_id = context.session.id().to_string();
-        let actor_participant_id = context.participant.id().to_string();
-        if let Some(receipt) = battle_runtime::command_receipt_by_nonce(
-            &canonical_session_id,
-            &actor_participant_id,
-            nonce,
-        ) {
-            return Ok(receipt.status_view());
-        }
+    if let Some(status) =
+        runtime_game_command_status_by_nonce(&context, &client_nonce, &[command_type.as_str()])
+    {
+        return Ok(status);
     }
 
     let command = find_game_command_by_nonce(&context, &client_nonce, &[command_type.as_str()])?;
@@ -248,19 +254,36 @@ pub(crate) fn get_command_status_by_nonce(
     })
 }
 
-fn runtime_submit_battle_command_status_by_nonce(
+fn runtime_game_command_status_by_nonce(
     context: &session_context::SessionCallerContext,
     client_nonce: &str,
     command_types: &[&str],
 ) -> Option<CommandStatusView> {
-    if !command_types.contains(&"submit_battle_action") {
-        return None;
-    }
-    let nonce = nonce_u64("submit_battle_action", client_nonce);
     let canonical_session_id = context.session.id().to_string();
     let actor_participant_id = context.participant.id().to_string();
-    battle_runtime::command_receipt_by_nonce(&canonical_session_id, &actor_participant_id, nonce)
-        .map(|receipt| receipt.status_view())
+    for command_type in command_types {
+        let nonce = nonce_u64(command_type, client_nonce);
+        if matches!(
+            *command_type,
+            "submit_move_intent" | "end_turn" | "sync_session_turn"
+        ) && let Some(receipt) = session_turn_runtime::command_receipt_by_nonce(
+            &canonical_session_id,
+            &actor_participant_id,
+            nonce,
+        ) {
+            return Some(receipt.status_view());
+        }
+        if *command_type == "submit_battle_action"
+            && let Some(receipt) = battle_runtime::command_receipt_by_nonce(
+                &canonical_session_id,
+                &actor_participant_id,
+                nonce,
+            )
+        {
+            return Some(receipt.status_view());
+        }
+    }
+    None
 }
 
 fn find_game_command_by_nonce(
@@ -417,6 +440,10 @@ fn command_status_by_id(
     value: &str,
 ) -> Result<Option<CommandStatusView>, ApiError> {
     let canonical_session_id = context.session.id().to_string();
+    if let Some(receipt) = session_turn_runtime::command_receipt_by_id(&canonical_session_id, value)
+    {
+        return Ok(Some(receipt.status_view()));
+    }
     if let Some(receipt) = battle_runtime::command_receipt_by_id(&canonical_session_id, value) {
         return Ok(Some(receipt.status_view()));
     }

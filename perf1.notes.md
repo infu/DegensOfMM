@@ -816,3 +816,66 @@ Decision:
 - Gate 2 is cleared: `submit_battle_action` is now below 3B avg.
 - `readiness_schedule` is no longer a major blocker: 1.1894B -> 0.0950B avg.
 - The remaining dominant cost is `auth_context` at about 2.13B, which means the next meaningful work is a session/participant auth cache or runtime submit auth shortcut.
+
+### Active Submit Auth Cache
+
+Removed most of the stable-read auth tax from active runtime battle submit.
+
+Changes made:
+
+- Added a narrow two-slot active session caller cache for active non-spell `submit_battle_action`.
+- The cache stores the active `SessionCallerContext` for the caller/session pair and is refreshed after submit, so runtime event sequence/session mutations are carried forward.
+- `CastAbility` and non-runtime/fallback paths still use the regular row-backed auth behavior.
+- The first cache version used a `BTreeMap`, but that pushed the benchmark Wasm over the IC code-section limit. The final version uses two explicit cache slots.
+- Runtime command receipts were simplified from two `BTreeMap`s to a small `Vec` with linear scans. Active battles have a small receipt set, and this freed enough canister code size for the auth cache.
+
+Verified:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-auth-cache-two cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`
+
+Focused benchmark:
+
+```text
+run id: 20260519-062456-gate-k-two-slot-auth-cache
+artifact: target/benchmarks/20260519-062456-gate-k-two-slot-auth-cache/gate-k/summary.json
+note: summary git_sha is f8399a4 because this was run before committing the checkpoint
+```
+
+Gate K result:
+
+| status | updates | queries | row growth | stable pages start | stable pages final |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| passed | 87 | 115 | 228 | 1025 | 149889 |
+
+Key method summary:
+
+| method | kind | calls | avg instructions | p95 instructions | avg memory delta | avg cycles |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `submit_battle_action` | update | 25 | 0.2846B | 1.1852B | 0.00 MB | 0.0003T |
+| `sync_battle` | update | 28 | 9.8803B | 36.1180B | 36.06 MB | 0.0107T |
+| `get_battle_state` | query | 48 | n/a | n/a | 1.33 MB | 0T |
+| `get_events_after` | query | 1 | n/a | n/a | 0 MB | 0T |
+
+Submit phase summary after this cut:
+
+| phase | calls | avg instructions |
+| --- | ---: | ---: |
+| `auth_context` | 25 | 0.1693B |
+| `readiness_schedule` | 25 | 0.0951B |
+| `event_fanout` | 25 | 0.0192B |
+| `apply_rules` | 25 | 0.0003B |
+| `load_battle_state` | 25 | 0.0002B |
+| `command_begin` | 25 | 0.0001B |
+| `validate_action` | 25 | 0.0001B |
+| `final_response` | 25 | 0.0000B |
+| `recovery` | 25 | 0.0000B |
+| `timeout` | 25 | 0.0000B |
+| `persist_battle_state` | 25 | 0.0000B |
+
+Decision:
+
+- Gate 3 and Gate 4 are cleared in focused Gate K: `submit_battle_action` is now at the intended normal target of about 0.3B avg.
+- The p95 is still 1.1852B because cache misses and edge/fallback actions still pay a stable auth read. That is acceptable for this checkpoint but should be watched in the full suite.
+- `sync_battle` remains expensive at about 9.88B avg and is now the largest battle endpoint smell.

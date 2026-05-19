@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{FactionDefinition, GameParticipant, GameSession, PlayerAccount};
 use domm_game::{ApiError, ParticipantView, ResourceCost, SessionSummary, SessionView};
@@ -12,6 +14,20 @@ use crate::repos::{content, players, sessions};
 pub(crate) struct SessionCallerContext {
     pub session: GameSession,
     pub participant: GameParticipant,
+}
+
+#[derive(Clone, Debug)]
+struct ActiveSessionCallerCacheEntry {
+    caller_text: String,
+    session_id: String,
+    context: SessionCallerContext,
+}
+
+thread_local! {
+    static ACTIVE_SESSION_CALLER_CACHE_A: RefCell<Option<ActiveSessionCallerCacheEntry>> =
+        const { RefCell::new(None) };
+    static ACTIVE_SESSION_CALLER_CACHE_B: RefCell<Option<ActiveSessionCallerCacheEntry>> =
+        const { RefCell::new(None) };
 }
 
 pub(crate) fn require_session_caller(
@@ -48,6 +64,66 @@ pub(crate) fn require_active_session_caller(
         ));
     }
     Ok(context)
+}
+
+pub(crate) fn require_cached_active_session_caller(
+    caller: CandidPrincipal,
+    session_id: &str,
+) -> Result<SessionCallerContext, ApiError> {
+    reject_anonymous(caller)?;
+    let caller_text = caller.to_text();
+    if let Some(context) = cached_active_session_caller(&caller_text, session_id) {
+        return Ok(context);
+    }
+    let context = require_active_session_caller(caller, session_id)?;
+    remember_active_session_caller(caller, &context);
+    Ok(context)
+}
+
+pub(crate) fn remember_active_session_caller(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+) {
+    if context.session.state != "active" {
+        return;
+    }
+    let entry = ActiveSessionCallerCacheEntry {
+        caller_text: caller.to_text(),
+        session_id: context.session.id().to_string(),
+        context: context.clone(),
+    };
+    let cached_a = ACTIVE_SESSION_CALLER_CACHE_A.with(|cache| cache.borrow().clone());
+    if cached_a.as_ref().is_none_or(|cached| {
+        cached.caller_text == entry.caller_text && cached.session_id == entry.session_id
+    }) {
+        ACTIVE_SESSION_CALLER_CACHE_A.with(|cache| *cache.borrow_mut() = Some(entry));
+    } else {
+        ACTIVE_SESSION_CALLER_CACHE_B.with(|cache| *cache.borrow_mut() = Some(entry));
+    }
+}
+
+fn cached_active_session_caller(
+    caller_text: &str,
+    session_id: &str,
+) -> Option<SessionCallerContext> {
+    if let Some(context) = ACTIVE_SESSION_CALLER_CACHE_A.with(|cache| {
+        cache.borrow().as_ref().and_then(|entry| {
+            (entry.caller_text == caller_text
+                && entry.session_id == session_id
+                && entry.context.session.state == "active")
+                .then(|| entry.context.clone())
+        })
+    }) {
+        return Some(context);
+    }
+    ACTIVE_SESSION_CALLER_CACHE_B.with(|cache| {
+        cache.borrow().as_ref().and_then(|entry| {
+            (entry.caller_text == caller_text
+                && entry.session_id == session_id
+                && entry.context.session.state == "active")
+                .then(|| entry.context.clone())
+        })
+    })
 }
 
 pub(crate) fn require_player(caller: CandidPrincipal) -> Result<PlayerAccount, ApiError> {

@@ -350,23 +350,24 @@ When a todo item is completed:
 - [x] Keep resolved-battle runtime events visible through an in-memory session archive after runtime removal; defer bulk durable event flushing because a one-shot finalization flush exceeded the 40B single-message limit.
 - [ ] Flush or project runtime command/event data to durable rows in bounded batches at battle resolution, explicit checkpoint, or upgrade as needed for history/debugging.
 - [x] Batch or avoid `GameSession.next_event_seq` durable updates during active battle commands by reserving active event sequence blocks.
-- [x] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`. Focused Gate K `20260519-051826-gate-k-runtime-command-receipts` passed with `submit_battle_action` at 4.0563B avg, so this checkpoint did not clear Gate 3. The remaining measured blockers are `auth_context` at 2.1350B, `readiness_schedule` at 1.1899B, and `load_battle` at 0.7120B.
+- [x] Run focused Gate K/L and decide whether Gate 3 cleared `<1B`. The command-receipt checkpoint alone did not clear Gate 3, but the later two-slot active auth cache run `20260519-062456-gate-k-two-slot-auth-cache` measured `submit_battle_action` at 0.2846B avg, so Gate 3 is now cleared.
 
 ### 5. Gate 4: CPU And Runtime Data-Structure Pass
 
 - [ ] Add runtime indexes for occupancy by cell and stack id if scans remain visible in phase timings.
-- [ ] Avoid full legal action generation for simple validation paths.
-- [ ] Avoid reachability BFS unless the submitted action is `Move` or a read API actually needs move paths.
+- [x] Avoid full legal action generation for simple validation paths.
+- [x] Avoid reachability BFS unless the submitted action is `Move` or a read API actually needs move paths.
+- [x] Add a narrow two-slot active session caller cache for active runtime battle submits so auth/session lookup is not a stable-read tax on every action.
 - [ ] Remove or defer any remaining per-action serialization/checkpointing visible in traces.
-- [ ] Run focused Gate K/L and decide whether Gate 4 reached around `0.3B`.
+- [x] Run focused Gate K/L and decide whether Gate 4 reached around `0.3B`. Focused Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured `submit_battle_action` at 0.2846B avg.
 
 ### 6. Benchmark And Regression Discipline
 
 - [x] Perf Gate 0: record traced baseline with repo-operation and phase attribution.
 - [x] Perf Gate 1: get `submit_battle_action` below 10B average instructions or document the measured blocker and change direction. The measured blocker is now durable command/event/session/aftermath work after tactical row writes were reduced; continue into Gate 2/3 cuts.
 - [x] Perf Gate 2: get `submit_battle_action` below 3B average instructions or document the measured blocker and change direction. Gate K `20260519-055234-gate-k-runtime-timeout-hints` measured 2.2481B avg.
-- [ ] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction.
-- [ ] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions.
+- [x] Perf Gate 3: get `submit_battle_action` below 1B average instructions or document the measured blocker and change direction. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
+- [x] Perf Gate 4: get `submit_battle_action` around 0.3B average instructions. Gate K `20260519-062456-gate-k-two-slot-auth-cache` measured 0.2846B avg.
 - [x] Record before/after method summaries for `submit_battle_action`, `sync_battle`, `get_battle_state`, `get_game_view`, `get_events_after`, and any active runtime event/status APIs.
 - [ ] Confirm no missing required endpoints and no benchmark instruction deltas show `n/a` for update methods.
 - [x] Confirm no leftover PocketIC processes after focused benchmark runs.

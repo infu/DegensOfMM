@@ -1047,12 +1047,17 @@ pub(crate) fn submit_battle_action(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         crate::metrics::benchmark_phase("submit_battle_action", "auth_context", || {
-            session_context::require_active_session_caller(caller, &session_id)
+            if input.action == "CastAbility" {
+                session_context::require_active_session_caller(caller, &session_id)
+            } else {
+                session_context::require_cached_active_session_caller(caller, &session_id)
+            }
         })?;
     if input.action != "CastAbility"
         && let Some(response) =
             submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
     {
+        session_context::remember_active_session_caller(caller, &context);
         return Ok(response);
     }
     let battle = crate::metrics::benchmark_phase("submit_battle_action", "load_battle", || {
@@ -1066,6 +1071,7 @@ pub(crate) fn submit_battle_action(
         && let Some(response) =
             submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
     {
+        session_context::remember_active_session_caller(caller, &context);
         return Ok(response);
     }
     let command =
@@ -1199,18 +1205,21 @@ pub(crate) fn submit_battle_action(
     })?;
 
     let result_json = battle_action_result_json(&receipt);
-    crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
-        command_response::apply_command_with_result(
-            caller,
-            &context,
-            command,
-            &client_nonce,
-            result_json,
-            events,
-            changed_subjects,
-            CommandResult::BattleAction(receipt),
-        )
-    })
+    let response =
+        crate::metrics::benchmark_phase("submit_battle_action", "final_response", || {
+            command_response::apply_command_with_result(
+                caller,
+                &context,
+                command,
+                &client_nonce,
+                result_json,
+                events,
+                changed_subjects,
+                CommandResult::BattleAction(receipt),
+            )
+        })?;
+    session_context::remember_active_session_caller(caller, &context);
+    Ok(response)
 }
 
 enum RuntimeBattleCommandAction {

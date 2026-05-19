@@ -84,8 +84,7 @@ pub(crate) struct BattleRuntime {
     pub battle_id: String,
     pub state: BattleState,
     pub participant_audience_keys: BTreeMap<String, BattleRuntimeAudience>,
-    pub command_receipts: BTreeMap<String, BattleRuntimeCommandReceipt>,
-    pub command_receipts_by_nonce: BTreeMap<BattleRuntimeNonceKey, String>,
+    pub command_receipts: Vec<BattleRuntimeCommandReceipt>,
     pub active_events: Vec<BattleRuntimeEvent>,
     pub ready_participants: BTreeSet<BattleRuntimeReadyKey>,
     pub deadline: BattleRuntimeDeadline,
@@ -105,8 +104,7 @@ impl BattleRuntime {
             battle_id: battle_id.into(),
             state,
             participant_audience_keys: BTreeMap::new(),
-            command_receipts: BTreeMap::new(),
-            command_receipts_by_nonce: BTreeMap::new(),
+            command_receipts: Vec::new(),
             active_events: Vec::new(),
             ready_participants: BTreeSet::new(),
             deadline: BattleRuntimeDeadline::default(),
@@ -130,15 +128,15 @@ impl BattleRuntime {
     }
 
     pub(crate) fn insert_command_receipt(&mut self, receipt: BattleRuntimeCommandReceipt) {
-        self.command_receipts_by_nonce.insert(
-            BattleRuntimeNonceKey {
-                actor_participant_id: receipt.actor_participant_id.clone(),
-                client_nonce: receipt.client_nonce,
-            },
-            receipt.command_id.clone(),
-        );
-        self.command_receipts
-            .insert(receipt.command_id.clone(), receipt);
+        if let Some(existing) = self
+            .command_receipts
+            .iter_mut()
+            .find(|existing| existing.command_id == receipt.command_id)
+        {
+            *existing = receipt;
+        } else {
+            self.command_receipts.push(receipt);
+        }
         self.mark_dirty();
     }
 
@@ -147,12 +145,10 @@ impl BattleRuntime {
         actor_participant_id: &str,
         client_nonce: u64,
     ) -> Option<&BattleRuntimeCommandReceipt> {
-        let key = BattleRuntimeNonceKey {
-            actor_participant_id: actor_participant_id.to_string(),
-            client_nonce,
-        };
-        let command_id = self.command_receipts_by_nonce.get(&key)?;
-        self.command_receipts.get(command_id)
+        self.command_receipts.iter().find(|receipt| {
+            receipt.actor_participant_id == actor_participant_id
+                && receipt.client_nonce == client_nonce
+        })
     }
 
     pub(crate) fn push_event(&mut self, event: BattleRuntimeEvent) {
@@ -309,12 +305,6 @@ impl BattleRuntimeCommandReceipt {
     pub(crate) fn status_view(&self) -> CommandStatusView {
         self.response.status_view()
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub(crate) struct BattleRuntimeNonceKey {
-    pub actor_participant_id: String,
-    pub client_nonce: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -508,7 +498,13 @@ pub(crate) fn command_receipt_by_id(
             .borrow()
             .values()
             .filter(|runtime| runtime.session_id == session_id)
-            .find_map(|runtime| runtime.command_receipts.get(command_id).cloned())
+            .find_map(|runtime| {
+                runtime
+                    .command_receipts
+                    .iter()
+                    .find(|receipt| receipt.command_id == command_id)
+                    .cloned()
+            })
     }) {
         return Some(receipt);
     }
@@ -591,7 +587,7 @@ pub(crate) fn archive_runtime_command_receipts(runtime: &BattleRuntime) {
             .iter()
             .map(|receipt| receipt.command_id.clone())
             .collect::<BTreeSet<_>>();
-        for receipt in runtime.command_receipts.values() {
+        for receipt in &runtime.command_receipts {
             if existing_ids.insert(receipt.command_id.clone()) {
                 session_receipts.push(receipt.clone());
             }

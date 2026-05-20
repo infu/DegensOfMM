@@ -1,8 +1,8 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
 use domm_degens_schema::schema::{
-    ArtifactInstance, Champion, ChampionArmyStack, GameParticipant, GameSession, NeutralArmy,
-    ParticipantKnownObject, SpellDefinition, Town, VisibilityChunk, WorldObject,
+    ArtifactInstance, Champion, ChampionArmyStack, GameParticipant, GameSession, MapChunk,
+    NeutralArmy, ParticipantKnownObject, SpellDefinition, Town, VisibilityChunk, WorldObject,
 };
 use domm_game::{
     ActionAffordance, ApiError, ApiTownView, ArtifactView, ChampionArmyStackRecord, ChampionView,
@@ -31,6 +31,8 @@ thread_local! {
     static CHAMPION_BANNER_ARTIFACT_IDS: RefCell<Vec<(String, String)>> =
         const { RefCell::new(Vec::new()) };
     static KNOWN_OBJECT_ROWS: RefCell<Vec<ParticipantKnownObject>> =
+        const { RefCell::new(Vec::new()) };
+    static MAP_CHUNK_ROWS: RefCell<Vec<MapChunk>> =
         const { RefCell::new(Vec::new()) };
 }
 
@@ -83,6 +85,12 @@ pub(crate) fn invalidate_known_objects(
     });
 }
 
+pub(crate) fn remember_map_chunks(rows: &[MapChunk]) {
+    MAP_CHUNK_ROWS.with_borrow_mut(|cache| {
+        cache.extend(rows.iter().cloned());
+    });
+}
+
 fn cached_champion_stack_rows(champion_id: Id<Champion>) -> Option<Vec<ChampionArmyStack>> {
     let key = champion_id.to_string();
     CHAMPION_STACK_ROWS.with_borrow(|cache| {
@@ -116,6 +124,16 @@ fn cached_known_objects(context: &SessionCallerContext) -> Vec<ParticipantKnownO
     })
 }
 
+fn cached_map_chunks(context: &SessionCallerContext) -> Vec<MapChunk> {
+    MAP_CHUNK_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .filter(|row| row.session_id == context.session.id().key())
+            .cloned()
+            .collect()
+    })
+}
+
 pub(crate) fn visible_map_chunks(
     context: &SessionCallerContext,
     viewport: &Viewport,
@@ -138,30 +156,34 @@ pub(crate) fn visible_map_chunks(
     .into_iter()
     .map(|visibility| ((visibility.chunk_x, visibility.chunk_y), visibility))
     .collect::<BTreeMap<_, _>>();
-    let mut chunks = map_visibility_occupancy::page_map_chunks_by_session(
-        context.session.id(),
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .filter(|chunk| chunk_intersects_viewport(&context.session, viewport, chunk))
-    .filter_map(|chunk| {
-        let visibility = visibility_by_coord.get(&(chunk.chunk_x, chunk.chunk_y))?;
-        Some(MapChunkView {
-            chunk_id: chunk.id().to_string(),
-            chunk_x: chunk.chunk_x,
-            chunk_y: chunk.chunk_y,
-            width: u16::from(chunk.width),
-            height: u16::from(chunk.height),
-            terrain_blob: chunk.terrain_blob.to_vec(),
-            movement_blob: chunk.movement_blob.to_vec(),
-            flags_blob: chunk.flags_blob.to_vec(),
-            discovered_blob: visibility.discovered_blob.to_vec(),
-            visible_blob: visibility.visible_blob.to_vec(),
+    let mut map_chunks = cached_map_chunks(context);
+    if map_chunks.is_empty() {
+        map_chunks = map_visibility_occupancy::page_map_chunks_by_session(
+            context.session.id(),
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items;
+    }
+    let mut chunks = map_chunks
+        .into_iter()
+        .filter(|chunk| chunk_intersects_viewport(&context.session, viewport, chunk))
+        .filter_map(|chunk| {
+            let visibility = visibility_by_coord.get(&(chunk.chunk_x, chunk.chunk_y))?;
+            Some(MapChunkView {
+                chunk_id: chunk.id().to_string(),
+                chunk_x: chunk.chunk_x,
+                chunk_y: chunk.chunk_y,
+                width: u16::from(chunk.width),
+                height: u16::from(chunk.height),
+                terrain_blob: chunk.terrain_blob.to_vec(),
+                movement_blob: chunk.movement_blob.to_vec(),
+                flags_blob: chunk.flags_blob.to_vec(),
+                discovered_blob: visibility.discovered_blob.to_vec(),
+                visible_blob: visibility.visible_blob.to_vec(),
+            })
         })
-    })
-    .collect::<Vec<_>>();
+        .collect::<Vec<_>>();
     chunks.sort_by_key(|chunk| (chunk.chunk_y, chunk.chunk_x));
 
     let start = cursor.unwrap_or(0) as usize;

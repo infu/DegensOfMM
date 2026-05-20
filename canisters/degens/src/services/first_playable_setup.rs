@@ -806,7 +806,8 @@ fn seed_map_chunks(
                 updated_at: now,
             })
             .collect::<Vec<_>>();
-        foundation::insert_many_atomic("map.seed_map_chunks", rows)?;
+        let rows = foundation::insert_many_atomic("map.seed_map_chunks", rows)?;
+        render_projection::remember_map_chunks(&rows);
     }
     Ok(())
 }

@@ -4019,3 +4019,41 @@ Decision:
 
 - Keep this checkpoint. It removes about half of the visible-object query floor without changing rows, pages, or route shape.
 - The next large query target is still `get_visible_map_chunks` at about `1.4B`; cutting it safely needs a visibility/map chunk projection cache with movement visibility invalidation or update-path mirroring.
+
+## Checkpoint: Immutable Map Chunk Cache Cuts Visible Map Query
+
+After the known-object cache, `get_visible_map_chunks` was the largest remaining first-playable query floor at about `1.4B` instructions. The map chunk rows are immutable for the current first-playable route, while visibility chunks are mutable as movement reveals map state. That made the safe first cut to cache only `MapChunk` rows and keep `VisibilityChunk` reads durable-backed.
+
+What changed:
+
+- `first_playable_setup::seed_map_chunks` now seeds a heap cache from the inserted real `MapChunk` rows.
+- `render_projection::visible_map_chunks` uses cached map chunks for the current session and still joins them with durable `VisibilityChunk` rows for the participant.
+- The benchmark diagnostic update payload no longer carries redundant call-level stable-page before/after fields. Benchmark artifacts still measure method memory deltas from PocketIC status snapshots, query stable pages from query logs, and repo-op stable page deltas from canister metrics.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo test -p domm-degens-canister --features benchmark benchmark_feature_exports_diagnostic_benchmark_endpoints -- --nocapture`
+- Benchmark Wasm build: code section `0x00bffe64`
+- Focused Gate J `20260520-map-chunk-cache-gate-j` passed in `195.36s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-known-object-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 54.2635B | 53.5648B | -1.3% |
+| `get_visible_map_chunks` avg | 1.4081B | 0.7036B | -50.0% |
+| `get_visible_objects` avg | 0.7153B | 0.7152B | flat |
+| `sync_session_turn` avg | 0.3801B | 0.3799B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It cuts the map chunk query floor in half without caching mutable visibility state or changing durable rows.
+- The remaining `get_visible_map_chunks` floor is the durable visibility page. Moving that safely needs visibility-cache invalidation or mirroring from `refresh_champion_visibility`, and the benchmark Wasm has only about 412 bytes of headroom after this checkpoint.

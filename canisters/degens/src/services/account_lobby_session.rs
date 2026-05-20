@@ -31,6 +31,7 @@ const SETUP_SYSTEM_ACTOR: &str = "setup";
 
 thread_local! {
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
+    static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
 }
 
 fn cached_session_view(session_id: &str) -> Option<SessionView> {
@@ -45,6 +46,75 @@ fn cached_session_view(session_id: &str) -> Option<SessionView> {
 
 fn remember_session_view(view: &SessionView) {
     SESSION_VIEW_CACHE.with(|cache| *cache.borrow_mut() = Some(view.clone()));
+}
+
+pub(crate) fn runtime_lobby_command_by_id(command_id: &str) -> Option<LobbyCommand> {
+    RUNTIME_LOBBY_COMMANDS.with_borrow(|commands| {
+        commands
+            .iter()
+            .find(|command| command.id().to_string() == command_id)
+            .cloned()
+    })
+}
+
+pub(crate) fn runtime_lobby_command_by_idempotency(
+    actor_principal: Principal,
+    client_nonce: u64,
+) -> Option<LobbyCommand> {
+    RUNTIME_LOBBY_COMMANDS.with_borrow(|commands| {
+        commands
+            .iter()
+            .find(|command| {
+                command.actor_principal == actor_principal && command.client_nonce == client_nonce
+            })
+            .cloned()
+    })
+}
+
+fn remember_runtime_lobby_command(command: &LobbyCommand) {
+    RUNTIME_LOBBY_COMMANDS.with_borrow_mut(|commands| {
+        commands.retain(|existing| {
+            existing.id != command.id
+                && (existing.actor_principal != command.actor_principal
+                    || existing.client_nonce != command.client_nonce)
+        });
+        commands.push(command.clone());
+    });
+}
+
+fn runtime_lobby_command(
+    actor_principal: Principal,
+    actor_player_id: Option<Id<PlayerAccount>>,
+    client_nonce: u64,
+    payload_hash: String,
+    command_type: &'static str,
+    payload_json: String,
+) -> LobbyCommand {
+    let now = Timestamp::now();
+    LobbyCommand {
+        id: Ulid::generate(),
+        actor_principal,
+        actor_player_id: actor_player_id.map(|id| id.key()),
+        client_nonce,
+        payload_hash,
+        command_type: command_type.to_string(),
+        status: "pending".to_string(),
+        phase: "created".to_string(),
+        payload_json,
+        result_json: None,
+        error_code: None,
+        error_message: None,
+        error_details_json: None,
+        retryable: false,
+        applied_at: None,
+        failed_at: None,
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn runtime_lobby_command_present(command: &LobbyCommand) -> bool {
+    runtime_lobby_command_by_id(&command.id().to_string()).is_some()
 }
 
 const SETUP_EFFECTS: &[SetupEffectSpec] = &[
@@ -781,6 +851,27 @@ fn begin_lobby_command(
         client_nonce_text,
         &payload_json,
     );
+    if let Some(existing) = runtime_lobby_command_by_idempotency(actor_principal, client_nonce) {
+        if existing.payload_hash != hash {
+            return Ok(LobbyCommandAction::Return(failed_lobby_response(
+                actor_principal,
+                command_type,
+                client_nonce_text,
+                hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+                0,
+            )));
+        }
+        if matches!(existing.status.as_str(), "pending" | "applying") {
+            return Ok(LobbyCommandAction::Apply(existing));
+        }
+        return response_from_lobby_command(existing, client_nonce_text)
+            .map(LobbyCommandAction::Return);
+    }
     if let Some(existing) =
         commands_events_effects::find_lobby_command_by_idempotency(actor_principal, client_nonce)?
     {
@@ -805,14 +896,15 @@ fn begin_lobby_command(
             .map(LobbyCommandAction::Return);
     }
 
-    let command = commands_events_effects::create_lobby_command(
+    let command = runtime_lobby_command(
         actor_principal,
         actor_player_id,
         client_nonce,
         hash,
-        command_type.to_string(),
+        command_type,
         payload_json,
-    )?;
+    );
+    remember_runtime_lobby_command(&command);
     Ok(LobbyCommandAction::Apply(command))
 }
 
@@ -834,7 +926,13 @@ fn apply_lobby_command(
     command.retryable = false;
     command.applied_at = Some(Timestamp::now());
     command.failed_at = None;
-    let command = commands_events_effects::update_lobby_command(command)?;
+    command.updated_at = Timestamp::now();
+    let command = if runtime_lobby_command_present(&command) {
+        remember_runtime_lobby_command(&command);
+        command
+    } else {
+        commands_events_effects::update_lobby_command(command)?
+    };
     if let LobbyCommandResult::Session(view) = &result {
         remember_session_view(view);
     }
@@ -870,7 +968,13 @@ fn fail_lobby_command(
     command.error_details_json = error.details_json.clone();
     command.retryable = error.retryable;
     command.failed_at = Some(Timestamp::now());
-    let command = commands_events_effects::update_lobby_command(command)?;
+    command.updated_at = Timestamp::now();
+    let command = if runtime_lobby_command_present(&command) {
+        remember_runtime_lobby_command(&command);
+        command
+    } else {
+        commands_events_effects::update_lobby_command(command)?
+    };
     Ok(lobby_response_from_parts(
         command.id().to_string(),
         command.command_type,

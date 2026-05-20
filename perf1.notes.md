@@ -4177,3 +4177,48 @@ Decision:
 
 - Keep this checkpoint. It removes the last large query-side floor from Gate J without changing rows, stable pages, or route shape.
 - The remaining route total is now mostly update/setup-side work: lobby/session setup commands dominate absolute instructions, and active movement sync is already around `0.38B` average in this route.
+
+## Checkpoint: Runtime Lobby Receipts Cut Setup Writes
+
+After the neutral projection cache, Gate J was dominated by lobby/setup updates. The highest command repo ops were still durable fresh `LobbyCommand` create/update pairs: `commands.create_lobby_command` and `commands.update_lobby_command` each cost about `3.33B` total in the route, while durable idempotency lookup cost another `4.93B`.
+
+What changed:
+
+- Fresh lobby commands now create a heap `LobbyCommand` receipt instead of immediately inserting a durable row.
+- `apply_lobby_command` and `fail_lobby_command` update that heap receipt for runtime commands and still fall back to durable update for older durable commands.
+- Lobby command replay checks heap receipts first, then durable rows. Same nonce/same payload returns the receipt; same nonce/different payload still returns `duplicate_nonce_payload_mismatch`.
+- `get_command_status` and `get_command_status_by_nonce` merge heap lobby receipts before durable `LobbyCommand` lookup.
+- Durable `commands.lobby_command_idempotency` remains for now so older rows and absence proof behavior are unchanged. That is the next obvious setup floor if the route still needs more cut.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bf819c`
+- Focused Gate J `20260520-lobby-runtime-receipts-gate-j` passed in `196.87s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+- Native service regression `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` failed after `156.63s` on the pre-existing runtime-open/durable turn-job guard expectation: a manually inserted durable turn-resolution job no longer blocks movement when heap runtime proves the turn open. The failure did not exercise the lobby receipt replay/status path and should be handled with the Gate 5H/runtime authority policy work.
+
+Measured delta versus `20260520-neutral-view-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 49.3327B | 42.6716B | -13.5% |
+| Gate J scenario memory | 4380.3750 MB | 4108.3125 MB | -6.2% |
+| `register_player` avg | 2.8239B | 1.8744B | -33.6% |
+| `create_session` avg | 11.9965B | 11.0501B | -7.9% |
+| `join_session` avg | 7.3248B | 6.3675B | -13.1% |
+| `mark_ready` avg | 5.9076B | 4.9536B | -16.1% |
+| `start_session` avg | 8.7177B | 7.7633B | -10.9% |
+| `commands.create_lobby_command` total | 3.3207B | 0B | removed |
+| `commands.update_lobby_command` total | 3.3359B | 0B | removed |
+| `commands.lobby_command_idempotency` total | 4.9285B | 4.9242B | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 66689 | -6.1% |
+
+Decision:
+
+- Keep this checkpoint. It removes about `6.66B` of setup route instructions without hollowing the public lobby API: same-call replay and status still work from heap receipts, while older durable receipts still fall back to IcyDB.
+- This intentionally weakens durable lobby receipt history until Gate 5H adds a flush/upgrade policy. The same pattern is already true for other hot runtime receipts, so consolidate it under one barrier/snapshot design rather than reintroducing per-command stable writes.

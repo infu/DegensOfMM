@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use crate::repos::{commands_events_effects, foundation};
 
 use super::{
-    battle_runtime,
+    account_lobby_session, battle_runtime,
     session_context::{self, public_error},
     session_turn_runtime,
 };
@@ -452,6 +452,13 @@ fn command_status_by_id(
         return Ok(None);
     };
 
+    if let Some(command) = account_lobby_session::runtime_lobby_command_by_id(value) {
+        if !lobby_command_visible(actor_principal, context, &command) {
+            return Ok(None);
+        }
+        return Ok(Some(lobby_status_view(command)));
+    }
+
     if let Some(command) =
         commands_events_effects::load_game_command(Id::<GameCommand>::from_key(id))?
     {
@@ -480,6 +487,13 @@ fn find_lobby_command_by_nonce(
 ) -> Result<Option<LobbyCommand>, ApiError> {
     for command_type in command_types {
         let nonce = nonce_u64(command_type, client_nonce);
+        if let Some(command) =
+            account_lobby_session::runtime_lobby_command_by_idempotency(actor_principal, nonce)
+        {
+            if lobby_command_visible(actor_principal, context, &command) {
+                return Ok(Some(command));
+            }
+        }
         let Some(command) =
             commands_events_effects::find_lobby_command_by_idempotency(actor_principal, nonce)?
         else {

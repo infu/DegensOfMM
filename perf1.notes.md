@@ -3457,3 +3457,50 @@ Decision:
 - Keep this checkpoint. It removes three durable header writes from the hot neutral battle handoff and puts the scenario below the previous Gate 5D `1.5B` sync threshold.
 - Do not mark Gate 5F complete yet. Full contact startup still creates durable stacks, occupancy, obstacles, neutral rows, jobs, and final battle activation rows, so the route is still above the `0.3B-0.6B` target.
 - This shifts intermediate neutral startup recovery further toward heap state. The durable create row plus final activation row remain, but upgrade/recovery during mid-start still needs Gate 5H flush/barrier work.
+
+## Checkpoint: Neutral Startup Tactical Rows Moved To Heap
+
+Changed neutral battle startup stacks, occupancy, and obstacles to use row-shaped heap structs with generated IDs instead of durable `BattleStack`, `BattleOccupancy`, and `BattleObstacle` creates during contact startup. Final activation still updates the durable `Battle` header and adopts a `BattleRuntime` from those heap rows.
+
+Test contract change:
+
+- Gate J now verifies the durable `Battle` boundary plus runtime-visible champion/battle behavior.
+- It no longer requires tactical child rows to exist immediately in IcyDB for the hot startup path.
+- Durable tactical projection is intentionally deferred to Gate 5H flush/barrier work.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bfe263`, about `7.6 KB` under the IC limit
+- Focused Gate J `20260520-neutral-start-heap-tactical-rows-gate-j` passed in `265.99s`
+
+Measured delta versus `20260520-neutral-start-no-intermediate-battle-updates-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 72.8864B | 68.3627B | -6.2% |
+| Gate J scenario memory | 4620.4375 MB | 4380.3750 MB | -5.2% |
+| `sync_session_turn` avg | 1.3278B | 0.8750B | -34.1% |
+| row growth | 43 | 35 | -18.6% |
+| stable pages final | 74881 | 71041 | -5.1% |
+| startup sync seq 69 | 3.7938B | 1.8891B | -50.2% |
+| startup sync seq 70 | 2.3690B | 0.7037B | -70.3% |
+| startup sync seq 71 | 0.9548B | 0.0002B | ~-100.0% |
+
+Repo operations removed from Gate J:
+
+| operation | previous calls | new calls | previous total |
+| --- | ---: | ---: | ---: |
+| `battles.create_battle_stack` | 3 | 0 | 1.4387B |
+| `battles.create_battle_occupancy` | 3 | 0 | 1.4223B |
+| `battles.create_battle_obstacle` | 2 | 0 | 0.9546B |
+| `battles.stacks_by_side` | 2 | 0 | 0.7076B |
+
+Decision:
+
+- Keep this checkpoint. It is the first whole-route sync number inside the `0.6B-0.9B` band.
+- Do not mark Gate 5F complete yet because the stated target is `0.3B-0.6B`; remaining contact cost is mostly durable battle header create/update, source army reads, neutral update, and timeout job creation.
+- The next useful cuts should target the remaining activation boundary, not tactical row micro-work.

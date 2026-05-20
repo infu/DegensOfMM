@@ -88,6 +88,26 @@ pub(crate) fn remember_startup_occupancy(battle_id: Id<Battle>, occupancy: Vec<B
     });
 }
 
+pub(crate) fn has_startup_rows(battle_id: Id<Battle>) -> bool {
+    BATTLE_STARTUP_ROWS.with_borrow(|cache| cache.contains_key(&battle_id.to_string()))
+}
+
+pub(crate) fn has_startup_stacks_for_side(battle_id: Id<Battle>, side: &str) -> bool {
+    BATTLE_STARTUP_ROWS.with_borrow(|cache| {
+        cache
+            .get(&battle_id.to_string())
+            .is_some_and(|rows| rows.stacks.iter().any(|stack| stack.side == side))
+    })
+}
+
+pub(crate) fn has_startup_obstacles(battle_id: Id<Battle>) -> bool {
+    BATTLE_STARTUP_ROWS.with_borrow(|cache| {
+        cache
+            .get(&battle_id.to_string())
+            .is_some_and(|rows| !rows.obstacles.is_empty())
+    })
+}
+
 pub(crate) fn take_complete_startup_rows(
     battle_id: Id<Battle>,
 ) -> Option<(Vec<BattleStack>, Vec<BattleObstacle>, Vec<BattleOccupancy>)> {

@@ -5977,9 +5977,6 @@ fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
 
     let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_J_PROGRESS_ENTITIES);
     assert!(row_count(&final_storage, "Battle") > row_count(&active_storage, "Battle"));
-    assert!(row_count(&final_storage, "BattleStack") > 0);
-    assert!(row_count(&final_storage, "BattleOccupancy") > 0);
-    assert!(row_count(&final_storage, "BattleObstacle") > 0);
     assert!(final_storage.total_rows > initial_storage.total_rows);
     assert!(final_storage.stable_memory_pages >= initial_storage.stable_memory_pages);
 

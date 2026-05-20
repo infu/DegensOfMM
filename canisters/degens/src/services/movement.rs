@@ -5,8 +5,9 @@ use std::{
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
-    Battle, BattleStack, Champion, GameCommand, GameEvent, GameParticipant, GameSession,
-    MovementIntent, NeutralArmy, SystemJob, Town, UnitDefinition, WorldObject,
+    Battle, BattleObstacle, BattleOccupancy, BattleStack, Champion, GameCommand, GameEvent,
+    GameParticipant, GameSession, MovementIntent, NeutralArmy, SystemJob, Town, UnitDefinition,
+    WorldObject,
 };
 use domm_game::{
     ApiError, CommandPhase, CommandResponse, CommandResult, CommandStatus, MoveCoord,
@@ -3732,25 +3733,35 @@ fn continue_neutral_battle_start(
             return Ok(None);
         }
         "starting_attacker" => {
-            let defender_stacks = battles::page_battle_stacks_by_side(
-                battle.id(),
-                "defender",
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            if defender_stacks.items.is_empty() {
-                let stacks =
-                    create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
-                battle_start::remember_startup_stacks(battle.id(), stacks);
+            if battle_start::has_startup_rows(battle.id()) {
+                if !battle_start::has_startup_stacks_for_side(battle.id(), "defender") {
+                    let stacks =
+                        create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
+                    battle_start::remember_startup_stacks(battle.id(), stacks);
+                }
             } else {
-                battle_start::remember_startup_stacks(battle.id(), defender_stacks.items);
+                let defender_stacks = battles::page_battle_stacks_by_side(
+                    battle.id(),
+                    "defender",
+                    domm_game::MAX_LIST_LIMIT,
+                    None,
+                )?;
+                if defender_stacks.items.is_empty() {
+                    let stacks =
+                        create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
+                    battle_start::remember_startup_stacks(battle.id(), stacks);
+                } else {
+                    battle_start::remember_startup_stacks(battle.id(), defender_stacks.items);
+                }
             }
             battle.state = "starting_defender".to_string();
             remember_neutral_starting_battle(&battle);
             return Ok(None);
         }
         "starting_defender" => {
-            create_initial_battle_obstacles(command_id, &battle)?;
+            if !battle_start::has_startup_obstacles(battle.id()) {
+                create_initial_battle_obstacles(command_id, &battle)?;
+            }
             battle.state = "starting_obstacles".to_string();
             remember_neutral_starting_battle(&battle);
             Ok(None)
@@ -3875,18 +3886,17 @@ fn create_neutral_battle_attacker_stacks(
             stack.front_hp,
             1,
             y,
-        )?;
+        );
         if !spell_status_keys.is_empty() {
             battle_stack.status_keys = spell_status_keys.clone();
-            battle_stack = battles::update_battle_stack(battle_stack)?;
         }
-        let occupancy = battles::create_battle_occupancy(
+        let occupancy = create_battle_occupancy_row(
+            command_id,
             battle.id(),
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
-            command_id,
-        )?;
+        );
         battle_start::remember_startup_occupancy(battle.id(), vec![occupancy]);
         stacks.push(battle_stack);
     }
@@ -3941,14 +3951,14 @@ fn create_neutral_battle_defender_stacks(
             stack.front_hp,
             domm_game::BATTLE_GRID_WIDTH - 2,
             y,
-        )?;
-        let occupancy = battles::create_battle_occupancy(
+        );
+        let occupancy = create_battle_occupancy_row(
+            command_id,
             battle.id(),
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
-            command_id,
-        )?;
+        );
         battle_start::remember_startup_occupancy(battle.id(), vec![occupancy]);
         stacks.push(battle_stack);
     }
@@ -3970,33 +3980,64 @@ fn create_battle_stack_from_unit(
     front_hp: u16,
     battle_x: u8,
     battle_y: u8,
-) -> Result<BattleStack, ApiError> {
-    battles::create_battle_stack(
-        battle_id,
-        unit.id(),
-        owner_participant_id,
-        side.to_string(),
+) -> BattleStack {
+    let now = Timestamp::now();
+    BattleStack {
+        id: Ulid::generate(),
+        battle_id: battle_id.key(),
+        unit_id: unit.id().key(),
+        owner_participant_id: owner_participant_id.map(|id| id.key()),
+        side: side.to_string(),
         slot_index,
-        origin_kind.to_string(),
+        origin_kind: origin_kind.to_string(),
         origin_stack_id_text,
         origin_slot_index,
-        unit.attack,
-        unit.defense,
-        unit.damage_min,
-        unit.damage_max,
-        unit.max_hp,
-        unit.speed,
-        unit.initiative,
-        unit.ranged,
-        unit.flying,
+        attack: unit.attack,
+        defense: unit.defense,
+        damage_min: unit.damage_min,
+        damage_max: unit.damage_max,
+        max_hp: unit.max_hp,
+        speed: unit.speed,
+        initiative: unit.initiative,
+        ranged: unit.ranged,
+        flying: unit.flying,
         quantity,
         front_hp,
-        unit.shots,
+        shots_remaining: unit.shots,
         battle_x,
         battle_y,
-        command_id,
-    )
-    .map_err(Into::into)
+        readiness: 0,
+        acted_round: 0,
+        retaliated_round: 0,
+        defended_round: 0,
+        waited_round: 0,
+        cast_round: 0,
+        status: "active".to_string(),
+        last_command_id: Some(command_id.key()),
+        status_keys: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn create_battle_occupancy_row(
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    battle_stack_id: Id<BattleStack>,
+    battle_x: u8,
+    battle_y: u8,
+) -> BattleOccupancy {
+    let now = Timestamp::now();
+    BattleOccupancy {
+        id: Ulid::generate(),
+        battle_id: battle_id.key(),
+        battle_stack_id: battle_stack_id.key(),
+        battle_x,
+        battle_y,
+        last_command_id: Some(command_id.key()),
+        created_at: now,
+        updated_at: now,
+    }
 }
 
 fn create_initial_battle_obstacles(
@@ -4004,11 +4045,35 @@ fn create_initial_battle_obstacles(
     battle: &Battle,
 ) -> Result<(), ApiError> {
     let obstacles = vec![
-        battles::create_battle_obstacle(battle.id(), "rubble".to_string(), 5, 4, command_id)?,
-        battles::create_battle_obstacle(battle.id(), "broken-cart".to_string(), 6, 5, command_id)?,
+        create_battle_obstacle_row(command_id, battle.id(), "rubble", 5, 4),
+        create_battle_obstacle_row(command_id, battle.id(), "broken-cart", 6, 5),
     ];
     battle_start::remember_startup_obstacles(battle.id(), obstacles);
     Ok(())
+}
+
+fn create_battle_obstacle_row(
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    obstacle_type: &str,
+    battle_x: u8,
+    battle_y: u8,
+) -> BattleObstacle {
+    let now = Timestamp::now();
+    BattleObstacle {
+        id: Ulid::generate(),
+        battle_id: battle_id.key(),
+        obstacle_type: obstacle_type.to_string(),
+        battle_x,
+        battle_y,
+        width: 1,
+        height: 1,
+        hp: 0,
+        state: "active".to_string(),
+        last_command_id: Some(command_id.key()),
+        created_at: now,
+        updated_at: now,
+    }
 }
 
 fn select_initial_active_stack(

@@ -6203,3 +6203,28 @@ Expected measurement:
 
 - `claim_quest_reward` should keep most of the `14.1557B -> 9.2372B` gain while adding one bounded quest-key page.
 - `sync_advanced_victory` should also improve because the shared claimed quest count no longer scans active participants plus per-participant claimed quest pages.
+
+## Random Pivot: Economy Participant Runtime Mirroring
+
+New cluster:
+
+- Rotated to the Bernoulli economy proposal after the random-rotation benchmark and quest-count hardening.
+- Current costs after the benchmark: `hire_tavern_champion` `11.1497B`, `submit_dwelling_recruit` `11.1059B`, and `submit_market_trade` `9.2251B`.
+- The benchmark still shows `sessions.update_participant` at four calls / `1.9207B` total; three of those calls are economy resource updates.
+
+Cut:
+
+- Added `persist_or_mirror_active_participant`.
+- When the current active `SessionTurnRuntime` exists, economy commands mirror the already-mutated participant into runtime and skip the immediate durable participant update.
+- When runtime is absent, the helper keeps the old durable `sessions.update_participant` path.
+- Resource ledger rows remain durable for replay/recovery idempotency.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- Endpoint-surface should drop up to three `sessions.update_participant` calls, about `1.44B` total, across `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`.

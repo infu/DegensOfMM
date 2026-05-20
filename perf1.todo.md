@@ -760,7 +760,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 - [x] Run endpoint-surface after scenario/worldgen fresh event/effect, objective no-op write skip, tavern metadata write skip, dwelling runtime resolution, targeted quest rule sync, and champion runtime resolution. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` passed in `425.17s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `145.4290B -> 113.5880B` (`-31.8410B`, `-21.9%`) versus `20260520-roundrobin-champion-battle-history-c783e49`.
 - [x] Harden the fast quest-victory claim path so it remains self-healing: replace the blind `rule.current_value + 1` with a direct claimed opening-quest count by `(session_id, quest_key)` instead of the old participant-by-participant sweep. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`. This should keep most of the `claim_quest_reward` gain while adding one bounded quest-key page to avoid stale counter drift.
-- [ ] Keep the random/rotating improvement rule active. Candidate next cuts from subagents: runtime event-seq allocation for public event session writes, economy participant row deferral with runtime mirroring, direct quest-key counting for `sync_advanced_victory`, central objective world-object snapshots, spell definition/spellbook caching, and deterministic worldgen/world-event row caches.
+- [x] Keep the random/rotating improvement rule active. Candidate next cuts from subagents: runtime event-seq allocation for public event session writes, economy participant row deferral with runtime mirroring, direct quest-key counting for `sync_advanced_victory`, central objective world-object snapshots, spell definition/spellbook caching, and deterministic worldgen/world-event row caches. Picked economy participant row deferral next because it hits three different economy endpoints and has a runtime-present safety guard.
+
+### 29. Random Endpoint Cluster: Economy Participant Runtime Mirroring
+
+- [x] Rotate to economy participant row writes after the random-rotation benchmark and quest-count hardening.
+- [x] For `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`, mirror the mutated participant into `SessionTurnRuntime` instead of immediately updating the durable participant row when the current active turn runtime exists.
+- [x] Keep the durable `sessions.update_participant` fallback when no current active runtime exists, preserving cold/recovery paths.
+- [x] Keep durable resource ledger rows unchanged so replay/recovery idempotency still has an authoritative command ledger.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `sessions.update_participant` drops by up to three calls in the endpoint-surface route. Expected savings are about `0.48B` each on `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`.
+- [ ] Rotate again before deeper economy-only changes.
 
 ## Expected Outcome
 

@@ -398,7 +398,8 @@ fn apply_hire_command(
         "hire_champion",
     )?;
     context.participant.last_action_turn = context.session.current_turn;
-    context.participant = sessions::update_participant(context.participant.clone())?;
+    context.participant =
+        persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
 
     let (mut hire, fresh_hire) =
         match economy_expansion::find_champion_hire_by_command(command.id())? {
@@ -586,7 +587,8 @@ fn apply_market_trade_command(
     )?;
     context.participant.last_resource_command_id = Some(command.id().key());
     context.participant.last_action_turn = context.session.current_turn;
-    context.participant = sessions::update_participant(context.participant.clone())?;
+    context.participant =
+        persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
     let fresh_trade = if economy_expansion::find_market_trade_by_command(command.id())?.is_none() {
         economy_expansion::create_market_trade(
             context.session.id(),
@@ -738,7 +740,8 @@ fn apply_dwelling_recruit_command(
         "dwelling_recruit",
     )?;
     context.participant.last_action_turn = context.session.current_turn;
-    context.participant = sessions::update_participant(context.participant.clone())?;
+    context.participant =
+        persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
     pool.available = pool.available.saturating_sub(quantity);
     pool.last_command_id = Some(command.id().key());
     pool = economy_expansion::update_dwelling_pool(pool)?;
@@ -1381,6 +1384,18 @@ fn reconcile_resource_balance(
             "unknown resource key",
             false,
         )),
+    }
+}
+
+fn persist_or_mirror_active_participant(
+    session: &GameSession,
+    participant: GameParticipant,
+) -> Result<GameParticipant, ApiError> {
+    if session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn) {
+        session_turn_runtime::mirror_participant_update(&participant);
+        Ok(participant)
+    } else {
+        Ok(sessions::update_participant(participant)?)
     }
 }
 

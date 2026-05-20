@@ -632,6 +632,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [ ] Measure the champion-magic cut with the next batched endpoint-surface/focused benchmark and verify `commands.update_game_command` drops from two calls to one for these methods.
 - [ ] If champion magic remains above `1B`, rotate to a different heavy cluster before deeper champion aggregation unless the remaining cost is shared command/event/session write floor.
 
+### 13. Round-Robin Endpoint Cluster: Economy Expansion
+
+- [x] Rotate to the economy-expansion cluster from endpoint-surface: `submit_dwelling_recruit` (`13.9243B`), `hire_tavern_champion` (`13.5124B`), `submit_market_trade` (`10.6367B`), and related preview queries.
+- [x] Add fresh-create command response helpers for public events and command effects so fresh commands can skip durable absence reads when another command-owned row proves this is not replay/recovery.
+- [x] Use those fresh helpers for market trade, tavern hire, and dwelling recruit after the corresponding `MarketTrade`, `ChampionHire`, or `DwellingRecruitment` row is newly created. Recovery/replay still falls back to idempotent `append_public_event`/`ensure_command_effect`.
+- [ ] Measure the economy-expansion cut with the next batched endpoint-surface/focused benchmark and verify `events.by_session_event_key` and `effects.command_effect_by_command_key` drop on the fresh paths.
+- [ ] If economy expansion remains above `1B`, rotate again before full economy/champion/town aggregation unless the remaining cost is shared command/event/session write floor.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

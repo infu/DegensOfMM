@@ -508,6 +508,27 @@ pub(crate) fn append_public_event(
     )
 }
 
+pub(crate) fn append_fresh_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
+    create_event_for_audience(
+        session,
+        command_id,
+        event_key,
+        "public".to_string(),
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn append_event_for_audience(
     session: &mut GameSession,
@@ -585,6 +606,28 @@ pub(crate) fn ensure_command_effect(
             Timestamp::now(),
         )?;
     }
+    Ok(())
+}
+
+pub(crate) fn create_fresh_command_effect(
+    session_id: Id<GameSession>,
+    command_id: Id<GameCommand>,
+    effect_key: String,
+    effect_type: String,
+    target_kind: String,
+    target_id_text: String,
+    payload_json: String,
+) -> Result<(), ApiError> {
+    commands_events_effects::create_applied_command_effect(
+        session_id,
+        command_id,
+        effect_key,
+        effect_type,
+        target_kind,
+        target_id_text,
+        payload_json,
+        Timestamp::now(),
+    )?;
     Ok(())
 }
 

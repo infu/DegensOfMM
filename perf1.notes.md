@@ -5662,3 +5662,29 @@ Verification:
 Expected measurement:
 
 - Next endpoint-surface/focused run should show `commands.update_game_command` dropping from two calls to one for the three champion-magic endpoints, saving roughly one durable update floor per call before any deeper champion aggregate work.
+
+## Round-Robin Pivot: Economy Expansion Cluster
+
+New cluster:
+
+- Rotated to economy expansion from endpoint-surface `20260520-200503-48ee723`: `submit_dwelling_recruit` `13.9243B`, `hire_tavern_champion` `13.5124B`, and `submit_market_trade` `10.6367B`.
+- These methods all showed expensive fresh-path idempotency reads for the public event and command effect rows: `events.by_session_event_key` around `0.702B-0.705B` and `effects.command_effect_by_command_key` around `0.702B-0.703B`.
+
+Cut:
+
+- Added `command_response::append_fresh_public_event` and `command_response::create_fresh_command_effect` for paths that can prove a command-owned business row was just created.
+- `hire_tavern_champion` now uses the fresh helpers only when it creates a new `ChampionHire` row for this command.
+- `submit_market_trade` now uses the fresh helpers only when it creates a new `MarketTrade` row for this command.
+- `submit_dwelling_recruit` now uses the fresh helpers only when it creates a new `DwellingRecruitment` row for this command.
+- Recovery/replay paths where those rows already exist keep the old idempotent `append_public_event` and `ensure_command_effect` calls, so duplicate rows remain guarded.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`
+
+Expected measurement:
+
+- Next batched endpoint-surface/focused run should remove the `events.by_session_event_key` and `effects.command_effect_by_command_key` repo-op reads from the fresh economy expansion calls, roughly `1.4B` per affected endpoint before deeper aggregate work.

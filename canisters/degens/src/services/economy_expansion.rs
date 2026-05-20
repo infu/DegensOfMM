@@ -397,19 +397,23 @@ fn apply_hire_command(
     context.participant.last_action_turn = context.session.current_turn;
     context.participant = sessions::update_participant(context.participant.clone())?;
 
-    let mut hire = match economy_expansion::find_champion_hire_by_command(command.id())? {
-        Some(row) => row,
-        None => economy_expansion::create_champion_hire(
-            context.session.id(),
-            context.participant.id(),
-            town.id(),
-            offer.id(),
-            command.id(),
-            None,
-            offer.cost_gold,
-            context.session.current_turn,
-        )?,
-    };
+    let (mut hire, fresh_hire) =
+        match economy_expansion::find_champion_hire_by_command(command.id())? {
+            Some(row) => (row, false),
+            None => (
+                economy_expansion::create_champion_hire(
+                    context.session.id(),
+                    context.participant.id(),
+                    town.id(),
+                    offer.id(),
+                    command.id(),
+                    None,
+                    offer.cost_gold,
+                    context.session.current_turn,
+                )?,
+                true,
+            ),
+        };
     let champion = match hire.champion_id {
         Some(id) => champions_artifacts::load_champion(Id::<Champion>::from_key(id))?
             .ok_or_else(|| public_error("champion_not_found", "hired champion missing", true))?,
@@ -475,24 +479,50 @@ fn apply_hire_command(
         balances_from_participant(&context.participant),
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        format!("hire:{offer_key}:{}", command.id()),
-        "champion_hired".to_string(),
-        Some("champion".to_string()),
-        Some(champion.id().to_string()),
-        result_json.clone(),
-    )?;
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("hire:{offer_key}"),
-        "champion_hire".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        result_json.clone(),
-    )?;
+    let event_key = format!("hire:{offer_key}:{}", command.id());
+    let effect_key = format!("hire:{offer_key}");
+    let event = if fresh_hire {
+        command_response::append_fresh_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "champion_hired".to_string(),
+            Some("champion".to_string()),
+            Some(champion.id().to_string()),
+            result_json.clone(),
+        )?
+    } else {
+        command_response::append_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "champion_hired".to_string(),
+            Some("champion".to_string()),
+            Some(champion.id().to_string()),
+            result_json.clone(),
+        )?
+    };
+    if fresh_hire {
+        command_response::create_fresh_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "champion_hire".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            result_json.clone(),
+        )?;
+    } else {
+        command_response::ensure_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "champion_hire".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            result_json.clone(),
+        )?;
+    }
     command_response::apply_command_with_result(
         caller,
         context,
@@ -556,7 +586,7 @@ fn apply_market_trade_command(
     context.participant.last_resource_command_id = Some(command.id().key());
     context.participant.last_action_turn = context.session.current_turn;
     context.participant = sessions::update_participant(context.participant.clone())?;
-    if economy_expansion::find_market_trade_by_command(command.id())?.is_none() {
+    let fresh_trade = if economy_expansion::find_market_trade_by_command(command.id())?.is_none() {
         economy_expansion::create_market_trade(
             context.session.id(),
             context.participant.id(),
@@ -568,7 +598,10 @@ fn apply_market_trade_command(
             quote.amount_out,
             quote.rate_key.clone(),
         )?;
-    }
+        true
+    } else {
+        false
+    };
     let receipt = receipt(
         command.id().to_string(),
         "submit_market_trade",
@@ -585,24 +618,50 @@ fn apply_market_trade_command(
         balances_from_participant(&context.participant),
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        format!("market:{}:{}", quote.rate_key, command.id()),
-        "market_trade".to_string(),
-        Some("participant".to_string()),
-        Some(context.participant.id().to_string()),
-        result_json.clone(),
-    )?;
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("market:{}:{}", quote.from_resource, quote.to_resource),
-        "market_trade".to_string(),
-        "participant".to_string(),
-        context.participant.id().to_string(),
-        result_json.clone(),
-    )?;
+    let event_key = format!("market:{}:{}", quote.rate_key, command.id());
+    let effect_key = format!("market:{}:{}", quote.from_resource, quote.to_resource);
+    let event = if fresh_trade {
+        command_response::append_fresh_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "market_trade".to_string(),
+            Some("participant".to_string()),
+            Some(context.participant.id().to_string()),
+            result_json.clone(),
+        )?
+    } else {
+        command_response::append_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "market_trade".to_string(),
+            Some("participant".to_string()),
+            Some(context.participant.id().to_string()),
+            result_json.clone(),
+        )?
+    };
+    if fresh_trade {
+        command_response::create_fresh_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "market_trade".to_string(),
+            "participant".to_string(),
+            context.participant.id().to_string(),
+            result_json.clone(),
+        )?;
+    } else {
+        command_response::ensure_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "market_trade".to_string(),
+            "participant".to_string(),
+            context.participant.id().to_string(),
+            result_json.clone(),
+        )?;
+    }
     command_response::apply_command_with_result(
         caller,
         context,
@@ -690,20 +749,24 @@ fn apply_dwelling_recruit_command(
         quantity,
         command.id(),
     )?;
-    if economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none() {
-        economy_expansion::create_dwelling_recruitment(
-            context.session.id(),
-            context.participant.id(),
-            object.id(),
-            pool.id(),
-            champion.id(),
-            unit.id(),
-            unit_slug.clone(),
-            command.id(),
-            quantity,
-            context.session.current_turn,
-        )?;
-    }
+    let fresh_recruitment =
+        if economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none() {
+            economy_expansion::create_dwelling_recruitment(
+                context.session.id(),
+                context.participant.id(),
+                object.id(),
+                pool.id(),
+                champion.id(),
+                unit.id(),
+                unit_slug.clone(),
+                command.id(),
+                quantity,
+                context.session.current_turn,
+            )?;
+            true
+        } else {
+            false
+        };
     let receipt = receipt(
         command.id().to_string(),
         "submit_dwelling_recruit",
@@ -720,24 +783,50 @@ fn apply_dwelling_recruit_command(
         balances_from_participant(&context.participant),
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        format!("dwelling_recruit:{}:{}", object.id(), command.id()),
-        "dwelling_recruit".to_string(),
-        Some("world_object".to_string()),
-        Some(object.id().to_string()),
-        result_json.clone(),
-    )?;
-    command_response::ensure_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("dwelling_recruit:{}:{unit_slug}", object.id()),
-        "dwelling_recruit".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        result_json.clone(),
-    )?;
+    let event_key = format!("dwelling_recruit:{}:{}", object.id(), command.id());
+    let effect_key = format!("dwelling_recruit:{}:{unit_slug}", object.id());
+    let event = if fresh_recruitment {
+        command_response::append_fresh_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "dwelling_recruit".to_string(),
+            Some("world_object".to_string()),
+            Some(object.id().to_string()),
+            result_json.clone(),
+        )?
+    } else {
+        command_response::append_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "dwelling_recruit".to_string(),
+            Some("world_object".to_string()),
+            Some(object.id().to_string()),
+            result_json.clone(),
+        )?
+    };
+    if fresh_recruitment {
+        command_response::create_fresh_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "dwelling_recruit".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            result_json.clone(),
+        )?;
+    } else {
+        command_response::ensure_command_effect(
+            context.session.id(),
+            command.id(),
+            effect_key,
+            "dwelling_recruit".to_string(),
+            "champion".to_string(),
+            champion.id().to_string(),
+            result_json.clone(),
+        )?;
+    }
     command_response::apply_command_with_result(
         caller,
         context,

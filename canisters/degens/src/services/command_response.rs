@@ -267,21 +267,13 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
 }
 
 pub(crate) fn runtime_proves_pre_deadline_turn_open(context: &SessionCallerContext) -> bool {
-    if Timestamp::now() >= context.session.turn_deadline_at {
-        return false;
-    }
     let session_id = context.session.id().to_string();
-    let Ok(deadline_ms) = u64::try_from(context.session.turn_deadline_at.as_millis()) else {
-        return false;
-    };
     session_turn_runtime::with_runtime(&session_id, context.session.current_turn, |runtime| {
         runtime.session.as_ref().is_some_and(|session| {
             session.id() == context.session.id()
                 && session.state == "active"
                 && session.current_turn == context.session.current_turn
-                && session.turn_deadline_at == context.session.turn_deadline_at
-        }) && runtime.turn_deadline_at_ms == deadline_ms
-            && !runtime.closing
+        }) && !runtime.closing
             && runtime.ready_participants.is_empty()
     })
     .unwrap_or(false)

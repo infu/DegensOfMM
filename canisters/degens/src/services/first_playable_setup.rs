@@ -193,7 +193,8 @@ fn seed_content_definition_batches(
                 updated_at: now,
             })
             .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_units", rows)?;
+        let rows = foundation::insert_many_atomic("content.seed_units", rows)?;
+        content::cache_units(&rows);
     }
 
     if content::find_building_by_ruleset_slug(ruleset_id, "crumbling-hall")?.is_none() {
@@ -227,7 +228,8 @@ fn seed_content_definition_batches(
                 updated_at: now,
             })
             .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_buildings", rows)?;
+        let rows = foundation::insert_many_atomic("content.seed_buildings", rows)?;
+        content::cache_buildings(&rows);
     }
 
     if !manifest.spells.is_empty()

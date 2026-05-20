@@ -3654,3 +3654,59 @@ Decision:
 - Keep this checkpoint. It moves `get_champion_view` into the `0.3B-0.8B` query target band for Gate J.
 - The remaining `0.709B` champion detail cost is the durable banner equipment read. Because query mutations do not persist, eliminating it needs an update-path artifact projection seed or a broader champion detail projection cache.
 - Do not chase that next without freeing more code size. Current benchmark Wasm headroom is only about `2.6 KB`.
+
+## Checkpoint: Runtime-Open Guard And Seeded Content Caches Remove Town Command Floor
+
+After the champion detail checkpoint, the measured town command floor was no longer town row mutation. It was the safety guard and one uncached content definition read:
+
+- `submit_build_town_structure` was `1.4118B`, with `system_jobs.by_session_status_due` plus a later building-definition cache miss.
+- `submit_recruit_units` was `0.7048B`, dominated by `system_jobs.by_session_status_due`.
+- The same Gate J route still has one late `submit_move_intent` at about `0.706B`, also from `system_jobs.by_session_status_due`.
+
+What changed:
+
+- Relaxed `runtime_proves_pre_deadline_turn_open` so an active matching `SessionTurnRuntime` with `closing == false` and no ready participants is enough to skip the durable scheduled-job scan. This handles the Gate J state where manual sync advanced PocketIC time past the deadline, processed movement, yielded after events, and left the runtime authoritative but not closing.
+- Seeded `content`'s heap unit/building slug caches from first-playable bulk `insert_many_atomic` rows. Before this, only the sentinel `crumbling-hall` building was cached; the actual build target `freehold-training-yard` missed and paid one stable content lookup.
+- Kept durable job scanning as fallback when the runtime proof is absent. `end_turn` still has its duplicate-ready durable check.
+
+Rejected/adjusted attempt:
+
+- A first guard helper still required `now_ms < runtime.turn_deadline_at_ms`; focused Gate J `20260520-runtime-turn-command-guard-gate-j` passed but produced identical numbers to `20260520-champion-detail-cache-gate-j`. The commands happen after the test advances time beyond the old deadline, so that proof was too strict and did not remove the scan.
+- A previous active caller cache experiment for `get_my_participant` remains rejected: it made Gate J fail after resource pickup because participant resources were stale.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm after relaxed guard: code section `0x00bff545`
+- Focused Gate J `20260520-runtime-open-turn-job-scan-gate-j` passed in `190.04s`
+- Benchmark Wasm after content-cache seeding: code section `0x00bff708`
+- Focused Gate J `20260520-seed-content-cache-gate-j` passed in `191.37s`
+- Leftover PocketIC servers from both runs were killed; follow-up process scans only matched the `pgrep` commands.
+
+Measured delta versus `20260520-champion-detail-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 61.7790B | 59.6702B | -3.4% |
+| `submit_build_town_structure` | 1.4118B | 0.0003B | ~-100.0% |
+| `submit_recruit_units` | 0.7048B | 0.0003B | ~-100.0% |
+| `system_jobs.by_session_status_due` route calls | 6 | 2 | -66.7% |
+| Gate J scenario cycles | 0.1019T | 0.0998T | -2.1% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Intermediate delta from `20260520-runtime-open-turn-job-scan-gate-j` to `20260520-seed-content-cache-gate-j`:
+
+| metric | before content cache | after content cache | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 60.3674B | 59.6702B | -1.2% |
+| `submit_build_town_structure` | 0.7071B | 0.0003B | ~-100.0% |
+| `submit_recruit_units` | 0.0003B | 0.0003B | flat |
+
+Decision:
+
+- Keep both cuts. Town build/recruit are now below the `0.3B-0.6B` target in the measured first-playable route.
+- Mark the town safe-guard floor done, but keep the durable flush/upgrade and broader town projection work open.
+- Track the remaining `system_jobs.by_session_status_due` scans under Gate 5B.5: late `submit_move_intent` seq 61 still pays `0.7063B` while the other move submits are already `0.0088B` and `0.0003B`.

@@ -103,7 +103,7 @@ fn cached_unit(id: Id<UnitDefinition>) -> Option<UnitDefinition> {
     UNIT_CACHE.with(|cache| cache.borrow().get(&id.to_string()).cloned())
 }
 
-fn cache_units(rows: &[UnitDefinition]) {
+pub(crate) fn cache_units(rows: &[UnitDefinition]) {
     UNIT_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
         for row in rows {
@@ -136,6 +136,18 @@ fn cache_building(row: &BuildingDefinition) {
             content_slug_key(Id::<RulesetDefinition>::from_key(row.ruleset_id), &row.slug),
             row.clone(),
         );
+    });
+}
+
+pub(crate) fn cache_buildings(rows: &[BuildingDefinition]) {
+    BUILDING_SLUG_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        for row in rows {
+            cache.insert(
+                content_slug_key(Id::<RulesetDefinition>::from_key(row.ruleset_id), &row.slug),
+                row.clone(),
+            );
+        }
     });
 }
 

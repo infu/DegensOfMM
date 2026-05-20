@@ -30,6 +30,8 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static CHAMPION_BANNER_ARTIFACT_IDS: RefCell<Vec<(String, String)>> =
         const { RefCell::new(Vec::new()) };
+    static KNOWN_OBJECT_ROWS: RefCell<Vec<ParticipantKnownObject>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn remember_champion_stack_rows(
@@ -64,6 +66,23 @@ pub(crate) fn invalidate_champion_detail(champion_id: Id<Champion>) {
     });
 }
 
+pub(crate) fn remember_known_objects(rows: &[ParticipantKnownObject]) {
+    KNOWN_OBJECT_ROWS.with_borrow_mut(|cache| {
+        cache.extend(rows.iter().cloned());
+    });
+}
+
+pub(crate) fn invalidate_known_objects(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+) {
+    let session_key = session_id.key();
+    let participant_key = participant_id.key();
+    KNOWN_OBJECT_ROWS.with_borrow_mut(|cache| {
+        cache.retain(|row| row.session_id != session_key || row.participant_id != participant_key);
+    });
+}
+
 fn cached_champion_stack_rows(champion_id: Id<Champion>) -> Option<Vec<ChampionArmyStack>> {
     let key = champion_id.to_string();
     CHAMPION_STACK_ROWS.with_borrow(|cache| {
@@ -81,6 +100,19 @@ fn cached_champion_banner_artifact(champion_id: Id<Champion>) -> Option<String> 
             .iter()
             .find(|(existing, _)| existing == &key)
             .map(|(_, artifact_id)| artifact_id.clone())
+    })
+}
+
+fn cached_known_objects(context: &SessionCallerContext) -> Vec<ParticipantKnownObject> {
+    KNOWN_OBJECT_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .filter(|row| {
+                row.session_id == context.session.id().key()
+                    && row.participant_id == context.participant.id().key()
+            })
+            .cloned()
+            .collect()
     })
 }
 
@@ -654,13 +686,17 @@ fn known_subjects_for_viewport(
     viewport: &Viewport,
 ) -> Result<Vec<ObjectSubject>, ApiError> {
     let mut subjects = Vec::new();
-    let page = map_visibility_occupancy::page_known_objects_for_participant(
-        context.session.id(),
-        context.participant.id(),
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    for known in page.items {
+    let mut rows = cached_known_objects(context);
+    if rows.is_empty() {
+        rows = map_visibility_occupancy::page_known_objects_for_participant(
+            context.session.id(),
+            context.participant.id(),
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items;
+    }
+    for known in rows {
         if known.visibility == "hidden" || !viewport.contains(known.x, known.y) {
             continue;
         }

@@ -49,7 +49,6 @@ pub(crate) fn benchmark_update<T>(
         instruction_delta: instruction_after.saturating_sub(instruction_before),
         stable_memory_pages_before,
         stable_memory_pages_after,
-        phases: Vec::new(),
         repo_ops,
     });
 

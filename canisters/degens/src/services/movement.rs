@@ -27,7 +27,7 @@ use crate::repos::{
 use super::{
     battle as battle_service, battle_runtime, battle_start,
     command_response::{self, GameCommandAction, GameCommandStart},
-    economy_expansion, scenario_progress,
+    economy_expansion, render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, system_jobs as system_job_service,
 };
@@ -3380,6 +3380,7 @@ fn create_known_object_if_missing(
         session.current_turn,
         Some(redacted_json),
     )?;
+    render_projection::invalidate_known_objects(session.id(), participant_id);
     Ok(true)
 }
 

@@ -7537,16 +7537,7 @@ impl BenchmarkRecorder {
             .find(|call| call.method == method && call.kind == EndpointKind::Update)
             .map(|call| BenchmarkCanisterCallMeasurement {
                 instruction_delta: call.instruction_delta,
-                phases: call
-                    .phases
-                    .iter()
-                    .map(|phase| BenchmarkPhaseRecord {
-                        name: phase.name.clone(),
-                        instruction_delta: phase.instruction_delta,
-                        stable_memory_pages_before: phase.stable_memory_pages_before,
-                        stable_memory_pages_after: phase.stable_memory_pages_after,
-                    })
-                    .collect(),
+                phases: Vec::new(),
                 repo_ops: call
                     .repo_ops
                     .iter()

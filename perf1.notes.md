@@ -3974,3 +3974,48 @@ Decision:
 
 - Keep this checkpoint. It removes the last known owned champion detail stable read from the first-playable route without changing rows, pages, or route shape.
 - Remaining large first-playable query costs are `get_visible_map_chunks` and `get_visible_objects`, both around `1.4B`; cutting those safely needs runtime/opening projection caches for visibility and known objects.
+
+## Checkpoint: Known Object Projection Cache Cuts Visible Objects
+
+After the champion banner cache, the remaining measured first-playable query floors were `get_visible_map_chunks` and `get_visible_objects`, both around `1.4B` instructions. `get_visible_objects` was still paying the durable `ParticipantKnownObject` page even though first-playable setup had just created the same real rows.
+
+What changed:
+
+- `first_playable_setup::seed_known_objects` now seeds a heap cache from the inserted real `ParticipantKnownObject` rows.
+- `render_projection::visible_objects` uses the heap known-object rows for the current session/participant and falls back to the durable page when the cache is absent.
+- `movement::create_known_object_if_missing` invalidates that participant's cache after a new discovery. This deliberately favors correctness: post-discovery reads fall back to durable rows rather than returning an opening-view cache that hides the newly known object.
+- The canister diagnostic benchmark payload no longer carries the empty phase vector. Phase markers were already disabled; method-level, query-log, and repo-operation metrics remain the benchmark signal. This recovered the Wasm headroom needed for the projection cache.
+
+Rejected shapes before the final version:
+
+- Full known-row cache plus `get_object_view` fast path compiled in dev but exceeded the benchmark Wasm code-section limit at `0x00c00dfc`.
+- A smaller `ObjectSubject` cache also exceeded the limit at `0x00c0114e`.
+- A visible-objects-only full-row cache still exceeded the limit at `0x00c0085b`/`0x00c007f7` before removing the empty phase payload.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo test -p domm-degens-canister exported_candid -- --nocapture`
+- Benchmark Wasm build: code section `0x00bffbb4`
+- Focused Gate J `20260520-known-object-cache-gate-j` passed in `195.18s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-champion-banner-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 54.9867B | 54.2635B | -1.3% |
+| `get_visible_objects` avg | 1.4210B | 0.7153B | -49.6% |
+| `get_visible_map_chunks` avg | 1.4055B | 1.4081B | flat |
+| `sync_session_turn` avg | 0.3801B | 0.3801B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes about half of the visible-object query floor without changing rows, pages, or route shape.
+- The next large query target is still `get_visible_map_chunks` at about `1.4B`; cutting it safely needs a visibility/map chunk projection cache with movement visibility invalidation or update-path mirroring.

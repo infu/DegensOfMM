@@ -888,7 +888,8 @@ fn seed_known_objects(
                 })
             })
             .collect::<foundation::RepoResult<Vec<_>>>()?;
-        foundation::insert_many_atomic("map.seed_known_objects", rows)?;
+        let rows = foundation::insert_many_atomic("map.seed_known_objects", rows)?;
+        render_projection::remember_known_objects(&rows);
     }
     Ok(())
 }

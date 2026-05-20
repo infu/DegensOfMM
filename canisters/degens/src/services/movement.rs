@@ -405,7 +405,7 @@ pub(crate) fn end_turn(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context = require_runtime_current_active_session_caller(caller, &session_id)?;
     let payload_json = format!(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)

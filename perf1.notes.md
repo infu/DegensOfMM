@@ -6405,3 +6405,29 @@ Expected measurement:
 
 - `sync_world_generation` should lose the active-caller durable lookup floor when active turn runtime context exists.
 - Remaining cost should mostly be command/idempotency writes plus existing worldgen state reads.
+
+## Random Pivot: End Turn Runtime-Current Context
+
+New cluster:
+
+- Rotated to `end_turn` after the worldgen runtime-first update cut.
+- `end_turn` measured `5.4317B` in the last benchmark and still used `require_active_session_caller`, while neighboring movement submit/sync paths already use the runtime-current context helper.
+
+Cut:
+
+- `end_turn` now uses `require_runtime_current_active_session_caller`.
+- Turn-ready row creation, runtime readiness counts, optional turn-resolution job scheduling, public event creation, and command response behavior are unchanged.
+- The helper still falls back to the durable active-caller path when runtime/cached caller context is unavailable.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- `end_turn` should lose the active-caller durable lookup floor when active turn runtime context exists.
+- Remaining cost should mostly be turn-ready row creation, command/idempotency writes, event/effect rows, and optional turn-resolution job scheduling.

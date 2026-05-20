@@ -828,7 +828,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve durable fallback behavior when no active runtime caller context exists.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `sync_world_generation` drops the active-caller durable lookup floor.
-- [ ] Rotate again before deeper worldgen-only changes unless the next benchmark says this endpoint is still a top blocker.
+- [x] Rotate again before deeper worldgen-only changes unless the next benchmark says this endpoint is still a top blocker. Picked `end_turn` because it still used the old durable active-caller path while neighboring movement endpoints already use runtime-current context.
+
+### 36. Random Endpoint Cluster: End Turn Runtime-Current Context
+
+- [x] Rotate to `end_turn` after the worldgen runtime-first update cut.
+- [x] Switch `end_turn` from `require_active_session_caller` to the existing `require_runtime_current_active_session_caller` helper used by movement submit/sync paths.
+- [x] Keep turn-ready row creation, runtime readiness counts, optional turn-resolution job scheduling, public event creation, and command response behavior unchanged.
+- [x] Preserve durable fallback behavior when the current active runtime is missing or incomplete.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `end_turn` drops the active-caller durable lookup floor.
+- [ ] Rotate again before deeper end-turn-only changes unless the next benchmark says `end_turn` remains a top blocker.
 
 ## Expected Outcome
 

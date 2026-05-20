@@ -29,6 +29,14 @@ pub(crate) enum GameCommandStart {
     Return(CommandResponse),
 }
 
+pub(crate) enum RuntimeGameCommandAction {
+    Apply {
+        command: GameCommand,
+        runtime_receipt: bool,
+    },
+    Return(CommandResponse),
+}
+
 pub(crate) fn begin_participant_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
@@ -46,6 +54,121 @@ pub(crate) fn begin_participant_command(
         payload_json,
         || ensure_map_turn_accepts_new_command(context, command_type),
     )
+}
+
+pub(crate) fn begin_runtime_participant_command(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    champion_id: Option<Id<Champion>>,
+    payload_json: String,
+) -> Result<RuntimeGameCommandAction, ApiError> {
+    if !runtime_can_hold_command_receipt(context) {
+        return match begin_participant_command(
+            caller,
+            context,
+            command_type,
+            client_nonce_text,
+            champion_id,
+            payload_json,
+        )? {
+            GameCommandAction::Apply(command) => Ok(RuntimeGameCommandAction::Apply {
+                command,
+                runtime_receipt: false,
+            }),
+            GameCommandAction::Return(response) => Ok(RuntimeGameCommandAction::Return(response)),
+        };
+    }
+
+    let actor_participant_id = context.participant.id().to_string();
+    let hash = payload_hash(
+        command_type,
+        &actor_participant_id,
+        client_nonce_text,
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        return Ok(RuntimeGameCommandAction::Return(failed_response(
+            caller,
+            context,
+            command_type,
+            client_nonce_text,
+            hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        )));
+    }
+
+    let client_nonce = nonce_u64(command_type, client_nonce_text);
+    if let Some(existing) = session_turn_runtime::command_receipt_by_nonce(
+        &context.session.id().to_string(),
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != hash {
+            return Ok(RuntimeGameCommandAction::Return(failed_response(
+                caller,
+                context,
+                command_type,
+                client_nonce_text,
+                hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            )));
+        }
+        return Ok(RuntimeGameCommandAction::Return(existing.response));
+    }
+
+    if let Some(existing) = commands_events_effects::runtime_game_command_by_idempotency(
+        context.session.id(),
+        "player",
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != hash {
+            return Ok(RuntimeGameCommandAction::Return(failed_response(
+                caller,
+                context,
+                command_type,
+                client_nonce_text,
+                hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            )));
+        }
+        return response_from_command(caller, context, existing, client_nonce_text)
+            .map(RuntimeGameCommandAction::Return);
+    }
+
+    ensure_map_turn_accepts_new_command(context, command_type)?;
+
+    let command = commands_events_effects::new_game_command(
+        context.session.id(),
+        "player".to_string(),
+        actor_participant_id,
+        Some(Id::from_key(context.participant.player_id)),
+        Some(context.participant.id()),
+        champion_id,
+        context.session.current_turn,
+        client_nonce,
+        command_type.to_string(),
+        hash,
+        payload_json,
+    );
+    Ok(RuntimeGameCommandAction::Apply {
+        command,
+        runtime_receipt: true,
+    })
 }
 
 pub(crate) fn begin_participant_command_tracked(
@@ -421,6 +544,57 @@ pub(crate) fn apply_command_with_result(
     ))
 }
 
+pub(crate) fn apply_runtime_command_with_result(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command: GameCommand,
+    runtime_receipt: bool,
+    client_nonce_text: &str,
+    result_json: String,
+    events: Vec<ApiEventView>,
+    changed_subjects: Vec<ChangedSubject>,
+    result: CommandResult,
+) -> Result<CommandResponse, ApiError> {
+    if !runtime_receipt {
+        return apply_command_with_result(
+            caller,
+            context,
+            command,
+            client_nonce_text,
+            result_json,
+            events,
+            changed_subjects,
+            result,
+        );
+    }
+
+    let mut command = command;
+    command.status = "applied".to_string();
+    command.phase = "complete".to_string();
+    command.result_json = Some(result_json);
+    command.error_code = None;
+    command.error_message = None;
+    command.error_details_json = None;
+    command.retryable = false;
+    command.applied_at = Some(Timestamp::now());
+    command.failed_at = None;
+    let response = response_from_parts(
+        caller,
+        context,
+        command.clone(),
+        client_nonce_text,
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        events,
+        changed_subjects,
+        result,
+        None,
+    );
+    remember_runtime_command_receipt(context, &command, client_nonce_text, response.clone());
+    Ok(response)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn runtime_command_response(
     caller: CandidPrincipal,
@@ -485,6 +659,77 @@ pub(crate) fn fail_command(
         CommandResult::None,
         Some(error),
     ))
+}
+
+pub(crate) fn fail_runtime_command(
+    caller: CandidPrincipal,
+    context: &SessionCallerContext,
+    command: GameCommand,
+    runtime_receipt: bool,
+    client_nonce_text: &str,
+    error: ApiError,
+) -> Result<CommandResponse, ApiError> {
+    if !runtime_receipt {
+        return fail_command(caller, context, command, client_nonce_text, error);
+    }
+
+    let mut command = command;
+    command.status = "failed".to_string();
+    command.phase = "failed".to_string();
+    command.result_json = None;
+    command.error_code = Some(error.code.clone());
+    command.error_message = Some(error.message.clone());
+    command.error_details_json = error.details_json.clone();
+    command.retryable = error.retryable;
+    command.failed_at = Some(Timestamp::now());
+    let response = response_from_parts(
+        caller,
+        context,
+        command.clone(),
+        client_nonce_text,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        error.retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    );
+    remember_runtime_command_receipt(context, &command, client_nonce_text, response.clone());
+    Ok(response)
+}
+
+fn runtime_can_hold_command_receipt(context: &SessionCallerContext) -> bool {
+    session_turn_runtime::with_runtime(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+        |_| (),
+    )
+    .is_some()
+}
+
+fn remember_runtime_command_receipt(
+    context: &SessionCallerContext,
+    command: &GameCommand,
+    client_nonce_text: &str,
+    response: CommandResponse,
+) {
+    let session_id = context.session.id().to_string();
+    let receipt = session_turn_runtime::SessionTurnCommandReceipt {
+        command_id: command.id().to_string(),
+        command_type: command.command_type.clone(),
+        actor_participant_id: context.participant.id().to_string(),
+        client_nonce_text: client_nonce_text.to_string(),
+        client_nonce: command.client_nonce,
+        turn_number: context.session.current_turn,
+        payload_hash: command.payload_hash.clone(),
+        #[cfg(not(feature = "benchmark"))]
+        payload_json: Some(command.payload_json.clone()),
+        response,
+    };
+    session_turn_runtime::with_runtime_mut(&session_id, context.session.current_turn, |runtime| {
+        runtime.insert_command_receipt(receipt);
+    });
 }
 
 pub(crate) fn append_public_event(

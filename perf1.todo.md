@@ -856,6 +856,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Confirm the runtime-context auth floor is gone from repo ops: `sessions.load_session` moved from `7` calls / `4.9236B` to zero calls, while command row counts and row growth remained stable.
 - [x] Pick the next rotated target from the new heavy list instead of continuing auth-only work. Current top remaining update costs: `hire_tavern_champion` `8.0801B`, `submit_dwelling_recruit` `8.0460B`, `claim_quest_reward` `7.3496B`, `submit_market_trade` `6.1614B`, `learn_champion_spell` `5.6836B`, `sync_advanced_victory` `5.4473B`, and `sync_world_generation` `5.0824B`.
 
+### 39. Random Endpoint Cluster: Economy Runtime Command Receipts
+
+- [x] Rotate to economy command/idempotency writes after the auth floor was removed because `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade` are still the top measured endpoints.
+- [x] Add a reusable runtime participant-command begin/apply/fail path in `command_response` that checks active `SessionTurnRuntime` command receipts first, creates a transient `GameCommand` when runtime is available, and falls back to the durable command path when runtime is absent.
+- [x] Store applied/failed runtime command receipts in `SessionTurnRuntime` so active `get_command_status` and nonce replay can answer without durable `GameCommand` rows.
+- [x] Preserve non-benchmark upgrade durability by reusing the existing `SessionTurnCommandReceipt` payload fields and flush path.
+- [x] Move `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` onto the runtime command receipt path while keeping durable resource ledger, hire/trade/recruit, event, effect, and projection rows unchanged.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next endpoint-surface run and verify the three economy endpoints drop `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` from their hot traces while preserving endpoint coverage and event/query behavior.
+- [ ] Rotate again before deeper economy-only changes unless the benchmark shows this same runtime command receipt pattern should immediately be replicated to another command cluster.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

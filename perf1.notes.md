@@ -6494,3 +6494,34 @@ Next target:
 
 - The easy auth floor is now gone from the endpoint-surface route.
 - The next meaningful reductions need to attack command/idempotency writes, economy durable rows, quest/scenario row work, champion spellbook/content rows, or worldgen state reads.
+
+## Random Pivot: Economy Runtime Command Receipts
+
+New cluster:
+
+- Rotated to economy command/idempotency writes because the runtime-context tail benchmark left economy commands as the top measured endpoints.
+- Current costs: `hire_tavern_champion` `8.0801B`, `submit_dwelling_recruit` `8.0460B`, and `submit_market_trade` `6.1614B`.
+- Shared floor to attack: `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command`.
+
+Cut:
+
+- Added `begin_runtime_participant_command`, `apply_runtime_command_with_result`, and `fail_runtime_command`.
+- When active `SessionTurnRuntime` can hold receipts, the begin path checks runtime receipts by nonce, checks the heap command cache, creates a transient `GameCommand`, and skips durable command idempotency/create rows.
+- Apply/fail stores the final `CommandResponse` in `SessionTurnRuntime` instead of updating a durable `GameCommand`.
+- Durable fallback is unchanged when runtime is unavailable.
+- `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` now use this runtime command receipt path.
+- Resource ledger rows, hire/trade/recruit rows, event rows, effect rows, and projections remain durable in this checkpoint.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- The three economy endpoints should lose the durable command idempotency/create/update row floor.
+- Command row growth should drop, but active runtime status/replay should still work through `SessionTurnRuntime` receipts.
+- Remaining cost should mainly be economy ledger/hire/trade/recruit rows, event/effect rows, and command-specific projection writes.

@@ -17,8 +17,7 @@ use crate::repos::{
 };
 
 use super::{
-    command_response::{self, GameCommandAction},
-    render_projection,
+    command_response, render_projection,
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -98,7 +97,7 @@ pub(crate) fn hire_tavern_champion(
         command_response::escape_json(&town_id),
         command_response::escape_json(&offer_key)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "hire_tavern_champion",
@@ -106,8 +105,11 @@ pub(crate) fn hire_tavern_champion(
         None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     apply_hire_command(
         caller,
@@ -115,6 +117,7 @@ pub(crate) fn hire_tavern_champion(
         town,
         offer_key,
         command,
+        runtime_receipt,
         &client_nonce,
     )
 }
@@ -153,7 +156,7 @@ pub(crate) fn submit_market_trade(
         command_response::escape_json(&to_resource),
         amount_in
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "submit_market_trade",
@@ -161,8 +164,11 @@ pub(crate) fn submit_market_trade(
         None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     apply_market_trade_command(
         caller,
@@ -171,6 +177,7 @@ pub(crate) fn submit_market_trade(
         to_resource,
         amount_in,
         command,
+        runtime_receipt,
         &client_nonce,
     )
 }
@@ -280,7 +287,7 @@ pub(crate) fn submit_dwelling_recruit(
         quantity,
         command_response::escape_json(&champion_id)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "submit_dwelling_recruit",
@@ -288,8 +295,11 @@ pub(crate) fn submit_dwelling_recruit(
         Some(champion.id()),
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     apply_dwelling_recruit_command(
         caller,
@@ -299,6 +309,7 @@ pub(crate) fn submit_dwelling_recruit(
         unit_slug,
         quantity,
         command,
+        runtime_receipt,
         &client_nonce,
     )
 }
@@ -352,23 +363,26 @@ fn apply_hire_command(
     town: Town,
     offer_key: String,
     command: GameCommand,
+    runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
     let mut offer = load_offer_for_town(context, &town, &offer_key)?;
     if town.owner_participant_id != Some(context.participant.id().key()) {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error("not_owner", "caller does not own this town", false),
         );
     }
     if offer.status != "available" && offer.hired_command_id != Some(command.id().key()) {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error(
                 "offer_not_available",
@@ -382,10 +396,11 @@ fn apply_hire_command(
         ..ResourceBalances::zero()
     };
     if !can_afford(&context.participant, &cost) {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error("insufficient_resources", "not enough resources", false),
         );
@@ -528,10 +543,11 @@ fn apply_hire_command(
             result_json.clone(),
         )?;
     }
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         context,
         command,
+        runtime_receipt,
         client_nonce,
         result_json,
         vec![event],
@@ -555,15 +571,17 @@ fn apply_market_trade_command(
     to_resource: String,
     amount_in: u64,
     command: GameCommand,
+    runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
     let quote = domm_game::market_trade_quote(&from_resource, &to_resource, amount_in)
         .map_err(|error| ApiError::new("invalid_market_trade", error.to_string(), false))?;
     if !has_resource(&context.participant, &from_resource, quote.amount_in)? {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error("insufficient_resources", "not enough resources", false),
         );
@@ -668,10 +686,11 @@ fn apply_market_trade_command(
             result_json.clone(),
         )?;
     }
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         context,
         command,
+        runtime_receipt,
         client_nonce,
         result_json,
         vec![event],
@@ -692,6 +711,7 @@ fn apply_dwelling_recruit_command(
     unit_slug: String,
     quantity: u32,
     command: GameCommand,
+    runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
     let mut pool =
@@ -721,10 +741,11 @@ fn apply_dwelling_recruit_command(
         pool.available,
         &total_cost,
     ) {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error(
                 reason.clone(),
@@ -834,10 +855,11 @@ fn apply_dwelling_recruit_command(
             result_json.clone(),
         )?;
     }
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         context,
         command,
+        runtime_receipt,
         client_nonce,
         result_json,
         vec![event],

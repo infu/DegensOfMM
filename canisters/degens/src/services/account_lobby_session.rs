@@ -34,6 +34,7 @@ thread_local! {
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
     static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
+    static ACTIVE_SESSION_IDS_CACHE: RefCell<Option<Vec<Id<GameSession>>>> = const { RefCell::new(None) };
     static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
     static RUNTIME_LOBBY_EVENTS: RefCell<Vec<ApiEventView>> = const { RefCell::new(Vec::new()) };
 }
@@ -139,6 +140,39 @@ fn remember_player_has_no_live_session(player_id: Id<PlayerAccount>) {
 fn clear_player_has_no_live_session(player_id: Id<PlayerAccount>) {
     PLAYER_NO_LIVE_SESSION_CACHE.with_borrow_mut(|players| {
         players.retain(|existing| *existing != player_id);
+    });
+}
+
+pub(crate) fn repair_active_session_admission_cache() -> Result<(), ApiError> {
+    let ids = active_session_ids_from_durable()?;
+    ACTIVE_SESSION_IDS_CACHE.with_borrow_mut(|cache| *cache = Some(ids));
+    Ok(())
+}
+
+fn cached_active_session_count() -> Option<u32> {
+    ACTIVE_SESSION_IDS_CACHE.with_borrow(|cache| {
+        cache
+            .as_ref()
+            .map(|ids| ids.len().try_into().unwrap_or(u32::MAX))
+    })
+}
+
+fn remember_active_session_id(session_id: Id<GameSession>) {
+    ACTIVE_SESSION_IDS_CACHE.with_borrow_mut(|cache| {
+        let Some(ids) = cache.as_mut() else {
+            return;
+        };
+        if !ids.contains(&session_id) {
+            ids.push(session_id);
+        }
+    });
+}
+
+pub(crate) fn forget_active_session_id(session_id: Id<GameSession>) {
+    ACTIVE_SESSION_IDS_CACHE.with_borrow_mut(|cache| {
+        if let Some(ids) = cache.as_mut() {
+            ids.retain(|existing| *existing != session_id);
+        }
     });
 }
 
@@ -501,6 +535,7 @@ pub(crate) fn create_session(
     clear_player_has_no_live_session(player.id());
     seed_session_participant_cache(session.id(), &participant);
     let mut session = session;
+    remember_active_session_id(session.id());
     let session_id_text = session.id().to_string();
     let event = append_session_event(
         &mut session,
@@ -1754,17 +1789,26 @@ fn player_has_live_session(player_id: Id<PlayerAccount>) -> Result<bool, ApiErro
 }
 
 fn active_session_count() -> Result<u32, ApiError> {
-    let mut total = 0_u32;
-    for state in ACTIVE_SESSION_STATES {
-        total = total.saturating_add(
-            sessions::page_sessions_by_state(state, MAX_LIST_LIMIT, None)?
-                .items
-                .len()
-                .try_into()
-                .unwrap_or(u32::MAX),
-        );
+    if let Some(count) = cached_active_session_count() {
+        return Ok(count);
     }
-    Ok(total)
+    let ids = active_session_ids_from_durable()?;
+    let count = ids.len().try_into().unwrap_or(u32::MAX);
+    ACTIVE_SESSION_IDS_CACHE.with_borrow_mut(|cache| *cache = Some(ids));
+    Ok(count)
+}
+
+fn active_session_ids_from_durable() -> Result<Vec<Id<GameSession>>, ApiError> {
+    let mut ids = Vec::new();
+    for state in ACTIVE_SESSION_STATES {
+        for session in sessions::page_sessions_by_state(state, MAX_LIST_LIMIT, None)?.items {
+            let session_id = session.id();
+            if !ids.contains(&session_id) {
+                ids.push(session_id);
+            }
+        }
+    }
+    Ok(ids)
 }
 
 fn session_view(session: &GameSession) -> Result<SessionView, ApiError> {

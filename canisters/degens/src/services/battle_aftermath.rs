@@ -11,7 +11,7 @@ use crate::repos::{
 };
 
 use super::{
-    command_response, render_projection, scenario_progress,
+    account_lobby_session, command_response, render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -517,6 +517,7 @@ fn finalize_victory_if_ready(
     session.finish_reason = Some("elimination".to_string());
     session.last_command_id = Some(command_id.key());
     *session = sessions::update_session(session.clone())?;
+    account_lobby_session::forget_active_session_id(session.id());
     write_match_summaries(session, winner_id, &participants)?;
     command_response::ensure_command_effect(
         session.id(),

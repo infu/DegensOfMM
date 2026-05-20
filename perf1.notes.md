@@ -4425,3 +4425,41 @@ Decision:
 
 - Keep this checkpoint. It removes lobby event/session write amplification without moving the cost into `get_events_after`.
 - The durability/history gap is now broader: fresh lobby command receipts and fresh lobby events are heap-backed until Gate 5H defines flush/upgrade/history policy. That is consistent with the active-runtime direction, but it must not be forgotten.
+
+## Checkpoint: Active Session Admission Cache
+
+After runtime lobby events, the largest remaining setup repo op was `sessions.by_state_current_turn`: six state-page operations totaling `2.1095B`, all attributed to `create_session` through the canister active-session-limit check.
+
+What changed:
+
+- Added an active-session admission cache holding active/lobby/starting `GameSession` IDs.
+- Seed the cache during canister install and post-upgrade from durable session state.
+- `create_session` now reads the cached count and remembers newly created sessions instead of scanning `GameSession` by state on the hot path.
+- Battle aftermath removes a finished session ID from the cache when the session transitions to `finished`.
+- If the cache is missing for any reason, `active_session_count` still falls back to durable state scans and seeds the cache.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfcb92`
+- Focused Gate J `20260520-active-session-admission-cache-gate-j` passed in `197.45s`
+
+Measured delta versus `20260520-lobby-runtime-events-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 26.1877B | 24.0875B | -8.0% |
+| Gate J scenario memory | 4076.2500 MB | 4076.1875 MB | flat |
+| `create_session` avg | 7.9832B | 5.8805B | -26.3% |
+| `get_events_after` avg | 0.000095B | 0.000095B | flat |
+| `sessions.by_state_current_turn` total | 2.1095B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the active-session-limit scan from the gameplay hot path while still seeding from durable rows at install/upgrade and falling back to durable scans if the cache is absent.
+- The scan cost is now paid outside the measured command route during install/upgrade repair, which is a better tradeoff for active gameplay. Gate 5H should include this cache in the broader runtime snapshot/repair policy.

@@ -35,6 +35,12 @@ icydb::start!();
 
 #[canic_cdk::init]
 fn init() {
+    if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
+        canic_cdk::eprintln!(
+            "active session admission cache init repair failed: {}",
+            error.message
+        );
+    }
     if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
         canic_cdk::eprintln!("system job init repair failed: {}", error.message);
     }
@@ -57,6 +63,12 @@ extern "C" fn canister_pre_upgrade() {
 fn post_upgrade() {
     if let Err(error) = services::battle_runtime::restore_snapshot_after_upgrade() {
         panic!("battle runtime post-upgrade restore failed: {error}");
+    }
+    if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
+        canic_cdk::eprintln!(
+            "active session admission cache post-upgrade repair failed: {}",
+            error.message
+        );
     }
     if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
         canic_cdk::eprintln!("system job post-upgrade repair failed: {}", error.message);

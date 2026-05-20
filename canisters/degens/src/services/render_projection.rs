@@ -34,6 +34,8 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static MAP_CHUNK_ROWS: RefCell<Vec<MapChunk>> =
         const { RefCell::new(Vec::new()) };
+    static VISIBILITY_CHUNK_ROWS: RefCell<Vec<VisibilityChunk>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn remember_champion_stack_rows(
@@ -91,6 +93,23 @@ pub(crate) fn remember_map_chunks(rows: &[MapChunk]) {
     });
 }
 
+pub(crate) fn remember_visibility_chunks(rows: &[VisibilityChunk]) {
+    VISIBILITY_CHUNK_ROWS.with_borrow_mut(|cache| {
+        cache.extend(rows.iter().cloned());
+    });
+}
+
+pub(crate) fn invalidate_visibility_chunks(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+) {
+    let session_key = session_id.key();
+    let participant_key = participant_id.key();
+    VISIBILITY_CHUNK_ROWS.with_borrow_mut(|cache| {
+        cache.retain(|row| row.session_id != session_key || row.participant_id != participant_key);
+    });
+}
+
 fn cached_champion_stack_rows(champion_id: Id<Champion>) -> Option<Vec<ChampionArmyStack>> {
     let key = champion_id.to_string();
     CHAMPION_STACK_ROWS.with_borrow(|cache| {
@@ -134,6 +153,19 @@ fn cached_map_chunks(context: &SessionCallerContext) -> Vec<MapChunk> {
     })
 }
 
+fn cached_visibility_chunks(context: &SessionCallerContext) -> Vec<VisibilityChunk> {
+    VISIBILITY_CHUNK_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .filter(|row| {
+                row.session_id == context.session.id().key()
+                    && row.participant_id == context.participant.id().key()
+            })
+            .cloned()
+            .collect()
+    })
+}
+
 pub(crate) fn visible_map_chunks(
     context: &SessionCallerContext,
     viewport: &Viewport,
@@ -146,16 +178,20 @@ pub(crate) fn visible_map_chunks(
         domm_game::MAX_CHUNK_LIMIT,
         "viewport_chunk_limit_exceeded",
     )?;
-    let visibility_by_coord = map_visibility_occupancy::page_visibility_chunks_by_participant(
-        context.session.id(),
-        context.participant.id(),
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .map(|visibility| ((visibility.chunk_x, visibility.chunk_y), visibility))
-    .collect::<BTreeMap<_, _>>();
+    let mut visibility_rows = cached_visibility_chunks(context);
+    if visibility_rows.is_empty() {
+        visibility_rows = map_visibility_occupancy::page_visibility_chunks_by_participant(
+            context.session.id(),
+            context.participant.id(),
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items;
+    }
+    let visibility_by_coord = visibility_rows
+        .into_iter()
+        .map(|visibility| ((visibility.chunk_x, visibility.chunk_y), visibility))
+        .collect::<BTreeMap<_, _>>();
     let mut map_chunks = cached_map_chunks(context);
     if map_chunks.is_empty() {
         map_chunks = map_visibility_occupancy::page_map_chunks_by_session(

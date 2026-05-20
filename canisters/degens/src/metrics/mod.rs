@@ -35,15 +35,12 @@ pub(crate) fn benchmark_update<T>(
     let instruction_before = canic_cdk::api::instruction_counter();
     let result = body();
     let instruction_after = canic_cdk::api::instruction_counter();
-    let error_code = result.as_ref().err().map(|error| error.code.clone());
     let repo_ops = take_current_repo_ops();
 
     record_benchmark_call(DiagnosticBenchmarkCallView {
         sequence: next_sequence(),
         method: method.to_string(),
         kind: EndpointKind::Update,
-        ok: result.is_ok(),
-        error_code,
         instruction_delta: instruction_after.saturating_sub(instruction_before),
         repo_ops,
     });

@@ -4057,3 +4057,42 @@ Decision:
 
 - Keep this checkpoint. It cuts the map chunk query floor in half without caching mutable visibility state or changing durable rows.
 - The remaining `get_visible_map_chunks` floor is the durable visibility page. Moving that safely needs visibility-cache invalidation or mirroring from `refresh_champion_visibility`, and the benchmark Wasm has only about 412 bytes of headroom after this checkpoint.
+
+## Checkpoint: Visibility Cache Eliminates Opening Map Chunk Query Floor
+
+After the map chunk cache, `get_visible_map_chunks` still averaged about `0.7036B` instructions because it still paged durable `VisibilityChunk` rows. The safe projection shape is to cache opening visibility rows, then invalidate the participant cache as soon as movement refresh writes durable visibility changes.
+
+What changed:
+
+- `first_playable_setup::seed_visibility_chunks` now seeds a heap cache from the inserted real `VisibilityChunk` rows.
+- `render_projection::visible_map_chunks` uses cached visibility rows when present and still falls back to durable rows after cache miss or invalidation.
+- `movement::refresh_champion_visibility` invalidates the participant visibility cache after it updates one or more durable visibility chunks. This keeps post-movement map reads truthful without needing a larger mirror/update cache.
+- The canister benchmark update payload no longer carries unused `ok` and `error_code` fields. Benchmark artifacts still compute method error counts from the client-side response records.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo test -p domm-degens-canister --features benchmark benchmark_feature_exports_diagnostic_benchmark_endpoints -- --nocapture`
+- Benchmark Wasm build: code section `0x00bff74b`
+- Focused Gate J `20260520-visibility-cache-gate-j` passed in `196.40s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-map-chunk-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 53.5648B | 52.8475B | -1.3% |
+| `get_visible_map_chunks` avg | 0.7036B | 0.0001B | ~-100.0% |
+| `get_visible_objects` avg | 0.7152B | 0.7156B | flat |
+| `sync_session_turn` avg | 0.3799B | 0.3796B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the opening map-chunk query floor while preserving durable fallback after movement visibility changes.
+- The biggest remaining Gate J query floor is now `get_events_after` at about `0.707B` average across four calls, followed by the already-halved `get_visible_objects` known-object durable fallback after movement cache invalidation.

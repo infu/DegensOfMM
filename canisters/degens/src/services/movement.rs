@@ -3319,13 +3319,11 @@ fn refresh_champion_visibility(
         }
     }
 
+    let participant_id = pending_move.participant.id();
     let mut updated_rows = 0_u32;
     for ((chunk_x, chunk_y), tiles) in by_chunk {
-        let Some(mut visibility) = map_visibility_occupancy::find_visibility_chunk(
-            pending_move.participant.id(),
-            chunk_x,
-            chunk_y,
-        )?
+        let Some(mut visibility) =
+            map_visibility_occupancy::find_visibility_chunk(participant_id, chunk_x, chunk_y)?
         else {
             continue;
         };
@@ -3345,6 +3343,9 @@ fn refresh_champion_visibility(
         visibility.visible_turn = session.current_turn;
         map_visibility_occupancy::update_visibility_chunk(visibility)?;
         updated_rows = updated_rows.saturating_add(1);
+    }
+    if updated_rows > 0 {
+        render_projection::invalidate_visibility_chunks(session.id(), participant_id);
     }
 
     Ok(updated_rows)

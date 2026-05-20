@@ -846,7 +846,8 @@ fn seed_visibility_chunks(
                 })
             })
             .collect::<foundation::RepoResult<Vec<_>>>()?;
-        foundation::insert_many_atomic("map.seed_visibility_chunks", rows)?;
+        let rows = foundation::insert_many_atomic("map.seed_visibility_chunks", rows)?;
+        render_projection::remember_visibility_chunks(&rows);
     }
     Ok(())
 }

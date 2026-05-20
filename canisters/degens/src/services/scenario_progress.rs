@@ -548,7 +548,6 @@ fn apply_accept_quest(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
-    schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
     command_response::apply_command_with_result(
         caller,
         context,
@@ -643,7 +642,6 @@ fn apply_claim_quest_reward(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
-    schedule_turn_maintenance_jobs(&context.session, Some(command.id()))?;
     command_response::apply_command_with_result(
         caller,
         context,
@@ -914,6 +912,9 @@ fn sync_scenario_rule_rows_for_session(
     let mut touched = 0_u32;
     for mut rule in scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items
     {
+        let previous_current_value = rule.current_value;
+        let previous_victory_state = rule.victory_state.clone();
+        let previous_winner_participant_id = rule.winner_participant_id;
         match rule.rule_key.as_str() {
             "rule:conquest" => {
                 rule.current_value = u32::from(session.winner_participant_id.is_some());
@@ -953,7 +954,12 @@ fn sync_scenario_rule_rows_for_session(
         if let Some(command_id) = command_id {
             rule.last_command_id = Some(command_id.key());
         }
-        scenario_progress::update_scenario_rule_state(rule)?;
+        if rule.current_value != previous_current_value
+            || rule.victory_state != previous_victory_state
+            || rule.winner_participant_id != previous_winner_participant_id
+        {
+            scenario_progress::update_scenario_rule_state(rule)?;
+        }
         touched = touched.saturating_add(1);
         if touched >= domm_game::MAX_ADVANCED_VICTORY_CHECKS_PER_UPDATE {
             break;

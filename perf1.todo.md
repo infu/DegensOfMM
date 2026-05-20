@@ -617,6 +617,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Gate 7.15.1: add benchmark-only `SystemJob` create attribution and run focused Gate J. `20260520-180501-gate7-system-job-attribution-gate-j` passed with the accepted route shape (`87` calls, `row_commands=5`, `row_events=3`, `row_growth=35`, stable pages `2049 -> 65665`) and measured seq18 as setup/non-battle (`sj.other`, `0.4778B`) and seq72 as battle timeout (`sj.bt`, `0.4789B`). This confirms Gate 7.15 should target `battle_timeout` runtime wakeup, not map-turn deadline scheduling.
 - [ ] Gate 7.16: target the remaining seq18 setup-session `sj.other` create. The next cut should either make setup wakeup heap-first with a durable recovery boundary, or prove the setup job must remain durable before setup executes. The benchmark must preserve the same active-session polling route, command/event counts, and setup recovery semantics.
 
+### 11. Round-Robin Endpoint Cluster: Scenario Progress
+
+- [x] Rotate away from battle/setup and pick the scenario-progress endpoint cluster from endpoint-surface: `claim_quest_reward` (`18.1532B`), `sync_advanced_victory` (`16.5262B`), `sync_objectives` (`10.3832B`), `accept_quest` (`10.3750B`), and related scenario queries.
+- [x] Remove obvious hot-path scenario maintenance churn from quest accept/claim: do not schedule a scenario maintenance job from those commands when the command path already applies its direct quest/rule state.
+- [x] Stop rewriting unchanged scenario rule rows during sync; keep the touched count stable for existing job receipts, but only persist rule rows when value/victory/winner state changes.
+- [ ] Measure the scenario-progress cut with the smallest useful endpoint-surface or focused route and record before/after method and repo-op deltas.
+- [ ] If scenario endpoints remain above `1B`, rotate to a different heavy endpoint cluster before coming back, unless the remaining shared command/event/session write floor is blocking several clusters.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

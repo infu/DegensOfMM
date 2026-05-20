@@ -5615,3 +5615,28 @@ Decision:
 
 - Keep it. This is the intended heap aggregate pattern for active battle deadlines: runtime owns the live timeout, durable job rows remain fallback/recovery infrastructure instead of hot-path command state.
 - Next Gate 7 work should target the remaining seq18 setup-session `sj.other` create without changing setup polling/recovery behavior.
+
+## Round-Robin Pivot: Scenario Progress Cluster
+
+The active instruction for perf1 is now round-robin endpoint optimization: do a bounded pass on a heavy endpoint/cluster, then rotate instead of maximizing one endpoint forever. This is now written into `perf1.todo.md`.
+
+Paused work:
+
+- A Gate K visibility repair was started but is not the active optimization focus now. It compiled natively before the pivot, but the previous focused Gate K still failed at `battle_not_visible`; do not mark that battle fix as done until a focused battle gate passes.
+
+New cluster:
+
+- Picked the scenario-progress cluster from endpoint-surface `20260520-200503-48ee723` because it has several heavy endpoints: `claim_quest_reward` `18.1532B`, `sync_advanced_victory` `16.5262B`, `sync_objectives` `10.3832B`, `accept_quest` `10.3750B`, plus expensive scenario query scans.
+- First bounded cut removes two obvious durable work patterns:
+  - `accept_quest` and `claim_quest_reward` no longer schedule scenario maintenance jobs from their hot command path. Quest accept/claim already update their direct quest/rule state, and turn maintenance is still scheduled from the turn/movement/battle paths.
+  - `sync_scenario_rule_rows_for_session` still reports the same touched count for command/job receipts, but it only writes a `ScenarioRuleState` row when current value, victory state, or winner participant actually changes.
+
+Verification so far:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`
+
+Next:
+
+- Measure with the smallest useful endpoint-surface/focused route when ready. If scenario endpoints remain over `1B`, rotate again before trying to fully aggregate scenario progress.

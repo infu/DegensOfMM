@@ -6108,3 +6108,27 @@ Expected measurement:
 - `claim_quest_reward` should drop the previous full-rule-sweep floor: `scenario.objectives_by_status`, `scenario.rules_by_status`, `sessions.participants_by_session_status`, and `scenario.quests_by_participant_status`.
 - The targeted helper adds one `scenario.rule_by_key` read and keeps the real `scenario.update_scenario_rule_state` when the quest-victory value changes.
 - Expected net save is roughly `3.5B-4.2B` on the current route, on top of the earlier fresh event/effect savings queued for the next benchmark.
+
+## Random Pivot: Champion Magic Runtime Champion Resolution
+
+New cluster:
+
+- Randomly picked `cast_adventure_spell` from the remaining heavy endpoint list after the quest-claim cut.
+- Current costs: `cast_adventure_spell` `7.8120B`, `learn_champion_spell` `8.9726B`, and `select_champion_level_up` `6.3975B`.
+- All three paths call the shared `require_owned_champion`, and the trace shows `champions.load_champion` at about `0.70B` per method.
+
+Cut:
+
+- `require_owned_champion` now checks `SessionTurnRuntime::champion_snapshot` before the durable `Champion` load.
+- The existing session and participant ownership checks still run on the returned row.
+- Durable fallback remains for cold runtime or missing snapshots.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- Champion magic commands should drop `champions.load_champion` when active runtime snapshots are present, about `0.70B` per command in the current route.

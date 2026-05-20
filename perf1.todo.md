@@ -745,7 +745,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Replace the post-claim full scenario rule sweep with a targeted `rule:quest-victory` increment. This keeps the quest-victory rule current without scanning objectives, active rules, participants, and every participant's claimed quests in the claim command.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `claim_quest_reward` drops the scenario objective/status, participant/status, and claimed-quest scan floor from the previous full-rule sweep. Expected savings are roughly `3.5B-4.2B` on the current route before considering the fresh event/effect cut already queued.
-- [ ] Rotate again before deeper quest-only changes.
+- [x] Rotate again before deeper quest-only changes. Randomly picked `cast_adventure_spell`; applied the cut at the shared champion ownership helper so the same improvement should cover champion magic endpoints.
+
+### 27. Random Endpoint Cluster: Champion Magic Runtime Champion Resolution
+
+- [x] Randomly rotate to `cast_adventure_spell` after the quest-claim cut.
+- [x] Make champion magic ownership checks read `SessionTurnRuntime` champion snapshots before durable `Champion` rows.
+- [x] Keep the same session/participant ownership validation after the snapshot lookup, with durable fallback for cold or missing runtime state.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `cast_adventure_spell`, `learn_champion_spell`, and `select_champion_level_up` drop `champions.load_champion` when snapshots are present. Expected savings are about `0.70B` per champion magic command in the current route.
+- [ ] Rotate again before deeper champion-only changes.
 
 ## Expected Outcome
 

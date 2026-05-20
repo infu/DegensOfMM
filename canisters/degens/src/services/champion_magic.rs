@@ -615,8 +615,15 @@ fn require_owned_champion(
     context: &session_context::SessionCallerContext,
     champion_id: Id<Champion>,
 ) -> Result<Champion, ApiError> {
-    let champion = champions_artifacts::load_champion(champion_id)?
-        .ok_or_else(|| public_error("champion_not_found", "champion was not found", false))?;
+    let champion_id_text = champion_id.to_string();
+    let champion = match session_turn_runtime::champion_snapshot(
+        &context.session.id().to_string(),
+        &champion_id_text,
+    ) {
+        Some(champion) => champion,
+        None => champions_artifacts::load_champion(champion_id)?
+            .ok_or_else(|| public_error("champion_not_found", "champion was not found", false))?,
+    };
     if champion.session_id != context.session.id().key() {
         return Err(public_error(
             "champion_wrong_session",

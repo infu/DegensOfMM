@@ -3042,3 +3042,28 @@ Benchmark status:
 Decision:
 
 - Keep pending focused Gate J validation. The code preserves durable row fallback and moves no logic to a hollow endpoint; it only reuses rows that were already created in the same staged startup sequence.
+
+## Checkpoint: Runtime-Proved Open Turn Guard
+
+Implemented the first Gate 5E job-authority cut:
+
+- `ensure_map_turn_accepts_new_command` now skips the pre-deadline scheduled `SystemJob` scan when `SessionTurnRuntime` proves the same active session, same turn, same deadline, not closing, and no ready participants.
+- The shortcut only skips the closure-job scan. `end_turn` still runs the durable duplicate-ready check, preserving the regression case that broke the earlier unsafe shortcut.
+- Post-deadline commands and any runtime-missing/runtime-ready/runtime-closing state still use the durable job scan.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Native PocketIC `pocket_ic_end_turn_closes_turn_and_blocks_stale_actions` passed in `188.77s`.
+- Removed the PocketIC server left by the native regression after the run.
+
+Benchmark status:
+
+- Focused Gate J measurement is deferred to the next batched run.
+- Expected repo-op reduction is the remaining safe pre-deadline `system_jobs.by_session_status_due` scan on fresh map-turn commands when the runtime is authoritative.
+
+Decision:
+
+- Keep this cut. It is the same semantic direction as Gate 5E, but fenced by active runtime proof and backed by the stale-turn regression before commit.

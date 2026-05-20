@@ -14,7 +14,10 @@ use sha2::{Digest, Sha256};
 
 use crate::repos::{commands_events_effects, sessions, system_jobs, turn_ready};
 
-use super::session_context::{SessionCallerContext, public_error};
+use super::{
+    session_context::{SessionCallerContext, public_error},
+    session_turn_runtime,
+};
 
 pub(crate) enum GameCommandAction {
     Apply(GameCommand),
@@ -208,16 +211,19 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
     }
     let now = Timestamp::now();
     if now < context.session.turn_deadline_at {
-        let page = system_jobs::page_system_jobs_by_session_status(
-            context.session.id(),
-            system_jobs::STATUS_SCHEDULED,
-            domm_game::MAX_LIST_LIMIT,
-            None,
-        )?;
-        for job in page.items {
-            if is_current_turn_closure_job(&job, context.session.current_turn) && job.due_at <= now
-            {
-                return Err(current_turn_closing_error());
+        if !runtime_proves_pre_deadline_turn_open(context) {
+            let page = system_jobs::page_system_jobs_by_session_status(
+                context.session.id(),
+                system_jobs::STATUS_SCHEDULED,
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?;
+            for job in page.items {
+                if is_current_turn_closure_job(&job, context.session.current_turn)
+                    && job.due_at <= now
+                {
+                    return Err(current_turn_closing_error());
+                }
             }
         }
     } else {
@@ -258,6 +264,24 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
         ));
     }
     Ok(())
+}
+
+fn runtime_proves_pre_deadline_turn_open(context: &SessionCallerContext) -> bool {
+    let session_id = context.session.id().to_string();
+    let Ok(deadline_ms) = u64::try_from(context.session.turn_deadline_at.as_millis()) else {
+        return false;
+    };
+    session_turn_runtime::with_runtime(&session_id, context.session.current_turn, |runtime| {
+        runtime.session.as_ref().is_some_and(|session| {
+            session.id() == context.session.id()
+                && session.state == "active"
+                && session.current_turn == context.session.current_turn
+                && session.turn_deadline_at == context.session.turn_deadline_at
+        }) && runtime.turn_deadline_at_ms == deadline_ms
+            && !runtime.closing
+            && runtime.ready_participants.is_empty()
+    })
+    .unwrap_or(false)
 }
 
 #[inline(never)]

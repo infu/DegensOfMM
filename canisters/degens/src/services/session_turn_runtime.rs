@@ -343,6 +343,7 @@ pub(crate) struct SessionTurnCommandReceipt {
     pub actor_participant_id: String,
     pub client_nonce_text: String,
     pub client_nonce: u64,
+    pub turn_number: u32,
     pub payload_hash: String,
     #[cfg(not(feature = "benchmark"))]
     pub payload_json: Option<String>,
@@ -1237,6 +1238,8 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             sessions::update_participant(participant)?;
             flushed = flushed.saturating_add(1);
         }
+    }
+    for runtime in &runtimes {
         for receipt in &runtime.command_receipts {
             if flush_runtime_command_receipt(runtime, receipt)? {
                 flushed = flushed.saturating_add(1);
@@ -1302,7 +1305,7 @@ fn flush_runtime_command_receipt(
         actor_player_id: None,
         actor_participant_id: Some(actor_participant_id.key()),
         champion_id: None,
-        turn_number: runtime.turn_number,
+        turn_number: receipt.turn_number,
         client_nonce: receipt.client_nonce,
         command_type: receipt.command_type.clone(),
         status: receipt.response.status.as_str().to_string(),

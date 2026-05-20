@@ -729,6 +729,7 @@ fn remember_runtime_town_receipt(
         actor_participant_id: context.participant.id().to_string(),
         client_nonce_text,
         client_nonce: command.client_nonce,
+        turn_number: context.session.current_turn,
         payload_hash: command.payload_hash,
         #[cfg(not(feature = "benchmark"))]
         payload_json: Some(command.payload_json),

@@ -243,9 +243,10 @@ pub(crate) fn submit_move_intent(
                 actor_participant_id,
                 client_nonce_text: client_nonce,
                 client_nonce: client_nonce_u64,
+                turn_number: context.session.current_turn,
                 payload_hash: command_payload_hash,
                 #[cfg(not(feature = "benchmark"))]
-                payload_json: None,
+                payload_json: Some(payload_json.clone()),
                 response: response.clone(),
             });
             Ok(response)
@@ -613,6 +614,7 @@ pub(crate) fn sync_session_turn(
                         caller,
                         context,
                         client_nonce,
+                        payload_json,
                         SyncTurnCommand::Durable(command),
                     );
                 }
@@ -625,23 +627,25 @@ pub(crate) fn sync_session_turn(
             "sync_session_turn",
             &client_nonce,
             None,
-            payload_json,
+            payload_json.clone(),
         )? {
             GameCommandStart::Apply(command) => SyncTurnCommand::Durable(command),
             GameCommandStart::Return(response) => return Ok(response),
         }
     };
 
-    sync_session_turn_with_command(caller, context, client_nonce, command)
+    sync_session_turn_with_command(caller, context, client_nonce, payload_json, command)
 }
 
 fn sync_session_turn_with_command(
     caller: CandidPrincipal,
     mut context: session_context::SessionCallerContext,
     client_nonce: String,
+    payload_json: String,
     command: SyncTurnCommand,
 ) -> Result<CommandResponse, ApiError> {
     let command_id = command.id();
+    let command_turn = context.session.current_turn;
 
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
@@ -661,6 +665,8 @@ fn sync_session_turn_with_command(
             &context,
             command,
             &client_nonce,
+            &payload_json,
+            command_turn,
             events,
             changed_subjects,
         )?;
@@ -793,6 +799,8 @@ fn sync_session_turn_with_command(
         &context,
         command,
         &client_nonce,
+        &payload_json,
+        command_turn,
         events,
         changed_subjects,
     )?;
@@ -805,6 +813,8 @@ fn complete_sync_command_response(
     context: &session_context::SessionCallerContext,
     command: SyncTurnCommand,
     client_nonce: &str,
+    payload_json: &str,
+    command_turn: u32,
     events: Vec<domm_game::ApiEventView>,
     changed_subjects: Vec<domm_game::ChangedSubject>,
 ) -> Result<CommandResponse, ApiError> {
@@ -852,6 +862,8 @@ fn complete_sync_command_response(
                 client_nonce.to_string(),
                 client_nonce_u64,
                 payload_hash,
+                payload_json.to_string(),
+                command_turn,
                 response.clone(),
             );
             Ok(response)
@@ -865,8 +877,13 @@ fn remember_runtime_sync_receipt(
     client_nonce_text: String,
     client_nonce: u64,
     payload_hash: String,
+    payload_json: String,
+    turn_number: u32,
     response: CommandResponse,
 ) {
+    #[cfg(feature = "benchmark")]
+    let _ = &payload_json;
+
     let session_id = context.session.id().to_string();
     let receipt = session_turn_runtime::SessionTurnCommandReceipt {
         command_id,
@@ -874,9 +891,10 @@ fn remember_runtime_sync_receipt(
         actor_participant_id: context.participant.id().to_string(),
         client_nonce_text,
         client_nonce,
+        turn_number,
         payload_hash,
         #[cfg(not(feature = "benchmark"))]
-        payload_json: None,
+        payload_json: Some(payload_json),
         response,
     };
     let inserted = session_turn_runtime::with_runtime_mut(

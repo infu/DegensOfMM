@@ -4911,3 +4911,23 @@ Decision:
 
 - Keep it. This closes runtime resource ledger history for upgrade flush across town and movement income/pickup paths.
 - The remaining Gate 5H receipt gap is now specifically non-town command payload/history, not resource ledger rows.
+
+## Checkpoint: Runtime Movement Command Upgrade Flush
+
+Gate 5H movement/sync receipt slice:
+
+- Runtime `submit_move_intent` receipts now retain their payload JSON on non-benchmark builds, so upgrade flush can materialize durable `GameCommand` rows instead of leaving them heap-only.
+- Runtime `sync_session_turn` receipts now retain payload JSON and the original command turn. The receipt may be stored in the next runtime after turn advance, but durable command history should still use the turn that accepted the command.
+- `flush_runtime_projections_for_upgrade` now scans command receipts from all retained session-turn runtimes, not just the latest runtime per session. Session/participant snapshots still flush only from the latest runtime.
+- The existing command flush remains idempotent by command id and participant nonce.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This closes the explicit movement/sync command receipt upgrade-history gap without restoring stable command writes to the active movement/sync routes.
+- Battle runtime command/event durable history remains a separate blocked item because previous attempts exceeded the IC Wasm code-section limit.

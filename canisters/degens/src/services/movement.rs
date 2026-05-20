@@ -4321,9 +4321,10 @@ fn materialize_income(
         return Ok(Vec::new());
     }
     let gold_income = if persistence_mode == MovementPersistenceMode::RuntimeOnly {
-        let runtime_income = runtime_gold_income(session, participant, turn_number).unwrap_or(0);
-        let durable_income = durable_gold_income(session, participant, turn_number)?;
-        runtime_income.max(durable_income)
+        match runtime_gold_income(session, participant, turn_number) {
+            Some(income) => income,
+            None => durable_gold_income(session, participant, turn_number)?,
+        }
     } else {
         durable_gold_income(session, participant, turn_number)?
     };

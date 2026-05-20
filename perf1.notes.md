@@ -3833,3 +3833,41 @@ Decision:
 
 - Do not retry the repo-level `Vec<GameEvent>` cache shape without freeing at least several KB of code size.
 - If we revisit `get_events_after`, prefer a smaller session-runtime event-feed projection or a broader code-size cleanup first.
+
+## Checkpoint: Runtime Income Trust Removes Durable Mine Scan
+
+After the faction slug checkpoint, the remaining measurable `sync_session_turn` income floor was the durable owned-mine scan:
+
+- Gate J income sync seq 65 spent `1.1841B`.
+- Repo ops showed `map.world_objects_by_owner_scoring` twice, `0.7057B` total.
+- The active `SessionTurnRuntime` already hydrates all world objects when created and carries `world_object_snapshots` into the next runtime turn, so runtime-mode income does not need to re-read durable owned mines when the runtime exists.
+
+What changed:
+
+- In `materialize_income`, runtime-mode income now uses `runtime_gold_income` directly when an active runtime snapshot exists.
+- Durable `world_objects_by_owner_scoring` remains the fallback when the runtime snapshot is unavailable, and it remains the durable-bridge path for legacy sync.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build: code section `0x00bffe3b`
+- Focused Gate J `20260520-runtime-income-trust-gate-j` passed in `192.46s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-faction-slug-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 57.5801B | 56.8715B | -1.2% |
+| `sync_session_turn` avg | 0.4985B | 0.4277B | -14.2% |
+| income sync seq 65 | 1.1841B | 0.4749B | -59.9% |
+| `map.world_objects_by_owner_scoring` route calls | 2 | 0 | -100.0% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes one remaining stable read category from the active runtime sync path with a smaller Wasm code section than before.
+- The largest remaining sync repo-operation costs in Gate J are now `map.update_visibility_chunk`, `map.create_known_object`, `map.update_world_object`, `battles.create_battle`, `system_jobs.create_system_job`, and `sessions.update_session`.

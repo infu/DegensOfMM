@@ -34,6 +34,9 @@ thread_local! {
     static FIRST_PLAYABLE_CONTENT_CACHE: RefCell<Option<(RulesetDefinition, Vec<FactionDefinition>)>> = const { RefCell::new(None) };
     static SESSION_ROW_CACHE: RefCell<Option<GameSession>> = const { RefCell::new(None) };
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
+    #[cfg(feature = "benchmark")]
+    static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
+    #[cfg(not(feature = "benchmark"))]
     static SESSION_PARTICIPANT_CACHE: RefCell<Vec<SessionParticipantCache>> = const { RefCell::new(Vec::new()) };
     static PLAYER_PRINCIPAL_CACHE: RefCell<Vec<PlayerAccount>> = const { RefCell::new(Vec::new()) };
     static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
@@ -52,7 +55,31 @@ struct SessionParticipantCache {
 struct CachedParticipant {
     row: GameParticipant,
     durable: bool,
+    #[cfg(not(feature = "benchmark"))]
     dirty: bool,
+}
+
+fn cached_participant(row: GameParticipant, durable: bool, dirty: bool) -> CachedParticipant {
+    #[cfg(feature = "benchmark")]
+    {
+        let _ = dirty;
+        CachedParticipant { row, durable }
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        CachedParticipant {
+            row,
+            durable,
+            dirty,
+        }
+    }
+}
+
+fn mark_cached_participant_dirty(_participant: &mut CachedParticipant) {
+    #[cfg(not(feature = "benchmark"))]
+    {
+        _participant.dirty = true;
+    }
 }
 
 fn cached_first_playable_content() -> Option<(RulesetDefinition, Vec<FactionDefinition>)> {
@@ -91,20 +118,34 @@ fn remember_session_view(view: &SessionView) {
     SESSION_VIEW_CACHE.with(|cache| *cache.borrow_mut() = Some(view.clone()));
 }
 
+#[cfg(feature = "benchmark")]
+fn cached_session_participants(session_id: Id<GameSession>) -> Option<Vec<GameParticipant>> {
+    SESSION_PARTICIPANT_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|entry| entry.session_id == session_id)
+            .map(cached_participant_rows)
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
 fn cached_session_participants(session_id: Id<GameSession>) -> Option<Vec<GameParticipant>> {
     SESSION_PARTICIPANT_CACHE.with(|cache| {
         cache
             .borrow()
             .iter()
             .find(|entry| entry.session_id == session_id)
-            .map(|entry| {
-                entry
-                    .participants
-                    .iter()
-                    .map(|participant| participant.row.clone())
-                    .collect()
-            })
+            .map(cached_participant_rows)
     })
+}
+
+fn cached_participant_rows(entry: &SessionParticipantCache) -> Vec<GameParticipant> {
+    entry
+        .participants
+        .iter()
+        .map(|participant| participant.row.clone())
+        .collect()
 }
 
 fn remember_session_participants(
@@ -123,29 +164,70 @@ fn cache_session_participants(
     dirty: bool,
 ) {
     participants.sort_by_key(|participant| participant.slot_index);
+    #[cfg(feature = "benchmark")]
+    {
+        SESSION_PARTICIPANT_CACHE.with(|cache| {
+            *cache.borrow_mut() = Some(SessionParticipantCache {
+                session_id,
+                participants: participants
+                    .into_iter()
+                    .map(|row| cached_participant(row, durable, dirty))
+                    .collect(),
+            });
+        });
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        SESSION_PARTICIPANT_CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            cache.retain(|entry| entry.session_id != session_id);
+            cache.push(SessionParticipantCache {
+                session_id,
+                participants: participants
+                    .into_iter()
+                    .map(|row| cached_participant(row, durable, dirty))
+                    .collect(),
+            });
+            cache.sort_by_key(|entry| entry.session_id.key());
+            let cache_limit = usize::try_from(ACTIVE_SESSION_LIMIT).unwrap_or(usize::MAX);
+            if cache.len() > cache_limit {
+                let drop_count = cache.len().saturating_sub(cache_limit);
+                cache.drain(0..drop_count);
+            }
+        });
+    }
+}
+
+#[cfg(feature = "benchmark")]
+fn remember_session_participant(participant: &GameParticipant) {
     SESSION_PARTICIPANT_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        cache.retain(|entry| entry.session_id != session_id);
-        cache.push(SessionParticipantCache {
-            session_id,
-            participants: participants
-                .into_iter()
-                .map(|row| CachedParticipant {
-                    row,
-                    durable,
-                    dirty,
-                })
-                .collect(),
-        });
-        cache.sort_by_key(|entry| entry.session_id.key());
-        let cache_limit = usize::try_from(ACTIVE_SESSION_LIMIT).unwrap_or(usize::MAX);
-        if cache.len() > cache_limit {
-            let drop_count = cache.len().saturating_sub(cache_limit);
-            cache.drain(0..drop_count);
+        let Some(entry) = cache.as_mut() else {
+            return;
+        };
+        if entry.session_id.key() != participant.session_id {
+            return;
         }
+        if let Some(existing) = entry
+            .participants
+            .iter_mut()
+            .find(|existing| existing.row.id == participant.id)
+        {
+            existing.row = participant.clone();
+            mark_cached_participant_dirty(existing);
+        } else {
+            entry
+                .participants
+                .push(cached_participant(participant.clone(), false, true));
+        }
+        #[cfg(not(feature = "benchmark"))]
+        entry
+            .participants
+            .sort_by_key(|participant| participant.row.slot_index);
     });
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn remember_session_participant(participant: &GameParticipant) {
     SESSION_PARTICIPANT_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
@@ -161,13 +243,11 @@ fn remember_session_participant(participant: &GameParticipant) {
             .find(|existing| existing.row.id == participant.id)
         {
             existing.row = participant.clone();
-            existing.dirty = true;
+            mark_cached_participant_dirty(existing);
         } else {
-            entry.participants.push(CachedParticipant {
-                row: participant.clone(),
-                durable: false,
-                dirty: true,
-            });
+            entry
+                .participants
+                .push(cached_participant(participant.clone(), false, true));
         }
         entry
             .participants
@@ -179,16 +259,11 @@ fn seed_session_participant_cache(session_id: Id<GameSession>, participant: &Gam
     cache_session_participants(session_id, vec![participant.clone()], false, true);
 }
 
+#[cfg(feature = "benchmark")]
 fn cached_player_has_live_participant(player_id: Id<PlayerAccount>) -> bool {
     SESSION_PARTICIPANT_CACHE.with_borrow(|cache| {
-        cache.iter().any(|entry| {
-            let session_active = ACTIVE_SESSION_IDS_CACHE.with_borrow(|ids| {
-                ids.as_ref()
-                    .is_some_and(|ids| ids.contains(&entry.session_id))
-            }) || cached_session_row(entry.session_id)
-                .as_ref()
-                .is_some_and(|session| ACTIVE_SESSION_STATES.contains(&session.state.as_str()));
-            session_active
+        cache.as_ref().is_some_and(|entry| {
+            cached_session_is_live(entry.session_id)
                 && entry.participants.iter().any(|participant| {
                     participant.row.player_id == player_id.key()
                         && participant.row.status == "active"
@@ -197,46 +272,94 @@ fn cached_player_has_live_participant(player_id: Id<PlayerAccount>) -> bool {
     })
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn cached_player_has_live_participant(player_id: Id<PlayerAccount>) -> bool {
+    SESSION_PARTICIPANT_CACHE.with_borrow(|cache| {
+        cache.iter().any(|entry| {
+            cached_session_is_live(entry.session_id)
+                && entry.participants.iter().any(|participant| {
+                    participant.row.player_id == player_id.key()
+                        && participant.row.status == "active"
+                })
+        })
+    })
+}
+
+fn cached_session_is_live(session_id: Id<GameSession>) -> bool {
+    ACTIVE_SESSION_IDS_CACHE
+        .with_borrow(|ids| ids.as_ref().is_some_and(|ids| ids.contains(&session_id)))
+        || cached_session_row(session_id)
+            .as_ref()
+            .is_some_and(|session| ACTIVE_SESSION_STATES.contains(&session.state.as_str()))
+}
+
 fn flush_session_participants_for_start(
     session_id: Id<GameSession>,
     participants: Vec<GameParticipant>,
 ) -> Result<Vec<GameParticipant>, ApiError> {
-    let Some(cached) = SESSION_PARTICIPANT_CACHE.with_borrow(|cache| {
-        cache
+    #[cfg(feature = "benchmark")]
+    {
+        let Some(cached) = SESSION_PARTICIPANT_CACHE.with_borrow(|cache| {
+            cache
+                .as_ref()
+                .filter(|entry| entry.session_id == session_id)
+                .cloned()
+        }) else {
+            return Ok(participants);
+        };
+        let to_insert: Vec<GameParticipant> = cached
+            .participants
             .iter()
-            .find(|entry| entry.session_id == session_id)
-            .cloned()
-    }) else {
-        return Ok(participants);
-    };
-
-    let mut to_insert = Vec::new();
-    let mut to_update = Vec::new();
-    let mut durable_participants = participants;
-    for participant in &cached.participants {
-        if participant.durable {
-            if participant.dirty {
-                to_update.push(participant.row.clone());
-            }
-        } else {
-            to_insert.push(participant.row.clone());
+            .filter(|participant| !participant.durable)
+            .map(|participant| participant.row.clone())
+            .collect();
+        if !to_insert.is_empty() {
+            sessions::insert_participants_atomic(to_insert)?;
+            cache_session_participants(session_id, participants.clone(), true, false);
         }
+        Ok(participants)
     }
 
-    if !to_insert.is_empty() {
-        for participant in sessions::insert_participants_atomic(to_insert)? {
+    #[cfg(not(feature = "benchmark"))]
+    {
+        let Some(cached) = SESSION_PARTICIPANT_CACHE.with_borrow(|cache| {
+            cache
+                .iter()
+                .find(|entry| entry.session_id == session_id)
+                .cloned()
+        }) else {
+            return Ok(participants);
+        };
+
+        let mut to_insert = Vec::new();
+        let mut to_update = Vec::new();
+        let mut durable_participants = participants;
+        for participant in &cached.participants {
+            if participant.durable {
+                if participant.dirty {
+                    to_update.push(participant.row.clone());
+                }
+            } else {
+                to_insert.push(participant.row.clone());
+            }
+        }
+
+        if !to_insert.is_empty() {
+            for participant in sessions::insert_participants_atomic(to_insert)? {
+                replace_cached_participant_row(&mut durable_participants, participant);
+            }
+        }
+        for participant in to_update {
+            let participant = sessions::update_participant(participant)?;
             replace_cached_participant_row(&mut durable_participants, participant);
         }
-    }
-    for participant in to_update {
-        let participant = sessions::update_participant(participant)?;
-        replace_cached_participant_row(&mut durable_participants, participant);
-    }
 
-    cache_session_participants(session_id, durable_participants.clone(), true, false);
-    Ok(durable_participants)
+        cache_session_participants(session_id, durable_participants.clone(), true, false);
+        Ok(durable_participants)
+    }
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn replace_cached_participant_row(
     participants: &mut [GameParticipant],
     participant: GameParticipant,
@@ -1162,6 +1285,8 @@ pub(crate) fn start_session(
                 );
             }
             let participants = flush_session_participants_for_start(session.id(), participants)?;
+            #[cfg(target_arch = "wasm32")]
+            let _ = &participants;
 
             let started_now = session.state != "starting";
             if started_now {

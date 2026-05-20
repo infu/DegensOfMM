@@ -5,10 +5,12 @@ use domm_game::ApiError;
 
 #[cfg(not(feature = "benchmark"))]
 pub(crate) const FLUSH_BARRIER_UPGRADE: &str = "Upgrade";
+#[cfg(not(feature = "benchmark"))]
+pub(crate) const FLUSH_BARRIER_STRONG_READ: &str = "StrongRead";
 
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
-    if reason != FLUSH_BARRIER_UPGRADE {
+    if reason != FLUSH_BARRIER_UPGRADE && reason != FLUSH_BARRIER_STRONG_READ {
         return Err(ApiError::new(
             "unsupported_flush_barrier",
             "flush barrier reason is not supported yet",
@@ -22,7 +24,9 @@ pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
     flushed = flushed
         .saturating_add(super::session_turn_runtime::flush_runtime_projections_for_upgrade()?);
     flushed = flushed.saturating_add(super::town_runtime::flush_all_projections_to_durable()?);
-    super::battle_runtime::persist_snapshot_for_upgrade()
-        .map_err(|message| ApiError::new("battle_runtime_snapshot_failed", message, true))?;
+    if reason == FLUSH_BARRIER_UPGRADE {
+        super::battle_runtime::persist_snapshot_for_upgrade()
+            .map_err(|message| ApiError::new("battle_runtime_snapshot_failed", message, true))?;
+    }
     Ok(flushed)
 }

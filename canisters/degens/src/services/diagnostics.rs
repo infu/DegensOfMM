@@ -31,7 +31,7 @@ use crate::contract::DiagnosticBenchmarkCallPage;
 use crate::{
     contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView},
     repos::system_jobs,
-    services::system_jobs as system_job_service,
+    services::{flush_barrier, system_jobs as system_job_service},
 };
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
@@ -168,6 +168,13 @@ pub(crate) fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError
 pub(crate) fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
     crate::auth::require_controller("run_diagnostic_system_job")?;
     system_job_service::run_due_job_by_key(&job_key)
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn run_diagnostic_flush_barrier(reason: String) -> Result<u64, ApiError> {
+    crate::auth::require_controller("run_diagnostic_flush_barrier")?;
+    let flushed = flush_barrier::flush_barrier(&reason)?;
+    Ok(flushed as u64)
 }
 
 #[cfg(feature = "benchmark")]

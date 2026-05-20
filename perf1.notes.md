@@ -5063,3 +5063,21 @@ Checklist hygiene:
 Decision:
 
 - Keep the parent closed. Remaining runtime durability/barrier work is tracked under Gate 5H, not Gate 5E.
+
+## Checkpoint: Diagnostic StrongRead Flush Barrier
+
+Gate 5H explicit checkpoint slice:
+
+- Added `flush_barrier("StrongRead")` for the currently supported durable projection set.
+- Added controller-only `run_diagnostic_flush_barrier(reason)` as a non-benchmark update endpoint so operators/tests can force an explicit barrier checkpoint outside `pre_upgrade`.
+- `StrongRead` flushes lobby runtime state, session-turn runtime state, and town projections, but intentionally does not write the upgrade-only battle runtime snapshot cell.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This gives Gate 5H a real callable explicit checkpoint while leaving hot-path `TurnAdvance`, `BattleHandoff`, and `RuntimeEviction` wiring for later slices.

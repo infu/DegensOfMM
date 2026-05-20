@@ -69,3 +69,9 @@ fn run_diagnostic_system_jobs(max_ticks: u32) -> Result<u32, ApiError> {
 fn run_diagnostic_system_job(job_key: String) -> Result<u32, ApiError> {
     crate::services::diagnostics::run_diagnostic_system_job(job_key)
 }
+
+#[cfg(not(feature = "benchmark"))]
+#[update]
+fn run_diagnostic_flush_barrier(reason: String) -> Result<u64, ApiError> {
+    crate::services::diagnostics::run_diagnostic_flush_barrier(reason)
+}

@@ -5436,4 +5436,21 @@ Verification:
 Decision:
 
 - Keep this checkpoint. It removes participant durable writes from `create_session` and `join_session` and moves the required durability to the setup boundary, which matches the aggregate/projection direction.
-- Benchmark is still required because `insert_many_atomic` may cost less than, equal to, or more than two individual inserts. The next Gate J run should compare `create_session`, `join_session`, `start_session`, scenario total, row growth, and repo ops against `20260520-152224-gate7-registration-recovery-gate-j`.
+- Benchmark confirmed that `insert_many_atomic` is worth keeping here. The next Gate J work should target the remaining durable setup/session/job floor.
+
+Code-size note:
+
+- First focused Gate J attempt after adding participant batching failed install because the benchmark Wasm code section was `12,592,587` bytes, `9,675` bytes over the IC limit.
+- The normal build keeps the full multi-session dirty participant cache. The benchmark build now uses a single-session participant cache and excludes dirty-update recovery code that Gate J does not exercise.
+- Final benchmark Wasm code section is `0x00bfec2a`, about `5.0 KB` under the IC limit.
+
+Gate J measurement:
+
+- Clean focused Gate J `20260520-155903-gate7-participant-flush-clean-gate-j` passed in `56.90s` on git `69ccabc`.
+- Scenario instructions improved versus `20260520-152224-gate7-registration-recovery-gate-j`: `5.3075B -> 4.8377B` (`-8.9%`).
+- Scenario memory stayed flat at `3980.0625 MB`; row growth stayed flat at `35`; cycles moved `0.0534T -> 0.0529T`.
+- `create_session` moved `0.9607B -> 0.4810B` avg because it no longer creates the first durable participant row.
+- `join_session` moved `0.4827B -> 0.0016B` avg because it no longer creates the second durable participant row.
+- `start_session` moved `1.4339B -> 1.9238B` avg because it now owns the participant durability boundary.
+- Net route win comes from two individual participant inserts (`sessions.create_participant`, `0.9607B` total) becoming one `sessions.insert_participants_atomic` call (`0.4870B` total).
+- Remaining measured repo-operation floor is durable row maintenance: `players.create_player_account` `0.9518B` total, `system_jobs.create_system_job` `0.9574B`, `sessions.update_session` `0.9547B`, `commands.create_game_command` `0.4791B`, `battles.create_battle` `0.4801B`, `sessions.create_game_session` `0.4794B`, and `sessions.insert_participants_atomic` `0.4870B`.

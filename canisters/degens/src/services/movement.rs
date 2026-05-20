@@ -3096,7 +3096,9 @@ fn update_movement_champion(
     persistence_mode: MovementPersistenceMode,
     champion: Champion,
 ) -> Result<Champion, ApiError> {
-    if persistence_mode == MovementPersistenceMode::RuntimeOnly && champion.status == "active" {
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly
+        && matches!(champion.status.as_str(), "active" | "in_battle")
+    {
         session_turn_runtime::mirror_champion_update(&champion);
         return Ok(champion);
     }
@@ -3612,7 +3614,7 @@ fn mark_neutral_encounter_pending(
     pending[pending_index].champion.in_battle_id = Some(battle.id().key());
     pending[pending_index].champion.last_command_id = Some(command_id.key());
     pending[pending_index].champion =
-        champions_artifacts::update_champion(pending[pending_index].champion.clone())?;
+        update_movement_champion(persistence_mode, pending[pending_index].champion.clone())?;
     append_movement_public_event(
         session,
         command_id,

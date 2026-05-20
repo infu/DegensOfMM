@@ -2944,3 +2944,39 @@ Decision:
 
 - Keep this cut. It is small, but it proves the next larger direction: battle startup should hand a complete in-memory state into runtime instead of writing rows and then reading them back.
 - The remaining activation floor is now mostly timeout job scheduling, durable neutral/champion status writes, and the obstacle/occupancy adoption reads.
+
+## Checkpoint: Runtime-Owned In-Battle Champion Status
+
+Implemented a Gate 5D runtime champion-status cut:
+
+- `update_movement_champion` now mirrors `in_battle` champion status into `SessionTurnRuntime` on the runtime-only movement path instead of writing the durable `Champion` row.
+- Neutral contact uses that movement champion update helper, so both the direct contact update and the following stop-candidate update stay heap-local.
+- Public `get_champion_view` still sees the in-battle status through the existing runtime champion snapshot overlay.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260520-runtime-inbattle-champion-gate-j` passed in `204.77s`.
+- Removed the benchmark PocketIC server left with the hard TTL after the run.
+
+Measured delta versus Gate 5F.3 `20260520-battle-start-reuse-stacks-gate-j`:
+
+| metric | Gate 5F.3 | Gate 5D.2 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 170.5444B | 169.5872B | -0.6% |
+| Gate J memory | 5084.8125 MB | 5084.8125 MB | flat |
+| `sync_session_turn` avg | 2.0789B | 1.9913B | -4.2% |
+| final post-contact sync call | 1.6691B | 0.7046B | -57.8% |
+
+Measured repo-operation movement:
+
+| operation | Gate 5F.3 calls | Gate 5D.2 calls | note |
+| --- | ---: | ---: | --- |
+| `champions.update_champion` | 2 | 0 | runtime owns active movement/in-battle champion status in this route |
+| final post-contact repo ops | `battles.by_attacker`, `champions.update_champion` | `battles.by_attacker` | durable champion projection removed |
+
+Decision:
+
+- Keep this cut. It moves another live movement status field into the runtime aggregate and preserves the public champion view used by Gate J.
+- This does not close Gate 5D because `sync_session_turn` is still above `1.5B`; the next large reductions require moving battle contact handoff/job scheduling out of durable rows or making turn/job authority runtime-owned.

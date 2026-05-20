@@ -239,7 +239,7 @@ fn apply_level_choice(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("skill:{skill_key}:{}", champion.id()),
@@ -252,7 +252,7 @@ fn apply_level_choice(
         ),
     )?;
     let mut session = context.session.clone();
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut session,
         command.id(),
         format!("champion_skill:{}:{skill_key}", champion.id()),
@@ -354,7 +354,7 @@ fn apply_spell_learning(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("learn_spell:{spell_slug}:{}", champion.id()),
@@ -367,7 +367,7 @@ fn apply_spell_learning(
         ),
     )?;
     let mut session = context.session.clone();
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut session,
         command.id(),
         format!("champion_spell_learned:{}:{spell_slug}", champion.id()),
@@ -460,7 +460,7 @@ fn apply_adventure_cast(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("cast_adventure_spell:{spell_slug}:{}", champion.id()),
@@ -473,7 +473,7 @@ fn apply_adventure_cast(
         ),
     )?;
     let mut session = context.session.clone();
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut session,
         command.id(),
         format!(

@@ -5879,3 +5879,30 @@ Post-measurement heavy endpoints:
 - `learn_champion_spell`: `10.3807B`.
 - `submit_market_trade`: `9.2274B`.
 - `cast_adventure_spell`: `9.2153B`.
+
+## Round-Robin Pivot: Champion Magic Fresh Event/Effect
+
+New cluster:
+
+- Rotated back to champion magic after worldgen/events, map-turn readiness, query-auth, and a batched measurement.
+- Current costs: `learn_champion_spell` `10.3807B`, `cast_adventure_spell` `9.2153B`, `select_champion_level_up` `7.8004B`.
+- The remaining obvious floor is shared with other command endpoints: fresh command effect absence reads and fresh public event absence reads.
+
+Cut:
+
+- Successful fresh `select_champion_level_up` now creates the command effect directly with `create_fresh_command_effect`.
+- Successful fresh `learn_champion_spell` now creates the command effect directly with `create_fresh_command_effect`.
+- Successful fresh `cast_adventure_spell` now creates the command effect directly with `create_fresh_command_effect`.
+- The matching public events now use `append_fresh_public_event`.
+- Early idempotent replay paths still return before event/effect creation, preserving duplicate avoidance for already-applied champion mutations.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- Each fresh champion magic command should drop `effects.command_effect_by_command_key` (`~0.70B`) and `events.by_session_event_key` (`~0.70B`) if the endpoint trace still had both absence reads.
+- Expected endpoint improvement is roughly `~1.4B` per fresh champion magic command before the remaining command create/update, champion row, event/effect create, session update, and content/champion reads dominate.

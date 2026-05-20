@@ -678,7 +678,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 ### 18. Batched Round-Robin Measurement
 
 - [x] Run endpoint-surface after worldgen/events, map-turn readiness, query-auth, and benchmark-gate cleanup. Artifact `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27` passed in `192.61s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `185.4812B -> 152.4118B` (`-33.0694B`, `-17.8%`) versus `20260520-endpoint-rotations-76036c8`.
-- [ ] Pick the next endpoint cluster using the round-robin rule rather than polishing the same query/end-turn/worldgen cuts.
+- [x] Pick the next endpoint cluster using the round-robin rule rather than polishing the same query/end-turn/worldgen cuts. Picked champion magic again after several intervening rotations because `learn_champion_spell` (`10.3807B`), `cast_adventure_spell` (`9.2153B`), and `select_champion_level_up` (`7.8004B`) still have the shared fresh event/effect absence-read floor.
+
+### 19. Round-Robin Endpoint Cluster: Champion Magic Fresh Event/Effect
+
+- [x] Rotate back to champion magic after worldgen/events, end-turn, and query-auth cuts.
+- [x] Use `create_fresh_command_effect` for successful fresh champion skill, spell learning, and adventure spell mutation paths. Existing early-idempotent replay paths still return without creating duplicate effects.
+- [x] Use `append_fresh_public_event` for the matching successful fresh champion magic public events. Existing early-idempotent replay paths still return without creating duplicate events.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `effects.command_effect_by_command_key` and `events.by_session_event_key` disappear from fresh `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` traces.
+- [ ] Rotate again before doing another deeper champion-only optimization.
 
 ## Expected Outcome
 

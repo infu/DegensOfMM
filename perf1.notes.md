@@ -3576,3 +3576,43 @@ Decision:
 - Keep this checkpoint. The individual activation call is now inside the target band at `0.4804B`.
 - Do not mark Gate 5F complete yet because the whole `sync_session_turn` average is still `0.6390B`, slightly above the `0.3B-0.6B` target.
 - The next useful cuts are source stack reads (`champions.army_stacks_by_champion`, `neutrals.stacks_by_army`) or making the timeout job heap-first. The timeout job is more behavior-sensitive, so prefer source-stack reads or code-size freeing first.
+
+## Checkpoint: Seeded Source Army Stack Cache Hits Gate 5F Target
+
+Seeded the real first-playable `ChampionArmyStack` and `NeutralArmyStack` rows into a consume-once heap cache during setup, then made battle startup take those source rows before falling back to IcyDB. The cache is removed on first use so battle aftermath or later stack mutations cannot reuse stale source army data.
+
+What changed:
+
+- `battle_start` now owns small consume-once source army stack caches for champion and neutral armies.
+- `first_playable_setup` records the actual rows it created or found for starting champion armies and neutral guard armies.
+- Champion/town battle startup and neutral battle startup can use the seeded rows without paying `champions.army_stacks_by_champion` or `neutrals.stacks_by_army` in the hot contact path.
+- Durable IcyDB source stack reads remain the fallback for cache misses, recovery, and non-seeded routes.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bfea98`, about `5.6 KB` under the IC limit
+- Focused Gate J `20260520-seeded-source-army-stacks-gate-j` passed in `67.17s`
+- Leftover PocketIC server from the run was killed; a follow-up process scan only matched the `pgrep` command itself.
+
+Measured delta versus `20260520-neutral-activation-heap-boundary-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 66.0030B | 64.6025B | -2.1% |
+| Gate J scenario memory | 4380.3750 MB | 4380.3125 MB | ~flat |
+| `sync_session_turn` avg | 0.6390B | 0.4984B | -22.0% |
+| neutral startup sync seq 69 | 1.1849B | 0.4810B | -59.4% |
+| neutral startup sync seq 70 | 0.7043B | 0.0003B | ~-100.0% |
+| `champions.army_stacks_by_champion` calls | 2 | 0 | -100.0% |
+| `neutrals.stacks_by_army` calls | 2 | 0 | -100.0% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. The measured Gate J contact route now meets the Gate 5F `0.3B-0.6B` average sync target at `0.4984B`.
+- Mark Gate 5F done for the measured route, with the explicit scope that durable projection/recovery is still Gate 5H work.
+- Do not spend the next checkpoint on source stack cache broadening. The remaining large route costs are now session/lobby setup, system-job scans, and query-side durable snapshot reads.

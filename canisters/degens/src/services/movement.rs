@@ -20,7 +20,7 @@ use icydb::{
 
 use crate::repos::{
     battles, champions_artifacts, commands_events_effects, content, economy,
-    map_visibility_occupancy, movement, neutrals, sessions, system_jobs as system_job_repo, towns,
+    map_visibility_occupancy, movement, sessions, system_jobs as system_job_repo, towns,
     turn_ready,
 };
 
@@ -3852,14 +3852,9 @@ fn create_neutral_battle_attacker_stacks(
 ) -> Result<Vec<BattleStack>, ApiError> {
     let mut stacks = Vec::new();
     let spell_status_keys = battle_spell_status_keys(&pending_move.champion)?;
-    for stack in champions_artifacts::page_champion_army_stacks(
-        pending_move.champion.id(),
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .filter(|stack| stack.status == "active" && stack.quantity > 0)
+    for stack in battle_start::source_champion_army_stacks(pending_move.champion.id())?
+        .into_iter()
+        .filter(|stack| stack.status == "active" && stack.quantity > 0)
     {
         let unit_id = Id::<UnitDefinition>::from_key(stack.unit_id);
         let unit = content::load_unit(unit_id)?
@@ -3925,8 +3920,7 @@ fn create_neutral_battle_defender_stacks(
     neutral_id: Id<NeutralArmy>,
 ) -> Result<Vec<BattleStack>, ApiError> {
     let mut stacks = Vec::new();
-    for stack in neutrals::page_neutral_army_stacks(neutral_id, domm_game::MAX_LIST_LIMIT, None)?
-        .items
+    for stack in battle_start::source_neutral_army_stacks(neutral_id)?
         .into_iter()
         .filter(|stack| stack.quantity > 0)
     {

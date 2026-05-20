@@ -1,8 +1,8 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
 use domm_degens_schema::schema::{
-    Battle, BattleObstacle, BattleOccupancy, BattleStack, Champion, GameCommand, GameParticipant,
-    GameSession, Town, UnitDefinition,
+    Battle, BattleObstacle, BattleOccupancy, BattleStack, Champion, ChampionArmyStack, GameCommand,
+    GameParticipant, GameSession, NeutralArmy, NeutralArmyStack, Town, UnitDefinition,
 };
 use domm_game::{ApiError, MoveCoord};
 use icydb::{
@@ -10,7 +10,7 @@ use icydb::{
     types::{Id, Timestamp},
 };
 
-use crate::repos::{battles, champions_artifacts, content, towns};
+use crate::repos::{battles, champions_artifacts, content, neutrals, towns};
 
 use super::{
     battle as battle_service, battle_runtime, command_response, session_context::public_error,
@@ -26,6 +26,77 @@ struct BattleStartupRows {
 thread_local! {
     static BATTLE_STARTUP_ROWS: RefCell<BTreeMap<String, BattleStartupRows>> =
         const { RefCell::new(BTreeMap::new()) };
+    static SEEDED_CHAMPION_ARMY_STACKS: RefCell<Vec<(String, Vec<ChampionArmyStack>)>> =
+        const { RefCell::new(Vec::new()) };
+    static SEEDED_NEUTRAL_ARMY_STACKS: RefCell<Vec<(String, Vec<NeutralArmyStack>)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn remember_seeded_champion_army_stacks(
+    champion_id: Id<Champion>,
+    stacks: Vec<ChampionArmyStack>,
+) {
+    if stacks.is_empty() {
+        return;
+    }
+    let key = champion_id.to_string();
+    SEEDED_CHAMPION_ARMY_STACKS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+        cache.push((key, stacks));
+    });
+}
+
+pub(crate) fn remember_seeded_neutral_army_stacks(
+    neutral_army_id: Id<NeutralArmy>,
+    stacks: Vec<NeutralArmyStack>,
+) {
+    if stacks.is_empty() {
+        return;
+    }
+    let key = neutral_army_id.to_string();
+    SEEDED_NEUTRAL_ARMY_STACKS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+        cache.push((key, stacks));
+    });
+}
+
+fn take_seeded_champion_army_stacks(champion_id: Id<Champion>) -> Option<Vec<ChampionArmyStack>> {
+    let key = champion_id.to_string();
+    SEEDED_CHAMPION_ARMY_STACKS.with_borrow_mut(|cache| {
+        cache
+            .iter()
+            .position(|(existing, _)| existing == &key)
+            .map(|index| cache.remove(index).1)
+    })
+}
+
+pub(crate) fn source_champion_army_stacks(
+    champion_id: Id<Champion>,
+) -> Result<Vec<ChampionArmyStack>, ApiError> {
+    match take_seeded_champion_army_stacks(champion_id) {
+        Some(stacks) => Ok(stacks),
+        None => Ok(champions_artifacts::page_champion_army_stacks(
+            champion_id,
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items),
+    }
+}
+
+pub(crate) fn source_neutral_army_stacks(
+    neutral_army_id: Id<NeutralArmy>,
+) -> Result<Vec<NeutralArmyStack>, ApiError> {
+    let key = neutral_army_id.to_string();
+    if let Some(stacks) = SEEDED_NEUTRAL_ARMY_STACKS.with_borrow_mut(|cache| {
+        cache
+            .iter()
+            .position(|(existing, _)| existing == &key)
+            .map(|index| cache.remove(index).1)
+    }) {
+        return Ok(stacks);
+    }
+    Ok(neutrals::page_neutral_army_stacks(neutral_army_id, domm_game::MAX_LIST_LIMIT, None)?.items)
 }
 
 pub(crate) fn remember_startup_stacks(battle_id: Id<Battle>, stacks: Vec<BattleStack>) {
@@ -393,14 +464,9 @@ fn create_champion_side_stacks(
 ) -> Result<Vec<BattleStack>, ApiError> {
     let mut rows = Vec::new();
     let battle_spell_status_keys = battle_spell_status_keys_for_champion(champion_id)?;
-    for stack in champions_artifacts::page_champion_army_stacks(
-        champion_id,
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .filter(|stack| stack.status == "active" && stack.quantity > 0)
+    for stack in source_champion_army_stacks(champion_id)?
+        .into_iter()
+        .filter(|stack| stack.status == "active" && stack.quantity > 0)
     {
         let unit_id = Id::<UnitDefinition>::from_key(stack.unit_id);
         let unit = content::load_unit(unit_id)?

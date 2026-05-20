@@ -20,7 +20,7 @@ use crate::repos::{
     neutrals, sessions, towns,
 };
 
-use super::town_runtime;
+use super::{battle_start, town_runtime};
 
 #[derive(Clone)]
 pub(crate) struct FirstPlayableContentRows {
@@ -520,12 +520,15 @@ fn seed_champions(
             )?,
         };
         sessions::ensure_participant_champion_id(participant.clone(), champion.id())?;
+        let mut seeded_stacks = Vec::new();
         for stack in &start.starting_army_stacks {
             let unit = require_unit(content_rows, &stack.unit_slug)?;
-            if champions_artifacts::find_champion_army_stack(champion.id(), stack.slot_index)?
-                .is_none()
-            {
-                champions_artifacts::create_champion_army_stack(
+            let row = match champions_artifacts::find_champion_army_stack(
+                champion.id(),
+                stack.slot_index,
+            )? {
+                Some(row) => row,
+                None => champions_artifacts::create_champion_army_stack(
                     session.id(),
                     champion.id(),
                     unit.id(),
@@ -533,9 +536,11 @@ fn seed_champions(
                     u32::from(stack.quantity),
                     unit.max_hp,
                     "active".to_string(),
-                )?;
-            }
+                )?,
+            };
+            seeded_stacks.push(row);
         }
+        battle_start::remember_seeded_champion_army_stacks(champion.id(), seeded_stacks);
         champion_keys.insert(start.champion_key.clone(), champion.id());
     }
     Ok(())
@@ -602,19 +607,23 @@ fn seed_neutrals(
                     1,
                 )?,
             };
+        let mut seeded_stacks = Vec::new();
         for stack in &neutral.stacks {
             let unit = require_unit(content_rows, &stack.unit_slug)?;
-            if neutrals::find_neutral_army_stack(army.id(), stack.slot_index)?.is_none() {
-                neutrals::create_neutral_army_stack(
+            let row = match neutrals::find_neutral_army_stack(army.id(), stack.slot_index)? {
+                Some(row) => row,
+                None => neutrals::create_neutral_army_stack(
                     session.id(),
                     army.id(),
                     unit.id(),
                     stack.slot_index,
                     u32::from(stack.quantity),
                     unit.max_hp,
-                )?;
-            }
+                )?,
+            };
+            seeded_stacks.push(row);
         }
+        battle_start::remember_seeded_neutral_army_stacks(army.id(), seeded_stacks);
         neutral_keys.insert(neutral.key.clone(), army.id());
     }
     Ok(())

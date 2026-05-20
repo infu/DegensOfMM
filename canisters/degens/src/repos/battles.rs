@@ -436,6 +436,7 @@ pub(crate) fn active_battles_plan_text(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn battle_stacks_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(
         BATTLE_STACKS_BY_BATTLE_LOOKUP.name,
@@ -450,6 +451,7 @@ pub(crate) fn battle_stacks_plan_text(battle_id: Id<Battle>, limit: u32) -> Repo
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn battle_obstacles_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(
         BATTLE_OBSTACLES_BY_BATTLE_LOOKUP.name,
@@ -463,6 +465,7 @@ pub(crate) fn battle_obstacles_plan_text(battle_id: Id<Battle>, limit: u32) -> R
     )
 }
 
+#[cfg(test)]
 #[cfg(test)]
 pub(crate) fn battle_occupancy_plan_text(battle_id: Id<Battle>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(

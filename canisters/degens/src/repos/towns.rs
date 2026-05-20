@@ -443,6 +443,7 @@ pub(crate) fn towns_by_owner_plan_text(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn town_buildings_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(
         TOWN_BUILDINGS_LOOKUP.name,
@@ -455,6 +456,7 @@ pub(crate) fn town_buildings_plan_text(town_id: Id<Town>, limit: u32) -> RepoRes
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn town_recruit_pools_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(
         TOWN_RECRUIT_POOLS_LOOKUP.name,
@@ -466,6 +468,7 @@ pub(crate) fn town_recruit_pools_plan_text(town_id: Id<Town>, limit: u32) -> Rep
     )
 }
 
+#[cfg(test)]
 #[cfg(test)]
 pub(crate) fn town_garrison_plan_text(town_id: Id<Town>, limit: u32) -> RepoResult<String> {
     foundation::explain_text(

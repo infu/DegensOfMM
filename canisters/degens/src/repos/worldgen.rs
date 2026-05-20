@@ -280,6 +280,7 @@ pub(crate) fn update_siege_rule(row: SiegeRuleState) -> RepoResult<SiegeRuleStat
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn skirmish_settings_plan_text(session_id: Id<GameSession>) -> RepoResult<String> {
     foundation::explain_text(
         SKIRMISH_SETTINGS_BY_SESSION_LOOKUP.name,

@@ -3934,3 +3934,43 @@ Decision:
 
 - Keep this checkpoint. It removes one more stable write from the active movement sync without changing the route shape or final row/page counts.
 - Next low-risk Gate 5D candidates are harder: `map.update_visibility_chunk` and `map.create_known_object` require runtime query overlays before they can be removed safely from the hot route.
+
+## Checkpoint: Champion Banner Cache Removes Detail Query Floor
+
+After the mine object delta checkpoint, `get_champion_view` still averaged about `0.709B` instructions. The remaining stable read was the owned champion's banner equipment lookup:
+
+- Champion army stacks were already cached from first-playable setup.
+- Spellbook lookup was already skipped for champions without `sour_sorcery`.
+- The west champion's first-playable banner is created during setup, so the detail view can reuse that artifact id from heap instead of querying `ArtifactEquipment` on every owned detail read.
+
+What changed:
+
+- `render_projection` now keeps a tiny champion-id to banner-artifact-id cache and builds the same `ArtifactView` from it.
+- `first_playable_setup` seeds the cache when it creates or sees the west banner equipment row.
+- `battle_aftermath::capture_artifacts` invalidates champion detail caches for both victor and defeated champion when equipment can move.
+- Removed unused `SessionTurnRuntime` champion, occupancy, and visibility delta scaffolding to recover code-size headroom for the cache. Object/resource deltas remain because the runtime uses them.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build: code section `0x00bffd31`
+- Focused Gate J `20260520-champion-banner-cache-gate-j` passed in `190.10s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-runtime-mine-object-delta-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 56.3951B | 54.9867B | -2.5% |
+| `get_champion_view` avg | 0.7090B | 0.0046B | -99.4% |
+| `sync_session_turn` avg | 0.3800B | 0.3801B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the last known owned champion detail stable read from the first-playable route without changing rows, pages, or route shape.
+- Remaining large first-playable query costs are `get_visible_map_chunks` and `get_visible_objects`, both around `1.4B`; cutting those safely needs runtime/opening projection caches for visibility and known objects.

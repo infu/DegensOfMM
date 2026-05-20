@@ -430,6 +430,8 @@ fn capture_artifacts(
         equipment.champion_id = victor_id.key();
         equipment.last_command_id = Some(command_id.key());
         champions_artifacts::update_artifact_equipment(equipment)?;
+        render_projection::invalidate_champion_detail(victor_id);
+        render_projection::invalidate_champion_detail(defeated_id);
         if let Some(mut artifact) =
             champions_artifacts::load_artifact_instance(Id::from_key(artifact_id))?
         {

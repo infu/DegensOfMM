@@ -365,6 +365,7 @@ fn job_is_claimable(job: &SystemJob, now: Timestamp) -> bool {
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn due_jobs_plan_text(now: Timestamp, limit: u32) -> RepoResult<String> {
     foundation::explain_text(
         SYSTEM_JOBS_BY_STATUS_DUE_LOOKUP.name,

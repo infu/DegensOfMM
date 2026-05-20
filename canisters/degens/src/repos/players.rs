@@ -63,6 +63,7 @@ pub(crate) fn update_player_account(player: PlayerAccount) -> RepoResult<PlayerA
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn principal_lookup_plan_text(account_principal: Principal) -> RepoResult<String> {
     foundation::explain_text(
         PRINCIPAL_LOOKUP.name,

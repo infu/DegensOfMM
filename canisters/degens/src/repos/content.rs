@@ -758,6 +758,7 @@ pub(crate) fn row_resource_cost(
 }
 
 #[cfg(test)]
+#[cfg(test)]
 pub(crate) fn ruleset_lookup_plan_text(slug: &str, version: u32) -> RepoResult<String> {
     foundation::explain_text(
         RULESET_SLUG_VERSION_LOOKUP.name,

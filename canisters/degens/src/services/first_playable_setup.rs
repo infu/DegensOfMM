@@ -557,7 +557,14 @@ fn seed_west_artifact(
     let Some(champion_id) = champion_keys.get("champion:west").copied() else {
         return Ok(());
     };
-    if champions_artifacts::find_equipment_by_champion_slot(champion_id, "banner")?.is_some() {
+    if let Some(equipment) =
+        champions_artifacts::find_equipment_by_champion_slot(champion_id, "banner")?
+    {
+        render_projection::remember_champion_banner_artifact(
+            champion_id,
+            Id::<domm_degens_schema::schema::ArtifactInstance>::from_key(equipment.artifact_id)
+                .to_string(),
+        );
         return Ok(());
     }
     let artifact = require_artifact(content_rows, "bent-banner")?;
@@ -579,6 +586,7 @@ fn seed_west_artifact(
         "banner".to_string(),
         1,
     )?;
+    render_projection::remember_champion_banner_artifact(champion_id, instance.id().to_string());
     Ok(())
 }
 

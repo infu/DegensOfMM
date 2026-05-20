@@ -43,9 +43,6 @@ pub(crate) struct SessionTurnRuntime {
     pub command_receipts: Vec<SessionTurnCommandReceipt>,
     pub active_events: Vec<SessionTurnEvent>,
     pub event_seq_block: Option<SessionTurnEventSeqBlock>,
-    pub champion_deltas: Vec<ChampionTurnDelta>,
-    pub occupancy_deltas: Vec<OccupancyTurnDelta>,
-    pub visibility_deltas: Vec<VisibilityTurnDelta>,
     pub object_deltas: Vec<ObjectTurnDelta>,
     pub resource_deltas: Vec<ResourceTurnDelta>,
     pub partial_cursor: Option<MovementCursor>,
@@ -79,9 +76,6 @@ impl SessionTurnRuntime {
             command_receipts: Vec::new(),
             active_events: Vec::new(),
             event_seq_block: None,
-            champion_deltas: Vec::new(),
-            occupancy_deltas: Vec::new(),
-            visibility_deltas: Vec::new(),
             object_deltas: Vec::new(),
             resource_deltas: Vec::new(),
             partial_cursor: None,
@@ -377,32 +371,6 @@ impl SessionTurnEventSeqBlock {
 }
 
 #[derive(Clone)]
-pub(crate) struct ChampionTurnDelta {
-    pub champion_id: String,
-    pub x: u16,
-    pub y: u16,
-    pub movement_remaining: u16,
-    pub status: String,
-}
-
-#[derive(Clone)]
-pub(crate) struct OccupancyTurnDelta {
-    pub subject_kind: String,
-    pub subject_id: String,
-    pub from_x: Option<u16>,
-    pub from_y: Option<u16>,
-    pub to_x: Option<u16>,
-    pub to_y: Option<u16>,
-}
-
-#[derive(Clone)]
-pub(crate) struct VisibilityTurnDelta {
-    pub participant_id: String,
-    pub chunk_x: u16,
-    pub chunk_y: u16,
-}
-
-#[derive(Clone)]
 pub(crate) struct ObjectTurnDelta {
     pub subject_kind: String,
     pub subject_id: String,
@@ -440,9 +408,6 @@ pub(crate) struct SessionTurnDirtySets {
     pub intents: bool,
     pub command_receipts: bool,
     pub events: bool,
-    pub champion_deltas: bool,
-    pub occupancy_deltas: bool,
-    pub visibility_deltas: bool,
     pub object_deltas: bool,
     pub resource_deltas: bool,
     pub cursor: bool,

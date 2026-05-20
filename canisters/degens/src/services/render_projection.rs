@@ -28,6 +28,8 @@ const MAX_OWNED_CHAMPIONS_VIEW: u32 = 16;
 thread_local! {
     static CHAMPION_STACK_ROWS: RefCell<Vec<(String, Vec<ChampionArmyStack>)>> =
         const { RefCell::new(Vec::new()) };
+    static CHAMPION_BANNER_ARTIFACT_IDS: RefCell<Vec<(String, String)>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn remember_champion_stack_rows(
@@ -44,9 +46,20 @@ pub(crate) fn remember_champion_stack_rows(
     });
 }
 
+pub(crate) fn remember_champion_banner_artifact(champion_id: Id<Champion>, artifact_id: String) {
+    let key = champion_id.to_string();
+    CHAMPION_BANNER_ARTIFACT_IDS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+        cache.push((key, artifact_id));
+    });
+}
+
 pub(crate) fn invalidate_champion_detail(champion_id: Id<Champion>) {
     let key = champion_id.to_string();
     CHAMPION_STACK_ROWS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+    });
+    CHAMPION_BANNER_ARTIFACT_IDS.with_borrow_mut(|cache| {
         cache.retain(|(existing, _)| existing != &key);
     });
 }
@@ -58,6 +71,16 @@ fn cached_champion_stack_rows(champion_id: Id<Champion>) -> Option<Vec<ChampionA
             .iter()
             .find(|(existing, _)| existing == &key)
             .map(|(_, rows)| rows.clone())
+    })
+}
+
+fn cached_champion_banner_artifact(champion_id: Id<Champion>) -> Option<String> {
+    let key = champion_id.to_string();
+    CHAMPION_BANNER_ARTIFACT_IDS.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|(existing, _)| existing == &key)
+            .map(|(_, artifact_id)| artifact_id.clone())
     })
 }
 
@@ -448,6 +471,14 @@ fn known_champion_unit_slug(champion: &Champion, slot_index: u8) -> Option<Strin
 }
 
 fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, ApiError> {
+    if let Some(artifact_id) = cached_champion_banner_artifact(champion_id) {
+        return Ok(vec![ArtifactView {
+            artifact_id,
+            artifact_def_id: "artifact:bent-banner".to_string(),
+            slot: "banner".to_string(),
+            state: "equipped".to_string(),
+        }]);
+    }
     let mut artifacts = Vec::new();
     for slot in ["banner"] {
         let Some(equipment) =
@@ -455,8 +486,10 @@ fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, Ap
         else {
             continue;
         };
+        let artifact_id = Id::<ArtifactInstance>::from_key(equipment.artifact_id).to_string();
+        remember_champion_banner_artifact(champion_id, artifact_id.clone());
         artifacts.push(ArtifactView {
-            artifact_id: Id::<ArtifactInstance>::from_key(equipment.artifact_id).to_string(),
+            artifact_id,
             artifact_def_id: "artifact:bent-banner".to_string(),
             slot: equipment.slot,
             state: "equipped".to_string(),

@@ -5586,3 +5586,32 @@ Decision:
 
 - Keep the attribution labels for benchmark builds. They are cheap enough to fit and prevent more blind edits.
 - Gate 7.15 should now cut `battle_timeout` scheduling specifically: active battle runtime should own the live timeout wakeup, with durable timeout job projection/flushing at battle resolution or upgrade/recovery boundaries.
+
+## Checkpoint: Gate 7 Runtime Battle Timeout Wakeup
+
+Gate 7.15 implementation:
+
+- Changed active battle timeout scheduling so battle start and runtime readiness paths no longer create a durable `battle_timeout` `SystemJob` on the public route.
+- Normal Wasm builds now arm a direct runtime timer for the active battle deadline. The timer checks the heap `BattleRuntime` battle id/session id/deadline before applying an auto-defend, so stale timers from older deadlines are ignored.
+- Benchmark builds skip the direct timer body to keep the performance canister inside the IC Wasm code-section limit; the benchmark route does not wait for the timeout timer to fire.
+- Row-backed fallback still uses durable `SystemJob` scheduling, and upgrade/recovery repair still recreates durable timeout jobs from active durable battles.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-182807-gate7-runtime-battle-timeout-final-gate-j` passed in `57.75s`.
+
+Gate J measurement:
+
+- Route shape stayed accepted: `87` calls, `row_commands=5`, `row_events=3`, `row_growth=35`, stable pages `2049 -> 65665`, and `battles.create_battle` remained present.
+- Scenario instructions improved versus `20260520-180501-gate7-system-job-attribution-gate-j`: `3.8788B -> 3.3999B`, a `0.4789B` / `12.3%` reduction.
+- Seq72 `sync_session_turn` moved from the attributed `sj.bt` create at `0.4793B` to `0.0004B`.
+- Repo operations now contain only one setup job create: `sj.other` at `0.4778B`. The `sj.bt` repo operation disappeared.
+- `sync_session_turn` average moved `0.1437B -> 0.0958B` because one of its ten calls no longer pays the timeout job insert.
+
+Decision:
+
+- Keep it. This is the intended heap aggregate pattern for active battle deadlines: runtime owns the live timeout, durable job rows remain fallback/recovery infrastructure instead of hot-path command state.
+- Next Gate 7 work should target the remaining seq18 setup-session `sj.other` create without changing setup polling/recovery behavior.

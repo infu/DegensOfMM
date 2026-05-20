@@ -1,4 +1,6 @@
 use std::collections::BTreeSet;
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+use std::time::Duration;
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
@@ -91,10 +93,9 @@ fn schedule_runtime_battle_timeout_job(
     let Some(deadline_ms) = battle.action_deadline_at else {
         return Ok(());
     };
-    schedule_battle_timeout_job_at(
+    schedule_runtime_battle_timeout_wakeup(
         session_id,
         battle_id,
-        battle.created_turn,
         Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
     )
 }
@@ -122,16 +123,112 @@ pub(crate) fn schedule_new_battle_timeout_job(
     let Some(deadline) = battle.action_deadline_at else {
         return Ok(());
     };
-    system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
-        job_key: format!("battle_timeout:{}:{}", battle.id(), deadline.as_millis()),
-        job_kind: "battle_timeout".to_string(),
-        session_id,
-        battle_id: Some(battle.id()),
-        turn_number: Some(battle.created_turn),
-        due_at: deadline,
-        command_id: None,
-        cursor_json: None,
-    })?;
+    schedule_runtime_battle_timeout_wakeup(session_id, battle.id(), deadline)
+}
+
+fn schedule_runtime_battle_timeout_wakeup(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    deadline: Timestamp,
+) -> Result<(), ApiError> {
+    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+    schedule_runtime_battle_timeout_timer(session_id, battle_id, deadline);
+    #[cfg(any(not(target_arch = "wasm32"), feature = "benchmark"))]
+    let _ = (session_id, battle_id, deadline);
+    Ok(())
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn schedule_runtime_battle_timeout_timer(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    deadline: Timestamp,
+) {
+    let session_id_text = session_id.to_string();
+    let battle_id_text = battle_id.to_string();
+    let deadline_ms = deadline.as_millis();
+    canic_cdk::timers::set_timer(runtime_timer_delay(deadline), async move {
+        if let Err(error) =
+            process_runtime_battle_timeout_timer(&session_id_text, &battle_id_text, deadline_ms)
+        {
+            canic_cdk::eprintln!("runtime battle timeout failed: {}", error.message);
+        }
+        if let Err(error) = system_job_service::schedule_nearest_due_job() {
+            canic_cdk::eprintln!("system job reschedule failed: {}", error.message);
+        }
+    });
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn runtime_timer_delay(due_at: Timestamp) -> Duration {
+    let now_ms = Timestamp::now().as_millis();
+    let delay_ms = due_at.as_millis().saturating_sub(now_ms).max(0);
+    Duration::from_millis(u64::try_from(delay_ms).unwrap_or(u64::MAX))
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn process_runtime_battle_timeout_timer(
+    session_id_text: &str,
+    battle_id_text: &str,
+    deadline_ms: i64,
+) -> Result<(), ApiError> {
+    let session_id = session_context::parse_id::<GameSession>(session_id_text, "session_id")?;
+    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        return Ok(());
+    };
+    let Some(runtime) = battle_runtime::with_runtime(battle_id_text, Clone::clone) else {
+        return Ok(());
+    };
+    if runtime.session_id != session_id_text {
+        return Ok(());
+    }
+    let battle = runtime
+        .state
+        .battle(battle_id_text)
+        .map_err(map_battle_error)?
+        .clone();
+    if battle.state != "active" {
+        return Ok(());
+    }
+    let Some(current_deadline_ms) = battle.action_deadline_at else {
+        return Ok(());
+    };
+    if Some(current_deadline_ms) != u64::try_from(deadline_ms).ok() {
+        return Ok(());
+    }
+    let deadline = Timestamp::from_millis(deadline_ms);
+    if deadline > Timestamp::now() {
+        schedule_runtime_battle_timeout_timer(session_id, battle_id, deadline);
+        return Ok(());
+    }
+    let Some(active_stack_id) = battle.active_stack_id else {
+        return Ok(());
+    };
+
+    let command =
+        begin_timeout_command(&session, battle_id, &active_stack_id, current_deadline_ms)?;
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    apply_timeout_command(
+        &mut session,
+        command,
+        battle_id,
+        active_stack_id,
+        current_deadline_ms,
+        None,
+        &mut events,
+        &mut changed_subjects,
+    )?;
+    if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
+        session.id(),
+        battle_id,
+        None,
+        true,
+        true,
+    )? {
+        changed_subjects.extend(readiness.changed_subjects);
+    }
     Ok(())
 }
 
@@ -2214,7 +2311,7 @@ struct BattleRoundReadinessSummary {
 struct RuntimeBattleRoundReadinessSummary {
     summary: BattleRoundReadinessSummary,
     round_job_key: Option<String>,
-    timeout_deadline: Option<(u32, u64)>,
+    timeout_deadline: Option<u64>,
 }
 
 fn recompute_battle_round_readiness_and_schedule(
@@ -2396,8 +2493,7 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
         });
         let timeout_deadline = (schedule_timeout && battle.state == "active")
             .then_some(battle.action_deadline_at)
-            .flatten()
-            .map(|deadline| (battle.created_turn, deadline));
+            .flatten();
 
         Ok(Some(RuntimeBattleRoundReadinessSummary {
             summary: BattleRoundReadinessSummary {
@@ -2442,11 +2538,10 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
             ));
     }
 
-    if let Some((created_turn, deadline_ms)) = runtime_summary.timeout_deadline {
-        schedule_battle_timeout_job_at(
+    if let Some(deadline_ms) = runtime_summary.timeout_deadline {
+        schedule_runtime_battle_timeout_wakeup(
             session_id,
             battle_id,
-            created_turn,
             Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
         )?;
     }

@@ -275,10 +275,7 @@ fn runtime_game_command_status_by_nonce(
     let actor_participant_id = context.participant.id().to_string();
     for command_type in command_types {
         let nonce = nonce_u64(command_type, client_nonce);
-        if matches!(
-            *command_type,
-            "submit_move_intent" | "end_turn" | "sync_session_turn"
-        ) && let Some(receipt) = session_turn_runtime::command_receipt_by_nonce(
+        if let Some(receipt) = session_turn_runtime::command_receipt_by_nonce(
             &canonical_session_id,
             &actor_participant_id,
             nonce,

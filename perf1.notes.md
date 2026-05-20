@@ -6640,3 +6640,45 @@ Decision:
 
 - Keep this checkpoint. The endpoint-surface benchmark no longer shows any `commands.*` repo operations.
 - Rotate away from runtime command receipt work. The new shared floor is `events.create_game_event` at `12` calls / `5.7358B` and `effects.create_applied_command_effect` at `12` calls / `5.7024B`, followed by economy ledger rows at `5` calls / `2.3844B`.
+
+## Champion Runtime Event Measurement
+
+Time: `2026-05-20T23:45:00Z`.
+
+Gate 42 analysis:
+
+- Endpoint-surface event/effect writers before this slice: champion magic `3`, economy `3`, scenario `5`, `end_turn` `1`, plus `sync_world_generation` effect-only `1`.
+- Public events are safe to move first because `SessionTurnRuntime.active_events` already merges into `get_events_after` and flushes on non-benchmark barriers.
+- `CommandEffect` rows stay durable in this slice; they are still a history/recovery marker and need a separate runtime-effect/flush plan before removal.
+
+Cut:
+
+- Added a small runtime-first public event append helper that consumes a reserved active-turn event sequence and pushes a `SessionTurnEvent`, with durable fallback if no reserved runtime sequence is available.
+- Moved `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` public events to the runtime-first helper.
+- Fixed `get_command_status_by_nonce` runtime lookup to check all game command receipt types, not only movement/end-turn/sync.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bffcf1` / `12,582,129` bytes, `783` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-champion-runtime-events-local`, passed.
+
+Measurement versus `20260520-final-command-receipts-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `137 -> 134`.
+- Stable pages: `2049 -> 74881` became `2049 -> 73729`.
+- Scenario instructions: `59.5007B -> 58.0803B`, `-1.4204B`, `-2.4%`.
+- `events.create_game_event`: `12 -> 9` calls and `5.7358B -> 4.3015B`.
+- `effects.create_applied_command_effect`: stayed `12` calls.
+- `select_champion_level_up`: `1.4363B -> 0.9579B`, `-33.3%`.
+- `learn_champion_spell`: `4.0121B -> 3.5412B`, `-11.7%`.
+- `cast_adventure_spell`: `2.8451B -> 2.3727B`, `-16.6%`.
+
+Decision:
+
+- Keep this checkpoint. The runtime event merge path preserved endpoint coverage and removed exactly the three champion event rows.
+- Next bounded event/effect family should not add new shared code unless code-size headroom is freed; current benchmark headroom is only `783` bytes.

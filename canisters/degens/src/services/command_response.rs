@@ -757,6 +757,60 @@ pub(crate) fn append_fresh_public_event(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn append_runtime_or_fresh_public_event(
+    context: &SessionCallerContext,
+    command_id: Id<GameCommand>,
+    event_key: String,
+    event_type: String,
+    subject_kind: Option<String>,
+    subject_id_text: Option<String>,
+    payload_json: String,
+) -> Result<ApiEventView, ApiError> {
+    let session_id = context.session.id().to_string();
+    if let Some(event_seq) = session_turn_runtime::take_reserved_session_event_seq(
+        &session_id,
+        context.session.current_turn,
+    ) {
+        let command_id_text = command_id.to_string();
+        let event = ApiEventView {
+            session_id: session_id.clone(),
+            event_seq,
+            event_key,
+            audience_key: "public".to_string(),
+            turn_number: context.session.current_turn,
+            event_type,
+            subject_kind,
+            subject_id_text,
+            payload: Some(payload_json),
+            redacted: false,
+        };
+        session_turn_runtime::with_runtime_mut(
+            &session_id,
+            context.session.current_turn,
+            |runtime| {
+                runtime.push_event(session_turn_runtime::SessionTurnEvent {
+                    command_id: Some(command_id_text),
+                    event: event.clone(),
+                    flushed: false,
+                });
+            },
+        );
+        return Ok(event);
+    }
+
+    let mut session = context.session.clone();
+    append_fresh_public_event(
+        &mut session,
+        command_id,
+        event_key,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn append_event_for_audience(
     session: &mut GameSession,
     command_id: Id<GameCommand>,

@@ -281,9 +281,8 @@ fn apply_level_choice(
             command_response::escape_json(skill_key)
         ),
     )?;
-    let mut session = context.session.clone();
-    let event = command_response::append_fresh_public_event(
-        &mut session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        context,
         command.id(),
         format!("champion_skill:{}:{skill_key}", champion.id()),
         "champion_skill_selected".to_string(),
@@ -396,9 +395,8 @@ fn apply_spell_learning(
             command_response::escape_json(spell_slug)
         ),
     )?;
-    let mut session = context.session.clone();
-    let event = command_response::append_fresh_public_event(
-        &mut session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        context,
         command.id(),
         format!("champion_spell_learned:{}:{spell_slug}", champion.id()),
         "champion_spell_learned".to_string(),
@@ -502,9 +500,8 @@ fn apply_adventure_cast(
             command_response::escape_json(spell_slug)
         ),
     )?;
-    let mut session = context.session.clone();
-    let event = command_response::append_fresh_public_event(
-        &mut session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        context,
         command.id(),
         format!(
             "adventure_spell:{}:{spell_slug}:{}",

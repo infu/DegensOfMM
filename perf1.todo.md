@@ -884,11 +884,12 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 42. Random Endpoint Cluster: Event/Effect Row Floor
 
-- [ ] Rotate away from runtime command receipts after `commands.*` repo ops disappear.
-- [ ] Analyze which of the 12 `events.create_game_event` and 12 `effects.create_applied_command_effect` writes are still required for public replay, history, flush barriers, or tests.
-- [ ] Apply a bounded cut to one random command family first, not all event/effect writers at once.
-- [ ] Preserve `get_events_after`, command-status results, and recovery tests; if a row is removed from the hot path, runtime event/effect visibility or flush coverage must replace it.
-- [ ] Measure with endpoint-surface and compare against `20260520-final-command-receipts-local`.
+- [x] Rotate away from runtime command receipts after `commands.*` repo ops disappear.
+- [x] Analyze which of the 12 `events.create_game_event` and 12 `effects.create_applied_command_effect` writes are still required for public replay, history, flush barriers, or tests. Current endpoint-surface writers are champion magic `3`, economy `3`, scenario `5`, `end_turn` `1`, and worldgen effect-only `1`; `CommandEffect` remains a durability/recovery marker for now, while public events can move to active runtime events with flush coverage.
+- [x] Apply a bounded cut to one random command family first, not all event/effect writers at once. First slice moved champion magic public events to `SessionTurnRuntime`.
+- [x] Preserve `get_events_after`, command-status results, and recovery tests; if a row is removed from the hot path, runtime event/effect visibility or flush coverage must replace it. Added runtime public-event append for active `SessionTurnRuntime`, kept durable fallback, and fixed runtime command status-by-nonce to check all game command receipts.
+- [x] Measure with endpoint-surface and compare against `20260520-final-command-receipts-local`. Artifact `target/benchmarks/20260520-champion-runtime-events-local` passed with `59/59` endpoints; `events.create_game_event` moved `12 -> 9`, row growth moved `137 -> 134`, scenario instructions moved `59.5007B -> 58.0803B` (`-2.4%`), and champion magic calls each dropped about `0.47B`.
+- [ ] Rotate to another bounded event/effect family after committing the champion event slice.
 
 ## Expected Outcome
 

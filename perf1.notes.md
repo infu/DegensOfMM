@@ -6431,3 +6431,29 @@ Expected measurement:
 
 - `end_turn` should lose the active-caller durable lookup floor when active turn runtime context exists.
 - Remaining cost should mostly be turn-ready row creation, command/idempotency writes, event/effect rows, and optional turn-resolution job scheduling.
+
+## Random Pivot: Battle Sync Runtime-First Context
+
+New cluster:
+
+- Rotated to battle boundary calls after the `end_turn` runtime-current context cut.
+- The last endpoint-surface run measured `sync_battle` and `end_battle_turn` around `2.1B` on invalid/edge calls, which is mostly the durable active-caller floor before the battle-specific response.
+
+Cut:
+
+- `sync_battle` and `end_battle_turn` now use `require_active_session_caller_runtime_first`.
+- Battle row loading, runtime adoption, timeout/recovery handling, readiness, aftermath, events, and command response behavior are unchanged.
+- The runtime-first helper still falls back to durable caller/session/participant rows when no active runtime context exists.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- `sync_battle` and `end_battle_turn` should drop the active-caller durable lookup floor on endpoint-surface.
+- Remaining cost should be battle row lookup/adoption and command handling for these boundary calls.

@@ -838,7 +838,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve durable fallback behavior when the current active runtime is missing or incomplete.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `end_turn` drops the active-caller durable lookup floor.
-- [ ] Rotate again before deeper end-turn-only changes unless the next benchmark says `end_turn` remains a top blocker.
+- [x] Rotate again before deeper end-turn-only changes unless the next benchmark says `end_turn` remains a top blocker. Picked battle sync/end-turn auth because endpoint-surface still shows a `2.1B` auth floor on those invalid/edge calls.
+
+### 37. Random Endpoint Cluster: Battle Sync Runtime-First Context
+
+- [x] Rotate to battle sync/end-turn auth after the `end_turn` runtime-current context cut.
+- [x] Switch `sync_battle` and `end_battle_turn` to `require_active_session_caller_runtime_first`.
+- [x] Keep battle row loading, active runtime adoption, timeout/recovery handling, readiness, aftermath, events, and command response behavior unchanged.
+- [x] Preserve durable fallback behavior when no active runtime caller context exists.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `sync_battle` and `end_battle_turn` drop the active-caller durable lookup floor on endpoint-surface.
+- [ ] Rotate again before deeper battle-only changes unless the next benchmark says these battle boundary calls remain top blockers.
 
 ## Expected Outcome
 

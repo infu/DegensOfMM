@@ -1734,7 +1734,8 @@ pub(crate) fn sync_battle(
     now_ms: u64,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let payload_json = format!(
         r#"{{"battle_id":"{}"}}"#,
@@ -1853,7 +1854,8 @@ pub(crate) fn end_battle_turn(
     battle_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     if battle.state == "active" {
         battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;

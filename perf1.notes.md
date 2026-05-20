@@ -2980,3 +2980,41 @@ Decision:
 
 - Keep this cut. It moves another live movement status field into the runtime aggregate and preserves the public champion view used by Gate J.
 - This does not close Gate 5D because `sync_session_turn` is still above `1.5B`; the next large reductions require moving battle contact handoff/job scheduling out of durable rows or making turn/job authority runtime-owned.
+
+## Checkpoint: Return Neutral Battle On Activation Sync
+
+Implemented a control-flow cut in the neutral battle startup state machine:
+
+- Final neutral battle activation now returns `Some(battle)` immediately, matching the champion battle startup path.
+- `mark_neutral_encounter_pending` can emit `neutral_encounter_pending` in the same sync that activates the battle.
+- This removes the extra follow-up sync whose only meaningful repo operation was re-reading `battles.by_attacker` to rediscover the active battle.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260520-neutral-activation-returns-battle-gate-j` passed in `206.47s`.
+- Removed the benchmark PocketIC server left with the hard TTL after the run.
+
+Measured delta versus Gate 5D.2 `20260520-runtime-inbattle-champion-gate-j`:
+
+| metric | Gate 5D.2 | Gate 5F.4 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 169.5872B | 168.8816B | -0.4% |
+| Gate J memory | 5084.8125 MB | 5084.8125 MB | flat |
+| scenario calls | 54 | 53 | -1 |
+| `sync_session_turn` calls | 11 | 10 | -1 |
+| `sync_session_turn` avg | 1.9913B | 2.1199B | +6.5% |
+
+The sync average rose because the removed call was the cheap final rediscovery sync (`0.7046B`). Scenario total and call count are the meaningful improvement for this checkpoint.
+
+Measured repo-operation movement:
+
+| operation | Gate 5D.2 calls | Gate 5F.4 calls | note |
+| --- | ---: | ---: | --- |
+| `battles.by_attacker` | 5 | 4 | removed final active-battle rediscovery |
+
+Decision:
+
+- Keep this cut. It removes an entire public update call from the route without hiding work in another endpoint.
+- The remaining activation spike is still about `7.13B`; reducing it requires eliminating durable battle startup rows/job scheduling or building the active battle runtime directly before durable projection.

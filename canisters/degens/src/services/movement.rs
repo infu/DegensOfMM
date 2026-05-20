@@ -3758,7 +3758,7 @@ fn continue_neutral_battle_start(
                 battle.clone(),
                 stacks,
             )?;
-            Ok(None)
+            Ok(Some(battle))
         }
         _ => Ok(None),
     }

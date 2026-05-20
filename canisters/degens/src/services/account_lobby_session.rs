@@ -1306,7 +1306,11 @@ pub(crate) fn start_session(
                 session.state = "starting".to_string();
                 remember_session_row(&session);
             }
-            let setup_command = ensure_setup_command(&session)?;
+            let setup_command = if started_now {
+                ensure_runtime_setup_command(&session)
+            } else {
+                ensure_setup_command(&session)?
+            };
             if started_now {
                 system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
                     job_key: setup_session_job_key(session.id()),
@@ -1881,6 +1885,22 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
     let command = new_setup_command(session);
     commands_events_effects::cache_runtime_game_command(&command);
     Ok(command)
+}
+
+fn ensure_runtime_setup_command(session: &GameSession) -> GameCommand {
+    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
+    if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    ) {
+        return command;
+    }
+
+    let command = new_setup_command(session);
+    commands_events_effects::cache_runtime_game_command(&command);
+    command
 }
 
 fn new_setup_command(session: &GameSession) -> GameCommand {

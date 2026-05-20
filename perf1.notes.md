@@ -4951,3 +4951,24 @@ Verification:
 Decision:
 
 - Keep it as a broadening checkpoint. It does not move tavern offers themselves into heap projection yet; that remains open with non-start aliases and any remaining direct town-child command variants.
+
+## Checkpoint: Tavern Offer Town Projection
+
+Gate 6 tavern projection slice:
+
+- `TownProjection` now carries bounded `TavernOffer` rows alongside buildings, recruit pools, and garrison stacks.
+- `get_tavern_offers` reads the projected week when all expected offer slots are cached, otherwise it hydrates the week from durable rows and mirrors them into the projection.
+- Hire preview and hire command offer lookup now use the projection before durable `offer_key` lookup.
+- Tavern offer create/update points in first-playable setup, weekly materialization, and hire completion mirror durable rows into the projection.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. Tavern offers are still durably created/updated at the existing boundaries, so this is a read/projection cache rather than a new deferred-write contract.
+- Remaining TownProjection broadening is now specifically non-start aliases and any direct town child-row variants not covered by town/economy/movement paths.

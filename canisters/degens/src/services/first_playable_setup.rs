@@ -1046,7 +1046,7 @@ fn seed_tavern_offers(
             let class = class_rows
                 .get(&offer.champion_class_slug)
                 .ok_or_else(|| missing_content("champion_class", &offer.champion_class_slug))?;
-            economy_expansion::create_tavern_offer(
+            let offer = economy_expansion::create_tavern_offer(
                 session.id(),
                 town.id(),
                 participant.id(),
@@ -1058,6 +1058,7 @@ fn seed_tavern_offers(
                 offer.candidate_name,
                 offer.cost_gold,
             )?;
+            town_runtime::mirror_tavern_offer(&offer);
         }
     }
     Ok(())

@@ -38,12 +38,10 @@ pub(crate) fn get_tavern_offers(
         ));
     }
     let week_number = domm_game::week_for_turn(context.session.current_turn);
-    let offers =
-        economy_expansion::page_tavern_offers(context.session.id(), town.id(), week_number)?
-            .items
-            .into_iter()
-            .map(tavern_offer_view)
-            .collect();
+    let offers = town_runtime::tavern_offers_for_week(&town, week_number)?
+        .into_iter()
+        .map(tavern_offer_view)
+        .collect();
     Ok(TavernOffersView {
         town_id: town.id().to_string(),
         week_number,
@@ -59,7 +57,7 @@ pub(crate) fn preview_hire_champion(
 ) -> Result<ChampionHirePreview, ApiError> {
     let context = session_context::require_active_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
-    let offer = load_offer_for_town(&context, town.id(), &offer_key)?;
+    let offer = load_offer_for_town(&context, &town, &offer_key)?;
     let cost = ResourceBalances {
         gold: u64::from(offer.cost_gold),
         ..ResourceBalances::zero()
@@ -350,7 +348,7 @@ fn apply_hire_command(
     command: GameCommand,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
-    let mut offer = load_offer_for_town(context, town.id(), &offer_key)?;
+    let mut offer = load_offer_for_town(context, &town, &offer_key)?;
     if town.owner_participant_id != Some(context.participant.id().key()) {
         return command_response::fail_command(
             caller,
@@ -457,7 +455,8 @@ fn apply_hire_command(
     offer.status = "hired".to_string();
     offer.hired_champion_id = Some(champion.id().key());
     offer.hired_command_id = Some(command.id().key());
-    economy_expansion::update_tavern_offer(offer)?;
+    let offer = economy_expansion::update_tavern_offer(offer)?;
+    town_runtime::mirror_tavern_offer(&offer);
     ensure_champion_occupancy(context.session.id(), command.id(), &champion)?;
 
     let receipt = receipt(
@@ -794,7 +793,7 @@ fn ensure_tavern_offers_for_week(
                 true,
             )
         })?;
-        economy_expansion::create_tavern_offer(
+        let offer = economy_expansion::create_tavern_offer(
             session.id(),
             town.id(),
             participant_id,
@@ -806,6 +805,7 @@ fn ensure_tavern_offers_for_week(
             offer.candidate_name,
             offer.cost_gold,
         )?;
+        town_runtime::mirror_tavern_offer(&offer);
         created = created.saturating_add(1);
     }
     Ok(created)
@@ -841,12 +841,12 @@ fn materialize_town_recruit_growth(
 
 fn load_offer_for_town(
     context: &session_context::SessionCallerContext,
-    town_id: Id<Town>,
+    town: &Town,
     offer_key: &str,
 ) -> Result<domm_degens_schema::schema::TavernOffer, ApiError> {
-    let offer = economy_expansion::find_tavern_offer_by_key(offer_key)?
+    let offer = town_runtime::tavern_offer_by_key(town, offer_key)?
         .ok_or_else(|| public_error("offer_not_found", "tavern offer not found", false))?;
-    if offer.session_id != context.session.id().key() || offer.town_id != town_id.key() {
+    if offer.session_id != context.session.id().key() || offer.town_id != town.id().key() {
         return Err(public_error(
             "offer_not_found",
             "tavern offer not found",

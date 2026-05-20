@@ -6,8 +6,8 @@
 use std::{cell::RefCell, collections::BTreeMap};
 
 use domm_degens_schema::schema::{
-    BuildingDefinition, GameCommand, GameSession, Town, TownBuilding, TownGarrisonStack,
-    TownRecruitPool, UnitDefinition,
+    BuildingDefinition, GameCommand, GameSession, TavernOffer, Town, TownBuilding,
+    TownGarrisonStack, TownRecruitPool, UnitDefinition,
 };
 use domm_game::ApiError;
 use icydb::{
@@ -15,7 +15,7 @@ use icydb::{
     types::{Id, Timestamp, Ulid},
 };
 
-use crate::repos::towns;
+use crate::repos::{economy_expansion as economy_expansion_repo, towns};
 
 #[derive(Clone)]
 pub(crate) struct TownProjection {
@@ -23,6 +23,7 @@ pub(crate) struct TownProjection {
     pub buildings: Vec<TownBuilding>,
     pub recruit_pools: Vec<TownRecruitPool>,
     pub garrison_stacks: Vec<TownGarrisonStack>,
+    pub tavern_offers: Vec<TavernOffer>,
 }
 
 thread_local! {
@@ -46,6 +47,7 @@ pub(crate) fn projection_for_town(town: &Town) -> Result<TownProjection, ApiErro
             town.id(),
             u32::from(domm_game::MAX_ARMY_SLOTS),
         )?,
+        tavern_offers: Vec::new(),
     };
     TOWN_PROJECTIONS.with(|projections| {
         projections.borrow_mut().insert(key, projection.clone());
@@ -63,6 +65,7 @@ pub(crate) fn seed_town(town: &Town) {
                 buildings: Vec::new(),
                 recruit_pools: Vec::new(),
                 garrison_stacks: Vec::new(),
+                tavern_offers: Vec::new(),
             },
         );
     });
@@ -171,6 +174,70 @@ pub(crate) fn mirror_garrison_stack(row: &TownGarrisonStack) {
             projection.garrison_stacks.push(row.clone());
         }
     });
+}
+
+pub(crate) fn mirror_tavern_offer(row: &TavernOffer) {
+    let key = row_key(row.session_id, row.town_id);
+    TOWN_PROJECTIONS.with(|projections| {
+        let mut projections = projections.borrow_mut();
+        let Some(projection) = projections.get_mut(&key) else {
+            return;
+        };
+        if let Some(existing) = projection
+            .tavern_offers
+            .iter_mut()
+            .find(|existing| existing.id() == row.id())
+        {
+            *existing = row.clone();
+        } else {
+            projection.tavern_offers.push(row.clone());
+        }
+    });
+}
+
+pub(crate) fn tavern_offers_for_week(
+    town: &Town,
+    week_number: u32,
+) -> Result<Vec<TavernOffer>, ApiError> {
+    projection_for_town(town)?;
+    if let Some(offers) = cached_tavern_offers_for_week(town, week_number) {
+        return Ok(offers);
+    }
+    let offers =
+        economy_expansion_repo::page_tavern_offers(town_session_id(town), town.id(), week_number)?
+            .items;
+    for offer in &offers {
+        mirror_tavern_offer(offer);
+    }
+    Ok(offers)
+}
+
+pub(crate) fn tavern_offer_by_key(
+    town: &Town,
+    offer_key: &str,
+) -> Result<Option<TavernOffer>, ApiError> {
+    projection_for_town(town)?;
+    if let Some(offer) = TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .get(&town_key(town))
+            .and_then(|projection| {
+                projection
+                    .tavern_offers
+                    .iter()
+                    .find(|offer| offer.offer_key == offer_key)
+                    .cloned()
+            })
+    }) {
+        return Ok(Some(offer));
+    }
+    let Some(offer) = economy_expansion_repo::find_tavern_offer_by_key(offer_key)? else {
+        return Ok(None);
+    };
+    if offer.session_id == town.session_id && offer.town_id == town.id().key() {
+        mirror_tavern_offer(&offer);
+    }
+    Ok(Some(offer))
 }
 
 pub(crate) fn recruit_pool(
@@ -328,6 +395,28 @@ pub(crate) fn flush_all_projections_to_durable() -> Result<usize, ApiError> {
         }
     }
     Ok(flushed)
+}
+
+fn cached_tavern_offers_for_week(town: &Town, week_number: u32) -> Option<Vec<TavernOffer>> {
+    TOWN_PROJECTIONS.with(|projections| {
+        let mut offers = projections
+            .borrow()
+            .get(&town_key(town))?
+            .tavern_offers
+            .iter()
+            .filter(|offer| offer.week_number == week_number)
+            .cloned()
+            .collect::<Vec<_>>();
+        if offers.len() < domm_game::TAVERN_OFFERS_PER_WEEK {
+            return None;
+        }
+        offers.sort_by_key(|offer| (offer.offer_slot, offer.id));
+        Some(offers)
+    })
+}
+
+fn town_session_id(town: &Town) -> Id<GameSession> {
+    Id::<GameSession>::from_key(town.session_id)
 }
 
 fn town_key(town: &Town) -> (String, String) {

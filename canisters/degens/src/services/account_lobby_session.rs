@@ -389,6 +389,18 @@ fn flush_cached_lobby_participants_for_upgrade() -> Result<usize, ApiError> {
     Ok(flushed)
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn flush_cached_starting_session_for_upgrade() -> Result<usize, ApiError> {
+    let Some(session) = SESSION_ROW_CACHE.with_borrow(Clone::clone) else {
+        return Ok(0);
+    };
+    if session.state != "starting" {
+        return Ok(0);
+    }
+    sessions::update_session(session)?;
+    Ok(1)
+}
+
 fn cached_player_by_principal(actor_principal: Principal) -> Option<PlayerAccount> {
     PLAYER_PRINCIPAL_CACHE.with_borrow(|players| {
         players
@@ -548,7 +560,8 @@ fn remember_runtime_lobby_event(event: &ApiEventView) {
 pub(crate) fn flush_runtime_lobby_state_for_upgrade() -> Result<usize, ApiError> {
     let commands = RUNTIME_LOBBY_COMMANDS.with_borrow(Clone::clone);
     let events = RUNTIME_LOBBY_EVENTS.with_borrow(Clone::clone);
-    let mut flushed = flush_cached_lobby_participants_for_upgrade()?;
+    let mut flushed = flush_cached_lobby_participants_for_upgrade()?
+        .saturating_add(flush_cached_starting_session_for_upgrade()?);
     for command in commands {
         let command_id = command.id();
         if commands_events_effects::load_lobby_command(command_id)?.is_some() {
@@ -1291,7 +1304,6 @@ pub(crate) fn start_session(
             let started_now = session.state != "starting";
             if started_now {
                 session.state = "starting".to_string();
-                session = sessions::update_session(session)?;
                 remember_session_row(&session);
             }
             let setup_command = if started_now {
@@ -1327,8 +1339,10 @@ pub(crate) fn start_session(
                     }
                 }
                 if let Some(updated) = sessions::load_session(session.id())? {
-                    session = updated;
-                    remember_session_row(&session);
+                    if !(session.state == "starting" && updated.state == "lobby") {
+                        session = updated;
+                        remember_session_row(&session);
+                    }
                 }
             }
             session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
@@ -1932,6 +1946,10 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
     if session.state == "active" {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
+    }
+    if session.state == "lobby" {
+        session.state = "starting".to_string();
+        remember_session_row(&session);
     }
     if session.state != "starting" {
         system_job_repo::fail_system_job(job, false, "session is not starting".to_string())?;

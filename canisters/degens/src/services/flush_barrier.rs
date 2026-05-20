@@ -7,10 +7,15 @@ use domm_game::ApiError;
 pub(crate) const FLUSH_BARRIER_UPGRADE: &str = "Upgrade";
 #[cfg(not(feature = "benchmark"))]
 pub(crate) const FLUSH_BARRIER_STRONG_READ: &str = "StrongRead";
+#[cfg(not(feature = "benchmark"))]
+pub(crate) const FLUSH_BARRIER_TURN_ADVANCE: &str = "TurnAdvance";
 
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
-    if reason != FLUSH_BARRIER_UPGRADE && reason != FLUSH_BARRIER_STRONG_READ {
+    if reason != FLUSH_BARRIER_UPGRADE
+        && reason != FLUSH_BARRIER_STRONG_READ
+        && reason != FLUSH_BARRIER_TURN_ADVANCE
+    {
         return Err(ApiError::new(
             "unsupported_flush_barrier",
             "flush barrier reason is not supported yet",

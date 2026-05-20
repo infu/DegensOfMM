@@ -5082,3 +5082,24 @@ Verification:
 Decision:
 
 - Keep it. This gives Gate 5H a real callable explicit checkpoint while leaving hot-path `TurnAdvance`, `BattleHandoff`, and `RuntimeEviction` wiring for later slices.
+
+## Checkpoint: TurnAdvance Flush Barrier
+
+Gate 5H turn boundary slice:
+
+- Added `flush_barrier("TurnAdvance")` for the currently supported durable projection set.
+- Manual `sync_session_turn` now enforces the barrier after a successful full turn advance and after the runtime command receipt has been stored.
+- Scheduled turn-resolution jobs enforce the same barrier after completing the old turn and scheduling the next turn's jobs.
+- The enforcement is excluded from `feature=benchmark` builds so benchmark gates continue measuring the hot runtime shape, not production checkpoint cost.
+- Internal enforcement panics on barrier failure, matching the IC rollback model for a failed consistency boundary instead of returning a partial-checkpoint `Result`.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This gives Gate 5H a real `TurnAdvance` lifecycle boundary while leaving `BattleHandoff` and `RuntimeEviction` as the remaining barrier reasons.

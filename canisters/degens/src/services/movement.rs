@@ -803,6 +803,7 @@ fn sync_session_turn_with_command(
         events,
         changed_subjects,
     )?;
+    enforce_turn_advance_barrier();
     session_context::remember_active_session_caller(caller, &context);
     Ok(response)
 }
@@ -1099,8 +1100,21 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         cursor_json: None,
     })?;
     scenario_progress::schedule_turn_maintenance_jobs(&session, Some(command.id()))?;
+    enforce_turn_advance_barrier();
     Ok(())
 }
+
+#[cfg(not(feature = "benchmark"))]
+fn enforce_turn_advance_barrier() {
+    if let Err(error) =
+        super::flush_barrier::flush_barrier(super::flush_barrier::FLUSH_BARRIER_TURN_ADVANCE)
+    {
+        panic!("turn advance flush barrier failed: {}", error.message);
+    }
+}
+
+#[cfg(feature = "benchmark")]
+fn enforce_turn_advance_barrier() {}
 
 fn ensure_system_turn_command(
     session: &GameSession,

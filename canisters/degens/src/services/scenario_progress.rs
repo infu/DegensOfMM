@@ -167,7 +167,7 @@ pub(crate) fn sync_objectives(
     );
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
         format!("scenario:objectives:{}:{touched}", command.id()),
@@ -176,7 +176,7 @@ pub(crate) fn sync_objectives(
         Some(session_id_text.clone()),
         result_json.clone(),
     )?;
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         "scenario:sync_objectives".to_string(),
@@ -233,7 +233,7 @@ pub(crate) fn sync_world_events(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
         format!("scenario:world_event:{event_key}:{}", command.id()),
@@ -242,7 +242,7 @@ pub(crate) fn sync_world_events(
         Some(event_key.clone()),
         result_json.clone(),
     )?;
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("scenario:world_event:{event_key}"),
@@ -300,7 +300,7 @@ pub(crate) fn sync_advanced_victory(
     );
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
         format!("scenario:victory:{}:{updated}", command.id()),
@@ -309,7 +309,7 @@ pub(crate) fn sync_advanced_victory(
         Some(session_id_text.clone()),
         result_json.clone(),
     )?;
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         "scenario:sync_advanced_victory".to_string(),
@@ -530,7 +530,7 @@ fn apply_accept_quest(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
         format!("scenario:quest_accept:{}:{}", quest.quest_key, command.id()),
@@ -539,7 +539,7 @@ fn apply_accept_quest(
         Some(quest.quest_key.clone()),
         result_json.clone(),
     )?;
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("scenario:quest_accept:{}", quest.quest_key),
@@ -624,7 +624,7 @@ fn apply_claim_quest_reward(
         Some(resources_after),
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_public_event(
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
         format!("scenario:quest_claim:{}:{}", quest.quest_key, command.id()),
@@ -633,7 +633,7 @@ fn apply_claim_quest_reward(
         Some(quest.quest_key.clone()),
         result_json.clone(),
     )?;
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         format!("scenario:quest_claim:{}", quest.quest_key),

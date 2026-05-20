@@ -709,7 +709,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 ### 22. Batched Round-Robin Measurement
 
 - [x] Run endpoint-surface after champion magic fresh event/effect, battle-state query auth, and match-history player-cache cuts. Artifact `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49` passed in `198.09s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `152.4118B -> 145.4290B` (`-6.9828B`, `-4.6%`) versus `20260520-roundrobin-worldgen-endturn-query-35c9c27`.
-- [ ] Rotate to another still-heavy endpoint cluster from the latest ranking instead of polishing the same champion/battle/history cuts. Current candidates are `sync_advanced_victory` (`14.6173B`), `claim_quest_reward` (`14.1557B`), `submit_dwelling_recruit` (`12.5253B`), `hire_tavern_champion` (`12.1146B`), `sync_objectives` (`10.3812B`), `submit_market_trade` (`9.2295B`), `learn_champion_spell` (`8.9726B`), `sync_world_generation` (`7.8909B`), `cast_adventure_spell` (`7.8120B`), `accept_quest` (`7.7979B`), `sync_world_events` (`7.3200B`), `select_champion_level_up` (`6.3975B`), and `end_turn` (`5.9115B`).
+- [x] Rotate to another still-heavy endpoint cluster from the latest ranking instead of polishing the same champion/battle/history cuts. Picked scenario/worldgen fresh event/effect absence reads because the trace still shows one `effects.command_effect_by_command_key` and one `events.by_session_event_key` on most scenario sync/quest commands, plus one effect absence read on `sync_world_generation`.
+
+### 23. Round-Robin Endpoint Cluster: Scenario And Worldgen Fresh Event/Effect
+
+- [x] Rotate to scenario/worldgen after champion magic, battle-state, and match-history cuts.
+- [x] Use `append_fresh_public_event` and `create_fresh_command_effect` for successful fresh `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` paths. `begin_participant_command` still returns completed replays before these fresh creates.
+- [x] Use `create_fresh_command_effect` for successful fresh `sync_world_generation`.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads. Expected savings are about `1.4B` for scenario commands that emit both event/effect and about `0.7B` for `sync_world_generation`.
+- [ ] Rotate again before deeper scenario/worldgen-only changes.
 
 ## Expected Outcome
 

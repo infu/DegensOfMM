@@ -6006,3 +6006,29 @@ Post-measurement heavy endpoints:
 Next decision:
 
 - Rotate away from champion/battle/history. The best next low-risk cluster is likely the shared update context/command floor on scenario/economy/worldgen endpoints, but only if the runtime participant/session state is authoritative enough for those command paths. Otherwise target the next obvious endpoint-specific durable metadata churn from the latest repo-op trace.
+
+## Round-Robin Pivot: Scenario And Worldgen Fresh Event/Effect
+
+New cluster:
+
+- Rotated away from champion/battle/history to scenario/worldgen update commands.
+- Current costs: `sync_advanced_victory` `14.6173B`, `claim_quest_reward` `14.1557B`, `sync_objectives` `10.3812B`, `accept_quest` `7.7979B`, `sync_world_events` `7.3200B`, and `sync_world_generation` `7.8909B`.
+- The latest method traces still show one `effects.command_effect_by_command_key` absence read and one `events.by_session_event_key` absence read on most scenario commands, plus one effect absence read on `sync_world_generation`.
+
+Cut:
+
+- Successful fresh `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` now use `append_fresh_public_event` and `create_fresh_command_effect`.
+- Successful fresh `sync_world_generation` now uses `create_fresh_command_effect`.
+- This is the same pattern already measured for economy and champion magic: `begin_participant_command` returns completed replay responses before the fresh event/effect code runs, so the fresh path does not need to prove absence with a stable read.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- Scenario commands that emit both public event and command effect should save about `1.4B` each if the route still uses the fresh command path.
+- `sync_world_generation` should save about `0.7B` from the effect absence read.
+- Remaining costs after this cut will still include durable command create/idempotency/update, event/effect create, session update for event seq, and the scenario row scans/updates themselves.

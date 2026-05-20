@@ -111,7 +111,7 @@ pub(crate) fn sync_world_generation(
     let receipt = receipt_from_map(command.id(), context.session.current_turn, &map);
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    command_response::ensure_command_effect(
+    command_response::create_fresh_command_effect(
         context.session.id(),
         command.id(),
         "worldgen:sync_world_generation".to_string(),

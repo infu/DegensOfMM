@@ -3871,3 +3871,27 @@ Decision:
 
 - Keep this checkpoint. It removes one remaining stable read category from the active runtime sync path with a smaller Wasm code section than before.
 - The largest remaining sync repo-operation costs in Gate J are now `map.update_visibility_chunk`, `map.create_known_object`, `map.update_world_object`, `battles.create_battle`, `system_jobs.create_system_job`, and `sessions.update_session`.
+
+## Rejected Next Attempt: Skipping Runtime Turn Session Update Moved Behavior
+
+Tried skipping `sessions.update_session` during runtime-mode `sync_session_turn` turn advancement, relying on the new `SessionTurnRuntime` session row as authority for later commands and queries.
+
+Result:
+
+- `cargo fmt --check` passed.
+- `cargo check -p domm-degens-canister --features benchmark` passed.
+- `cargo check -p domm-degens-canister` passed.
+- Benchmark Wasm code section fit at `0x00bffe58`.
+- Focused Gate J `20260520-runtime-turn-session-skip-gate-j` passed in `197.03s`.
+
+Why it was rejected:
+
+- It reduced route instructions, but changed route shape in a suspicious way.
+- Gate J call count moved `87 -> 86`, `sync_session_turn` calls moved `10 -> 9`, and `battles.create_battle` disappeared from route repo ops.
+- Stable pages final moved `71041 -> 74881`, command rows moved `12 -> 17`, and event rows moved `7 -> 10`.
+- That means the saved session update was not a clean cut; it caused later behavior to use more durable command/event/job state and changed battle boundary projection timing.
+
+Decision:
+
+- Reverted before commit.
+- Do not skip the durable `GameSession` turn-advance projection by itself. It needs a proper Gate 5H flush/barrier and battle handoff contract so later commands do not drift into extra durable fallback work.

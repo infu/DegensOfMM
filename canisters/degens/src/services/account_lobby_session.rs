@@ -35,6 +35,7 @@ thread_local! {
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
     static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
     static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
+    static RUNTIME_LOBBY_EVENTS: RefCell<Vec<ApiEventView>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -180,6 +181,35 @@ fn remember_runtime_lobby_command(command: &LobbyCommand) {
                     || existing.client_nonce != command.client_nonce)
         });
         commands.push(command.clone());
+    });
+}
+
+pub(crate) fn runtime_lobby_events_after(
+    session_id: &str,
+    audience_key: &str,
+    after_event_seq: u64,
+) -> Vec<ApiEventView> {
+    RUNTIME_LOBBY_EVENTS.with_borrow(|events| {
+        events
+            .iter()
+            .filter(|event| {
+                event.session_id == session_id
+                    && event.audience_key == audience_key
+                    && event.event_seq > after_event_seq
+            })
+            .cloned()
+            .collect()
+    })
+}
+
+fn remember_runtime_lobby_event(event: &ApiEventView) {
+    RUNTIME_LOBBY_EVENTS.with_borrow_mut(|events| {
+        events.retain(|existing| {
+            existing.session_id != event.session_id
+                || existing.audience_key != event.audience_key
+                || existing.event_key != event.event_key
+        });
+        events.push(event.clone());
     });
 }
 
@@ -486,7 +516,7 @@ pub(crate) fn create_session(
         command,
         &client_nonce,
         Some(format!(r#"{{"session_id":"{}"}}"#, session.id())),
-        event.into_iter().map(api_event_view).collect(),
+        event.into_iter().collect(),
         vec![
             changed("session", &session_view.session_id, "upsert"),
             changed("participant", &participant.id().to_string(), "upsert"),
@@ -590,7 +620,7 @@ pub(crate) fn join_session(
                     r#"{{"session_id":"{}","participant_id":"{}"}}"#,
                     session_id_text, participant_id_text
                 )),
-                event.into_iter().map(api_event_view).collect(),
+                event.into_iter().collect(),
                 vec![
                     changed("session", &session_view.session_id, "update"),
                     changed("participant", &participant_id_text, "upsert"),
@@ -648,7 +678,7 @@ pub(crate) fn mark_ready(
                     r#"{{"session_id":"{}","participant_id":"{}"}}"#,
                     session_id_text, participant_id_text
                 )),
-                event.into_iter().map(api_event_view).collect(),
+                event.into_iter().collect(),
                 vec![
                     changed("session", &session_view.session_id, "update"),
                     changed("participant", &participant_id_text, "update"),
@@ -1563,23 +1593,33 @@ fn ensure_match_summary_shells(
 
 fn append_session_event(
     session: &mut GameSession,
-    command_id: Option<Id<GameCommand>>,
+    _command_id: Option<Id<GameCommand>>,
     event_key: &str,
     event_type: &str,
     subject_kind: Option<&str>,
     subject_id_text: Option<String>,
     payload_json: String,
-) -> Result<Option<GameEvent>, ApiError> {
-    append_session_event_with_command(
-        session,
-        command_id,
-        event_key,
-        event_type,
-        subject_kind,
+) -> Result<Option<ApiEventView>, ApiError> {
+    let event_seq = session.next_event_seq;
+    session.next_event_seq = event_seq.saturating_add(1);
+    remember_session_row(session);
+    let event = ApiEventView {
+        session_id: session.id().to_string(),
+        event_seq,
+        event_key: event_key.to_string(),
+        audience_key: "public".to_string(),
+        turn_number: session.current_turn,
+        event_type: event_type.to_string(),
+        subject_kind: subject_kind.map(str::to_string),
         subject_id_text,
-        payload_json,
-    )
-    .map(Some)
+        payload: Some(payload_json),
+        redacted: false,
+    };
+    if event.event_seq == 1 {
+        commands_events_effects::mark_event_feed_complete_from_runtime(session.id(), "public");
+    }
+    remember_runtime_lobby_event(&event);
+    Ok(Some(event))
 }
 
 fn append_session_event_with_command(
@@ -1819,21 +1859,6 @@ fn is_faction_arg_for(arg: &str, faction: &FactionDefinition) -> bool {
     arg == faction.slug
         || arg == faction.id().to_string()
         || arg == format!("faction:{}", faction.slug)
-}
-
-fn api_event_view(event: GameEvent) -> ApiEventView {
-    ApiEventView {
-        session_id: Id::<GameSession>::from_key(event.session_id).to_string(),
-        event_seq: event.event_seq,
-        event_key: event.event_key,
-        audience_key: event.audience_key,
-        turn_number: event.turn_number,
-        event_type: event.event_type,
-        subject_kind: event.subject_kind,
-        subject_id_text: event.subject_id_text,
-        payload: Some(event.payload_json),
-        redacted: false,
-    }
 }
 
 fn parse_id<E>(value: &str, field_name: &str) -> Result<Id<E>, ApiError>

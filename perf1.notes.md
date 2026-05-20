@@ -4382,3 +4382,46 @@ Decision:
 
 - Keep this checkpoint. It is a direct reuse of the real session row after successful durable writes, with durable fallback when the heap row is absent.
 - The remaining largest setup floors are now `sessions.update_session` (`2.8624B`), `sessions.by_state_current_turn` (`2.1095B`), and lobby/game event creates (`1.9B`).
+
+## Checkpoint: Runtime Lobby Events With Feed Cache Prime
+
+After the session row cache, Gate J still paid for four durable lobby `GameEvent` rows and four matching `GameSession.next_event_seq` updates. These events are immediate response/feed material for create-session, join-session, and ready-state lobby commands; they are not needed as durable live-state writes before the setup/battle handoff.
+
+What changed:
+
+- Added a runtime lobby event buffer storing `ApiEventView` rows for session-created, participant-joined, and participant-ready events.
+- `create_session`, `join_session`, and `mark_ready` now bump the cached session event cursor in heap and return/record runtime events instead of calling durable `events.create_game_event`.
+- `get_events_after` merges runtime lobby events with durable, session-turn, and battle runtime events.
+- The first runtime lobby event primes the existing complete event-feed cache, so later `get_events_after` calls stay heap-backed and durable setup/game events still append to the cached feed.
+- The durable setup completion event path remains unchanged.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfc265`
+- Focused Gate J `20260520-lobby-runtime-events-cache-gate-j` passed in `186.57s`
+- An intermediate run `20260520-lobby-runtime-events-gate-j` passed but regressed `get_events_after` to `0.7067B` average because the event-feed cache was no longer primed by a durable event with `event_seq=1`; the cache-prime fix restored `get_events_after` to `0.0001B`.
+
+Measured delta versus `20260520-lobby-session-row-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 30.0113B | 26.1877B | -12.7% |
+| Gate J scenario memory | 4108.2500 MB | 4076.2500 MB | -0.8% |
+| `create_session` avg | 8.9368B | 7.9832B | -10.7% |
+| `join_session` avg | 2.8393B | 1.8853B | -33.6% |
+| `mark_ready` avg | 2.8469B | 1.8895B | -33.6% |
+| `start_session` avg | 4.9582B | 4.9558B | flat |
+| `get_events_after` avg | 0.000092B | 0.000095B | flat |
+| `events.create_game_event` total | 1.9112B | 0B | removed |
+| `sessions.update_session` total | 2.8624B | 0.9538B | -66.7% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66689 | 66177 | -0.8% |
+
+Decision:
+
+- Keep this checkpoint. It removes lobby event/session write amplification without moving the cost into `get_events_after`.
+- The durability/history gap is now broader: fresh lobby command receipts and fresh lobby events are heap-backed until Gate 5H defines flush/upgrade/history policy. That is consistent with the active-runtime direction, but it must not be forgotten.

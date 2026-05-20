@@ -379,6 +379,13 @@ fn event_feed_complete(session_id: Id<GameSession>, audience_key: &str) -> bool 
     })
 }
 
+pub(crate) fn mark_event_feed_complete_from_runtime(
+    session_id: Id<GameSession>,
+    audience_key: &str,
+) {
+    mark_event_feed_complete(session_id, audience_key);
+}
+
 fn mark_event_feed_complete(session_id: Id<GameSession>, audience_key: &str) {
     let session_key = session_id.to_string();
     EVENT_FEED_CACHE.with_borrow_mut(|cache| {

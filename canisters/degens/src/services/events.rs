@@ -82,6 +82,18 @@ pub(crate) fn get_events_after(
         .map(api_event_view)
         .collect::<Vec<_>>();
     let canonical_session_id = context.session.id().to_string();
+    views.extend(account_lobby_session::runtime_lobby_events_after(
+        &canonical_session_id,
+        "public",
+        events_after_seq,
+    ));
+    if audience_key != "public" {
+        views.extend(account_lobby_session::runtime_lobby_events_after(
+            &canonical_session_id,
+            &audience_key,
+            events_after_seq,
+        ));
+    }
     views.extend(session_turn_runtime::active_events_after(
         &canonical_session_id,
         "public",

@@ -15,7 +15,7 @@ use icydb::{
 };
 
 use crate::repos::{
-    champions_artifacts, content, foundation, map_visibility_occupancy, neutrals, sessions, towns,
+    champions_artifacts, content, foundation, map_visibility_occupancy, neutrals, towns,
 };
 
 use super::{
@@ -1067,286 +1067,6 @@ fn fast_champion_for_known(
     champions_artifacts::find_champion_by_session_xy(context.session.id(), subject.x, subject.y)
 }
 
-#[allow(dead_code)]
-fn object_view_from_known(
-    context: &SessionCallerContext,
-    known: &ParticipantKnownObject,
-    participants_by_slot: &BTreeMap<u8, GameParticipant>,
-    participant_ids_by_slot: &BTreeMap<u8, String>,
-    world_objects_by_key: &BTreeMap<String, WorldObject>,
-    visibility_by_coord: &BTreeMap<(u16, u16), VisibilityChunk>,
-    viewport: Option<&Viewport>,
-) -> Result<Option<ObjectView>, ApiError> {
-    if known.visibility == "hidden" {
-        return Ok(None);
-    }
-
-    match known.subject_kind.as_str() {
-        "champion" => champion_object_view(
-            context,
-            known,
-            participants_by_slot,
-            visibility_by_coord,
-            viewport,
-        ),
-        "town" => town_object_view(
-            context,
-            known,
-            participant_ids_by_slot,
-            visibility_by_coord,
-            viewport,
-        ),
-        "neutral_army" => neutral_object_view(context, known, visibility_by_coord, viewport),
-        "world_object" => world_object_view(
-            context,
-            known,
-            world_objects_by_key,
-            visibility_by_coord,
-            viewport,
-        ),
-        _ => Ok(last_known_object_view(
-            known,
-            participant_ids_by_slot,
-            viewport,
-        )),
-    }
-}
-
-#[allow(dead_code)]
-fn participants_by_slot(
-    session_id: Id<GameSession>,
-) -> Result<BTreeMap<u8, GameParticipant>, ApiError> {
-    Ok(sessions::page_participants_by_session_status(
-        session_id,
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .map(|participant| (participant.slot_index, participant))
-    .collect())
-}
-
-fn participant_ids_by_slot(
-    participants_by_slot: &BTreeMap<u8, GameParticipant>,
-) -> BTreeMap<u8, String> {
-    participants_by_slot
-        .iter()
-        .map(|(slot, participant)| (*slot, participant.id().to_string()))
-        .collect()
-}
-
-#[allow(dead_code)]
-fn world_objects_by_scenario_key(
-    session_id: Id<GameSession>,
-) -> Result<BTreeMap<String, WorldObject>, ApiError> {
-    Ok(map_visibility_occupancy::page_world_objects_by_session(
-        session_id,
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items
-    .into_iter()
-    .filter_map(|object| {
-        json_string_field(object.instance_json.as_deref(), "scenario_key").map(|key| (key, object))
-    })
-    .collect())
-}
-
-#[allow(dead_code)]
-fn visibility_by_coord(
-    context: &SessionCallerContext,
-) -> Result<BTreeMap<(u16, u16), VisibilityChunk>, ApiError> {
-    Ok(
-        map_visibility_occupancy::page_visibility_chunks_by_participant(
-            context.session.id(),
-            context.participant.id(),
-            domm_game::MAX_LIST_LIMIT,
-            None,
-        )?
-        .items
-        .into_iter()
-        .map(|visibility| ((visibility.chunk_x, visibility.chunk_y), visibility))
-        .collect(),
-    )
-}
-
-fn champion_object_view(
-    context: &SessionCallerContext,
-    known: &ParticipantKnownObject,
-    participants_by_slot: &BTreeMap<u8, GameParticipant>,
-    visibility_by_coord: &BTreeMap<(u16, u16), VisibilityChunk>,
-    viewport: Option<&Viewport>,
-) -> Result<Option<ObjectView>, ApiError> {
-    let Some(champion) = live_champion_for_subject(
-        context.session.id(),
-        &known.subject_id_text,
-        participants_by_slot,
-    )?
-    else {
-        return Ok(last_known_object_view(
-            known,
-            &participant_ids_by_slot(participants_by_slot),
-            viewport,
-        ));
-    };
-    if !matches!(champion.status.as_str(), "active" | "in_battle") {
-        return Ok(None);
-    }
-    let own = champion.participant_id == context.participant.id().key();
-    let visible = own
-        || is_visible_with_cache(
-            &context.session,
-            visibility_by_coord,
-            champion.x,
-            champion.y,
-        );
-    if !visible {
-        return Ok(last_known_object_view(
-            known,
-            &participant_ids_by_slot(participants_by_slot),
-            viewport,
-        ));
-    }
-    if viewport.is_some_and(|viewport| !viewport.contains(champion.x, champion.y)) {
-        return Ok(None);
-    }
-    let details = scenario_subject_details(
-        &known.subject_kind,
-        &known.subject_id_text,
-        &participant_ids_by_slot(participants_by_slot),
-    );
-    Ok(Some(ObjectView {
-        subject_kind: known.subject_kind.clone(),
-        subject_id_text: known.subject_id_text.clone(),
-        visibility: "visible".to_string(),
-        redaction_level: "none".to_string(),
-        x: champion.x,
-        y: champion.y,
-        last_seen_turn: Some(context.session.current_turn),
-        display_name: Some(champion.name.clone()),
-        asset_key: details.asset_key,
-        owner_participant_id: Some(
-            Id::<GameParticipant>::from_key(champion.participant_id).to_string(),
-        ),
-        details_json: format!(
-            "{{\"type\":\"champion\",\"scenario_key\":\"{}\",\"champion_id\":\"{}\",\"class_key\":\"{}\",\"status\":\"{}\"}}",
-            escape_json(&known.subject_id_text),
-            champion.id(),
-            escape_json(&champion.class_key),
-            escape_json(&champion.status)
-        ),
-    }))
-}
-
-fn live_champion_for_subject(
-    session_id: Id<GameSession>,
-    subject_id_text: &str,
-    participants_by_slot: &BTreeMap<u8, GameParticipant>,
-) -> Result<Option<Champion>, ApiError> {
-    if let Ok(id) = Ulid::from_str(subject_id_text).map(Id::<Champion>::from_key) {
-        return champions_artifacts::load_champion(id);
-    }
-    let Some(start) = domm_game::first_playable_scenario()
-        .starts
-        .iter()
-        .find(|start| start.champion_key == subject_id_text)
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    if let Some(participant) = participants_by_slot.get(&start.slot_index) {
-        for champion_key in &participant.champion_ids {
-            let Some(champion) =
-                champions_artifacts::load_champion(Id::<Champion>::from_key(*champion_key))?
-            else {
-                continue;
-            };
-            if champion.session_id == session_id.key()
-                && champion.name == start.champion_name
-                && champion.class_key == start.champion_class_slug
-            {
-                return Ok(Some(champion));
-            }
-        }
-    }
-    champions_artifacts::find_champion_by_session_xy(session_id, start.champion_x, start.champion_y)
-}
-
-fn town_object_view(
-    context: &SessionCallerContext,
-    known: &ParticipantKnownObject,
-    participant_ids_by_slot: &BTreeMap<u8, String>,
-    visibility_by_coord: &BTreeMap<(u16, u16), VisibilityChunk>,
-    viewport: Option<&Viewport>,
-) -> Result<Option<ObjectView>, ApiError> {
-    let Some(town) = live_town_for_subject(context.session.id(), &known.subject_id_text)? else {
-        return Ok(last_known_object_view(
-            known,
-            participant_ids_by_slot,
-            viewport,
-        ));
-    };
-    if town.status != "active" {
-        return Ok(None);
-    }
-    let visible = is_visible_with_cache(&context.session, visibility_by_coord, town.x, town.y);
-    if !visible {
-        return Ok(last_known_object_view(
-            known,
-            participant_ids_by_slot,
-            viewport,
-        ));
-    }
-    if viewport.is_some_and(|viewport| !viewport.contains(town.x, town.y)) {
-        return Ok(None);
-    }
-    let details = scenario_subject_details(
-        &known.subject_kind,
-        &known.subject_id_text,
-        participant_ids_by_slot,
-    );
-    Ok(Some(ObjectView {
-        subject_kind: known.subject_kind.clone(),
-        subject_id_text: known.subject_id_text.clone(),
-        visibility: "visible".to_string(),
-        redaction_level: "none".to_string(),
-        x: town.x,
-        y: town.y,
-        last_seen_turn: Some(context.session.current_turn),
-        display_name: Some(town.name.clone()),
-        asset_key: details.asset_key,
-        owner_participant_id: town
-            .owner_participant_id
-            .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
-        details_json: format!(
-            "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"town_id\":\"{}\",\"status\":\"{}\"}}",
-            escape_json(&known.subject_id_text),
-            town.id(),
-            escape_json(&town.status)
-        ),
-    }))
-}
-
-fn live_town_for_subject(
-    session_id: Id<GameSession>,
-    subject_id_text: &str,
-) -> Result<Option<Town>, ApiError> {
-    if let Ok(id) = Ulid::from_str(subject_id_text).map(Id::<Town>::from_key) {
-        return towns::load_town(id);
-    }
-    let scenario = domm_game::first_playable_scenario();
-    let Some(start) = scenario
-        .starts
-        .iter()
-        .find(|start| start.town_key == subject_id_text)
-    else {
-        return Ok(None);
-    };
-    towns::find_town_by_session_xy(session_id, start.town_x, start.town_y)
-}
-
 fn live_town_for_known(
     session_id: Id<GameSession>,
     subject: &ObjectSubject,
@@ -1357,70 +1077,6 @@ fn live_town_for_known(
     towns::find_town_by_session_xy(session_id, subject.x, subject.y)
 }
 
-fn neutral_object_view(
-    context: &SessionCallerContext,
-    known: &ParticipantKnownObject,
-    visibility_by_coord: &BTreeMap<(u16, u16), VisibilityChunk>,
-    viewport: Option<&Viewport>,
-) -> Result<Option<ObjectView>, ApiError> {
-    let Some(neutral) = live_neutral_for_subject(context.session.id(), &known.subject_id_text)?
-    else {
-        return Ok(None);
-    };
-    if neutral.state == "defeated" {
-        return Ok(None);
-    }
-    let visible =
-        is_visible_with_cache(&context.session, visibility_by_coord, neutral.x, neutral.y);
-    if !visible {
-        return Ok(last_known_object_view(known, &BTreeMap::new(), viewport));
-    }
-    if viewport.is_some_and(|viewport| !viewport.contains(neutral.x, neutral.y)) {
-        return Ok(None);
-    }
-    let details = scenario_subject_details(
-        &known.subject_kind,
-        &known.subject_id_text,
-        &BTreeMap::new(),
-    );
-    Ok(Some(ObjectView {
-        subject_kind: known.subject_kind.clone(),
-        subject_id_text: known.subject_id_text.clone(),
-        visibility: "visible".to_string(),
-        redaction_level: "none".to_string(),
-        x: neutral.x,
-        y: neutral.y,
-        last_seen_turn: Some(context.session.current_turn),
-        display_name: Some(details.display_name),
-        asset_key: details.asset_key,
-        owner_participant_id: None,
-        details_json: format!(
-            "{{\"type\":\"neutral_army\",\"scenario_key\":\"{}\",\"neutral_army_id\":\"{}\",\"state\":\"{}\"}}",
-            escape_json(&known.subject_id_text),
-            neutral.id(),
-            escape_json(&neutral.state)
-        ),
-    }))
-}
-
-fn live_neutral_for_subject(
-    session_id: Id<GameSession>,
-    subject_id_text: &str,
-) -> Result<Option<NeutralArmy>, ApiError> {
-    if let Ok(id) = Ulid::from_str(subject_id_text).map(Id::<NeutralArmy>::from_key) {
-        return neutrals::load_neutral_army(id);
-    }
-    let scenario = domm_game::first_playable_scenario();
-    let Some(neutral) = scenario
-        .neutral_armies
-        .iter()
-        .find(|neutral| neutral.key == subject_id_text)
-    else {
-        return Ok(None);
-    };
-    neutrals::find_neutral_army_by_session_xy(session_id, neutral.x, neutral.y)
-}
-
 fn live_neutral_for_known(
     session_id: Id<GameSession>,
     subject: &ObjectSubject,
@@ -1429,72 +1085,6 @@ fn live_neutral_for_known(
         return neutrals::load_neutral_army(id);
     }
     neutrals::find_neutral_army_by_session_xy(session_id, subject.x, subject.y)
-}
-
-fn world_object_view(
-    context: &SessionCallerContext,
-    known: &ParticipantKnownObject,
-    world_objects_by_key: &BTreeMap<String, WorldObject>,
-    visibility_by_coord: &BTreeMap<(u16, u16), VisibilityChunk>,
-    viewport: Option<&Viewport>,
-) -> Result<Option<ObjectView>, ApiError> {
-    let Some(object) = live_world_object_for_subject(
-        context.session.id(),
-        &known.subject_id_text,
-        world_objects_by_key,
-    )?
-    else {
-        return Ok(None);
-    };
-    if object.state == "collected" {
-        return Ok(None);
-    }
-    let visible = is_visible_with_cache(&context.session, visibility_by_coord, object.x, object.y);
-    if !visible {
-        return Ok(last_known_object_view(known, &BTreeMap::new(), viewport));
-    }
-    if viewport.is_some_and(|viewport| !viewport.contains(object.x, object.y)) {
-        return Ok(None);
-    }
-    let details = scenario_subject_details(
-        &known.subject_kind,
-        &known.subject_id_text,
-        &BTreeMap::new(),
-    );
-    Ok(Some(ObjectView {
-        subject_kind: known.subject_kind.clone(),
-        subject_id_text: known.subject_id_text.clone(),
-        visibility: "visible".to_string(),
-        redaction_level: "none".to_string(),
-        x: object.x,
-        y: object.y,
-        last_seen_turn: Some(context.session.current_turn),
-        display_name: Some(details.display_name),
-        asset_key: details.asset_key,
-        owner_participant_id: object
-            .owner_participant_id
-            .map(|id| Id::<GameParticipant>::from_key(id).to_string()),
-        details_json: world_object_live_details_json(&known.subject_id_text, &object),
-    }))
-}
-
-fn live_world_object_for_subject(
-    session_id: Id<GameSession>,
-    subject_id_text: &str,
-    world_objects_by_key: &BTreeMap<String, WorldObject>,
-) -> Result<Option<WorldObject>, ApiError> {
-    if let Ok(id) = Ulid::from_str(subject_id_text).map(Id::<WorldObject>::from_key) {
-        if let Some(object) =
-            session_turn_runtime::world_object_by_id(&session_id.to_string(), &id.to_string())
-        {
-            return Ok(Some(object));
-        }
-        return map_visibility_occupancy::load_world_object(id);
-    }
-    if let Some(object) = world_objects_by_key.get(subject_id_text) {
-        return Ok(Some(object.clone()));
-    }
-    Ok(None)
 }
 
 fn live_world_object_for_known(
@@ -1515,34 +1105,6 @@ fn live_world_object_for_known(
         return Ok(runtime_result);
     }
     map_visibility_occupancy::find_world_object_by_session_xy(session_id, subject.x, subject.y)
-}
-
-fn last_known_object_view(
-    known: &ParticipantKnownObject,
-    participant_ids_by_slot: &BTreeMap<u8, String>,
-    viewport: Option<&Viewport>,
-) -> Option<ObjectView> {
-    if viewport.is_some_and(|viewport| !viewport.contains(known.x, known.y)) {
-        return None;
-    }
-    let details = scenario_subject_details(
-        &known.subject_kind,
-        &known.subject_id_text,
-        participant_ids_by_slot,
-    );
-    Some(ObjectView {
-        subject_kind: known.subject_kind.clone(),
-        subject_id_text: known.subject_id_text.clone(),
-        visibility: "last_known".to_string(),
-        redaction_level: "last_known".to_string(),
-        x: known.x,
-        y: known.y,
-        last_seen_turn: Some(known.last_seen_turn),
-        display_name: None,
-        asset_key: details.asset_key,
-        owner_participant_id: None,
-        details_json: known.redacted_json.clone().unwrap_or(details.redacted_json),
-    })
 }
 
 fn last_known_object_view_fast(
@@ -1574,7 +1136,6 @@ fn last_known_object_view_fast(
 struct SubjectDetails {
     display_name: String,
     asset_key: Option<String>,
-    redacted_json: String,
 }
 
 fn scenario_subject_details(
@@ -1593,10 +1154,6 @@ fn scenario_subject_details(
             return SubjectDetails {
                 display_name: start.town_name.clone(),
                 asset_key: Some(format!("sprite:town:{}", start.faction_slug)),
-                redacted_json: format!(
-                    "{{\"type\":\"town\",\"scenario_key\":\"{}\",\"status\":\"last_known\"}}",
-                    escape_json(subject_id_text)
-                ),
             };
         }
     }
@@ -1609,10 +1166,6 @@ fn scenario_subject_details(
             return SubjectDetails {
                 display_name: start.champion_name.clone(),
                 asset_key: Some(format!("sprite:champion:{}", start.champion_class_slug)),
-                redacted_json: format!(
-                    "{{\"type\":\"champion\",\"scenario_key\":\"{}\",\"status\":\"last_known\"}}",
-                    escape_json(subject_id_text)
-                ),
             };
         }
     }
@@ -1625,11 +1178,6 @@ fn scenario_subject_details(
             return SubjectDetails {
                 display_name: format!("Neutral Guard ({})", neutral.strength_band),
                 asset_key: Some("sprite:unit:broken-pike".to_string()),
-                redacted_json: format!(
-                    "{{\"type\":\"neutral_army\",\"scenario_key\":\"{}\",\"strength_label\":\"{}\"}}",
-                    escape_json(subject_id_text),
-                    escape_json(&neutral.strength_band)
-                ),
             };
         }
     }
@@ -1649,26 +1197,17 @@ fn scenario_subject_details(
         });
     if let Some(slug) = object {
         let definition = manifest.map_object(&slug);
-        let object_type = definition
-            .map(|definition| definition.object_type.as_str())
-            .unwrap_or("world_object");
         return SubjectDetails {
             display_name: definition
                 .map(|definition| definition.name.clone())
                 .unwrap_or_else(|| slug.clone()),
             asset_key: definition.and_then(|definition| definition.sprite_key.clone()),
-            redacted_json: format!(
-                "{{\"type\":\"world_object\",\"scenario_key\":\"{}\",\"object_type\":\"{}\",\"state\":\"last_known\"}}",
-                escape_json(subject_id_text),
-                escape_json(object_type)
-            ),
         };
     }
 
     SubjectDetails {
         display_name: subject_id_text.to_string(),
         asset_key: None,
-        redacted_json: "{}".to_string(),
     }
 }
 

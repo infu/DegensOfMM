@@ -3203,3 +3203,23 @@ Measured delta versus `20260520-runtime-session-query-fixed-gate-j`:
 Decision:
 
 - Keep this cut. The query changes materially reduce scenario cost without moving command paths onto stale runtime session rows. The town command micro-cuts are useful but small; getting build/recruit near `0.3B-0.6B` still requires the Gate 6 `TownRuntime`/resource-runtime rewrite, not more row-level polishing.
+
+## Checkpoint: Projection Code-Size Headroom
+
+Removed the unused legacy object projection pipeline from `render_projection.rs`.
+
+Why:
+
+- The benchmark canister is again close to the IC Wasm code-section limit.
+- The failed `20260520-query-town-cuts-gate-j` run showed that even useful small runtime helpers can push install over the limit.
+- The removed renderer was explicitly dead code after `object_view_from_known_fast` became the active projection path.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep this cleanup. It does not claim a gameplay performance delta, but it is necessary engineering work before adding the larger `TownRuntime` surface.

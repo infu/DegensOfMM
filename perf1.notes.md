@@ -5124,3 +5124,22 @@ Verification:
 Decision:
 
 - Keep it. This closes the most important battle-start recovery gap left by the heap startup optimization without changing benchmark hot-route measurements.
+
+## Checkpoint: RuntimeEviction Flush Barrier
+
+Gate 5H runtime eviction slice:
+
+- Added `flush_barrier("RuntimeEviction")` for the currently supported durable projection set.
+- Resolved battle cleanup now enforces that barrier before removing the active battle runtime from heap.
+- The barrier runs after the resolved battle state has already been projected and aftermath has updated durable/town/champion state.
+- Internal enforcement panics on failure so the IC reverts the eviction message instead of silently dropping heap-owned projection state.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. The listed Gate 5H lifecycle reasons now have concrete entry points, but the Gate 5H parent stays open because durable battle command/event archive flushing remains blocked by the IC benchmark Wasm code-section limit.

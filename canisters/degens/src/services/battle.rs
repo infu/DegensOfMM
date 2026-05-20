@@ -1606,10 +1606,23 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
         changed_subjects,
     )?;
     if battles::load_battle(battle_id)?.is_some_and(|battle| battle.state != "active") {
+        enforce_runtime_eviction_barrier();
         battle_runtime::remove_runtime(&battle_id_text);
     }
     Ok(())
 }
+
+#[cfg(not(feature = "benchmark"))]
+fn enforce_runtime_eviction_barrier() {
+    if let Err(error) =
+        super::flush_barrier::flush_barrier(super::flush_barrier::FLUSH_BARRIER_RUNTIME_EVICTION)
+    {
+        panic!("runtime eviction flush barrier failed: {}", error.message);
+    }
+}
+
+#[cfg(feature = "benchmark")]
+fn enforce_runtime_eviction_barrier() {}
 
 pub(crate) fn sync_battle(
     caller: CandidPrincipal,

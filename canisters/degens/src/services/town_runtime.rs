@@ -176,6 +176,19 @@ pub(crate) fn mirror_garrison_stack(row: &TownGarrisonStack) {
     });
 }
 
+pub(crate) fn replace_garrison_stacks(
+    town: &Town,
+    stacks: Vec<TownGarrisonStack>,
+) -> Result<(), ApiError> {
+    projection_for_town(town)?;
+    TOWN_PROJECTIONS.with(|projections| {
+        if let Some(projection) = projections.borrow_mut().get_mut(&town_key(town)) {
+            projection.garrison_stacks = stacks;
+        }
+    });
+    Ok(())
+}
+
 pub(crate) fn mirror_tavern_offer(row: &TavernOffer) {
     let key = row_key(row.session_id, row.town_id);
     TOWN_PROJECTIONS.with(|projections| {
@@ -345,13 +358,6 @@ pub(crate) fn create_garrison_stack(
     };
     mirror_garrison_stack(&row);
     Ok(row)
-}
-
-pub(crate) fn evict_town(session_id: Id<GameSession>, town_id: Id<Town>) {
-    let key = projection_key(session_id, town_id);
-    TOWN_PROJECTIONS.with(|projections| {
-        projections.borrow_mut().remove(&key);
-    });
 }
 
 #[cfg(not(feature = "benchmark"))]

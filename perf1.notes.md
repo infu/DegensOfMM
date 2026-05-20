@@ -4972,3 +4972,23 @@ Decision:
 
 - Keep it. Tavern offers are still durably created/updated at the existing boundaries, so this is a read/projection cache rather than a new deferred-write contract.
 - Remaining TownProjection broadening is now specifically non-start aliases and any direct town child-row variants not covered by town/economy/movement paths.
+
+## Checkpoint: Battle Town Garrison Projection
+
+Gate 6 town-child row broadening slice:
+
+- Town battle startup now builds defender stacks from `TownProjection.garrison_stacks` instead of paging durable `TownGarrisonStack` rows directly.
+- Battle aftermath now enumerates old defender garrison rows from the projection, deletes them durably, creates survivor garrison rows durably, and replaces the projected garrison with the survivor rows.
+- The now-unused `evict_town` helper was removed; aftermath keeps the projection coherent instead of cold-evicting it.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This removes the remaining direct battle garrison read path from outside `TownProjection` while preserving durable survivor writes at the battle-resolution boundary.
+- The remaining TownProjection todo is now only non-start town aliases beyond the first-playable start list.

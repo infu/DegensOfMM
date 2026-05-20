@@ -10,10 +10,11 @@ use icydb::{
     types::{Id, Timestamp},
 };
 
-use crate::repos::{battles, champions_artifacts, content, neutrals, towns};
+use crate::repos::{battles, champions_artifacts, content, neutrals};
 
 use super::{
     battle as battle_service, battle_runtime, command_response, session_context::public_error,
+    town_runtime,
 };
 
 #[derive(Clone, Default)]
@@ -379,11 +380,7 @@ pub(crate) fn start_town_battle(
         "attacker",
         1,
     )?;
-    stacks.extend(create_town_defender_stacks(
-        command_id,
-        battle.id(),
-        town.id(),
-    )?);
+    stacks.extend(create_town_defender_stacks(command_id, battle.id(), town)?);
     create_default_obstacles(command_id, battle.id())?;
     if stacks.iter().all(|stack| stack.side != "defender") {
         battle.state = "resolved".to_string();
@@ -539,11 +536,11 @@ fn battle_spell_status_keys_for_champion(
 fn create_town_defender_stacks(
     command_id: Id<GameCommand>,
     battle_id: Id<Battle>,
-    town_id: Id<Town>,
+    town: &Town,
 ) -> Result<Vec<BattleStack>, ApiError> {
     let mut rows = Vec::new();
-    for stack in towns::page_town_garrison(town_id, domm_game::MAX_LIST_LIMIT, None)?
-        .items
+    for stack in town_runtime::projection_for_town(town)?
+        .garrison_stacks
         .into_iter()
         .filter(|stack| stack.quantity > 0)
     {

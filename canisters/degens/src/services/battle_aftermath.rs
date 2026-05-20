@@ -226,7 +226,7 @@ fn apply_town_aftermath(
     town.last_command_id = Some(command_id.key());
     town = towns::update_town(town)?;
     town_runtime::mirror_town(&town);
-    write_town_garrison_survivors(session.id(), battle.id(), town_id, command_id)?;
+    write_town_garrison_survivors(battle.id(), &town, command_id)?;
 
     let mut champion = champions_artifacts::load_champion(champion_id)?
         .ok_or_else(|| public_error("champion_not_found", "champion not found", true))?;
@@ -376,15 +376,14 @@ fn write_champion_survivors(
 }
 
 fn write_town_garrison_survivors(
-    session_id: Id<GameSession>,
     battle_id: Id<Battle>,
-    town_id: Id<Town>,
+    town: &Town,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
-    town_runtime::evict_town(session_id, town_id);
-    for stack in towns::page_town_garrison(town_id, MAX_LIST_LIMIT, None)?.items {
+    for stack in town_runtime::projection_for_town(town)?.garrison_stacks {
         towns::delete_town_garrison_stack(stack.id())?;
     }
+    let mut survivor_stacks = Vec::new();
     for (slot_index, battle_stack) in battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?
         .items
         .into_iter()
@@ -399,9 +398,9 @@ fn write_town_garrison_survivors(
                     true,
                 )
             })?;
-        towns::create_town_garrison_stack(
-            session_id,
-            town_id,
+        let stack = towns::create_town_garrison_stack(
+            Id::<GameSession>::from_key(town.session_id),
+            town.id(),
             unit.id(),
             unit.slug,
             u8::try_from(slot_index).unwrap_or(u8::MAX),
@@ -409,7 +408,9 @@ fn write_town_garrison_survivors(
             battle_stack.front_hp,
             Some(command_id),
         )?;
+        survivor_stacks.push(stack);
     }
+    town_runtime::replace_garrison_stacks(town, survivor_stacks)?;
     Ok(())
 }
 

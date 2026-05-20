@@ -662,7 +662,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Verify the map-turn readiness cut with `cargo fmt`, `git diff --check`, and `cargo check -p domm-degens-canister`.
 - [ ] Re-run the benchmark-feature gates once the environment issue is cleared. Native `cargo check -p domm-degens-canister --features benchmark` currently fails in pre-existing benchmark-only lobby setup code (`process_setup_session_job` is cfg'd out), and `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark` currently fails before DoMM code because the host build-script linker points to a missing Nix `ld-wrapper.sh`.
 - [ ] Measure the next batched endpoint-surface/focused run and verify fresh `end_turn` drops `events.by_session_event_key` and, when the runtime is complete, drops the durable participant/ready count pages.
-- [ ] Rotate again after measurement or one more small independent cut.
+- [x] Rotate again after measurement or one more small independent cut. Picked the query-auth cluster because heavy read endpoints are still `2.8B-4.2B` while runtime-first game/town/event views are near zero.
+
+### 17. Round-Robin Endpoint Cluster: Query Auth Runtime-First
+
+- [x] Rotate to heavy read/preview endpoints from endpoint-surface: `preview_dwelling_recruit` (`4.2313B`), `get_dwelling_pool` (`3.5232B`), `preview_champion_progression` (`3.5225B`), `get_objective_progress` (`3.5182B`), `get_scenario_rules` (`3.5182B`), and worldgen reads (`~2.81B`).
+- [x] Use `require_session_caller_runtime_first` for read-only champion progression, economy/tavern/dwelling, scenario progress, quest preview, and worldgen query endpoints.
+- [x] Use `require_active_session_caller_runtime_first` for read-only active previews: hire champion, market trade, and dwelling recruit.
+- [x] Leave update endpoints on their existing command-safe context paths for this cut.
+- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure the next batched endpoint-surface/focused run and verify these queries lose the old durable caller/session/participant lookup floor when an active turn runtime is available.
+- [ ] Rotate again after the next batched measurement or another small independent low-risk cut.
 
 ## Expected Outcome
 

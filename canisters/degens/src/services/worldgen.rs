@@ -23,7 +23,7 @@ pub(crate) fn get_skirmish_settings(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<SkirmishSettingsView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let settings = worldgen::find_skirmish_settings(context.session.id())?.ok_or_else(|| {
         public_error(
             "skirmish_settings_missing",
@@ -42,7 +42,7 @@ pub(crate) fn get_procedural_map_state(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<ProceduralMapView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let maps = worldgen::page_procedural_maps_by_status(context.session.id(), "validated")?
         .items
         .into_iter()
@@ -59,7 +59,7 @@ pub(crate) fn get_naval_routes(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<NavalRoutesView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let routes = worldgen::page_naval_routes_by_status(context.session.id(), "disabled")?
         .items
         .into_iter()
@@ -76,7 +76,7 @@ pub(crate) fn get_siege_rules(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<SiegeRulesView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let rules = worldgen::page_siege_rules_by_status(context.session.id(), "disabled")?
         .items
         .into_iter()

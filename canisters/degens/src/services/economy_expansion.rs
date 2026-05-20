@@ -28,7 +28,7 @@ pub(crate) fn get_tavern_offers(
     session_id: String,
     town_id: String,
 ) -> Result<TavernOffersView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     if town.owner_participant_id != Some(context.participant.id().key()) {
         return Err(public_error(
@@ -55,7 +55,8 @@ pub(crate) fn preview_hire_champion(
     town_id: String,
     offer_key: String,
 ) -> Result<ChampionHirePreview, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let offer = load_offer_for_town(&context, &town, &offer_key)?;
     let cost = ResourceBalances {
@@ -124,7 +125,8 @@ pub(crate) fn preview_market_trade(
     to_resource: String,
     amount_in: u64,
 ) -> Result<MarketTradePreview, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let mut quote = domm_game::market_trade_quote(&from_resource, &to_resource, amount_in)
         .map_err(|error| ApiError::new("invalid_market_trade", error.to_string(), false))?;
     if !has_resource(&context.participant, &from_resource, amount_in)? {
@@ -176,7 +178,7 @@ pub(crate) fn get_dwelling_pool(
     session_id: String,
     object_id: String,
 ) -> Result<DwellingPoolView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
     let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
         .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
@@ -205,7 +207,8 @@ pub(crate) fn preview_dwelling_recruit(
     quantity: u32,
     champion_id: String,
 ) -> Result<DwellingRecruitPreview, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
     let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
         .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;

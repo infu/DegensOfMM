@@ -23,7 +23,7 @@ pub(crate) fn preview_champion_progression(
     session_id: String,
     champion_id: String,
 ) -> Result<ChampionProgressionView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let champion_id = session_context::parse_id::<Champion>(&champion_id, "champion_id")?;
     let champion = require_owned_champion(&context, champion_id)?;
     progression_view(&champion, context.session.current_turn)

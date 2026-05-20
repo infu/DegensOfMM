@@ -29,7 +29,7 @@ pub(crate) fn get_objective_progress(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<ObjectiveProgressView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let objectives = objective_rows_for_session(context.session.id())?
         .into_iter()
         .map(objective_view)
@@ -44,7 +44,7 @@ pub(crate) fn get_scenario_rules(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<ScenarioRulesView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let rules = scenario_rule_rows_for_session(context.session.id())?
         .into_iter()
         .map(rule_view)
@@ -60,7 +60,7 @@ pub(crate) fn get_world_events(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<WorldEventsView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let events = scenario_progress::page_world_events_by_status(context.session.id(), "active")?
         .items
         .into_iter()
@@ -78,7 +78,7 @@ pub(crate) fn preview_quest(
     session_id: String,
     quest_key: String,
 ) -> Result<QuestPreview, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let quest = load_quest(&context, &quest_key)?;
     Ok(quest_preview(&context, quest))
 }

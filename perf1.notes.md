@@ -5793,3 +5793,35 @@ Expected measurement:
 
 - Fresh `end_turn` should drop `events.by_session_event_key` (`~0.70B`).
 - Hot complete-runtime `end_turn` should also drop the durable participant/ready count pages (`~1.4B` in the last trace), while cold/partial-runtime paths retain the old stable reads for correctness.
+
+## Round-Robin Pivot: Query Auth Runtime-First Cluster
+
+New cluster:
+
+- Rotated from `end_turn` to broad read/preview endpoints.
+- Last measured heavy queries:
+  - `preview_dwelling_recruit`: `4.2313B`.
+  - `get_dwelling_pool`: `3.5232B`.
+  - `preview_champion_progression`: `3.5225B`.
+  - `get_objective_progress`: `3.5182B`.
+  - `get_scenario_rules`: `3.5182B`.
+  - `get_world_events`, `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, `get_siege_rules`: about `2.81B`.
+
+Cut:
+
+- Read-only champion progression now uses `require_session_caller_runtime_first`.
+- Economy/tavern/dwelling read endpoints now use runtime-first caller context; active previews use the active runtime-first variant.
+- Scenario progress and quest preview reads now use runtime-first caller context.
+- Worldgen read endpoints now use runtime-first caller context.
+- Update endpoints were intentionally left on the previous command paths in this cut.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- These endpoints should avoid the durable player/session/participant lookup when an active `SessionTurnRuntime` has the caller row, matching the shape already used by cheap game/town/event views.
+- The remaining query cost after that will identify whether stable child-row reads or DTO assembly dominate each endpoint.

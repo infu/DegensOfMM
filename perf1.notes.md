@@ -4263,3 +4263,42 @@ Decision:
 
 - Keep this checkpoint. It removes the repeated participant-list scan without pretending the rows do not exist: the cache is seeded and updated only from successful durable participant writes.
 - The remaining Gate J setup floor is now mostly `commands.lobby_command_idempotency`, session load/update scans, `sessions.by_state_current_turn`, and unavoidable first-time durable creates.
+
+## Checkpoint: Negative Player Live-Session Cache
+
+After the participant cache, `sessions.participants_by_player_status` was still visible at 4 calls and `1.4091B` total. The only caller is `player_has_live_session`, used to enforce active-session limits before create/join. For newly registered players, we can safely know the negative case without scanning durable participant rows.
+
+What changed:
+
+- Added a negative-only heap cache of players known to have no live session.
+- New player registration seeds that negative cache after the durable `PlayerAccount` insert.
+- `player_has_live_session` returns `false` from that negative cache before durable scans.
+- If a durable scan proves no live session, the negative cache is also updated.
+- Creating or joining a session clears the negative cache for that player. The cache never returns a positive answer, so it cannot incorrectly block a player after a session closes.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfb2a1`
+- Focused Gate J `20260520-player-no-live-cache-gate-j` passed in `193.05s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-session-participant-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 37.7339B | 36.3147B | -3.8% |
+| Gate J scenario memory | 4108.3750 MB | 4108.3125 MB | flat |
+| `create_session` avg | 10.3434B | 9.6384B | -6.8% |
+| `join_session` avg | 4.9507B | 4.2439B | -14.3% |
+| `sessions.participants_by_player_status` total | 1.4091B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66689 | 66689 | flat |
+
+Decision:
+
+- Keep this checkpoint. It is a small but clean setup win, and the negative-only shape avoids stale positive active-session decisions.
+- The next big setup floor is now `commands.lobby_command_idempotency` at about `4.924B`, followed by session load/update/state scans.

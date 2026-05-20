@@ -32,6 +32,7 @@ const SETUP_SYSTEM_ACTOR: &str = "setup";
 thread_local! {
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
+    static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
     static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
 }
 
@@ -105,6 +106,24 @@ fn remember_session_participant(participant: &GameParticipant) {
 
 fn seed_session_participant_cache(session_id: Id<GameSession>, participant: &GameParticipant) {
     let _ = remember_session_participants(session_id, vec![participant.clone()]);
+}
+
+fn cached_player_has_no_live_session(player_id: Id<PlayerAccount>) -> bool {
+    PLAYER_NO_LIVE_SESSION_CACHE.with_borrow(|players| players.contains(&player_id))
+}
+
+fn remember_player_has_no_live_session(player_id: Id<PlayerAccount>) {
+    PLAYER_NO_LIVE_SESSION_CACHE.with_borrow_mut(|players| {
+        if !players.contains(&player_id) {
+            players.push(player_id);
+        }
+    });
+}
+
+fn clear_player_has_no_live_session(player_id: Id<PlayerAccount>) {
+    PLAYER_NO_LIVE_SESSION_CACHE.with_borrow_mut(|players| {
+        players.retain(|existing| *existing != player_id);
+    });
 }
 
 pub(crate) fn runtime_lobby_command_by_id(command_id: &str) -> Option<LobbyCommand> {
@@ -298,13 +317,18 @@ pub(crate) fn register_player(
         LobbyCommandAction::Return(response) => return Ok(response),
     };
 
-    let player = match players::find_by_principal(actor_principal)? {
+    let existing_player = players::find_by_principal(actor_principal)?;
+    let player = match existing_player {
         Some(player) => player,
-        None => players::create_player_account(
-            actor_principal,
-            command_username(&username, caller),
-            Some(display_name),
-        )?,
+        None => {
+            let player = players::create_player_account(
+                actor_principal,
+                command_username(&username, caller),
+                Some(display_name),
+            )?;
+            remember_player_has_no_live_session(player.id());
+            player
+        }
     };
     command.actor_player_id = Some(player.id);
     let player_view = player_view(&player);
@@ -421,6 +445,7 @@ pub(crate) fn create_session(
         0,
         "red".to_string(),
     )?;
+    clear_player_has_no_live_session(player.id());
     seed_session_participant_cache(session.id(), &participant);
     let mut session = session;
     let session_id_text = session.id().to_string();
@@ -518,6 +543,7 @@ pub(crate) fn join_session(
                 slot_index,
                 color_key,
             )?;
+            clear_player_has_no_live_session(player.id());
             remember_session_participant(&participant);
             let session_id_text = session.id().to_string();
             let participant_id_text = participant.id().to_string();
@@ -1632,6 +1658,9 @@ fn participants_for_session(session_id: Id<GameSession>) -> Result<Vec<GameParti
 }
 
 fn player_has_live_session(player_id: Id<PlayerAccount>) -> Result<bool, ApiError> {
+    if cached_player_has_no_live_session(player_id) {
+        return Ok(false);
+    }
     let participants =
         sessions::page_participants_by_player_status(player_id, "active", MAX_LIST_LIMIT, None)?;
     for participant in participants.items {
@@ -1642,6 +1671,7 @@ fn player_has_live_session(player_id: Id<PlayerAccount>) -> Result<bool, ApiErro
             return Ok(true);
         }
     }
+    remember_player_has_no_live_session(player_id);
     Ok(false)
 }
 

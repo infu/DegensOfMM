@@ -5378,3 +5378,22 @@ Test follow-up:
 Decision:
 
 - Keep it. The durable recovery route should stay durable until the parked movement is finished; this keeps the fast runtime path unchanged for normal Gate J commands.
+
+## Checkpoint: Champion Snapshot Flush At Runtime Barrier
+
+Gate 7.8 battle-handoff durability slice:
+
+- After durable follow-up sync, the long setup/replay test progressed to a neutral encounter assertion where the durable champion row still reported `active` instead of `in_battle`.
+- The battle handoff path updated runtime champion snapshots, and the existing barrier flushed session, participant, command receipt, resource, and event projections, but not champion snapshots.
+- Added champion snapshot updates to `session_turn_runtime::flush_runtime_projections_for_upgrade`, so battle handoff/upgrade/strong-read barriers persist the latest heap champion rows before direct durable recovery reads.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture` passed in `209.30s`
+
+Decision:
+
+- Keep it. Runtime battle handoff must not leave direct durable champion reads behind heap state when a barrier has explicitly run.

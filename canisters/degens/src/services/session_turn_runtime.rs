@@ -1238,6 +1238,10 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             sessions::update_participant(participant)?;
             flushed = flushed.saturating_add(1);
         }
+        for champion in &runtime.champion_snapshots {
+            champions_artifacts::update_champion(champion.clone())?;
+            flushed = flushed.saturating_add(1);
+        }
     }
     for runtime in &runtimes {
         for receipt in &runtime.command_receipts {

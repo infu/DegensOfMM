@@ -4222,3 +4222,44 @@ Decision:
 
 - Keep this checkpoint. It removes about `6.66B` of setup route instructions without hollowing the public lobby API: same-call replay and status still work from heap receipts, while older durable receipts still fall back to IcyDB.
 - This intentionally weakens durable lobby receipt history until Gate 5H adds a flush/upgrade policy. The same pattern is already true for other hot runtime receipts, so consolidate it under one barrier/snapshot design rather than reintroducing per-command stable writes.
+
+## Checkpoint: Session Participant Cache Removes Lobby Scans
+
+After runtime lobby receipts, the next largest route repo op was `sessions.participants_by_session_status`: 14 scans, `4.9362B` total. These reads were mostly rebuilding the same lobby/session participant list after create, join, ready, and start-session operations.
+
+What changed:
+
+- Added a single active-session heap cache containing real `GameParticipant` rows.
+- `create_session` seeds the cache with the creator participant after the durable insert.
+- `join_session` appends the newly inserted participant to the cache.
+- `mark_ready` updates the cached participant after the durable participant update.
+- `participants_for_session` now returns the cached real rows when present and falls back to the durable indexed page on cache miss.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfae70`
+- Focused Gate J `20260520-session-participant-cache-gate-j` passed in `184.10s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-lobby-runtime-receipts-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 42.6716B | 37.7339B | -11.6% |
+| Gate J scenario memory | 4108.3125 MB | 4108.3750 MB | flat |
+| `create_session` avg | 11.0501B | 10.3434B | -6.4% |
+| `join_session` avg | 6.3675B | 4.9507B | -22.3% |
+| `mark_ready` avg | 4.9536B | 4.2488B | -14.2% |
+| `start_session` avg | 7.7633B | 6.3586B | -18.1% |
+| `sessions.participants_by_session_status` total | 4.9362B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66689 | 66689 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the repeated participant-list scan without pretending the rows do not exist: the cache is seeded and updated only from successful durable participant writes.
+- The remaining Gate J setup floor is now mostly `commands.lobby_command_idempotency`, session load/update scans, `sessions.by_state_current_turn`, and unavoidable first-time durable creates.

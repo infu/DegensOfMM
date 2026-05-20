@@ -31,7 +31,14 @@ const SETUP_SYSTEM_ACTOR: &str = "setup";
 
 thread_local! {
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
+    static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
     static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone)]
+struct SessionParticipantCache {
+    session_id: Id<GameSession>,
+    participants: Vec<GameParticipant>,
 }
 
 fn cached_session_view(session_id: &str) -> Option<SessionView> {
@@ -46,6 +53,58 @@ fn cached_session_view(session_id: &str) -> Option<SessionView> {
 
 fn remember_session_view(view: &SessionView) {
     SESSION_VIEW_CACHE.with(|cache| *cache.borrow_mut() = Some(view.clone()));
+}
+
+fn cached_session_participants(session_id: Id<GameSession>) -> Option<Vec<GameParticipant>> {
+    SESSION_PARTICIPANT_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|entry| entry.session_id == session_id)
+            .map(|entry| entry.participants.clone())
+    })
+}
+
+fn remember_session_participants(
+    session_id: Id<GameSession>,
+    mut participants: Vec<GameParticipant>,
+) -> Vec<GameParticipant> {
+    participants.sort_by_key(|participant| participant.slot_index);
+    SESSION_PARTICIPANT_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some(SessionParticipantCache {
+            session_id,
+            participants: participants.clone(),
+        });
+    });
+    participants
+}
+
+fn remember_session_participant(participant: &GameParticipant) {
+    SESSION_PARTICIPANT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let Some(entry) = cache.as_mut() else {
+            return;
+        };
+        if entry.session_id.key() != participant.session_id {
+            return;
+        }
+        if let Some(existing) = entry
+            .participants
+            .iter_mut()
+            .find(|existing| existing.id == participant.id)
+        {
+            *existing = participant.clone();
+        } else {
+            entry.participants.push(participant.clone());
+        }
+        entry
+            .participants
+            .sort_by_key(|participant| participant.slot_index);
+    });
+}
+
+fn seed_session_participant_cache(session_id: Id<GameSession>, participant: &GameParticipant) {
+    let _ = remember_session_participants(session_id, vec![participant.clone()]);
 }
 
 pub(crate) fn runtime_lobby_command_by_id(command_id: &str) -> Option<LobbyCommand> {
@@ -362,6 +421,7 @@ pub(crate) fn create_session(
         0,
         "red".to_string(),
     )?;
+    seed_session_participant_cache(session.id(), &participant);
     let mut session = session;
     let session_id_text = session.id().to_string();
     let event = append_session_event(
@@ -458,6 +518,7 @@ pub(crate) fn join_session(
                 slot_index,
                 color_key,
             )?;
+            remember_session_participant(&participant);
             let session_id_text = session.id().to_string();
             let participant_id_text = participant.id().to_string();
             let event = append_session_event(
@@ -515,6 +576,7 @@ pub(crate) fn mark_ready(
             let mut participant = require_participant_for_player(session.id(), player.id())?;
             participant.ready_turn = session.current_turn;
             let participant = sessions::update_participant(participant)?;
+            remember_session_participant(&participant);
             let session_id_text = session.id().to_string();
             let participant_id_text = participant.id().to_string();
             let event = append_session_event(
@@ -1562,8 +1624,11 @@ fn require_participant_for_player(
 }
 
 fn participants_for_session(session_id: Id<GameSession>) -> Result<Vec<GameParticipant>, ApiError> {
+    if let Some(participants) = cached_session_participants(session_id) {
+        return Ok(participants);
+    }
     sessions::page_participants_by_session_status(session_id, "active", MAX_LIST_LIMIT, None)
-        .map(|page| page.items)
+        .map(|page| remember_session_participants(session_id, page.items))
 }
 
 fn player_has_live_session(player_id: Id<PlayerAccount>) -> Result<bool, ApiError> {

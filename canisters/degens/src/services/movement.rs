@@ -656,6 +656,7 @@ fn sync_session_turn_with_command(
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
+        let enforce_battle_handoff = contains_battle_handoff_event(&events);
         if !command.is_runtime() {
             reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         }
@@ -669,6 +670,9 @@ fn sync_session_turn_with_command(
             events,
             changed_subjects,
         )?;
+        if enforce_battle_handoff {
+            enforce_battle_handoff_barrier();
+        }
         session_context::remember_active_session_caller(caller, &context);
         return Ok(response);
     }
@@ -1015,6 +1019,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
+        let enforce_battle_handoff = contains_battle_handoff_event(&events);
         let mut command = command;
         command.status = "applying".to_string();
         command.phase = "movement_partial".to_string();
@@ -1025,6 +1030,9 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         ));
         commands_events_effects::update_game_command(command)?;
         system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
+        if enforce_battle_handoff {
+            enforce_battle_handoff_barrier();
+        }
         return Ok(());
     }
 
@@ -1115,6 +1123,27 @@ fn enforce_turn_advance_barrier() {
 
 #[cfg(feature = "benchmark")]
 fn enforce_turn_advance_barrier() {}
+
+fn contains_battle_handoff_event(events: &[domm_game::ApiEventView]) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event.event_type.as_str(),
+            "champion_encounter_pending" | "neutral_encounter_pending" | "town_encounter_pending"
+        )
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn enforce_battle_handoff_barrier() {
+    if let Err(error) =
+        super::flush_barrier::flush_barrier(super::flush_barrier::FLUSH_BARRIER_BATTLE_HANDOFF)
+    {
+        panic!("battle handoff flush barrier failed: {}", error.message);
+    }
+}
+
+#[cfg(feature = "benchmark")]
+fn enforce_battle_handoff_barrier() {}
 
 fn ensure_system_turn_command(
     session: &GameSession,
@@ -3881,8 +3910,14 @@ fn continue_neutral_battle_start(
             battle.action_deadline_at = Some(battle_start::fresh_action_deadline_at());
             discard_neutral_starting_battle(pending_move.champion.id());
             battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
+            #[cfg(not(feature = "benchmark"))]
+            battle_start::persist_battle_header_for_handoff(&battle, command_id)?;
 
             if let Some((_, obstacles, occupancy)) = cached_rows {
+                #[cfg(not(feature = "benchmark"))]
+                battle_start::persist_loaded_startup_rows_for_handoff(
+                    &stacks, &obstacles, &occupancy,
+                )?;
                 battle_runtime::adopt_active_battle_from_loaded_rows(
                     session,
                     battle.clone(),

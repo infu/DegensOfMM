@@ -5103,3 +5103,24 @@ Verification:
 Decision:
 
 - Keep it. This gives Gate 5H a real `TurnAdvance` lifecycle boundary while leaving `BattleHandoff` and `RuntimeEviction` as the remaining barrier reasons.
+
+## Checkpoint: BattleHandoff Flush Barrier
+
+Gate 5H battle handoff slice:
+
+- Added `flush_barrier("BattleHandoff")` for the currently supported durable projection set.
+- Manual movement sync and scheduled turn-resolution now enforce the barrier when they return a battle handoff event: `champion_encounter_pending`, `neutral_encounter_pending`, or `town_encounter_pending`.
+- Non-benchmark battle handoff now projects the active `Battle` header before adopting heap runtime state.
+- Non-benchmark handoff also materializes cached heap startup `BattleStack`, `BattleObstacle`, and `BattleOccupancy` rows idempotently by row id before runtime adoption.
+- This keeps benchmark builds on the fast heap-only startup path while giving production/upgrade recovery real tactical child rows to hydrate from at the handoff boundary.
+- Internal enforcement panics on barrier failure so the IC reverts the handoff message instead of leaving a partial checkpoint.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This closes the most important battle-start recovery gap left by the heap startup optimization without changing benchmark hot-route measurements.

@@ -197,6 +197,14 @@ pub(crate) fn update_battle_stack(stack: BattleStack) -> RepoResult<BattleStack>
     foundation::update("battles.update_battle_stack", stack)
 }
 
+pub(crate) fn load_battle_stack(id: Id<BattleStack>) -> RepoResult<Option<BattleStack>> {
+    foundation::load_by_id("battles.load_battle_stack", id)
+}
+
+pub(crate) fn insert_battle_stack(stack: BattleStack) -> RepoResult<BattleStack> {
+    foundation::insert("battles.insert_battle_stack", stack)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_battle_stack(
     battle_id: Id<Battle>,
@@ -282,6 +290,16 @@ pub(crate) fn update_battle_occupancy(occupancy: BattleOccupancy) -> RepoResult<
     foundation::update("battles.update_battle_occupancy", occupancy)
 }
 
+pub(crate) fn load_battle_occupancy(
+    id: Id<BattleOccupancy>,
+) -> RepoResult<Option<BattleOccupancy>> {
+    foundation::load_by_id("battles.load_battle_occupancy", id)
+}
+
+pub(crate) fn insert_battle_occupancy(occupancy: BattleOccupancy) -> RepoResult<BattleOccupancy> {
+    foundation::insert("battles.insert_battle_occupancy", occupancy)
+}
+
 pub(crate) fn delete_battle_occupancy(occupancy_id: Id<BattleOccupancy>) -> RepoResult<u32> {
     foundation::delete_by_id("battles.delete_battle_occupancy", occupancy_id)
 }
@@ -306,6 +324,18 @@ pub(crate) fn create_battle_obstacle(
     };
 
     foundation::create("battles.create_battle_obstacle", input)
+}
+
+pub(crate) fn load_battle_obstacle(id: Id<BattleObstacle>) -> RepoResult<Option<BattleObstacle>> {
+    foundation::load_by_id("battles.load_battle_obstacle", id)
+}
+
+pub(crate) fn insert_battle_obstacle(obstacle: BattleObstacle) -> RepoResult<BattleObstacle> {
+    foundation::insert("battles.insert_battle_obstacle", obstacle)
+}
+
+pub(crate) fn update_battle_obstacle(obstacle: BattleObstacle) -> RepoResult<BattleObstacle> {
+    foundation::update("battles.update_battle_obstacle", obstacle)
 }
 
 pub(crate) fn page_battle_obstacles(

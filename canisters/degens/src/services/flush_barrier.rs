@@ -9,12 +9,15 @@ pub(crate) const FLUSH_BARRIER_UPGRADE: &str = "Upgrade";
 pub(crate) const FLUSH_BARRIER_STRONG_READ: &str = "StrongRead";
 #[cfg(not(feature = "benchmark"))]
 pub(crate) const FLUSH_BARRIER_TURN_ADVANCE: &str = "TurnAdvance";
+#[cfg(not(feature = "benchmark"))]
+pub(crate) const FLUSH_BARRIER_BATTLE_HANDOFF: &str = "BattleHandoff";
 
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
     if reason != FLUSH_BARRIER_UPGRADE
         && reason != FLUSH_BARRIER_STRONG_READ
         && reason != FLUSH_BARRIER_TURN_ADVANCE
+        && reason != FLUSH_BARRIER_BATTLE_HANDOFF
     {
         return Err(ApiError::new(
             "unsupported_flush_barrier",

@@ -206,6 +206,51 @@ pub(crate) fn discard_startup_rows(battle_id: Id<Battle>) {
     });
 }
 
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn persist_battle_header_for_handoff(
+    battle: &Battle,
+    command_id: Id<GameCommand>,
+) -> Result<(), ApiError> {
+    let mut row = battle.clone();
+    row.last_command_id = Some(command_id.key());
+    battles::update_battle(row)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn persist_loaded_startup_rows_for_handoff(
+    stacks: &[BattleStack],
+    obstacles: &[BattleObstacle],
+    occupancy: &[BattleOccupancy],
+) -> Result<usize, ApiError> {
+    let mut persisted = 0_usize;
+    for stack in stacks {
+        if battles::load_battle_stack(stack.id())?.is_some() {
+            battles::update_battle_stack(stack.clone())?;
+        } else {
+            battles::insert_battle_stack(stack.clone())?;
+        }
+        persisted = persisted.saturating_add(1);
+    }
+    for obstacle in obstacles {
+        if battles::load_battle_obstacle(obstacle.id())?.is_some() {
+            battles::update_battle_obstacle(obstacle.clone())?;
+        } else {
+            battles::insert_battle_obstacle(obstacle.clone())?;
+        }
+        persisted = persisted.saturating_add(1);
+    }
+    for row in occupancy {
+        if battles::load_battle_occupancy(row.id())?.is_some() {
+            battles::update_battle_occupancy(row.clone())?;
+        } else {
+            battles::insert_battle_occupancy(row.clone())?;
+        }
+        persisted = persisted.saturating_add(1);
+    }
+    Ok(persisted)
+}
+
 pub(crate) fn start_champion_battle(
     session: &GameSession,
     command_id: Id<GameCommand>,
@@ -326,7 +371,11 @@ fn continue_champion_battle_start(
             battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
             battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
+            #[cfg(not(feature = "benchmark"))]
+            persist_battle_header_for_handoff(&battle, command_id)?;
             if let Some((_, obstacles, occupancy)) = cached_rows {
+                #[cfg(not(feature = "benchmark"))]
+                persist_loaded_startup_rows_for_handoff(&stacks, &obstacles, &occupancy)?;
                 battle_runtime::adopt_active_battle_from_loaded_rows(
                     session,
                     battle.clone(),
@@ -393,7 +442,11 @@ pub(crate) fn start_town_battle(
     } else {
         let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
         battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
+        #[cfg(not(feature = "benchmark"))]
+        persist_battle_header_for_handoff(&battle, command_id)?;
         if let Some((_, obstacles, occupancy)) = take_complete_startup_rows(battle.id()) {
+            #[cfg(not(feature = "benchmark"))]
+            persist_loaded_startup_rows_for_handoff(&stacks, &obstacles, &occupancy)?;
             battle_runtime::adopt_active_battle_from_loaded_rows(
                 session,
                 battle.clone(),

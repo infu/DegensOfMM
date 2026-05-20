@@ -588,6 +588,11 @@ pub(crate) fn start_session(
 }
 
 pub(crate) fn get_session(session_id: String) -> Result<SessionView, ApiError> {
+    if let Some((session, mut participants)) =
+        session_turn_runtime::latest_session_rows(&session_id)
+    {
+        return session_view_from_participants(&session, &mut participants);
+    }
     let session = load_session_from_text(&session_id)?;
     session_view(&session)
 }
@@ -648,6 +653,11 @@ pub(crate) fn get_my_participant(
     session_id: String,
 ) -> Result<ParticipantView, ApiError> {
     reject_anonymous(caller)?;
+    if let Some((_session, participant)) =
+        session_turn_runtime::caller_context_rows(&caller.to_text(), &session_id)
+    {
+        return participant_view(&participant);
+    }
     let player = require_player(caller)?;
     let session = load_session_from_text(&session_id)?;
     let participant = require_participant_for_player(session.id(), player.id())?;
@@ -1449,12 +1459,19 @@ fn active_session_count() -> Result<u32, ApiError> {
 
 fn session_view(session: &GameSession) -> Result<SessionView, ApiError> {
     let mut participants = participants_for_session(session.id())?;
+    session_view_from_participants(session, &mut participants)
+}
+
+fn session_view_from_participants(
+    session: &GameSession,
+    participants: &mut [GameParticipant],
+) -> Result<SessionView, ApiError> {
     participants.sort_by_key(|participant| participant.slot_index);
     Ok(SessionView {
         session_id: session.id().to_string(),
         state: session.state.clone(),
         participant_ids: participants
-            .into_iter()
+            .iter()
             .map(|participant| participant.id().to_string())
             .collect(),
     })

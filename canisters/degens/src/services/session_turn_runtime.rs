@@ -506,6 +506,29 @@ pub(crate) fn caller_context_rows(
     })
 }
 
+pub(crate) fn latest_session_rows(session_id: &str) -> Option<(GameSession, Vec<GameParticipant>)> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .max_by_key(|runtime| runtime.turn_number)
+            .and_then(|runtime| {
+                let session = runtime.session.clone()?;
+                if session.state != "active" {
+                    return None;
+                }
+                let participants = runtime
+                    .participants
+                    .iter()
+                    .filter(|participant| participant.status == "active")
+                    .filter_map(|participant| participant.participant.clone())
+                    .collect::<Vec<_>>();
+                Some((session, participants))
+            })
+    })
+}
+
 pub(crate) fn mirror_champion_update(champion: &Champion) {
     let session_id = Id::<GameSession>::from_key(champion.session_id).to_string();
     let champion_id = champion.id().to_string();

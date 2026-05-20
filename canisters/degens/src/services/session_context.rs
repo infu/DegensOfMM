@@ -37,6 +37,14 @@ pub(crate) fn require_session_caller(
     session_id: &str,
 ) -> Result<SessionCallerContext, ApiError> {
     reject_anonymous(caller)?;
+    if let Some((session, participant)) =
+        session_turn_runtime::caller_context_rows(&caller.to_text(), session_id)
+    {
+        return Ok(SessionCallerContext {
+            session,
+            participant,
+        });
+    }
     let player = require_player(caller)?;
     let session = load_session_from_text(session_id)?;
     let participant = sessions::find_participant_by_session_player(session.id(), player.id())?
@@ -183,6 +191,13 @@ pub(crate) fn session_summary(session: &GameSession) -> Result<SessionSummary, A
 
 pub(crate) fn session_view(session: &GameSession) -> Result<SessionView, ApiError> {
     let mut participants = participants_for_session(session.id())?;
+    session_view_from_participants(session, &mut participants)
+}
+
+pub(crate) fn session_view_from_participants(
+    session: &GameSession,
+    participants: &mut [GameParticipant],
+) -> Result<SessionView, ApiError> {
     participants.sort_by_key(|participant| participant.slot_index);
     Ok(SessionView {
         session_id: session.id().to_string(),

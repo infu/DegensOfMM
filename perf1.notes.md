@@ -3129,3 +3129,26 @@ Measured sync call shape:
 Decision:
 
 - Keep this cut. It brings `sync_session_turn` just under the current Gate 5D target (`1.5B`), with durable fallback still present for cache misses and upgrades. The remaining path to `0.6B-0.9B` is now durable startup writes themselves: battle header/stacks/occupancy/obstacles, neutral load/update, and system-job create.
+
+## Checkpoint: Runtime Session Query Context
+
+Implemented the first Gate 5G query/runtime projection cut:
+
+- `get_session` now renders active sessions from `SessionTurnRuntime` session/participant rows before falling back to durable session and participant reads.
+- `session_context::require_session_caller` now authenticates active-session callers from runtime caller rows before durable player/session/participant lookups.
+- `get_my_participant` uses the same runtime caller rows before durable fallback.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Benchmark status:
+
+- Focused Gate J measurement is next.
+- Expected improvements: active `get_session` should drop from about `1.4128B` when runtime is present, and active caller queries should avoid repeated auth-context stable reads before their projection work.
+
+Decision:
+
+- Keep pending focused measurement. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement.

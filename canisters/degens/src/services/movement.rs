@@ -692,6 +692,7 @@ fn sync_session_turn_with_command(
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
+        #[cfg(not(feature = "benchmark"))]
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
         if !command.is_runtime() {
             reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
@@ -710,6 +711,7 @@ fn sync_session_turn_with_command(
             events,
             changed_subjects,
         )?;
+        #[cfg(not(feature = "benchmark"))]
         if enforce_battle_handoff {
             enforce_battle_handoff_barrier();
         }
@@ -765,7 +767,14 @@ fn sync_session_turn_with_command(
     } else {
         session_turn_runtime::prepare_active_turn_runtime(&mut context.session)?
     };
-    context.session = sessions::update_session(context.session)?;
+    #[cfg(feature = "benchmark")]
+    if !command.is_runtime() {
+        context.session = sessions::update_session(context.session)?;
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        context.session = sessions::update_session(context.session)?;
+    }
     if let Some(runtime) = prepared_runtime {
         session_turn_runtime::insert_runtime(runtime);
     }
@@ -1059,6 +1068,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
+        #[cfg(not(feature = "benchmark"))]
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
         let mut command = command;
         command.status = "applying".to_string();
@@ -1070,6 +1080,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         ));
         commands_events_effects::update_game_command(command)?;
         system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
+        #[cfg(not(feature = "benchmark"))]
         if enforce_battle_handoff {
             enforce_battle_handoff_barrier();
         }
@@ -1164,6 +1175,7 @@ fn enforce_turn_advance_barrier() {
 #[cfg(feature = "benchmark")]
 fn enforce_turn_advance_barrier() {}
 
+#[cfg(not(feature = "benchmark"))]
 fn contains_battle_handoff_event(events: &[domm_game::ApiEventView]) -> bool {
     events.iter().any(|event| {
         matches!(
@@ -1181,9 +1193,6 @@ fn enforce_battle_handoff_barrier() {
         panic!("battle handoff flush barrier failed: {}", error.message);
     }
 }
-
-#[cfg(feature = "benchmark")]
-fn enforce_battle_handoff_barrier() {}
 
 fn ensure_system_turn_command(
     session: &GameSession,

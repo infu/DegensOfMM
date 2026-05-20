@@ -43,6 +43,7 @@ pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError>
     Ok(job)
 }
 
+#[allow(dead_code)]
 pub(crate) fn schedule_new_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError> {
     let job = system_jobs::create_system_job(draft)?;
     #[cfg(target_arch = "wasm32")]
@@ -242,6 +243,7 @@ fn schedule_wakeup_for_upserted_job(job: &SystemJob) -> Result<(), ApiError> {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 fn schedule_wakeup_for_new_job(job: &SystemJob) {
     let due_at_ms = job.due_at.as_millis();
     if due_at_ms <= Timestamp::now().as_millis() {

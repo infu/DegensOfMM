@@ -1,4 +1,6 @@
 use std::cell::RefCell;
+#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
+use std::time::Duration;
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
@@ -1312,16 +1314,24 @@ pub(crate) fn start_session(
                 ensure_setup_command(&session)?
             };
             if started_now {
-                system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
-                    job_key: setup_session_job_key(session.id()),
-                    job_kind: "setup_session".to_string(),
-                    session_id: session.id(),
-                    battle_id: None,
-                    turn_number: Some(session.current_turn),
-                    due_at: Timestamp::now(),
-                    command_id: Some(setup_command.id()),
-                    cursor_json: setup_command.result_json.clone(),
-                })?;
+                #[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
+                {
+                    let _ = &setup_command;
+                    schedule_runtime_setup_session_timer(session.id());
+                }
+                #[cfg(not(all(target_arch = "wasm32", feature = "benchmark")))]
+                {
+                    system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
+                        job_key: setup_session_job_key(session.id()),
+                        job_kind: "setup_session".to_string(),
+                        session_id: session.id(),
+                        battle_id: None,
+                        turn_number: Some(session.current_turn),
+                        due_at: Timestamp::now(),
+                        command_id: Some(setup_command.id()),
+                        cursor_json: setup_command.result_json.clone(),
+                    })?;
+                }
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -1929,6 +1939,14 @@ fn new_setup_command(session: &GameSession) -> GameCommand {
     )
 }
 
+#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
+fn schedule_runtime_setup_session_timer(session_id: Id<GameSession>) {
+    let session_id_text = session_id.to_string();
+    canic_cdk::timers::set_timer(Duration::from_millis(0), async move {
+        let _ = process_runtime_setup_session_timer(&session_id_text);
+    });
+}
+
 fn setup_command_for_progress(session: &GameSession) -> Result<Option<GameCommand>, ApiError> {
     let client_nonce = nonce_u64("setup_session", &session.id().to_string());
     if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
@@ -2040,6 +2058,56 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
             .and_then(|command| command.result_json)
             .or_else(|| setup_command.result_json.clone());
         system_job_repo::reschedule_system_job(job, Timestamp::now(), cursor_json)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
+fn process_runtime_setup_session_timer(session_id: &str) -> Result<(), ApiError> {
+    let session_id = parse_id::<GameSession>(session_id, "session_id")?;
+    process_runtime_setup_session_step(session_id)
+}
+
+#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
+fn process_runtime_setup_session_step(session_id: Id<GameSession>) -> Result<(), ApiError> {
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        return Ok(());
+    };
+
+    if session.state == "active" {
+        return Ok(());
+    }
+    if session.state == "lobby" {
+        session.state = "starting".to_string();
+        remember_session_row(&session);
+    }
+    if session.state != "starting" {
+        return Ok(());
+    }
+
+    let participants = participants_for_session(session.id())?;
+    let setup_command = ensure_durable_setup_command(&session)?;
+    let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+    if setup_complete {
+        session.state = "active".to_string();
+        let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
+        session = sessions::update_session(session)?;
+        remember_session_row(&session);
+        if let Some(runtime) = prepared_runtime {
+            session_turn_runtime::insert_runtime(runtime);
+        }
+        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
+            job_kind: "turn_deadline".to_string(),
+            session_id: session.id(),
+            battle_id: None,
+            turn_number: Some(session.current_turn),
+            due_at: session.turn_deadline_at,
+            command_id: Some(setup_command.id()),
+            cursor_json: None,
+        })?;
+    } else {
+        schedule_runtime_setup_session_timer(session.id());
     }
     Ok(())
 }

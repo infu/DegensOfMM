@@ -4786,3 +4786,32 @@ Decision:
 - Keep this checkpoint. It removes the last measured movement visibility/known-object durable projection writes from Gate J without broadening the canister enough to hit the IC code-section limit.
 - Gate 5D is complete for the measured route: movement resolver state now stays in runtime/projection caches unless a durable fallback is required.
 - The durability contract is still explicitly Gate 5H work. Visibility and known-object runtime projection must be included in `flush_barrier(StrongRead|Upgrade|RuntimeEviction)` instead of reintroducing hot-path stable writes.
+
+## Checkpoint: Upgrade Projection Flush For Session-Turn And Town Runtime
+
+Implemented the first concrete `Upgrade` flush slice instead of leaving all runtime-only state as a hot-path optimization with no recovery boundary.
+
+Implementation:
+
+- `pre_upgrade_impl` now flushes active session-turn runtime projections before persisting the battle runtime snapshot.
+- `SessionTurnRuntime` flushes heap `GameSession` and `GameParticipant` snapshots from the latest retained runtime per session to durable rows, and writes unflushed runtime events from all retained runtimes to durable `GameEvent` rows idempotently by event key.
+- Runtime events only keep a durable `command_id` when the referenced `GameCommand` row already exists; heap-only town/movement command receipts remain a separate Gate 5H flush task.
+- `TownProjection` flushes durable `Town` rows and upserts heap-created `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows by id.
+- Cached town resolution now handles cached real `Town` ids and all scenario start aliases instead of only hardcoded `town:west`/`town:east`.
+- The upgrade flush is excluded from `feature=benchmark` builds. Including it in the benchmark Wasm pushed the code section over the IC limit; excluding upgrade-only code keeps the benchmark canister installable without changing the hot route being measured.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister town -- --nocapture` matched no tests and passed the filtered harness
+- Benchmark release Wasm build with `feature=benchmark`: code section `0x00bfe95e`, about `5.8 KB` under the IC limit
+
+Decision:
+
+- Keep this checkpoint. It does not change the hot Gate J route, so no PocketIC benchmark was run.
+- This makes upgrade safer for the current runtime town path: visible town/building/pool/garrison changes, participant resource snapshots, and runtime event feed rows now have a pre-upgrade durable projection.
+- Remaining Gate 5H/6 work is still real: heap command receipt rows, detailed resource ledger history, lobby runtime receipts, `StrongRead`/`RuntimeEviction`/`TurnAdvance` flush reasons, and non-first-playable town variants are not solved by this checkpoint.

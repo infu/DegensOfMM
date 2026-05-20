@@ -250,6 +250,18 @@ pub(crate) fn create_town_building(
     foundation::create("towns.create_town_building", input)
 }
 
+pub(crate) fn load_town_building(id: Id<TownBuilding>) -> RepoResult<Option<TownBuilding>> {
+    foundation::load_by_id("towns.load_town_building", id)
+}
+
+pub(crate) fn insert_town_building(building: TownBuilding) -> RepoResult<TownBuilding> {
+    foundation::insert("towns.insert_town_building", building)
+}
+
+pub(crate) fn update_town_building(building: TownBuilding) -> RepoResult<TownBuilding> {
+    foundation::update("towns.update_town_building", building)
+}
+
 pub(crate) fn page_town_recruit_pools(
     town_id: Id<Town>,
     limit: u32,
@@ -327,6 +339,16 @@ pub(crate) fn create_town_recruit_pool(
     };
 
     foundation::create("towns.create_town_recruit_pool", input)
+}
+
+pub(crate) fn load_town_recruit_pool(
+    id: Id<TownRecruitPool>,
+) -> RepoResult<Option<TownRecruitPool>> {
+    foundation::load_by_id("towns.load_town_recruit_pool", id)
+}
+
+pub(crate) fn insert_town_recruit_pool(pool: TownRecruitPool) -> RepoResult<TownRecruitPool> {
+    foundation::insert("towns.insert_town_recruit_pool", pool)
 }
 
 pub(crate) fn update_town_recruit_pool(pool: TownRecruitPool) -> RepoResult<TownRecruitPool> {
@@ -413,6 +435,18 @@ pub(crate) fn create_town_garrison_stack(
     };
 
     foundation::create("towns.create_town_garrison_stack", input)
+}
+
+pub(crate) fn load_town_garrison_stack(
+    id: Id<TownGarrisonStack>,
+) -> RepoResult<Option<TownGarrisonStack>> {
+    foundation::load_by_id("towns.load_town_garrison_stack", id)
+}
+
+pub(crate) fn insert_town_garrison_stack(
+    stack: TownGarrisonStack,
+) -> RepoResult<TownGarrisonStack> {
+    foundation::insert("towns.insert_town_garrison_stack", stack)
 }
 
 pub(crate) fn update_town_garrison_stack(

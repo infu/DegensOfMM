@@ -15,8 +15,12 @@ use domm_degens_schema::schema::{
     Champion, GameCommand, GameParticipant, GameSession, MovementIntent, WorldObject,
 };
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
+#[cfg(not(feature = "benchmark"))]
+use icydb::{traits::EntityKey, types::Ulid};
 use icydb::{traits::EntityValue, types::Id};
 
+#[cfg(not(feature = "benchmark"))]
+use crate::repos::commands_events_effects;
 use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
 };
@@ -1134,6 +1138,125 @@ pub(crate) fn command_receipt_by_nonce(
                     .cloned()
             })
     })
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError> {
+    let runtimes = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .cloned()
+            .collect::<Vec<SessionTurnRuntime>>()
+    });
+    let mut flushed = 0_usize;
+    let mut latest_by_session = BTreeMap::<String, &SessionTurnRuntime>::new();
+    for runtime in &runtimes {
+        match latest_by_session.get(&runtime.session_id) {
+            Some(existing) if existing.turn_number >= runtime.turn_number => {}
+            _ => {
+                latest_by_session.insert(runtime.session_id.clone(), runtime);
+            }
+        }
+    }
+    for runtime in latest_by_session.values() {
+        if let Some(session) = runtime.session.clone() {
+            sessions::update_session(session)?;
+            flushed = flushed.saturating_add(1);
+        }
+        for participant in runtime
+            .participants
+            .iter()
+            .filter_map(|participant| participant.participant.clone())
+        {
+            sessions::update_participant(participant)?;
+            flushed = flushed.saturating_add(1);
+        }
+    }
+    for runtime in &runtimes {
+        for runtime_event in runtime
+            .active_events
+            .iter()
+            .filter(|runtime_event| !runtime_event.flushed)
+        {
+            flush_runtime_event(runtime_event)?;
+            flushed = flushed.saturating_add(1);
+        }
+    }
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        for runtime in runtimes.borrow_mut().values_mut() {
+            for runtime_event in &mut runtime.active_events {
+                runtime_event.flushed = true;
+            }
+        }
+    });
+    Ok(flushed)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<(), ApiError> {
+    let session_id = parse_ulid_id::<GameSession>(&runtime_event.event.session_id)?;
+    if commands_events_effects::find_event_by_key(session_id, &runtime_event.event.event_key)?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let command_id = durable_command_id(runtime_event.command_id.as_deref())?;
+    commands_events_effects::create_game_event(
+        session_id,
+        command_id,
+        None,
+        runtime_event.event.turn_number,
+        runtime_event.event.event_seq,
+        runtime_event.event.event_key.clone(),
+        runtime_event.event.audience_key.clone(),
+        runtime_event.event.event_type.clone(),
+        runtime_event.event.subject_kind.clone(),
+        runtime_event.event.subject_id_text.clone(),
+        runtime_event
+            .event
+            .payload
+            .clone()
+            .unwrap_or_else(|| "{}".to_string()),
+    )?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCommand>>, ApiError> {
+    let Some(command_id_text) = command_id_text else {
+        return Ok(None);
+    };
+    let Ok(command_id) = try_parse_ulid_id::<GameCommand>(command_id_text) else {
+        return Ok(None);
+    };
+    if commands_events_effects::load_game_command(command_id)?.is_some() {
+        Ok(Some(command_id))
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn parse_ulid_id<E>(value: &str) -> Result<Id<E>, ApiError>
+where
+    E: EntityKey<Key = Ulid>,
+{
+    try_parse_ulid_id(value).map_err(|_| {
+        ApiError::new(
+            "invalid_runtime_snapshot_id",
+            "runtime snapshot contains an invalid id",
+            true,
+        )
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn try_parse_ulid_id<E>(value: &str) -> Result<Id<E>, ()>
+where
+    E: EntityKey<Key = Ulid>,
+{
+    Ulid::from_str(value).map(Id::from_key).map_err(|_| ())
 }
 
 pub(crate) fn snapshot_for_upgrade() -> SessionTurnRuntimeSnapshot {

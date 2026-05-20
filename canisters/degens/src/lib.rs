@@ -54,6 +54,22 @@ fn init() {
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn pre_upgrade_impl() {
+    #[cfg(not(feature = "benchmark"))]
+    {
+        if let Err(error) = services::session_turn_runtime::flush_runtime_projections_for_upgrade()
+        {
+            panic!(
+                "session-turn runtime pre-upgrade projection flush failed: {}",
+                error.message
+            );
+        }
+        if let Err(error) = services::town_runtime::flush_all_projections_to_durable() {
+            panic!(
+                "town runtime pre-upgrade projection flush failed: {}",
+                error.message
+            );
+        }
+    }
     if let Err(error) = services::battle_runtime::persist_snapshot_for_upgrade() {
         panic!("battle runtime pre-upgrade snapshot failed: {error}");
     }

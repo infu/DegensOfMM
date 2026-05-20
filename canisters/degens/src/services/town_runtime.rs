@@ -69,11 +69,31 @@ pub(crate) fn seed_town(town: &Town) {
 }
 
 pub(crate) fn cached_town_by_public_id(session_id: Id<GameSession>, town_id: &str) -> Option<Town> {
-    let (town_x, town_y) = match town_id {
-        "town:west" => (6, 24),
-        "town:east" => (41, 24),
-        _ => return None,
-    };
+    if let Ok(id) = Ulid::from_str(town_id)
+        && let Some(town) = cached_town_by_id(session_id, Id::<Town>::from_key(id))
+    {
+        return Some(town);
+    }
+    let start = domm_game::first_playable_scenario()
+        .starts
+        .into_iter()
+        .find(|start| start.town_key == town_id)?;
+    cached_town_by_xy(session_id, start.town_x, start.town_y)
+}
+
+fn cached_town_by_id(session_id: Id<GameSession>, town_id: Id<Town>) -> Option<Town> {
+    TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .values()
+            .find(|projection| {
+                projection.town.session_id == session_id.key() && projection.town.id() == town_id
+            })
+            .map(|projection| projection.town.clone())
+    })
+}
+
+fn cached_town_by_xy(session_id: Id<GameSession>, town_x: u16, town_y: u16) -> Option<Town> {
     TOWN_PROJECTIONS.with(|projections| {
         projections
             .borrow()
@@ -265,6 +285,49 @@ pub(crate) fn evict_town(session_id: Id<GameSession>, town_id: Id<Town>) {
     TOWN_PROJECTIONS.with(|projections| {
         projections.borrow_mut().remove(&key);
     });
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_all_projections_to_durable() -> Result<usize, ApiError> {
+    let projections = TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .values()
+            .cloned()
+            .collect::<Vec<TownProjection>>()
+    });
+    let mut flushed = 0_usize;
+    for projection in projections {
+        if towns::load_town(projection.town.id())?.is_some() {
+            towns::update_town(projection.town.clone())?;
+            flushed = flushed.saturating_add(1);
+        }
+        for building in projection.buildings {
+            if towns::load_town_building(building.id())?.is_some() {
+                towns::update_town_building(building)?;
+            } else {
+                towns::insert_town_building(building)?;
+            }
+            flushed = flushed.saturating_add(1);
+        }
+        for pool in projection.recruit_pools {
+            if towns::load_town_recruit_pool(pool.id())?.is_some() {
+                towns::update_town_recruit_pool(pool)?;
+            } else {
+                towns::insert_town_recruit_pool(pool)?;
+            }
+            flushed = flushed.saturating_add(1);
+        }
+        for stack in projection.garrison_stacks {
+            if towns::load_town_garrison_stack(stack.id())?.is_some() {
+                towns::update_town_garrison_stack(stack)?;
+            } else {
+                towns::insert_town_garrison_stack(stack)?;
+            }
+            flushed = flushed.saturating_add(1);
+        }
+    }
+    Ok(flushed)
 }
 
 fn town_key(town: &Town) -> (String, String) {

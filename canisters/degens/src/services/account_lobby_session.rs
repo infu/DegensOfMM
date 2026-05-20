@@ -1484,28 +1484,38 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
 fn create_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
     let client_nonce = nonce_u64("setup_session", &session.id().to_string());
     let scenario = first_playable_scenario();
-    commands_events_effects::create_game_command(
-        session.id(),
-        "system".to_string(),
-        SETUP_SYSTEM_ACTOR.to_string(),
-        None,
-        None,
-        None,
-        session.current_turn,
+    let command = GameCommand {
+        session_id: session.id().key(),
+        actor_kind: "system".to_string(),
+        actor_id_text: SETUP_SYSTEM_ACTOR.to_string(),
+        actor_player_id: None,
+        actor_participant_id: None,
+        champion_id: None,
+        turn_number: session.current_turn,
         client_nonce,
-        "setup_session".to_string(),
-        payload_hash(
+        command_type: "setup_session".to_string(),
+        status: "pending".to_string(),
+        phase: "created".to_string(),
+        payload_hash: payload_hash(
             "setup_session",
             SETUP_SYSTEM_ACTOR,
             &session.id().to_string(),
             &scenario.scenario_hash,
         ),
-        format!(
+        payload_json: format!(
             r#"{{"scenario_hash":"{}","ruleset":"{}"}}"#,
             scenario.scenario_hash, FIRST_PLAYABLE_RULESET_ID
         ),
-    )
-    .map_err(Into::into)
+        result_json: None,
+        error_code: None,
+        error_message: None,
+        error_details_json: None,
+        retryable: false,
+        applied_at: None,
+        failed_at: None,
+        ..Default::default()
+    };
+    commands_events_effects::insert_game_command(command).map_err(Into::into)
 }
 
 fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameCommand, ApiError> {

@@ -588,6 +588,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 - [ ] Gate 7: reduce the remaining Gate J durable setup/job floor. Latest focused artifact `20260520-runtime-visibility-known-projection-bounded-gate-j` measures `6.6772B` scenario instructions with the largest repo-operation costs now coming from durable player/session/participant creates, two session updates, one setup command create, one battle create, and two `SystemJob` creates.
 - [x] Gate 7.1: use a direct typed `SystemJob` insert for known-new job creation instead of generated `Create<SystemJob>` materialization. This targets the two remaining `system_jobs.create_system_job` calls in Gate J while preserving durable timer/job semantics. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
+- [x] Gate 7.2: create the deterministic `setup_session` system `GameCommand` with the direct `insert_game_command` path instead of generated `Create<GameCommand>` materialization. Recovery/replay still uses the existing idempotency lookup before creation. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
 
 ## Expected Outcome
 

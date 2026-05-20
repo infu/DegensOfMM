@@ -5185,3 +5185,22 @@ Verification:
 Decision:
 
 - Keep it. It is a small low-risk cut against the remaining job floor before taking on larger heap-first setup/timer work.
+
+## Checkpoint: Direct Setup GameCommand Insert
+
+Gate 7 setup/job floor slice:
+
+- The same latest Gate J artifact had one `commands.create_game_command` call left in the route, created by the deterministic `setup_session` system command.
+- `start_session` only calls `create_setup_command` on the fresh `lobby -> starting` transition, while recovery/replay goes through `ensure_setup_command` and the existing idempotency lookup first.
+- Changed `create_setup_command` to build the typed `GameCommand` row directly and call `commands_events_effects::insert_game_command`.
+- This preserves the durable command row and the setup job's command-id linkage, but removes the generated `Create<GameCommand>` materialization from this known-new route.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep it. The next larger Gate 7 work should decide whether setup and battle timeout jobs can be heap-first wakeup hints with durable barrier projection, rather than just direct inserts.

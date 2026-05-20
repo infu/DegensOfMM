@@ -6228,3 +6228,29 @@ Verification:
 Expected measurement:
 
 - Endpoint-surface should drop up to three `sessions.update_participant` calls, about `1.44B` total, across `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`.
+
+## Random Cross-Cut: Runtime Event Sequence Allocation
+
+New cluster:
+
+- Randomly picked runtime event-seq allocation from the remaining subagent proposals.
+- Current benchmark still shows `sessions.update_session` at 12 calls / `5.7216B` total, much of it from public event creation advancing `GameSession.next_event_seq`.
+- Active turn runtimes already reserve an event sequence block at turn setup; durable `GameSession.next_event_seq` is advanced to the block end there.
+
+Cut:
+
+- Added `session_turn_runtime::take_reserved_session_event_seq`.
+- `command_response::create_event_for_audience` now consumes a reserved active-turn sequence first.
+- If no runtime sequence is available, event creation falls back to the old `session.next_event_seq` plus durable `sessions.update_session` path.
+- Durable `GameEvent` rows are still created immediately, so event feeds/history keep their current durable shape.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- Fresh public-event commands should stop paying one `sessions.update_session` each when an active turn runtime has sequence headroom.
+- This should unblock later runtime-first auth for event-emitting commands, because event creation no longer depends on mutating a possibly stale runtime session copy.

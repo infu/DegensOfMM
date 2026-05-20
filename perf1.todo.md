@@ -770,7 +770,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep durable resource ledger rows unchanged so replay/recovery idempotency still has an authoritative command ledger.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `sessions.update_participant` drops by up to three calls in the endpoint-surface route. Expected savings are about `0.48B` each on `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`.
-- [ ] Rotate again before deeper economy-only changes.
+- [x] Rotate again before deeper economy-only changes. Randomly picked runtime event-seq allocation from the remaining subagent proposals.
+
+### 30. Random Cross-Cut: Runtime Event Sequence Allocation
+
+- [x] Rotate to runtime event-seq allocation after the economy participant mirroring cut.
+- [x] Add a `SessionTurnRuntime` helper that takes the next sequence from the already-reserved active turn event block without touching the durable `GameSession` row.
+- [x] Make public event creation consume that runtime-reserved sequence first, falling back to the old durable `sessions.update_session` path when no active runtime sequence is available.
+- [x] Preserve durable `GameEvent` creation; this cut only removes the per-event session sequence write when the active runtime already owns a reserved block.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `sessions.update_session` drops from public event paths. Expected savings are about `0.48B` on each fresh public-event command while preserving event sequence uniqueness.
+- [ ] Rotate again before deeper event/feed-only changes.
 
 ## Expected Outcome
 

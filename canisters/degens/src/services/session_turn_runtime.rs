@@ -1191,6 +1191,19 @@ pub(crate) fn reserve_session_event_seq(
     Ok(start)
 }
 
+pub(crate) fn take_reserved_session_event_seq(session_id: &str, turn_number: u32) -> Option<u64> {
+    with_runtime_mut(session_id, turn_number, |runtime| {
+        let event_seq = runtime
+            .event_seq_block
+            .as_mut()
+            .and_then(SessionTurnEventSeqBlock::take_event_seq)?;
+        runtime.dirty.events = true;
+        runtime.mark_dirty();
+        Some(event_seq)
+    })
+    .flatten()
+}
+
 pub(crate) fn active_events_after(
     session_id: &str,
     audience_key: &str,

@@ -566,7 +566,11 @@ fn create_event_for_audience(
     subject_id_text: Option<String>,
     payload_json: String,
 ) -> Result<ApiEventView, ApiError> {
-    let event_seq = session.next_event_seq;
+    let event_seq = session_turn_runtime::take_reserved_session_event_seq(
+        &session.id().to_string(),
+        session.current_turn,
+    )
+    .unwrap_or(session.next_event_seq);
     let event = commands_events_effects::create_game_event(
         session.id(),
         Some(command_id),
@@ -580,8 +584,11 @@ fn create_event_for_audience(
         subject_id_text,
         payload_json,
     )?;
-    session.next_event_seq = event_seq.saturating_add(1);
-    *session = sessions::update_session(session.clone())?;
+    let next_event_seq = event_seq.saturating_add(1);
+    if next_event_seq > session.next_event_seq {
+        session.next_event_seq = next_event_seq;
+        *session = sessions::update_session(session.clone())?;
+    }
     Ok(api_event_view(event))
 }
 

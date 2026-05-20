@@ -3421,3 +3421,39 @@ Measured code section:
 Decision:
 
 - Keep this cleanup. It is behavior-preserving and gives enough headroom for a small runtime/contact cut before a larger code-size freeing pass is needed.
+
+## Checkpoint: Neutral Startup Header Writes Deferred To Activation
+
+Changed neutral battle startup so the durable `Battle` row is created in `starting_attacker` and then left alone while attacker stacks, defender stacks, and obstacles are staged in heap. The durable row is still updated when the battle becomes active.
+
+Why:
+
+- Gate J showed one `battles.update_battle` write in each startup sync step before activation.
+- The staged `Battle` row is already cached in heap by attacker while startup is in progress.
+- Writing each intermediate `starting_*` header state costs about `0.477B` instructions and does not add useful client behavior on the normal path.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bfec59`, about `5.0 KB` under the IC limit
+- Focused Gate J `20260520-neutral-start-no-intermediate-battle-updates-gate-j` passed in `263.08s`
+
+Measured delta versus `20260520-session-cache-town-slugs-single-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 74.3158B | 72.8864B | -1.9% |
+| `sync_session_turn` avg | 1.4704B | 1.3278B | -9.7% |
+| `battles.update_battle` calls | 4 | 1 | -75.0% |
+| `battles.update_battle` total instructions | 1.9125B | 0.4810B | -74.8% |
+| neutral startup sync seq 69 | 4.2718B | 3.7938B | -11.2% |
+| neutral startup sync seq 70 | 2.8447B | 2.3690B | -16.7% |
+| neutral startup sync seq 71 | 1.4297B | 0.9548B | -33.2% |
+
+Decision:
+
+- Keep this checkpoint. It removes three durable header writes from the hot neutral battle handoff and puts the scenario below the previous Gate 5D `1.5B` sync threshold.
+- Do not mark Gate 5F complete yet. Full contact startup still creates durable stacks, occupancy, obstacles, neutral rows, jobs, and final battle activation rows, so the route is still above the `0.3B-0.6B` target.
+- This shifts intermediate neutral startup recovery further toward heap state. The durable create row plus final activation row remain, but upgrade/recovery during mid-start still needs Gate 5H flush/barrier work.

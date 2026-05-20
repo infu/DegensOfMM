@@ -3682,9 +3682,9 @@ fn start_neutral_battle(
         Timestamp::from_millis(Timestamp::now().as_millis().saturating_add(
             i64::try_from(domm_game::BATTLE_ACTION_DEADLINE_MS).unwrap_or(i64::MAX),
         ));
-    let mut battle = battles::create_battle(
+    let battle = battles::create_battle(
         session.id(),
-        "starting".to_string(),
+        "starting_attacker".to_string(),
         "neutral".to_string(),
         Some(pending_move.champion.id()),
         None,
@@ -3701,8 +3701,6 @@ fn start_neutral_battle(
     )?;
     let stacks = create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
     battle_start::remember_startup_stacks(battle.id(), stacks);
-    battle.state = "starting_attacker".to_string();
-    battle = battles::update_battle(battle)?;
     remember_neutral_starting_battle(&battle);
     Ok(None)
 }
@@ -3730,7 +3728,6 @@ fn continue_neutral_battle_start(
                 battle_start::remember_startup_stacks(battle.id(), attacker_stacks.items);
             }
             battle.state = "starting_attacker".to_string();
-            battle = battles::update_battle(battle)?;
             remember_neutral_starting_battle(&battle);
             return Ok(None);
         }
@@ -3749,14 +3746,12 @@ fn continue_neutral_battle_start(
                 battle_start::remember_startup_stacks(battle.id(), defender_stacks.items);
             }
             battle.state = "starting_defender".to_string();
-            battle = battles::update_battle(battle)?;
             remember_neutral_starting_battle(&battle);
             return Ok(None);
         }
         "starting_defender" => {
             create_initial_battle_obstacles(command_id, &battle)?;
             battle.state = "starting_obstacles".to_string();
-            battle = battles::update_battle(battle)?;
             remember_neutral_starting_battle(&battle);
             Ok(None)
         }

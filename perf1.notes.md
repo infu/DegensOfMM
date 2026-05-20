@@ -5077,6 +5077,7 @@ Verification:
 - `cargo fmt --check`
 - `cargo check -p domm-degens-canister`
 - `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister exported_candid_contains_every_required_game_endpoint -- --nocapture`
 
 Decision:
 

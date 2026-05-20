@@ -6132,3 +6132,74 @@ Verification:
 Expected measurement:
 
 - Champion magic commands should drop `champions.load_champion` when active runtime snapshots are present, about `0.70B` per command in the current route.
+
+## Measurement: Random Rotations
+
+Artifact:
+
+- `target/benchmarks/20260520-random-rotations-43ccf1f`
+- Passed in `425.17s`.
+- Git: `43ccf1f`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `150`.
+- Stable pages: `2049 -> 81281`.
+- Note: the single-gate command used a relative `DOMM_BENCH_QUERY_LOG_PATH`, so the generated summary missed query instruction values; the raw log still contains them. Use absolute paths for direct single-gate benchmark commands going forward.
+
+Scenario delta versus `20260520-roundrobin-champion-battle-history-c783e49`:
+
+- `145.4290B -> 113.5880B`, `-31.8410B`, `-21.9%`.
+
+Targeted endpoint deltas:
+
+- `claim_quest_reward`: `14.1557B -> 9.2372B`, `-4.9185B`, `-34.7%`.
+- `sync_advanced_victory`: `14.6173B -> 12.2543B`, `-2.3631B`, `-16.2%`.
+- `sync_objectives`: `10.3812B -> 8.0271B`, `-2.3542B`, `-22.7%`.
+- `submit_dwelling_recruit`: `12.5253B -> 11.1059B`, `-1.4194B`, `-11.3%`.
+- `sync_world_events`: `7.3200B -> 5.9111B`, `-1.4089B`, `-19.2%`.
+- `accept_quest`: `7.7979B -> 6.3948B`, `-1.4030B`, `-18.0%`.
+- `hire_tavern_champion`: `12.1146B -> 11.1497B`, `-0.9649B`, `-8.0%`.
+- `cast_adventure_spell`: `7.8120B -> 7.0985B`, `-0.7135B`, `-9.1%`.
+- `learn_champion_spell`: `8.9726B -> 8.2591B`, `-0.7135B`, `-8.0%`.
+- `select_champion_level_up`: `6.3975B -> 5.6901B`, `-0.7074B`, `-11.1%`.
+- `sync_world_generation`: `7.8909B -> 7.1881B`, `-0.7028B`, `-8.9%`.
+- Raw log query values: `get_dwelling_pool` `0.7064B`, `preview_dwelling_recruit` `0.7064B`.
+
+Repo-op confirmation:
+
+- `effects.command_effect_by_command_key` is gone from the summary repo ops.
+- `events.by_session_event_key` is gone from the summary repo ops.
+- `map.update_occupancy_cell` is gone from the summary repo ops.
+- `champions.load_champion` is gone from the summary repo ops.
+- `scenario.update_objective_progress` is gone from the summary repo ops for unchanged objective sync.
+- Remaining visible floors include command idempotency/create/update, durable event/effect creates, `sessions.load_session` and `sessions.update_session`, economy ledger rows, participant updates, and scenario scan rows in `sync_advanced_victory`.
+
+Subagent findings to carry forward:
+
+- Noether confirmed the targeted quest claim cut saves the expected full rule sweep, but pointed out that incrementing from `rule.current_value` is not self-healing if the row was already stale. Next fix should count claimed opening quests directly by `(session_id, quest_key)` and set the rule value from that count.
+- Bernoulli recommended deferring economy participant row writes with runtime mirroring, then making `submit_dwelling_recruit` reuse the already-loaded pool/unit from precheck.
+- Herschel recommended runtime event-seq allocation before switching event-emitting update endpoints to runtime-first auth; switching auth first can collide event sequences because the runtime session snapshot can carry stale `next_event_seq`.
+
+## Follow-Up: Self-Healing Quest Victory Count
+
+Reason:
+
+- The measured targeted quest-claim cut was fast but used `rule.current_value.saturating_add(1)`.
+- That is correct for normal fresh commands, but it is not self-healing if a migrated or stale `rule:quest-victory` row already has the wrong value.
+
+Cut:
+
+- Added `scenario.quests_by_session_key` repository paging over the existing `QuestState(session_id, quest_key)` index.
+- `claimed_quest_count` now counts claimed `OPENING_QUEST_KEY` rows from that page instead of scanning active participants and each participant's claimed quests.
+- `sync_quest_victory_rule_after_claim` now sets `rule.current_value` from that direct count rather than incrementing the existing rule value.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- `claim_quest_reward` should keep most of the `14.1557B -> 9.2372B` gain while adding one bounded quest-key page.
+- `sync_advanced_victory` should also improve because the shared claimed quest count no longer scans active participants plus per-participant claimed quest pages.

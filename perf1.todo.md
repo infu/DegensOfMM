@@ -718,7 +718,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `create_fresh_command_effect` for successful fresh `sync_world_generation`.
 - [x] Stop rewriting existing objective progress rows during objective sync when owner/progress/status/score fields are unchanged and only `last_command_id` would move. The touched count still reports scanned objectives.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads plus unchanged `scenario.update_objective_progress` writes. Expected savings are about `1.4B` for scenario commands that emit both event/effect, about `0.7B` for `sync_world_generation`, and about `0.95B` for objective sync commands in the current unchanged-objective route.
+- [x] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads plus unchanged `scenario.update_objective_progress` writes. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` moved `accept_quest` `7.7979B -> 6.3948B`, `sync_world_events` `7.3200B -> 5.9111B`, `sync_world_generation` `7.8909B -> 7.1881B`, `sync_objectives` `10.3812B -> 8.0271B`, and `sync_advanced_victory` `14.6173B -> 12.2543B`. Global `effects.command_effect_by_command_key` and `events.by_session_event_key` are gone from repo ops; unchanged objective writes are gone from `sync_objectives`.
 - [x] Rotate again before deeper scenario/worldgen-only changes. Picked tavern hire metadata-only writes because the trace still shows `champions.update_champion` and `map.update_occupancy_cell` immediately after fresh creates.
 
 ### 24. Round-Robin Endpoint Cluster: Tavern Hire Metadata Writes
@@ -727,7 +727,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Stop updating a freshly created hired champion solely to stamp `last_command_id`; the durable `ChampionHire` command row already links the command to the new champion.
 - [x] Stop updating a freshly created champion occupancy cell solely to stamp `last_command_id`; the occupancy create remains durable and authoritative.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `hire_tavern_champion` drops `champions.update_champion` and `map.update_occupancy_cell`. Expected savings are about `0.96B` on the current route.
+- [x] Measure in the next batched run and verify `hire_tavern_champion` drops `champions.update_champion` and `map.update_occupancy_cell`. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` moved `hire_tavern_champion` `12.1146B -> 11.1497B` (`-0.9649B`, `-8.0%`), and `map.update_occupancy_cell` disappeared from repo ops.
 - [x] Rotate again before deeper tavern/economy-only changes. Picked dwelling object/champion resolution because those paths can reuse existing session-turn snapshots before stable loads.
 
 ### 25. Round-Robin Endpoint Cluster: Dwelling Runtime Resolution
@@ -736,7 +736,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Resolve dwelling world objects from `SessionTurnRuntime` snapshots by id or first-playable coordinate before falling back to stable `WorldObject` rows.
 - [x] Resolve recruit target champions from `SessionTurnRuntime` snapshots by id or first-playable start coordinate before falling back to stable `Champion` rows.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `submit_dwelling_recruit`, `preview_dwelling_recruit`, and `get_dwelling_pool` avoid stable object/champion resolution where snapshots are present. The visible repo-op target is the `champions.load_champion` call in `submit_dwelling_recruit` (`~0.71B`); object lookup savings may show only in method instructions if those repo ops are not traced.
+- [x] Measure in the next batched run and verify `submit_dwelling_recruit`, `preview_dwelling_recruit`, and `get_dwelling_pool` avoid stable object/champion resolution where snapshots are present. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` moved `submit_dwelling_recruit` `12.5253B -> 11.1059B` (`-1.4194B`, `-11.3%`), and `champions.load_champion` disappeared from repo ops. The generated summary missed query instruction values because this single-gate run used a relative query-log path, but the raw log measured `get_dwelling_pool` at `0.7064B` and `preview_dwelling_recruit` at `0.7064B`.
 - [x] Rotate again before deeper dwelling-only changes. Randomly picked `claim_quest_reward` from the remaining heavy endpoint list.
 
 ### 26. Random Endpoint Cluster: Claim Quest Reward
@@ -744,7 +744,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Randomly rotate to `claim_quest_reward` after the dwelling runtime-resolution cut.
 - [x] Replace the post-claim full scenario rule sweep with a targeted `rule:quest-victory` increment. This keeps the quest-victory rule current without scanning objectives, active rules, participants, and every participant's claimed quests in the claim command.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `claim_quest_reward` drops the scenario objective/status, participant/status, and claimed-quest scan floor from the previous full-rule sweep. Expected savings are roughly `3.5B-4.2B` on the current route before considering the fresh event/effect cut already queued.
+- [x] Measure in the next batched run and verify `claim_quest_reward` drops the scenario objective/status, participant/status, and claimed-quest scan floor from the previous full-rule sweep. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` moved `claim_quest_reward` `14.1557B -> 9.2372B` (`-4.9185B`, `-34.7%`).
 - [x] Rotate again before deeper quest-only changes. Randomly picked `cast_adventure_spell`; applied the cut at the shared champion ownership helper so the same improvement should cover champion magic endpoints.
 
 ### 27. Random Endpoint Cluster: Champion Magic Runtime Champion Resolution
@@ -753,8 +753,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Make champion magic ownership checks read `SessionTurnRuntime` champion snapshots before durable `Champion` rows.
 - [x] Keep the same session/participant ownership validation after the snapshot lookup, with durable fallback for cold or missing runtime state.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `cast_adventure_spell`, `learn_champion_spell`, and `select_champion_level_up` drop `champions.load_champion` when snapshots are present. Expected savings are about `0.70B` per champion magic command in the current route.
-- [ ] Rotate again before deeper champion-only changes.
+- [x] Measure in the next batched run and verify `cast_adventure_spell`, `learn_champion_spell`, and `select_champion_level_up` drop `champions.load_champion` when snapshots are present. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` moved `cast_adventure_spell` `7.8120B -> 7.0985B`, `learn_champion_spell` `8.9726B -> 8.2591B`, and `select_champion_level_up` `6.3975B -> 5.6901B`; `champions.load_champion` disappeared from repo ops.
+- [x] Rotate again before deeper champion-only changes. Pick next from subagent proposals instead of continuing champion-only work.
+
+### 28. Batched Random-Rotation Measurement
+
+- [x] Run endpoint-surface after scenario/worldgen fresh event/effect, objective no-op write skip, tavern metadata write skip, dwelling runtime resolution, targeted quest rule sync, and champion runtime resolution. Artifact `target/benchmarks/20260520-random-rotations-43ccf1f` passed in `425.17s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `145.4290B -> 113.5880B` (`-31.8410B`, `-21.9%`) versus `20260520-roundrobin-champion-battle-history-c783e49`.
+- [x] Harden the fast quest-victory claim path so it remains self-healing: replace the blind `rule.current_value + 1` with a direct claimed opening-quest count by `(session_id, quest_key)` instead of the old participant-by-participant sweep. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`. This should keep most of the `claim_quest_reward` gain while adding one bounded quest-key page to avoid stale counter drift.
+- [ ] Keep the random/rotating improvement rule active. Candidate next cuts from subagents: runtime event-seq allocation for public event session writes, economy participant row deferral with runtime mirroring, direct quest-key counting for `sync_advanced_victory`, central objective world-object snapshots, spell definition/spellbook caching, and deterministic worldgen/world-event row caches.
 
 ## Expected Outcome
 

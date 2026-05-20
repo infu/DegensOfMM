@@ -43,6 +43,13 @@ pub(crate) const QUESTS_BY_PARTICIPANT_STATUS_LOOKUP: IndexedQueryPlan = Indexed
     bounded_limit: Some(domm_game::MAX_ACTIVE_QUESTS_PER_PARTICIPANT),
 };
 
+pub(crate) const QUESTS_BY_SESSION_KEY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
+    name: "scenario.quests_by_session_key",
+    entity: "QuestState",
+    indexed_fields: &["session_id", "quest_key"],
+    bounded_limit: Some(domm_game::MAX_LIST_LIMIT),
+};
+
 pub(crate) const WORLD_EVENT_BY_KEY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "scenario.world_event_by_key",
     entity: "WorldEventState",
@@ -178,6 +185,23 @@ pub(crate) fn page_quests_by_participant_status(
             .order_asc("quest_key")
             .order_asc("id"),
         domm_game::MAX_ACTIVE_QUESTS_PER_PARTICIPANT,
+        None,
+    )
+}
+
+pub(crate) fn page_quests_by_session_key(
+    session_id: Id<GameSession>,
+    quest_key: &str,
+) -> RepoResult<RepositoryPage<QuestState>> {
+    foundation::execute_page(
+        QUESTS_BY_SESSION_KEY_LOOKUP.name,
+        crate::db()
+            .load::<QuestState>()
+            .filter(FieldRef::new("session_id").eq(session_id.key()))
+            .filter(FieldRef::new("quest_key").eq(quest_key))
+            .order_asc("participant_id")
+            .order_asc("id"),
+        domm_game::MAX_LIST_LIMIT,
         None,
     )
 }

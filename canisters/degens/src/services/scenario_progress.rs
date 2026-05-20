@@ -922,7 +922,7 @@ fn sync_quest_victory_rule_after_claim(
     }
     let previous_current_value = rule.current_value;
     let previous_victory_state = rule.victory_state.clone();
-    rule.current_value = rule.current_value.saturating_add(1);
+    rule.current_value = claimed_quest_count(session.id())?;
     rule.victory_state = if rule.current_value >= rule.required_value {
         "complete".to_string()
     } else {
@@ -1024,26 +1024,13 @@ fn scenario_rule_rows_for_session(
 }
 
 fn claimed_quest_count(session_id: Id<GameSession>) -> Result<u32, ApiError> {
-    let participants = sessions::page_participants_by_session_status(
-        session_id,
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items;
-    let mut claimed = 0_u32;
-    for participant in participants {
-        claimed = claimed.saturating_add(
-            scenario_progress::page_quests_by_participant_status(
-                session_id,
-                participant.id(),
-                "claimed",
-            )?
+    Ok(
+        scenario_progress::page_quests_by_session_key(session_id, OPENING_QUEST_KEY)?
             .items
-            .len() as u32,
-        );
-    }
-    Ok(claimed)
+            .into_iter()
+            .filter(|quest| quest.status == "claimed")
+            .count() as u32,
+    )
 }
 
 fn load_quest(

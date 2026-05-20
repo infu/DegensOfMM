@@ -3104,9 +3104,28 @@ Verification:
 
 Benchmark status:
 
-- Deferred to the next focused Gate J batch.
-- Expected removals: `system_jobs.by_status_due`/`system_jobs.by_status_lease` from startup timeout job timer refresh, and up to three `battles.by_attacker` reads from staged neutral battle startup.
+- Focused Gate J `20260520-neutral-startup-scan-cache-gate-j` passed in `197.64s`.
+
+Measured delta versus `20260520-startup-cache-open-turn-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 164.7224B | 161.1489B | -2.2% |
+| `sync_session_turn` avg | 1.8362B | 1.4784B | -19.5% |
+| `submit_move_intent` avg | 0.2389B | 0.2389B | flat |
+| `battles.by_attacker` calls | 4 | 1 | -75.0% |
+| `system_jobs.by_status_due` calls | 2 | 1 | -50.0% |
+| `system_jobs.by_status_lease` calls | 2 | 1 | -50.0% |
+
+Measured sync call shape:
+
+| startup sync | previous dominant ops | new dominant ops |
+| --- | --- | --- |
+| attacker stack creation | `battles.by_attacker`, battle/stack/occupancy writes, champion army page | unchanged first lookup plus writes |
+| defender stack creation | `battles.by_attacker`, defender stack writes, neutral stack page | cached battle row; no attacker lookup |
+| obstacle creation | `battles.by_attacker`, obstacle writes | cached battle row; no attacker lookup |
+| final activation | `battles.by_attacker`, neutral load/update, job scans/create | cached battle row; direct new-job timer refresh; neutral load/update and job create remain |
 
 Decision:
 
-- Keep pending focused measurement. Both cuts preserve durable fallback and target measured repo ops from `20260520-startup-cache-open-turn-gate-j`.
+- Keep this cut. It brings `sync_session_turn` just under the current Gate 5D target (`1.5B`), with durable fallback still present for cache misses and upgrades. The remaining path to `0.6B-0.9B` is now durable startup writes themselves: battle header/stacks/occupancy/obstacles, neutral load/update, and system-job create.

@@ -819,7 +819,11 @@ pub(crate) fn start_session(
                 session = sessions::update_session(session)?;
                 remember_session_row(&session);
             }
-            let setup_command = ensure_setup_command(&session)?;
+            let setup_command = if started_now {
+                create_setup_command(&session)?
+            } else {
+                ensure_setup_command(&session)?
+            };
             if started_now {
                 system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
                     job_key: setup_session_job_key(session.id()),
@@ -1386,6 +1390,11 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
         return Ok(command);
     }
 
+    create_setup_command(session)
+}
+
+fn create_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
+    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
     let scenario = first_playable_scenario();
     commands_events_effects::create_game_command(
         session.id(),
@@ -1409,6 +1418,24 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
         ),
     )
     .map_err(Into::into)
+}
+
+fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameCommand, ApiError> {
+    if let Some(command_id) = job.command_id {
+        if let Some(command) =
+            commands_events_effects::load_game_command(Id::<GameCommand>::from_key(command_id))?
+        {
+            if command.session_id == session.id().key()
+                && command.actor_kind == "system"
+                && command.actor_id_text == SETUP_SYSTEM_ACTOR
+                && command.command_type == "setup_session"
+            {
+                return Ok(command);
+            }
+        }
+    }
+
+    ensure_setup_command(session)
 }
 
 pub(crate) fn process_setup_session_job(job: SystemJob) -> Result<(), ApiError> {
@@ -1437,7 +1464,7 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
     }
 
     let participants = participants_for_session(session.id())?;
-    let setup_command = ensure_setup_command(&session)?;
+    let setup_command = setup_command_for_job(&session, &job)?;
     let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
     if setup_complete {
         session.state = "active".to_string();

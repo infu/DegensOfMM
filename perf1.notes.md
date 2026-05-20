@@ -4614,3 +4614,37 @@ Decision:
 
 - Keep this checkpoint. A newly started lobby does not need the idempotent job-key probe before inserting its first setup job.
 - This leaves `system_jobs.create_system_job` as a real durable boundary. Gate 5H should decide whether setup/turn/battle jobs are durable barriers or runtime wakeup hints with delayed durable projection.
+
+## Checkpoint: Known-New Setup Command
+
+After the new setup job scheduling checkpoint, `start_session` still performed a durable `GameCommand` idempotency lookup before creating the setup command. In the route where `start_session` just moved the session from `lobby` to `starting`, that command is known-new for the same reason the setup job is known-new.
+
+What changed:
+
+- `start_session` creates the setup `GameCommand` directly on the `started_now` route.
+- Recovered or repeated `starting` sessions still use `ensure_setup_command` and the durable idempotency lookup.
+- Setup jobs first load the command through their stored `command_id` and fall back to idempotency only if the job has no usable command pointer.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-setup-command-fastpath-gate-j` passed in `56.33s` after a cached build
+
+Measured delta versus `20260520-setup-new-job-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 13.2728B | 12.5656B | -5.3% |
+| Gate J scenario memory | 4012.1250 MB | 4012.0625 MB | flat |
+| Gate J scenario cycles | 0.0625T | 0.0618T | -1.2% |
+| `start_session` avg | 2.8398B | 2.1342B | -24.8% |
+| `commands.game_command_idempotency` total | 0.7038B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. The direct create path is bounded to the atomic state transition from lobby to starting, and the old idempotent path remains the recovery path.
+- The remaining Gate J repo costs are now mostly unavoidable durable creates/updates unless Gate 5H changes what must be projected during the hot setup route: two `SystemJob` creates, two participant creates, two session updates, two player creates, one session create, one setup command create, one visibility chunk update, one known object create, and one battle header create.

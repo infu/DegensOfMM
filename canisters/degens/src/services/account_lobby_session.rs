@@ -1523,8 +1523,8 @@ fn player_view(player: &PlayerAccount) -> PlayerView {
 }
 
 fn participant_view(participant: &GameParticipant) -> Result<ParticipantView, ApiError> {
-    let faction =
-        content::load_faction(Id::from_key(participant.faction_id))?.ok_or_else(|| {
+    let faction_slug = content::load_faction_slug(Id::from_key(participant.faction_id))?
+        .ok_or_else(|| {
             public_error(
                 "faction_not_found",
                 "participant faction was not found",
@@ -1535,7 +1535,7 @@ fn participant_view(participant: &GameParticipant) -> Result<ParticipantView, Ap
         participant_id: participant.id().to_string(),
         session_id: Id::<GameSession>::from_key(participant.session_id).to_string(),
         player_id: Id::<PlayerAccount>::from_key(participant.player_id).to_string(),
-        faction_slug: faction.slug,
+        faction_slug,
         slot_index: participant.slot_index,
         status: participant.status.clone(),
         ready: participant.ready_turn > 0,

@@ -3762,3 +3762,49 @@ Decision:
 
 - Do not retry the same broad row-cache shape without first freeing at least several KB of benchmark Wasm headroom.
 - A narrower projection cache may still be worthwhile, but it should cache final DTOs or reuse existing runtime fields with less new generic cache plumbing.
+
+## Checkpoint: Faction Slug Cache Removes get_my_participant Stable Read
+
+After the top-level runtime guard checkpoint, `get_my_participant` still sat at about `0.7046B` instructions even though active caller/session/participant rows were served from `SessionTurnRuntime`. The remaining floor was participant rendering: both participant-view helpers hydrated the full `FactionDefinition` row only to return `faction_slug`.
+
+What changed:
+
+- Added a tiny two-slot heap cache for `faction_id -> faction_slug` in `repos::content`.
+- Populated the cache from first-playable faction create/find paths, which already run during session setup.
+- Added `load_faction_slug` with a stable fallback on cache miss.
+- Changed `account_lobby_session::participant_view` and `session_context::participant_view` to use the slug helper instead of loading the full faction row.
+- Removed the now-unused full-row `load_faction` helper.
+
+Rejected/adjusted attempts:
+
+- A full `FactionDefinition` row cache exceeded the benchmark Wasm code-section limit (`0x00c00652`).
+- An id-only `BTreeMap<String, FactionDefinition>` cache still exceeded the limit (`0x00c0029e`).
+- A two-slot full-row cache still exceeded the limit (`0x00c0045b`).
+- A slug-only two-slot cache initially missed by 15 bytes (`0x00c0000f`); simplifying the cache to rotate entries without duplicate rewrite handling fit at `0x00bffe82`.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build: code section `0x00bffe82`
+- Focused Gate J `20260520-faction-slug-cache-gate-j` passed in `189.55s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-runtime-guard-top-level-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 58.9607B | 57.5801B | -2.3% |
+| `get_my_participant` avg | 0.7046B | 0.000026B | ~-100.0% |
+| `get_champion_view` avg | 0.7094B | 0.7083B | flat |
+| `get_events_after` avg | 0.7068B | 0.7070B | flat |
+| `get_visible_map_chunks` | 1.4080B | 1.4053B | flat |
+| `get_visible_objects` | 1.4190B | 1.4216B | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep the checkpoint. It is a small but clean projection-cache win, with no row growth or stable-memory change and enough code-size headroom to install.
+- Do not broaden this into a general content row cache until more code-size headroom exists. The next useful query targets remain `get_visible_map_chunks`, `get_visible_objects`, `get_events_after`, and the remaining `get_champion_view` banner equipment read.

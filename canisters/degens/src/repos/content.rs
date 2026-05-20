@@ -78,6 +78,8 @@ pub(crate) const MAP_OBJECT_SLUG_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
 };
 
 thread_local! {
+    static FACTION_SLUG_CACHE: RefCell<[Option<(String, String)>; 2]> =
+        const { RefCell::new([None, None]) };
     static UNIT_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
     static UNIT_SLUG_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
     static BUILDING_SLUG_CACHE: RefCell<BTreeMap<String, BuildingDefinition>> = const { RefCell::new(BTreeMap::new()) };
@@ -85,6 +87,32 @@ thread_local! {
 
 fn content_slug_key(ruleset_id: Id<RulesetDefinition>, slug: &str) -> String {
     format!("{}:{slug}", ruleset_id)
+}
+
+fn cache_faction_slug(row: &FactionDefinition) {
+    FACTION_SLUG_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache[1] = cache[0].take();
+        cache[0] = Some((row.id().to_string(), row.slug.clone()));
+    });
+}
+
+fn cached_faction_slug(id: &str) -> Option<String> {
+    FACTION_SLUG_CACHE.with(|cache| {
+        let cache = cache.borrow();
+        if let Some((cached_id, slug)) = &cache[0]
+            && cached_id == id
+        {
+            return Some(slug.clone());
+        }
+        if let Some((cached_id, slug)) = &cache[1]
+            && cached_id == id
+        {
+            Some(slug.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn cache_unit(row: &UnitDefinition) {
@@ -219,14 +247,16 @@ pub(crate) fn create_faction_definition(
         trait_key: Some(trait_key),
     };
 
-    foundation::create("content.create_faction_definition", input)
+    let row = foundation::create("content.create_faction_definition", input)?;
+    cache_faction_slug(&row);
+    Ok(row)
 }
 
 pub(crate) fn find_faction_by_ruleset_slug(
     ruleset_id: Id<RulesetDefinition>,
     slug: &str,
 ) -> RepoResult<Option<FactionDefinition>> {
-    foundation::storage_result(
+    let row = foundation::storage_result(
         FACTION_SLUG_LOOKUP.name,
         crate::db()
             .load::<FactionDefinition>()
@@ -235,11 +265,25 @@ pub(crate) fn find_faction_by_ruleset_slug(
             .order_asc("id")
             .limit(1)
             .try_entity(),
-    )
+    )?;
+    if let Some(row) = &row {
+        cache_faction_slug(row);
+    }
+    Ok(row)
 }
 
-pub(crate) fn load_faction(id: Id<FactionDefinition>) -> RepoResult<Option<FactionDefinition>> {
-    foundation::load_by_id("content.load_faction", id)
+pub(crate) fn load_faction_slug(id: Id<FactionDefinition>) -> RepoResult<Option<String>> {
+    let key = id.to_string();
+    if let Some(slug) = cached_faction_slug(&key) {
+        return Ok(Some(slug));
+    }
+    let row: Option<FactionDefinition> = foundation::load_by_id("content.load_faction_slug", id)?;
+    if let Some(row) = row {
+        cache_faction_slug(&row);
+        Ok(Some(row.slug))
+    } else {
+        Ok(None)
+    }
 }
 
 pub(crate) fn page_factions_by_ruleset(

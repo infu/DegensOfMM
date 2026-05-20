@@ -242,19 +242,20 @@ pub(crate) fn session_view_from_participants(
 }
 
 pub(crate) fn participant_view(participant: &GameParticipant) -> Result<ParticipantView, ApiError> {
-    let faction = content::load_faction(Id::<FactionDefinition>::from_key(participant.faction_id))?
-        .ok_or_else(|| {
-            public_error(
-                "faction_not_found",
-                "participant faction was not found",
-                false,
-            )
-        })?;
+    let faction_slug =
+        content::load_faction_slug(Id::<FactionDefinition>::from_key(participant.faction_id))?
+            .ok_or_else(|| {
+                public_error(
+                    "faction_not_found",
+                    "participant faction was not found",
+                    false,
+                )
+            })?;
     Ok(ParticipantView {
         participant_id: participant.id().to_string(),
         session_id: Id::<GameSession>::from_key(participant.session_id).to_string(),
         player_id: Id::<PlayerAccount>::from_key(participant.player_id).to_string(),
-        faction_slug: faction.slug,
+        faction_slug,
         slot_index: participant.slot_index,
         status: participant.status.clone(),
         ready: participant.ready_turn > 0,

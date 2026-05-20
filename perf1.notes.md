@@ -4028,7 +4028,7 @@ What changed:
 
 - `first_playable_setup::seed_map_chunks` now seeds a heap cache from the inserted real `MapChunk` rows.
 - `render_projection::visible_map_chunks` uses cached map chunks for the current session and still joins them with durable `VisibilityChunk` rows for the participant.
-- The benchmark diagnostic update payload no longer carries redundant call-level stable-page before/after fields. Benchmark artifacts still measure method memory deltas from PocketIC status snapshots, query stable pages from query logs, and repo-op stable page deltas from canister metrics.
+- The benchmark diagnostic update payload no longer carries redundant call-level stable-page before/after fields. Benchmark artifacts still measure method memory/stable-memory deltas from PocketIC status snapshots, query stable pages from query logs, and repo-operation instruction totals from canister metrics.
 
 Verification:
 
@@ -4096,3 +4096,44 @@ Decision:
 
 - Keep this checkpoint. It removes the opening map-chunk query floor while preserving durable fallback after movement visibility changes.
 - The biggest remaining Gate J query floor is now `get_events_after` at about `0.707B` average across four calls, followed by the already-halved `get_visible_objects` known-object durable fallback after movement cache invalidation.
+
+## Checkpoint: Complete Event Feed Cache Cuts Events Query
+
+After the visibility cache, `get_events_after` was the largest remaining Gate J query floor at about `0.707B` average across four calls. The public feed is append-only and ordered by event sequence, so a complete heap feed cache can answer repeated active reads without paging durable `GameEvent` rows.
+
+What changed:
+
+- `commands_events_effects::events_after` first checks a tiny single-feed heap cache for the requested `(session, audience)` after the feed has been proven complete.
+- `create_game_event` appends newly created rows to the cache when the current feed is complete. If the first event in a feed has sequence `1`, that feed is complete immediately.
+- A durable `events_after(..., after_event_seq=0, limit)` scan marks a feed complete only when the result is not truncated, then replaces the heap rows with that ordered durable result.
+- Requests for a different session/audience miss the single-feed cache and fall back to IcyDB, so the cache cannot hide durable history it has not proven complete.
+- The canister diagnostic repo-operation payload no longer carries stable-page deltas. Client benchmark artifacts still record method memory and stable-memory deltas around each call, and repo-operation instruction totals remain available.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo test -p domm-degens-canister --features benchmark benchmark_feature_exports_diagnostic_benchmark_endpoints -- --nocapture`
+- Benchmark Wasm build: code section `0x00bf8885`
+- Focused Gate J `20260520-event-feed-cache-gate-j` passed in `198.46s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-visibility-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 52.8475B | 50.0394B | -5.3% |
+| `get_events_after` avg | 0.7071B | 0.0001B | ~-100.0% |
+| `get_visible_objects` avg | 0.7156B | 0.7143B | flat |
+| `get_visible_map_chunks` avg | 0.0001B | 0.0001B | flat |
+| `sync_session_turn` avg | 0.3796B | 0.3800B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the event-feed query floor without changing row growth, stable pages, or the public route shape.
+- The remaining Gate J total is now dominated by the single `get_visible_objects` durable fallback after movement invalidates the opening known-object cache, plus update-side durable boundary work that belongs to Gate 5H.

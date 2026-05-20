@@ -41,14 +41,12 @@ pub struct DiagnosticBenchmarkRepoOpView {
     pub operation: String,
     pub calls: u64,
     pub instruction_delta: u64,
-    pub stable_memory_page_delta: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct DiagnosticBenchmarkCallView {
     pub sequence: u64,
     pub method: String,
-    pub kind: EndpointKind,
     pub instruction_delta: u64,
     pub repo_ops: Vec<DiagnosticBenchmarkRepoOpView>,
 }

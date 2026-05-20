@@ -7301,7 +7301,6 @@ struct BenchmarkRepoOpRecord {
     operation: String,
     calls: u64,
     instruction_delta: u64,
-    stable_memory_page_delta: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -7352,7 +7351,6 @@ struct BenchmarkRepoOpSummary {
     call_count: u64,
     avg_instruction_delta: f64,
     total_instruction_delta: u128,
-    stable_page_delta: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -7534,7 +7532,7 @@ impl BenchmarkRecorder {
         page.calls
             .iter()
             .rev()
-            .find(|call| call.method == method && call.kind == EndpointKind::Update)
+            .find(|call| call.method == method)
             .map(|call| BenchmarkCanisterCallMeasurement {
                 instruction_delta: call.instruction_delta,
                 phases: Vec::new(),
@@ -7545,7 +7543,6 @@ impl BenchmarkRecorder {
                         operation: op.operation.clone(),
                         calls: op.calls,
                         instruction_delta: op.instruction_delta,
-                        stable_memory_page_delta: op.stable_memory_page_delta,
                     })
                     .collect(),
             })
@@ -7893,9 +7890,6 @@ fn repo_op_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkRepoOpSummar
                 .iter()
                 .map(|op| u128::from(op.instruction_delta))
                 .sum::<u128>();
-            let stable_page_delta = ops.iter().fold(0_i64, |sum, op| {
-                sum.saturating_add(op.stable_memory_page_delta)
-            });
             BenchmarkRepoOpSummary {
                 operation,
                 call_count,
@@ -7905,7 +7899,6 @@ fn repo_op_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkRepoOpSummar
                     total_instruction_delta as f64 / call_count as f64
                 },
                 total_instruction_delta,
-                stable_page_delta,
             }
         })
         .collect()
@@ -8150,16 +8143,15 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
     }
     if !summary.repo_ops.is_empty() {
         out.push_str("\n## Repo Operations\n\n");
-        out.push_str("| Operation | Calls | Avg inst B | Total inst B | Stable page delta |\n");
-        out.push_str("| --- | ---: | ---: | ---: | ---: |\n");
+        out.push_str("| Operation | Calls | Avg inst B | Total inst B |\n");
+        out.push_str("| --- | ---: | ---: | ---: |\n");
         for op in &summary.repo_ops {
             out.push_str(&format!(
-                "| {} | {} | {} | {} | {} |\n",
+                "| {} | {} | {} | {} |\n",
                 op.operation,
                 op.call_count,
                 format_billions_f64(op.avg_instruction_delta),
-                format_billions_u128(op.total_instruction_delta),
-                op.stable_page_delta
+                format_billions_u128(op.total_instruction_delta)
             ));
         }
     }

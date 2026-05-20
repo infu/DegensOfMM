@@ -1,5 +1,7 @@
 //! Repository boundary for commands, pending effects, idempotency keys, and event logs.
 
+use std::cell::RefCell;
+
 use domm_degens_schema::schema::{
     Champion, CommandEffect, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
     PendingEffect, PlayerAccount,
@@ -11,6 +13,16 @@ use icydb::{
 };
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
+
+thread_local! {
+    static EVENT_FEED_CACHE: RefCell<Option<EventFeedCache>> = const { RefCell::new(None) };
+}
+
+struct EventFeedCache {
+    session_key: String,
+    audience_key: String,
+    rows: Vec<GameEvent>,
+}
 
 pub(crate) const GAME_COMMAND_IDEMPOTENCY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "commands.game_command_idempotency",
@@ -207,7 +219,15 @@ pub(crate) fn events_after(
     limit: u32,
 ) -> RepoResult<Vec<GameEvent>> {
     let limit = foundation::validate_list_limit(limit)?;
-    foundation::storage_operation(EVENT_FEED_LOOKUP.name, || {
+    if event_feed_complete(session_id, audience_key) {
+        return Ok(cached_events_after(
+            session_id,
+            audience_key,
+            after_event_seq,
+            limit,
+        ));
+    }
+    let events = foundation::storage_operation(EVENT_FEED_LOOKUP.name, || {
         crate::db()
             .load::<GameEvent>()
             .filter(FieldRef::new("session_id").eq(session_id.key()))
@@ -217,7 +237,12 @@ pub(crate) fn events_after(
             .order_asc("id")
             .limit(limit)
             .entities()
-    })
+    })?;
+    if after_event_seq == 0 && events.len() < limit as usize {
+        mark_event_feed_complete(session_id, audience_key);
+        replace_event_rows(&events);
+    }
+    Ok(events)
 }
 
 pub(crate) fn events_by_type(
@@ -283,7 +308,92 @@ pub(crate) fn create_game_event(
         payload_json: Some(payload_json),
     };
 
-    foundation::create("events.create_game_event", input)
+    let event = foundation::create("events.create_game_event", input)?;
+    remember_created_event(&event);
+    Ok(event)
+}
+
+fn remember_created_event(event: &GameEvent) {
+    let session_id = Id::<GameSession>::from_key(event.session_id);
+    if event.event_seq == 1 {
+        mark_event_feed_complete(session_id, &event.audience_key);
+    }
+    if event_feed_complete(session_id, &event.audience_key) {
+        append_event_row(event);
+    }
+}
+
+fn replace_event_rows(rows: &[GameEvent]) {
+    if let Some(first) = rows.first() {
+        let session_id = Id::<GameSession>::from_key(first.session_id);
+        if event_feed_complete(session_id, &first.audience_key) {
+            EVENT_FEED_CACHE.with_borrow_mut(|cache| {
+                if let Some(cache) = cache.as_mut() {
+                    cache.rows.clear();
+                    cache.rows.extend_from_slice(rows);
+                }
+            });
+        }
+    }
+}
+
+fn append_event_row(event: &GameEvent) {
+    EVENT_FEED_CACHE.with_borrow_mut(|cache| {
+        if let Some(cache) = cache.as_mut() {
+            cache.rows.push(event.clone());
+        }
+    });
+}
+
+fn cached_events_after(
+    session_id: Id<GameSession>,
+    audience_key: &str,
+    after_event_seq: u64,
+    limit: u32,
+) -> Vec<GameEvent> {
+    let limit = limit as usize;
+    let session_key = session_id.to_string();
+    EVENT_FEED_CACHE.with_borrow(|cache| {
+        let Some(cache) = cache else {
+            return Vec::new();
+        };
+        if cache.session_key != session_key || cache.audience_key != audience_key {
+            return Vec::new();
+        }
+        cache
+            .rows
+            .iter()
+            .filter(|row| row.event_seq > after_event_seq)
+            .take(limit)
+            .cloned()
+            .collect()
+    })
+}
+
+fn event_feed_complete(session_id: Id<GameSession>, audience_key: &str) -> bool {
+    let session_key = session_id.to_string();
+    EVENT_FEED_CACHE.with_borrow(|cache| {
+        cache.as_ref().is_some_and(|cache| {
+            cache.session_key == session_key && cache.audience_key == audience_key
+        })
+    })
+}
+
+fn mark_event_feed_complete(session_id: Id<GameSession>, audience_key: &str) {
+    let session_key = session_id.to_string();
+    EVENT_FEED_CACHE.with_borrow_mut(|cache| {
+        let replace = match cache.as_ref() {
+            Some(cache) => cache.session_key != session_key || cache.audience_key != audience_key,
+            None => true,
+        };
+        if replace {
+            *cache = Some(EventFeedCache {
+                session_key,
+                audience_key: audience_key.to_string(),
+                rows: Vec::new(),
+            });
+        }
+    });
 }
 
 pub(crate) fn find_command_effect(

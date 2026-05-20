@@ -11,7 +11,6 @@ use std::{
 #[cfg(feature = "benchmark")]
 use crate::contract::{
     DiagnosticBenchmarkCallPage, DiagnosticBenchmarkCallView, DiagnosticBenchmarkRepoOpView,
-    EndpointKind,
 };
 
 #[cfg(feature = "benchmark")]
@@ -40,7 +39,6 @@ pub(crate) fn benchmark_update<T>(
     record_benchmark_call(DiagnosticBenchmarkCallView {
         sequence: next_sequence(),
         method: method.to_string(),
-        kind: EndpointKind::Update,
         instruction_delta: instruction_after.saturating_sub(instruction_before),
         repo_ops,
     });
@@ -80,14 +78,10 @@ pub(crate) fn benchmark_query<T>(
 
 #[cfg(feature = "benchmark")]
 pub(crate) fn benchmark_repo_operation<T>(operation: &'static str, body: impl FnOnce() -> T) -> T {
-    let stable_memory_pages_before = canic_cdk::api::stable_size();
     let instruction_before = canic_cdk::api::instruction_counter();
     let result = body();
     let instruction_after = canic_cdk::api::instruction_counter();
-    let stable_memory_pages_after = canic_cdk::api::stable_size();
     let instruction_delta = instruction_after.saturating_sub(instruction_before);
-    let stable_memory_page_delta =
-        signed_delta(stable_memory_pages_after, stable_memory_pages_before);
 
     CURRENT_BENCHMARK_REPO_OPS.with(|ops| {
         let mut ops = ops.borrow_mut();
@@ -97,13 +91,9 @@ pub(crate) fn benchmark_repo_operation<T>(operation: &'static str, body: impl Fn
                 operation: operation.to_string(),
                 calls: 0,
                 instruction_delta: 0,
-                stable_memory_page_delta: 0,
             });
         op.calls = op.calls.saturating_add(1);
         op.instruction_delta = op.instruction_delta.saturating_add(instruction_delta);
-        op.stable_memory_page_delta = op
-            .stable_memory_page_delta
-            .saturating_add(stable_memory_page_delta);
     });
 
     result
@@ -188,15 +178,6 @@ fn take_current_repo_ops() -> Vec<DiagnosticBenchmarkRepoOpView> {
             .into_values()
             .collect()
     })
-}
-
-#[cfg(feature = "benchmark")]
-fn signed_delta(after: u64, before: u64) -> i64 {
-    if after >= before {
-        i64::try_from(after - before).unwrap_or(i64::MAX)
-    } else {
-        -i64::try_from(before - after).unwrap_or(i64::MAX)
-    }
 }
 
 #[cfg(feature = "benchmark")]

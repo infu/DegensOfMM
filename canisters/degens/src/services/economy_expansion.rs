@@ -90,7 +90,8 @@ pub(crate) fn hire_tavern_champion(
     offer_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let payload_json = format!(
         r#"{{"town_id":"{}","offer_key":"{}"}}"#,
@@ -144,7 +145,8 @@ pub(crate) fn submit_market_trade(
     amount_in: u64,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let payload_json = format!(
         r#"{{"from_resource":"{}","to_resource":"{}","amount_in":{}}}"#,
         command_response::escape_json(&from_resource),
@@ -244,7 +246,8 @@ pub(crate) fn submit_dwelling_recruit(
     champion_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
     let champion = resolve_champion(&context.session, &champion_id)?;
     let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?

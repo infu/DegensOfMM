@@ -6354,3 +6354,29 @@ Next target:
 
 - Rotate to economy update runtime-first auth for `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade`.
 - This should remove the same active-caller durable floor from the current top three endpoints before any deeper economy/town aggregate work.
+
+## Random Pivot: Economy Runtime-First Updates
+
+New cluster:
+
+- Rotated to economy updates after the runtime-context measurement.
+- The current top three endpoint costs are all economy commands: `hire_tavern_champion` `10.1886B`, `submit_dwelling_recruit` `10.1479B`, and `submit_market_trade` `8.2701B`.
+- Their previews already use runtime-first caller context, but the update endpoints still used the durable active-caller path.
+
+Cut:
+
+- `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` now use `require_active_session_caller_runtime_first`.
+- Existing town/dwelling/champion resolution, command rows, resource ledger rows, hire/trade/recruit rows, event/effect writes, and durable fallbacks are unchanged.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- These three economy updates should lose the active-caller durable lookup floor when active turn runtime context exists.
+- Remaining high cost should then mostly be command/idempotency writes, resource ledger rows, recruit/hire/trade durable rows, town/dwelling/tavern projections, and champion/town child-row writes.

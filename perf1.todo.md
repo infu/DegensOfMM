@@ -810,6 +810,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Confirm the largest removed repo operations: `sessions.update_session` (`12 -> 0` calls), `sessions.update_participant` (`4 -> 1` calls), `sessions.load_session` (`15 -> 7` calls), `sessions.participants_by_session_status` (`2 -> 0` calls), `scenario.objectives_by_status` (`4 -> 0` calls), and `scenario.quests_by_participant_status` (`4 -> 0` calls).
 - [x] Pick the next rotated target from the new heavy list rather than continuing champion-only work. Next target: economy update runtime-first auth for `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade`, then rotate again before deeper economy aggregate work.
 
+### 34. Random Endpoint Cluster: Economy Runtime-First Updates
+
+- [x] Rotate to economy update auth after the runtime-context measurement because `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade` are the top three remaining endpoints.
+- [x] Switch `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` to `require_active_session_caller_runtime_first`.
+- [x] Keep existing town/dwelling/champion resolution, durable command rows, resource ledger rows, hire/trade/recruit rows, and event/effect writes unchanged.
+- [x] Preserve durable fallback behavior through `require_active_session_caller_runtime_first` when no active runtime caller context exists.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify the three economy update endpoints drop the active-caller durable lookup floor after the earlier participant-row mirroring cut.
+- [ ] Rotate again before deeper economy-only changes unless the next benchmark shows economy remains the clear route blocker.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

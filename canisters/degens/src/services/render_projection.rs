@@ -32,6 +32,8 @@ thread_local! {
         const { RefCell::new(Vec::new()) };
     static KNOWN_OBJECT_ROWS: RefCell<Vec<ParticipantKnownObject>> =
         const { RefCell::new(Vec::new()) };
+    static NEUTRAL_ARMY_ROWS: RefCell<Vec<NeutralArmy>> =
+        const { RefCell::new(Vec::new()) };
     static MAP_CHUNK_ROWS: RefCell<Vec<MapChunk>> =
         const { RefCell::new(Vec::new()) };
     static VISIBILITY_CHUNK_ROWS: RefCell<Vec<VisibilityChunk>> =
@@ -76,14 +78,29 @@ pub(crate) fn remember_known_objects(rows: &[ParticipantKnownObject]) {
     });
 }
 
-pub(crate) fn invalidate_known_objects(
+pub(crate) fn remember_known_object_if_cached(
     session_id: Id<GameSession>,
     participant_id: Id<GameParticipant>,
+    row: &ParticipantKnownObject,
 ) {
     let session_key = session_id.key();
     let participant_key = participant_id.key();
     KNOWN_OBJECT_ROWS.with_borrow_mut(|cache| {
-        cache.retain(|row| row.session_id != session_key || row.participant_id != participant_key);
+        if cache
+            .iter()
+            .any(|row| row.session_id == session_key && row.participant_id == participant_key)
+        {
+            cache.push(row.clone());
+        }
+    });
+}
+
+pub(crate) fn remember_neutral_armies(rows: &[NeutralArmy]) {
+    NEUTRAL_ARMY_ROWS.with_borrow_mut(|cache| {
+        for row in rows {
+            cache.retain(|existing| existing.id() != row.id());
+            cache.push(row.clone());
+        }
     });
 }
 
@@ -150,6 +167,24 @@ fn cached_map_chunks(context: &SessionCallerContext) -> Vec<MapChunk> {
             .filter(|row| row.session_id == context.session.id().key())
             .cloned()
             .collect()
+    })
+}
+
+fn cached_neutral_for_known(
+    session_id: Id<GameSession>,
+    subject: &ObjectSubject,
+) -> Option<NeutralArmy> {
+    let session_key = session_id.key();
+    let id_key = Ulid::from_str(&subject.subject_id_text).ok();
+    NEUTRAL_ARMY_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|row| {
+                row.session_id == session_key
+                    && (id_key.is_some_and(|id| row.id == id)
+                        || row.x == subject.x && row.y == subject.y)
+            })
+            .cloned()
     })
 }
 
@@ -1273,6 +1308,9 @@ fn live_neutral_for_known(
     session_id: Id<GameSession>,
     subject: &ObjectSubject,
 ) -> Result<Option<NeutralArmy>, ApiError> {
+    if let Some(neutral) = cached_neutral_for_known(session_id, subject) {
+        return Ok(Some(neutral));
+    }
     if let Ok(id) = Ulid::from_str(&subject.subject_id_text).map(Id::<NeutralArmy>::from_key) {
         return neutrals::load_neutral_army(id);
     }

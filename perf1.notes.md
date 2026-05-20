@@ -4137,3 +4137,43 @@ Decision:
 
 - Keep this checkpoint. It removes the event-feed query floor without changing row growth, stable pages, or the public route shape.
 - The remaining Gate J total is now dominated by the single `get_visible_objects` durable fallback after movement invalidates the opening known-object cache, plus update-side durable boundary work that belongs to Gate 5H.
+
+## Checkpoint: Neutral View Cache Cuts Visible Objects
+
+After the event-feed cache, `get_visible_objects` was the last large Gate J query floor at about `0.7143B`. A first attempt kept newly discovered known-object rows in the participant cache, but the benchmark did not move. A second attempt added a first-playable world-object cache, but that also did not move. The measured blocker was the visible neutral-army branch, which still loaded a durable `NeutralArmy` row while building the object list.
+
+What changed:
+
+- `first_playable_setup::seed_neutrals` now seeds the real `NeutralArmy` rows into a small render projection cache.
+- `render_projection::live_neutral_for_known` checks that cache by id or coordinate before falling back to `neutrals`.
+- `battle_aftermath::apply_neutral_aftermath` updates the cache after a neutral army is marked defeated, so the object list does not keep showing stale active neutral state.
+- `movement::create_known_object_if_missing` now appends newly created known-object rows when the participant cache is present, instead of invalidating the whole cache. If no participant cache exists, later reads still fall back to durable rows.
+- The world-object cache prototype was removed before the final benchmark because focused Gate J proved it did not reduce the route.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bf9200`
+- Focused Gate J `20260520-neutral-view-cache-gate-j` passed in `188.19s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-event-feed-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 50.0394B | 49.3327B | -1.4% |
+| `get_visible_objects` avg | 0.7143B | 0.0115B | -98.4% |
+| `get_events_after` avg | 0.0001B | 0.0001B | flat |
+| `get_visible_map_chunks` avg | 0.0001B | 0.0001B | flat |
+| `sync_session_turn` avg | 0.3800B | 0.3796B | flat |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the last large query-side floor from Gate J without changing rows, stable pages, or route shape.
+- The remaining route total is now mostly update/setup-side work: lobby/session setup commands dominate absolute instructions, and active movement sync is already around `0.38B` average in this route.

@@ -122,6 +122,7 @@ fn apply_neutral_aftermath(
     neutral.state = "defeated".to_string();
     neutral.last_command_id = Some(command_id.key());
     neutral = neutrals::update_neutral_army(neutral)?;
+    render_projection::remember_neutral_armies(std::slice::from_ref(&neutral));
     cleanup_occupancy_by_occupant(session.id(), "neutral_army", &neutral_id.to_string())?;
 
     let mut champion = champions_artifacts::load_champion(champion_id)?

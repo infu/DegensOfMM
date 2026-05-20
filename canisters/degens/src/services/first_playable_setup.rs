@@ -635,6 +635,7 @@ fn seed_neutrals(
             seeded_stacks.push(row);
         }
         battle_start::remember_seeded_neutral_army_stacks(army.id(), seeded_stacks);
+        render_projection::remember_neutral_armies(std::slice::from_ref(&army));
         neutral_keys.insert(neutral.key.clone(), army.id());
     }
     Ok(())

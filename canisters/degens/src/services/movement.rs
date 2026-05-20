@@ -3368,7 +3368,7 @@ fn create_known_object_if_missing(
     {
         return Ok(false);
     }
-    map_visibility_occupancy::create_known_object(
+    let known_object = map_visibility_occupancy::create_known_object(
         session.id(),
         participant_id,
         subject_kind.to_string(),
@@ -3381,7 +3381,7 @@ fn create_known_object_if_missing(
         session.current_turn,
         Some(redacted_json),
     )?;
-    render_projection::invalidate_known_objects(session.id(), participant_id);
+    render_projection::remember_known_object_if_cached(session.id(), participant_id, &known_object);
     Ok(true)
 }
 

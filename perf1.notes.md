@@ -3036,12 +3036,31 @@ Verification:
 
 Benchmark status:
 
-- Deferred by design. The last focused Gate J run took about 3.4 minutes, and the current instruction from the workflow is to batch more low-risk cuts before rerunning slow PocketIC tests.
-- Expected activation repo-op removals when the heap cache is complete: `battles.stacks_by_battle`, `battles.obstacles_by_battle`, `battles.occupancy_by_battle`, and `system_jobs.by_job_key`.
+- Focused Gate J `20260520-startup-cache-open-turn-gate-j` passed in `197.43s`.
+
+Measured delta versus Gate 5F.4 `20260520-neutral-activation-returns-battle-gate-j`:
+
+| metric | Gate 5F.4 | Gate 5F.5 / 5E.1 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 168.8816B | 164.7224B | -2.5% |
+| `sync_session_turn` avg | 2.1199B | 1.8362B | -13.4% |
+| `submit_move_intent` avg | 0.7108B | 0.2389B | -66.4% |
+| `system_jobs.by_session_status_due` calls | 10 | 6 | -40.0% |
+| `system_jobs.by_job_key` calls | 2 | 1 | -50.0% |
+
+Measured repo-operation movement:
+
+| operation | Gate 5F.4 | Gate 5F.5 / 5E.1 | note |
+| --- | ---: | ---: | --- |
+| `battles.stacks_by_battle` | 1 | 0 | final activation reused heap startup stacks |
+| `battles.obstacles_by_battle` | 1 | 0 | final activation reused heap startup obstacles |
+| `battles.occupancy_by_battle` | 1 | 0 | final activation reused heap startup occupancy |
+| `system_jobs.by_job_key` | 2 | 1 | startup timeout job uses direct create |
+| `system_jobs.by_session_status_due` | 10 | 6 | runtime-open guard skipped safe pre-deadline scans |
 
 Decision:
 
-- Keep pending focused Gate J validation. The code preserves durable row fallback and moves no logic to a hollow endpoint; it only reuses rows that were already created in the same staged startup sequence.
+- Keep this cut. The code preserves durable row fallback and moves no logic to a hollow endpoint; it only reuses rows that were already created in the same staged startup sequence. The paired runtime-open guard also gets `submit_move_intent` under the `0.3B-0.6B` hard target.
 
 ## Checkpoint: Runtime-Proved Open Turn Guard
 
@@ -3061,9 +3080,10 @@ Verification:
 
 Benchmark status:
 
-- Focused Gate J measurement is deferred to the next batched run.
-- Expected repo-op reduction is the remaining safe pre-deadline `system_jobs.by_session_status_due` scan on fresh map-turn commands when the runtime is authoritative.
+- Focused Gate J `20260520-startup-cache-open-turn-gate-j` passed in `197.43s`.
+- Versus Gate 5F.4 `20260520-neutral-activation-returns-battle-gate-j`, `submit_move_intent` moved `0.7108B -> 0.2389B` (-66.4%) and `system_jobs.by_session_status_due` calls moved `10 -> 6`.
+- This gets fresh movement submit below the `0.3B-0.6B` hard target for the first time.
 
 Decision:
 
-- Keep this cut. It is the same semantic direction as Gate 5E, but fenced by active runtime proof and backed by the stale-turn regression before commit.
+- Keep this cut. It is the same semantic direction as Gate 5E, but fenced by active runtime proof and backed by the stale-turn regression before commit and the focused Gate J benchmark after commit.

@@ -11,12 +11,14 @@ use icydb::{
     types::{Id, Timestamp},
 };
 
+#[cfg(not(feature = "benchmark"))]
+use crate::services::account_lobby_session;
 use crate::{
     repos::{
         battles, sessions,
         system_jobs::{self, SystemJobDraft},
     },
-    services::{account_lobby_session, battle, movement, scenario_progress},
+    services::{battle, movement, scenario_progress},
 };
 
 const TIMER_LEASE_MS: i64 = 30_000;
@@ -131,6 +133,7 @@ fn repair_jobs_for_sessions_in_state(state: &str) -> Result<(), ApiError> {
 
 fn repair_jobs_for_session(session: &GameSession) -> Result<(), ApiError> {
     match session.state.as_str() {
+        #[cfg(not(feature = "benchmark"))]
         "starting" => {
             schedule_job(SystemJobDraft {
                 job_key: format!("setup_session:{}", session.id()),
@@ -359,9 +362,12 @@ fn next_claimable_or_scheduled_job() -> Result<Option<SystemJob>, ApiError> {
 
 fn dispatch_claimed_job(job: SystemJob) -> Result<(), ApiError> {
     match job.job_kind.as_str() {
+        #[cfg(not(feature = "benchmark"))]
         "setup_session" => {
             account_lobby_session::process_setup_session_job(job)?;
         }
+        #[cfg(feature = "benchmark")]
+        "setup_session" => {}
         "turn_deadline" | "turn_resolution" => {
             movement::process_turn_resolution_job(job)?;
         }

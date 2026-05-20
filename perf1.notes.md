@@ -5260,3 +5260,20 @@ Verification:
 Decision:
 
 - Keep it. It is the same low-risk direct-insert pattern as `GameCommand`, `SystemJob`, and `Battle` header rows.
+
+## Checkpoint: Gate 7 Direct-Create Benchmark
+
+Gate 7 measurement after the direct-create pass:
+
+- Focused Gate J `20260520-143448-gate7-direct-create-gate-j` passed in `323.52s`.
+- Scenario: `2 players; map 48x48; 3 movement paths; 0 battle actions; 2 town reads; 4 event reads; benchmark route`.
+- Scenario instructions were effectively flat versus `20260520-runtime-visibility-known-projection-bounded-gate-j`: `6.6772B -> 6.6790B` (`+0.03%`).
+- Scenario memory stayed flat at `3980.0625 MB`; cycles stayed flat at `0.0548T`; row growth stayed flat at `35`.
+- `start_session` was neutral (`1.4346B -> 1.4340B`) and `sync_session_turn` was neutral (`0.1440B -> 0.1439B`).
+- `submit_build_town_structure` and `submit_recruit_units` moved from about `0.0003B` to `0.0018B`; that is a small absolute cost but it confirms the direct-create pass did not improve this route.
+- Remaining repo-operation costs are still almost all durable insert/update/index work: `players.create_player_account` `0.9435B` total, `sessions.create_participant` `0.9599B`, `sessions.update_session` `0.9552B`, `system_jobs.create_system_job` `0.9560B`, `battles.create_battle` `0.4803B`, `commands.create_game_command` `0.4777B`, and `sessions.create_game_session` `0.4778B`.
+
+Decision:
+
+- Keep the direct-insert cleanups because they simplify the create path and do not break behavior, but stop expecting them to move Gate J materially.
+- The next Gate 7 work needs to reduce durable row count or defer row writes with a real heap-first/barrier model. Generated `Create<T>` materialization is not the measured floor; stable row insert/update/index maintenance is.

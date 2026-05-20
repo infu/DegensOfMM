@@ -22,11 +22,11 @@ use icydb::{
 };
 use icydb::{traits::EntityValue, types::Id};
 
-#[cfg(not(feature = "benchmark"))]
-use crate::repos::commands_events_effects;
 use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
 };
+#[cfg(not(feature = "benchmark"))]
+use crate::repos::{commands_events_effects, economy};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 
@@ -398,6 +398,19 @@ pub(crate) struct ResourceTurnDelta {
     pub crystal: i64,
     pub ember: i64,
     pub aether: i64,
+    #[cfg(not(feature = "benchmark"))]
+    pub ledger: Option<ResourceLedgerDelta>,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone)]
+pub(crate) struct ResourceLedgerDelta {
+    pub command_id: String,
+    pub ledger_key: String,
+    pub resource_key: String,
+    pub delta: i64,
+    pub balance_after: u64,
+    pub reason: String,
 }
 
 #[derive(Clone)]
@@ -625,28 +638,75 @@ pub(crate) fn record_resource_delta(
         let Some(runtime) = runtimes.get_mut(&runtime_key(session_id, turn_number)) else {
             return;
         };
-        let mut resource_delta = ResourceTurnDelta {
-            participant_id: participant_id.to_string(),
-            gold: 0,
-            wood: 0,
-            stone: 0,
-            iron: 0,
-            crystal: 0,
-            ember: 0,
-            aether: 0,
+        let Some(resource_delta) = resource_turn_delta(participant_id, resource_key, delta) else {
+            return;
         };
-        match resource_key {
-            "gold" => resource_delta.gold = delta,
-            "wood" => resource_delta.wood = delta,
-            "stone" => resource_delta.stone = delta,
-            "iron" => resource_delta.iron = delta,
-            "crystal" => resource_delta.crystal = delta,
-            "ember" => resource_delta.ember = delta,
-            "aether" => resource_delta.aether = delta,
-            _ => return,
-        }
         runtime.push_resource_delta(resource_delta);
     });
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn record_resource_ledger_delta(
+    session_id: &str,
+    turn_number: u32,
+    participant_id: &str,
+    command_id: &str,
+    ledger_key: String,
+    resource_key: &str,
+    delta: i64,
+    balance_after: u64,
+    reason: &str,
+) {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        let Some(runtime) = runtimes.get_mut(&runtime_key(session_id, turn_number)) else {
+            return;
+        };
+        let Some(mut resource_delta) = resource_turn_delta(participant_id, resource_key, delta)
+        else {
+            return;
+        };
+        resource_delta.ledger = Some(ResourceLedgerDelta {
+            command_id: command_id.to_string(),
+            ledger_key,
+            resource_key: resource_key.to_string(),
+            delta,
+            balance_after,
+            reason: reason.to_string(),
+        });
+        runtime.push_resource_delta(resource_delta);
+    });
+}
+
+fn resource_turn_delta(
+    participant_id: &str,
+    resource_key: &str,
+    delta: i64,
+) -> Option<ResourceTurnDelta> {
+    let mut resource_delta = ResourceTurnDelta {
+        participant_id: participant_id.to_string(),
+        gold: 0,
+        wood: 0,
+        stone: 0,
+        iron: 0,
+        crystal: 0,
+        ember: 0,
+        aether: 0,
+        #[cfg(not(feature = "benchmark"))]
+        ledger: None,
+    };
+    match resource_key {
+        "gold" => resource_delta.gold = delta,
+        "wood" => resource_delta.wood = delta,
+        "stone" => resource_delta.stone = delta,
+        "iron" => resource_delta.iron = delta,
+        "crystal" => resource_delta.crystal = delta,
+        "ember" => resource_delta.ember = delta,
+        "aether" => resource_delta.aether = delta,
+        _ => return None,
+    }
+    Some(resource_delta)
 }
 
 pub(crate) fn champion_snapshot(session_id: &str, champion_id: &str) -> Option<Champion> {
@@ -1184,6 +1244,13 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
         }
     }
     for runtime in &runtimes {
+        for resource_delta in &runtime.resource_deltas {
+            if flush_runtime_resource_delta(runtime, resource_delta)? {
+                flushed = flushed.saturating_add(1);
+            }
+        }
+    }
+    for runtime in &runtimes {
         for runtime_event in runtime
             .active_events
             .iter()
@@ -1255,6 +1322,35 @@ fn flush_runtime_command_receipt(
         ..Default::default()
     };
     commands_events_effects::insert_game_command(command)?;
+    Ok(true)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_resource_delta(
+    runtime: &SessionTurnRuntime,
+    resource_delta: &ResourceTurnDelta,
+) -> Result<bool, ApiError> {
+    let Some(ledger_delta) = resource_delta.ledger.clone() else {
+        return Ok(false);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let participant_id = parse_ulid_id::<GameParticipant>(&resource_delta.participant_id)?;
+    let command_id = parse_ulid_id::<GameCommand>(&ledger_delta.command_id)?;
+    if economy::find_resource_ledger_entry(command_id, &ledger_delta.ledger_key)?.is_some() {
+        return Ok(false);
+    }
+    economy::create_resource_ledger_entry(
+        session_id,
+        participant_id,
+        command_id,
+        ledger_delta.ledger_key,
+        runtime.turn_number,
+        ledger_delta.resource_key,
+        ledger_delta.delta,
+        ledger_delta.balance_after,
+        ledger_delta.reason,
+        "applied".to_string(),
+    )?;
     Ok(true)
 }
 

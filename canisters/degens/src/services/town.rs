@@ -888,11 +888,14 @@ fn spend_resources_runtime(
     session_id: Id<domm_degens_schema::schema::GameSession>,
     participant: &mut GameParticipant,
     command_id: Id<domm_degens_schema::schema::GameCommand>,
-    _ledger_prefix: &str,
+    ledger_prefix: &str,
     turn_number: u32,
     cost: &domm_game::ResourceBalances,
-    _reason: &str,
+    reason: &str,
 ) -> Result<(), ApiError> {
+    #[cfg(feature = "benchmark")]
+    let _ = (ledger_prefix, reason);
+
     for (resource_key, amount) in [
         ("gold", i64::try_from(cost.gold).unwrap_or(i64::MAX)),
         ("wood", i64::from(cost.wood)),
@@ -906,14 +909,32 @@ fn spend_resources_runtime(
             continue;
         }
         let delta = -amount;
-        apply_resource_balance_delta(participant, resource_key, delta)?;
-        session_turn_runtime::record_resource_delta(
-            &session_id.to_string(),
-            turn_number,
-            &participant.id().to_string(),
-            resource_key,
-            delta,
-        );
+        #[cfg(feature = "benchmark")]
+        {
+            apply_resource_balance_delta(participant, resource_key, delta)?;
+            session_turn_runtime::record_resource_delta(
+                &session_id.to_string(),
+                turn_number,
+                &participant.id().to_string(),
+                resource_key,
+                delta,
+            );
+        }
+        #[cfg(not(feature = "benchmark"))]
+        {
+            let balance_after = apply_resource_balance_delta(participant, resource_key, delta)?;
+            session_turn_runtime::record_resource_ledger_delta(
+                &session_id.to_string(),
+                turn_number,
+                &participant.id().to_string(),
+                &command_id.to_string(),
+                format!("{ledger_prefix}:{resource_key}"),
+                resource_key,
+                delta,
+                balance_after,
+                reason,
+            );
+        }
     }
     participant.last_resource_command_id = Some(command_id.key());
     Ok(())

@@ -817,7 +817,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep existing town/dwelling/champion resolution, durable command rows, resource ledger rows, hire/trade/recruit rows, and event/effect writes unchanged.
 - [x] Preserve durable fallback behavior through `require_active_session_caller_runtime_first` when no active runtime caller context exists.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify the three economy update endpoints drop the active-caller durable lookup floor after the earlier participant-row mirroring cut.
+- [x] Measure in the next batched run and verify the three economy update endpoints drop the active-caller durable lookup floor after the earlier participant-row mirroring cut. Artifact `target/benchmarks/20260520-runtime-context-tail-6e65208` moved `hire_tavern_champion` `10.1886B -> 8.0801B`, `submit_dwelling_recruit` `10.1479B -> 8.0460B`, and `submit_market_trade` `8.2701B -> 6.1614B`.
 - [x] Rotate again before deeper economy-only changes unless the next benchmark shows economy remains the clear route blocker. Picked `sync_world_generation` update auth because it remains a separate `7B` endpoint and still used the old durable active-caller path.
 
 ### 35. Random Endpoint Cluster: Worldgen Runtime-First Update
@@ -827,7 +827,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep seeded worldgen state, durable command/effect rows, and command response behavior unchanged.
 - [x] Preserve durable fallback behavior when no active runtime caller context exists.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `sync_world_generation` drops the active-caller durable lookup floor.
+- [x] Measure in the next batched run and verify `sync_world_generation` drops the active-caller durable lookup floor. Artifact `target/benchmarks/20260520-runtime-context-tail-6e65208` moved `sync_world_generation` `7.1939B -> 5.0824B`.
 - [x] Rotate again before deeper worldgen-only changes unless the next benchmark says this endpoint is still a top blocker. Picked `end_turn` because it still used the old durable active-caller path while neighboring movement endpoints already use runtime-current context.
 
 ### 36. Random Endpoint Cluster: End Turn Runtime-Current Context
@@ -837,7 +837,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep turn-ready row creation, runtime readiness counts, optional turn-resolution job scheduling, public event creation, and command response behavior unchanged.
 - [x] Preserve durable fallback behavior when the current active runtime is missing or incomplete.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `end_turn` drops the active-caller durable lookup floor.
+- [x] Measure in the next batched run and verify `end_turn` drops the active-caller durable lookup floor. Artifact `target/benchmarks/20260520-runtime-context-tail-6e65208` moved `end_turn` `5.4317B -> 3.3239B`.
 - [x] Rotate again before deeper end-turn-only changes unless the next benchmark says `end_turn` remains a top blocker. Picked battle sync/end-turn auth because endpoint-surface still shows a `2.1B` auth floor on those invalid/edge calls.
 
 ### 37. Random Endpoint Cluster: Battle Sync Runtime-First Context
@@ -847,8 +847,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep battle row loading, active runtime adoption, timeout/recovery handling, readiness, aftermath, events, and command response behavior unchanged.
 - [x] Preserve durable fallback behavior when no active runtime caller context exists.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `sync_battle` and `end_battle_turn` drop the active-caller durable lookup floor on endpoint-surface.
-- [ ] Rotate again before deeper battle-only changes unless the next benchmark says these battle boundary calls remain top blockers.
+- [x] Measure in the next batched run and verify `sync_battle` and `end_battle_turn` drop the active-caller durable lookup floor on endpoint-surface. Artifact `target/benchmarks/20260520-runtime-context-tail-6e65208` moved both endpoint-surface boundary calls from about `2.108B` to effectively zero on the invalid/edge route.
+- [x] Rotate again before deeper battle-only changes unless the next benchmark says these battle boundary calls remain top blockers. Next target should be a different still-heavy command cluster; the remaining top costs are economy command writes, `claim_quest_reward`, champion magic writes, and scenario/worldgen command rows.
+
+### 38. Batched Runtime-Context Tail Measurement
+
+- [x] Run endpoint-surface after economy update auth, worldgen sync auth, `end_turn` runtime-current context, and battle sync/end-turn runtime-first context. Artifact `target/benchmarks/20260520-runtime-context-tail-6e65208` passed in `193.20s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `95.9404B -> 81.2096B` (`-14.7308B`, `-15.4%`) versus `20260520-runtime-context-rotations-d1765d7`.
+- [x] Confirm the runtime-context auth floor is gone from repo ops: `sessions.load_session` moved from `7` calls / `4.9236B` to zero calls, while command row counts and row growth remained stable.
+- [x] Pick the next rotated target from the new heavy list instead of continuing auth-only work. Current top remaining update costs: `hire_tavern_champion` `8.0801B`, `submit_dwelling_recruit` `8.0460B`, `claim_quest_reward` `7.3496B`, `submit_market_trade` `6.1614B`, `learn_champion_spell` `5.6836B`, `sync_advanced_victory` `5.4473B`, and `sync_world_generation` `5.0824B`.
 
 ## Expected Outcome
 

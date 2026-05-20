@@ -6457,3 +6457,40 @@ Expected measurement:
 
 - `sync_battle` and `end_battle_turn` should drop the active-caller durable lookup floor on endpoint-surface.
 - Remaining cost should be battle row lookup/adoption and command handling for these boundary calls.
+
+## Measurement: Runtime-Context Tail Cuts
+
+Artifact:
+
+- `target/benchmarks/20260520-runtime-context-tail-6e65208`
+- Git: `6e65208`.
+- Endpoint-surface passed in `193.20s`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `150`.
+- Stable pages: `2049 -> 81281`.
+
+Scenario delta versus `20260520-runtime-context-rotations-d1765d7`:
+
+- `95.9404B -> 81.2096B`, `-14.7308B`, `-15.4%`.
+
+Targeted endpoint deltas:
+
+- `hire_tavern_champion`: `10.1886B -> 8.0801B`, `-2.1085B`, `-20.7%`.
+- `submit_dwelling_recruit`: `10.1479B -> 8.0460B`, `-2.1020B`, `-20.7%`.
+- `submit_market_trade`: `8.2701B -> 6.1614B`, `-2.1087B`, `-25.5%`.
+- `sync_world_generation`: `7.1939B -> 5.0824B`, `-2.1115B`, `-29.4%`.
+- `end_turn`: `5.4317B -> 3.3239B`, `-2.1078B`, `-38.8%`.
+- `sync_battle`: `2.1085B -> 0.0000B`, effectively removed on endpoint-surface.
+- `end_battle_turn`: `2.1096B -> 0.0000B`, effectively removed on endpoint-surface.
+
+Repo-op confirmation:
+
+- `sessions.load_session`: `7` calls / `4.9236B -> 0`.
+- `sessions.update_participant` stayed at `1` call / `0.4798B`.
+- Command rows are still the dominant shared floor: `commands.game_command_idempotency` `13` calls / `9.1996B`, `commands.create_game_command` `13` calls / `6.2337B`, and `commands.update_game_command` `13` calls / `6.2405B`.
+
+Next target:
+
+- The easy auth floor is now gone from the endpoint-surface route.
+- The next meaningful reductions need to attack command/idempotency writes, economy durable rows, quest/scenario row work, champion spellbook/content rows, or worldgen state reads.

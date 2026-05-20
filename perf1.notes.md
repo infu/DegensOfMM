@@ -5020,7 +5020,7 @@ Decision:
 Gate 5H barrier boundary slice:
 
 - Added `services::flush_barrier::flush_barrier("Upgrade")` as the common non-benchmark entry point for durable projection barriers.
-- `pre_upgrade` now calls that barrier for lobby receipts/events, session-turn rows/events/commands/resource ledgers, and town projections before persisting the battle runtime snapshot.
+- `pre_upgrade` now calls that barrier for lobby receipts/events, session-turn rows/events/commands/resource ledgers, and town projections before persisting the battle runtime snapshot. The next checkpoint folds that battle snapshot into the barrier too.
 - The barrier rejects unsupported reasons for now, so this does not claim the full Gate 5H contract for `TurnAdvance`, `BattleHandoff`, `RuntimeEviction`, or `StrongRead`.
 
 Verification:
@@ -5033,3 +5033,22 @@ Verification:
 Decision:
 
 - Keep it. It creates the reusable boundary without broadening hot-path behavior yet, and leaves the non-upgrade reasons as explicit follow-up work.
+
+## Checkpoint: Battle Runtime Snapshot In Upgrade Barrier
+
+Gate 5H barrier boundary slice:
+
+- Folded `battle_runtime::persist_snapshot_for_upgrade` into `flush_barrier("Upgrade")`.
+- `pre_upgrade` now has a single non-benchmark barrier call for lobby runtime state, session-turn runtime state, town projections, and active battle runtime snapshot refs.
+- Battle snapshot failures are mapped into retryable `ApiError` values inside the barrier, keeping the pre-upgrade panic handling centralized.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This makes `Upgrade` a real shared barrier boundary instead of a partial wrapper, without adding any hot-path IcyDB writes.

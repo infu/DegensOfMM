@@ -62,9 +62,6 @@ fn pre_upgrade_impl() {
             panic!("upgrade flush barrier failed: {}", error.message);
         }
     }
-    if let Err(error) = services::battle_runtime::persist_snapshot_for_upgrade() {
-        panic!("battle runtime pre-upgrade snapshot failed: {error}");
-    }
 }
 
 #[cfg(target_arch = "wasm32")]

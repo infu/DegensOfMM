@@ -817,9 +817,7 @@ fn materialize_town_recruit_growth(
     command_id: Id<GameCommand>,
 ) -> Result<u32, ApiError> {
     let mut touched = 0_u32;
-    for mut pool in
-        towns::page_town_recruit_pools(town.id(), domm_game::MAX_LIST_LIMIT, None)?.items
-    {
+    for mut pool in town_runtime::projection_for_town(town)?.recruit_pools {
         let growth_weeks = current_week.saturating_sub(pool.last_growth_week).min(2);
         if growth_weeks == 0 {
             continue;
@@ -859,9 +857,14 @@ fn load_offer_for_town(
 }
 
 fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
+    if let Some(town) = town_runtime::cached_town_by_public_id(session.id(), town_id) {
+        return Ok(town);
+    }
     if let Ok(id) = session_context::parse_id::<Town>(town_id, "town_id") {
-        return towns::load_town(id)?
-            .ok_or_else(|| public_error("not_found", "town not found", false));
+        let town = towns::load_town(id)?
+            .ok_or_else(|| public_error("not_found", "town not found", false))?;
+        town_runtime::projection_for_town(&town)?;
+        return Ok(town);
     }
     let scenario = domm_game::first_playable_scenario();
     let start = scenario
@@ -869,8 +872,10 @@ fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> 
         .iter()
         .find(|start| start.town_key == town_id)
         .ok_or_else(|| public_error("not_found", "town not found", false))?;
-    towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
-        .ok_or_else(|| public_error("not_found", "town not found", false))
+    let town = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+        .ok_or_else(|| public_error("not_found", "town not found", false))?;
+    town_runtime::projection_for_town(&town)?;
+    Ok(town)
 }
 
 fn resolve_dwelling_object(

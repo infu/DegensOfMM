@@ -4931,3 +4931,23 @@ Decision:
 
 - Keep it. This closes the explicit movement/sync command receipt upgrade-history gap without restoring stable command writes to the active movement/sync routes.
 - Battle runtime command/event durable history remains a separate blocked item because previous attempts exceeded the IC Wasm code-section limit.
+
+## Checkpoint: Economy Town Projection Broadening
+
+Gate 6 projection broadening slice:
+
+- `economy_expansion::resolve_town` now uses `town_runtime::cached_town_by_public_id` before durable lookup, matching the town service path.
+- Tavern/economy town id misses now hydrate `TownProjection`, so repeated tavern offer/preview/hire calls can reuse the real-row-backed town aggregate.
+- Movement-side town text lookup now uses the same cache/adoption path, so non-Gate-J paths that resolve towns through movement also keep the projection warm.
+- Weekly recruit growth now iterates recruit pools from `TownProjection` and mirrors updates back into the projection after durable update.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it as a broadening checkpoint. It does not move tavern offers themselves into heap projection yet; that remains open with non-start aliases and any remaining direct town-child command variants.

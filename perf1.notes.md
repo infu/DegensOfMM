@@ -5414,3 +5414,26 @@ Decision:
 
 - Keep the insert-first registration slice. It produced the first material Gate 7 scenario reduction after the neutral direct-create pass.
 - Next performance work should target the setup/session durable row count: `start_session` still pays roughly one session update plus setup command/job writes, and session creation still pays durable session plus participant creates.
+
+## Checkpoint: Heap Lobby Participants With Start Flush
+
+Gate 7.10 session/participant row-count slice:
+
+- The last focused Gate J run showed `sessions.create_participant` as the largest remaining route-local floor after registration: two durable participant inserts cost `0.9607B` total, split across `create_session` and `join_session`.
+- Changed lobby creation/join to build `GameParticipant` rows in heap instead of immediately inserting them into IcyDB.
+- The session participant cache is now multi-session and tracks each cached participant as durable/dirty, so `mark_ready` can update the heap row and `start_session` can flush exactly the rows setup needs.
+- `start_session` flushes cached participants before scheduling/running setup. The common fresh lobby route uses one `sessions.insert_participants_atomic` operation for both participants instead of two separate `sessions.create_participant` operations.
+- The live-session admission guard now checks heap-only cached participants before trusting the "no live session" cache or falling back to durable participant rows.
+- The non-benchmark upgrade barrier now flushes cached lobby participants before lobby commands/events, so an upgrade between lobby creation and start does not lose participant rows.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister start_session_replay_while_starting_reuses_original_nonce_and_cursor -- --nocapture` passed in `22.09s`
+
+Decision:
+
+- Keep this checkpoint. It removes participant durable writes from `create_session` and `join_session` and moves the required durability to the setup boundary, which matches the aggregate/projection direction.
+- Benchmark is still required because `insert_many_atomic` may cost less than, equal to, or more than two individual inserts. The next Gate J run should compare `create_session`, `join_session`, `start_session`, scenario total, row growth, and repo ops against `20260520-152224-gate7-registration-recovery-gate-j`.

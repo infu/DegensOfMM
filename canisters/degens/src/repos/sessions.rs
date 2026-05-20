@@ -105,7 +105,18 @@ pub(crate) fn create_participant(
     slot_index: u8,
     color_key: String,
 ) -> RepoResult<GameParticipant> {
-    let participant = GameParticipant {
+    let participant = new_participant(session_id, player_id, faction_id, slot_index, color_key);
+    foundation::insert("sessions.create_participant", participant)
+}
+
+pub(crate) fn new_participant(
+    session_id: Id<GameSession>,
+    player_id: Id<PlayerAccount>,
+    faction_id: Id<FactionDefinition>,
+    slot_index: u8,
+    color_key: String,
+) -> GameParticipant {
+    GameParticipant {
         session_id: session_id.key(),
         player_id: player_id.key(),
         faction_id: faction_id.key(),
@@ -129,9 +140,13 @@ pub(crate) fn create_participant(
         last_resource_command_id: None,
         champion_ids: Vec::new(),
         ..Default::default()
-    };
+    }
+}
 
-    foundation::insert("sessions.create_participant", participant)
+pub(crate) fn insert_participants_atomic(
+    participants: impl IntoIterator<Item = GameParticipant>,
+) -> RepoResult<Vec<GameParticipant>> {
+    foundation::insert_many_atomic("sessions.insert_participants_atomic", participants)
 }
 
 pub(crate) fn load_participant(id: Id<GameParticipant>) -> RepoResult<Option<GameParticipant>> {

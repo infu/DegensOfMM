@@ -393,18 +393,20 @@ pub(crate) fn register_player(
         option_json(username.as_deref()),
         escape_json(&display_name)
     );
+    let existing_player = players::find_by_principal(actor_principal)?;
+    let actor_player_id = existing_player.as_ref().map(EntityValue::id);
     let mut command = match begin_lobby_command(
         actor_principal,
-        None,
+        actor_player_id,
         "register_player",
         &client_nonce,
         payload_json,
+        existing_player.is_some(),
     )? {
         LobbyCommandAction::Apply(command) => command,
         LobbyCommandAction::Return(response) => return Ok(response),
     };
 
-    let existing_player = players::find_by_principal(actor_principal)?;
     let player = match existing_player {
         Some(player) => player,
         None => {
@@ -458,6 +460,7 @@ pub(crate) fn create_session(
         "create_session",
         &client_nonce,
         payload_json,
+        true,
     )? {
         LobbyCommandAction::Apply(command) => command,
         LobbyCommandAction::Return(response) => return Ok(response),
@@ -973,6 +976,7 @@ where
         command_type,
         client_nonce,
         payload_json,
+        true,
     )? {
         LobbyCommandAction::Apply(command) => command,
         LobbyCommandAction::Return(response) => return Ok(response),
@@ -1002,6 +1006,7 @@ fn begin_lobby_command(
     command_type: &'static str,
     client_nonce_text: &str,
     payload_json: String,
+    check_durable_idempotency: bool,
 ) -> Result<LobbyCommandAction, ApiError> {
     if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
         return Ok(LobbyCommandAction::Return(failed_lobby_response(
@@ -1051,7 +1056,7 @@ fn begin_lobby_command(
         return response_from_lobby_command(existing, client_nonce_text)
             .map(LobbyCommandAction::Return);
     }
-    if !runtime_lobby_actor_present(actor_principal) {
+    if check_durable_idempotency && !runtime_lobby_actor_present(actor_principal) {
         if let Some(existing) = commands_events_effects::find_lobby_command_by_idempotency(
             actor_principal,
             client_nonce,

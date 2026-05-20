@@ -4463,3 +4463,40 @@ Decision:
 
 - Keep this checkpoint. It removes the active-session-limit scan from the gameplay hot path while still seeding from durable rows at install/upgrade and falling back to durable scans if the cache is absent.
 - The scan cost is now paid outside the measured command route during install/upgrade repair, which is a better tradeoff for active gameplay. Gate 5H should include this cache in the broader runtime snapshot/repair policy.
+
+## Checkpoint: Brand-New Register Idempotency Skip
+
+After the active-session admission cache, the remaining lobby idempotency cost was two `commands.lobby_command_idempotency` lookups from the first `register_player` call for each principal.
+
+What changed:
+
+- `register_player` now performs the already-required `players.find_by_principal` lookup before beginning the lobby command.
+- If no player row exists, the command skips the durable lobby idempotency lookup and creates the runtime lobby receipt directly.
+- If a player row exists, durable lobby idempotency lookup is still allowed so older persisted register receipts can be replayed.
+- Runtime lobby receipt replay remains first for same-process retries.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfcb43`
+- Focused Gate J `20260520-register-idempotency-skip-gate-j` passed in `195.58s`
+
+Measured delta versus `20260520-active-session-admission-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 24.0875B | 22.6822B | -5.8% |
+| Gate J scenario memory | 4076.1875 MB | 4076.1250 MB | flat |
+| `register_player` avg | 1.8748B | 1.1742B | -37.4% |
+| `create_session` avg | 5.8805B | 5.8788B | flat |
+| `commands.lobby_command_idempotency` total | 1.4102B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the last lobby idempotency repo op from Gate J without weakening replay for principals that already have a durable player row.
+- Fresh register receipts are still runtime-backed, so Gate 5H must define their flush/upgrade/status retention policy together with other runtime lobby receipts.

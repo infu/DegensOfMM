@@ -5485,3 +5485,38 @@ Gate J measurement:
 Decision:
 
 - Keep it. This is exactly the aggregate/projection pattern: heap state answers active progress immediately, durable state is written at the setup completion boundary or upgrade barrier.
+
+## Checkpoint: Runtime Setup Command Boundary
+
+Gate 7.12 setup command durability cut:
+
+- After heap-only `starting`, the public `start_session` call still created a durable deterministic `setup_session` `GameCommand` before scheduling the setup job.
+- Changed fresh `start_session` to build and cache the setup command in the runtime command cache, without inserting the `GameCommand` row on the public call.
+- The setup job now persists or loads the durable setup command when it actually runs, so replay/recovery still has a durable command boundary without charging the fresh public route.
+- `get_setup_progress` also checks the runtime command cache before falling back to durable command lookup, so the heap-only command remains visible during the active setup window.
+
+Important correction:
+
+- The first implementation committed as `3205cf1` removed the durable insert, but fresh `start_session` still called the durable idempotency lookup before creating the runtime command.
+- Focused Gate J `20260520-161817-gate7-runtime-setup-command-gate-j` passed but regressed versus Gate 7.11: scenario instructions moved `4.3593B -> 4.5879B`, and `start_session` moved `1.4451B -> 1.6727B`.
+- The repo summary exposed the mistake directly: `commands.game_command_idempotency` appeared as one public-route call at `0.7068B`.
+- Follow-up commit `53625d5` makes the fresh path create/cache the runtime setup command directly, while replay/recovery still uses the durable lookup.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister start_session_replay_while_starting_reuses_original_nonce_and_cursor -- --nocapture` passed in `20.31s`
+
+Gate J measurement:
+
+- Corrected focused Gate J `20260520-162144-gate7-runtime-setup-command-fresh-gate-j` passed in `190.48s` on git `53625d5`.
+- Scenario instructions improved versus `20260520-160417-gate7-starting-session-heap-gate-j`: `4.3593B -> 3.8788B` (`-11.0%`).
+- `start_session` moved `1.4451B -> 0.9664B` avg.
+- The public-route `commands.create_game_command`/`commands.game_command_idempotency` setup command cost disappeared from repo operations.
+- Remaining measured repo-operation floor is now: `players.create_player_account` `0.9518B`, `system_jobs.create_system_job` `0.9566B`, `sessions.insert_participants_atomic` `0.4870B`, `battles.create_battle` `0.4801B`, `sessions.create_game_session` `0.4794B`, and `sessions.update_session` `0.4759B`.
+
+Decision:
+
+- Keep it. This is the same heap-first boundary used for lobby command receipts and starting session state: the public route returns from runtime state, and durable setup history is pushed to the job/recovery boundary.

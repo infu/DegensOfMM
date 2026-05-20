@@ -110,6 +110,29 @@ pub(crate) fn schedule_battle_timeout_job(
     schedule_battle_timeout_job_at(session_id, battle.id(), battle.created_turn, deadline)
 }
 
+pub(crate) fn schedule_new_battle_timeout_job(
+    session_id: Id<GameSession>,
+    battle: &Battle,
+) -> Result<(), ApiError> {
+    if battle.state != "active" {
+        return Ok(());
+    }
+    let Some(deadline) = battle.action_deadline_at else {
+        return Ok(());
+    };
+    system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
+        job_key: format!("battle_timeout:{}:{}", battle.id(), deadline.as_millis()),
+        job_kind: "battle_timeout".to_string(),
+        session_id,
+        battle_id: Some(battle.id()),
+        turn_number: Some(battle.created_turn),
+        due_at: deadline,
+        command_id: None,
+        cursor_json: None,
+    })?;
+    Ok(())
+}
+
 fn schedule_battle_timeout_job_at(
     session_id: Id<GameSession>,
     battle_id: Id<Battle>,

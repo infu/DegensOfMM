@@ -3688,7 +3688,8 @@ fn start_neutral_battle(
         Some(action_deadline_at),
         command_id,
     )?;
-    create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
+    let stacks = create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
+    battle_start::remember_startup_stacks(battle.id(), stacks);
     battle.state = "starting_attacker".to_string();
     battles::update_battle(battle)?;
     Ok(None)
@@ -3710,7 +3711,11 @@ fn continue_neutral_battle_start(
                 None,
             )?;
             if attacker_stacks.items.is_empty() {
-                create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
+                let stacks =
+                    create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
+                battle_start::remember_startup_stacks(battle.id(), stacks);
+            } else {
+                battle_start::remember_startup_stacks(battle.id(), attacker_stacks.items);
             }
             battle.state = "starting_attacker".to_string();
             battles::update_battle(battle)?;
@@ -3724,7 +3729,11 @@ fn continue_neutral_battle_start(
                 None,
             )?;
             if defender_stacks.items.is_empty() {
-                create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
+                let stacks =
+                    create_neutral_battle_defender_stacks(command_id, &battle, neutral_id)?;
+                battle_start::remember_startup_stacks(battle.id(), stacks);
+            } else {
+                battle_start::remember_startup_stacks(battle.id(), defender_stacks.items);
             }
             battle.state = "starting_defender".to_string();
             battles::update_battle(battle)?;
@@ -3737,7 +3746,14 @@ fn continue_neutral_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
-            let mut stacks = battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT)?;
+            let cached_rows = battle_start::take_complete_startup_rows(battle.id());
+            let mut stacks = cached_rows
+                .as_ref()
+                .map(|rows| rows.0.clone())
+                .map_or_else(
+                    || battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT),
+                    Ok,
+                )?;
             if let Some(active_stack) = select_initial_active_stack(session, &battle, &mut stacks) {
                 battle.active_stack_id = Some(active_stack.id().key());
                 battle.active_side = active_stack.side.clone();
@@ -3745,7 +3761,7 @@ fn continue_neutral_battle_start(
             battle.state = "active".to_string();
             battle.action_deadline_at = Some(battle_start::fresh_action_deadline_at());
             battle = battles::update_battle(battle)?;
-            battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
+            battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
 
             let mut neutral = neutrals::load_neutral_army(neutral_id)?.ok_or_else(|| {
                 public_error("neutral_army_not_found", "neutral army not found", true)
@@ -3753,11 +3769,22 @@ fn continue_neutral_battle_start(
             neutral.state = "in_battle".to_string();
             neutral.last_command_id = Some(command_id.key());
             neutrals::update_neutral_army(neutral)?;
-            battle_runtime::adopt_active_battle_from_rows_with_stacks(
-                session,
-                battle.clone(),
-                stacks,
-            )?;
+            if let Some((_, obstacles, occupancy)) = cached_rows {
+                battle_runtime::adopt_active_battle_from_loaded_rows(
+                    session,
+                    battle.clone(),
+                    stacks,
+                    obstacles,
+                    occupancy,
+                )?;
+            } else {
+                battle_runtime::adopt_active_battle_from_rows_with_stacks(
+                    session,
+                    battle.clone(),
+                    stacks,
+                )?;
+                battle_start::discard_startup_rows(battle.id());
+            }
             Ok(Some(battle))
         }
         _ => Ok(None),
@@ -3809,13 +3836,14 @@ fn create_neutral_battle_attacker_stacks(
             battle_stack.status_keys = spell_status_keys.clone();
             battle_stack = battles::update_battle_stack(battle_stack)?;
         }
-        battles::create_battle_occupancy(
+        let occupancy = battles::create_battle_occupancy(
             battle.id(),
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
             command_id,
         )?;
+        battle_start::remember_startup_occupancy(battle.id(), vec![occupancy]);
         stacks.push(battle_stack);
     }
     Ok(stacks)
@@ -3870,13 +3898,14 @@ fn create_neutral_battle_defender_stacks(
             domm_game::BATTLE_GRID_WIDTH - 2,
             y,
         )?;
-        battles::create_battle_occupancy(
+        let occupancy = battles::create_battle_occupancy(
             battle.id(),
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
             command_id,
         )?;
+        battle_start::remember_startup_occupancy(battle.id(), vec![occupancy]);
         stacks.push(battle_stack);
     }
     Ok(stacks)
@@ -3930,8 +3959,11 @@ fn create_initial_battle_obstacles(
     command_id: Id<GameCommand>,
     battle: &Battle,
 ) -> Result<(), ApiError> {
-    battles::create_battle_obstacle(battle.id(), "rubble".to_string(), 5, 4, command_id)?;
-    battles::create_battle_obstacle(battle.id(), "broken-cart".to_string(), 6, 5, command_id)?;
+    let obstacles = vec![
+        battles::create_battle_obstacle(battle.id(), "rubble".to_string(), 5, 4, command_id)?,
+        battles::create_battle_obstacle(battle.id(), "broken-cart".to_string(), 6, 5, command_id)?,
+    ];
+    battle_start::remember_startup_obstacles(battle.id(), obstacles);
     Ok(())
 }
 

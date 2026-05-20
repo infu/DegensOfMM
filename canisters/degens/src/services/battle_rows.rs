@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use domm_degens_schema::schema::{Battle, BattleOccupancy, BattleStack, GameCommand, GameSession};
+use domm_degens_schema::schema::{
+    Battle, BattleObstacle, BattleOccupancy, BattleStack, GameCommand, GameSession,
+};
 use domm_game::{
     ApiError, BattleCommandRecord, BattleObstacleRecord, BattleOccupancyRecord, BattleRecord,
     BattleStackRecord, BattleState, MAX_LIST_LIMIT,
@@ -79,6 +81,24 @@ pub(crate) fn load_battle_state_from_row_with_stacks(
     Ok(battle_state_from_loaded_rows(
         session, battle, stacks, obstacles, occupancy,
     ))
+}
+
+pub(crate) fn battle_state_from_loaded_tactical_rows(
+    session: &GameSession,
+    battle: Battle,
+    stacks: Vec<BattleStack>,
+    obstacles: Vec<BattleObstacle>,
+    occupancy: Vec<BattleOccupancy>,
+) -> BattleState {
+    let obstacles = obstacles
+        .into_iter()
+        .map(obstacle_record)
+        .collect::<Vec<_>>();
+    let occupancy = occupancy
+        .into_iter()
+        .map(occupancy_record)
+        .collect::<Vec<_>>();
+    battle_state_from_loaded_rows(session, battle, stacks, obstacles, occupancy)
 }
 
 fn battle_state_from_loaded_rows(

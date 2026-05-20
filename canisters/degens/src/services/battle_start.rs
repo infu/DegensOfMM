@@ -1,5 +1,8 @@
+use std::{cell::RefCell, collections::BTreeMap};
+
 use domm_degens_schema::schema::{
-    Battle, BattleStack, Champion, GameCommand, GameParticipant, GameSession, Town, UnitDefinition,
+    Battle, BattleObstacle, BattleOccupancy, BattleStack, Champion, GameCommand, GameParticipant,
+    GameSession, Town, UnitDefinition,
 };
 use domm_game::{ApiError, MoveCoord};
 use icydb::{
@@ -12,6 +15,104 @@ use crate::repos::{battles, champions_artifacts, content, towns};
 use super::{
     battle as battle_service, battle_runtime, command_response, session_context::public_error,
 };
+
+#[derive(Clone, Default)]
+struct BattleStartupRows {
+    stacks: Vec<BattleStack>,
+    obstacles: Vec<BattleObstacle>,
+    occupancy: Vec<BattleOccupancy>,
+}
+
+thread_local! {
+    static BATTLE_STARTUP_ROWS: RefCell<BTreeMap<String, BattleStartupRows>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+pub(crate) fn remember_startup_stacks(battle_id: Id<Battle>, stacks: Vec<BattleStack>) {
+    if stacks.is_empty() {
+        return;
+    }
+    BATTLE_STARTUP_ROWS.with_borrow_mut(|cache| {
+        let rows = cache.entry(battle_id.to_string()).or_default();
+        for stack in stacks {
+            if let Some(existing) = rows
+                .stacks
+                .iter_mut()
+                .find(|existing| existing.id() == stack.id())
+            {
+                *existing = stack;
+            } else {
+                rows.stacks.push(stack);
+            }
+        }
+    });
+}
+
+pub(crate) fn remember_startup_obstacles(battle_id: Id<Battle>, obstacles: Vec<BattleObstacle>) {
+    if obstacles.is_empty() {
+        return;
+    }
+    BATTLE_STARTUP_ROWS.with_borrow_mut(|cache| {
+        let rows = cache.entry(battle_id.to_string()).or_default();
+        for obstacle in obstacles {
+            if let Some(existing) = rows
+                .obstacles
+                .iter_mut()
+                .find(|existing| existing.id() == obstacle.id())
+            {
+                *existing = obstacle;
+            } else {
+                rows.obstacles.push(obstacle);
+            }
+        }
+    });
+}
+
+pub(crate) fn remember_startup_occupancy(battle_id: Id<Battle>, occupancy: Vec<BattleOccupancy>) {
+    if occupancy.is_empty() {
+        return;
+    }
+    BATTLE_STARTUP_ROWS.with_borrow_mut(|cache| {
+        let rows = cache.entry(battle_id.to_string()).or_default();
+        for cell in occupancy {
+            if let Some(existing) = rows
+                .occupancy
+                .iter_mut()
+                .find(|existing| existing.id() == cell.id())
+            {
+                *existing = cell;
+            } else {
+                rows.occupancy.push(cell);
+            }
+        }
+    });
+}
+
+pub(crate) fn take_complete_startup_rows(
+    battle_id: Id<Battle>,
+) -> Option<(Vec<BattleStack>, Vec<BattleObstacle>, Vec<BattleOccupancy>)> {
+    BATTLE_STARTUP_ROWS.with_borrow_mut(|cache| {
+        let key = battle_id.to_string();
+        let complete = cache.get(&key).is_some_and(|rows| {
+            rows.stacks.iter().any(|stack| stack.side == "attacker")
+                && rows.stacks.iter().any(|stack| stack.side == "defender")
+                && !rows.obstacles.is_empty()
+                && rows.occupancy.len() >= rows.stacks.len()
+        });
+        complete.then(|| {
+            let rows = cache
+                .remove(&key)
+                .expect("startup rows existed after complete check");
+            (rows.stacks, rows.obstacles, rows.occupancy)
+        })
+    })
+}
+
+pub(crate) fn discard_startup_rows(battle_id: Id<Battle>) {
+    BATTLE_STARTUP_ROWS.with_borrow_mut(|cache| {
+        cache.remove(&battle_id.to_string());
+    });
+}
 
 pub(crate) fn start_champion_battle(
     session: &GameSession,
@@ -44,7 +145,7 @@ pub(crate) fn start_champion_battle(
         None,
         battle_seed(session, attacker, &defender.id().to_string(), coord),
     )?;
-    create_champion_side_stacks(
+    let stacks = create_champion_side_stacks(
         command_id,
         battle.id(),
         attacker.id(),
@@ -52,6 +153,7 @@ pub(crate) fn start_champion_battle(
         "attacker",
         1,
     )?;
+    remember_startup_stacks(battle.id(), stacks);
     battle.state = "starting_attacker".to_string();
     battles::update_battle(battle)?;
     Ok(None)
@@ -73,7 +175,7 @@ fn continue_champion_battle_start(
                 None,
             )?;
             if attacker_stacks.items.is_empty() {
-                create_champion_side_stacks(
+                let stacks = create_champion_side_stacks(
                     command_id,
                     battle.id(),
                     attacker.id(),
@@ -81,6 +183,9 @@ fn continue_champion_battle_start(
                     "attacker",
                     1,
                 )?;
+                remember_startup_stacks(battle.id(), stacks);
+            } else {
+                remember_startup_stacks(battle.id(), attacker_stacks.items);
             }
             battle.state = "starting_attacker".to_string();
             battles::update_battle(battle)?;
@@ -94,7 +199,7 @@ fn continue_champion_battle_start(
                 None,
             )?;
             if defender_stacks.items.is_empty() {
-                create_champion_side_stacks(
+                let stacks = create_champion_side_stacks(
                     command_id,
                     battle.id(),
                     defender.id(),
@@ -102,6 +207,9 @@ fn continue_champion_battle_start(
                     "defender",
                     domm_game::BATTLE_GRID_WIDTH - 2,
                 )?;
+                remember_startup_stacks(battle.id(), stacks);
+            } else {
+                remember_startup_stacks(battle.id(), defender_stacks.items);
             }
             battle.state = "starting_defender".to_string();
             battles::update_battle(battle)?;
@@ -114,16 +222,34 @@ fn continue_champion_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
-            let mut stacks = battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT)?;
+            let cached_rows = take_complete_startup_rows(battle.id());
+            let mut stacks = cached_rows
+                .as_ref()
+                .map(|rows| rows.0.clone())
+                .map_or_else(
+                    || battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT),
+                    Ok,
+                )?;
             battle.state = "active".to_string();
             battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
-            battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
-            battle_runtime::adopt_active_battle_from_rows_with_stacks(
-                session,
-                battle.clone(),
-                stacks,
-            )?;
+            battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
+            if let Some((_, obstacles, occupancy)) = cached_rows {
+                battle_runtime::adopt_active_battle_from_loaded_rows(
+                    session,
+                    battle.clone(),
+                    stacks,
+                    obstacles,
+                    occupancy,
+                )?;
+            } else {
+                battle_runtime::adopt_active_battle_from_rows_with_stacks(
+                    session,
+                    battle.clone(),
+                    stacks,
+                )?;
+                discard_startup_rows(battle.id());
+            }
             Ok(Some(battle))
         }
         _ => Ok(None),
@@ -174,11 +300,27 @@ pub(crate) fn start_town_battle(
         battle.active_stack_id = None;
         battle.action_deadline_at = None;
         battle.resolved_at = Some(Timestamp::now());
+        discard_startup_rows(battle.id());
         battles::update_battle(battle)
     } else {
         let battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
-        battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
-        battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
+        battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
+        if let Some((_, obstacles, occupancy)) = take_complete_startup_rows(battle.id()) {
+            battle_runtime::adopt_active_battle_from_loaded_rows(
+                session,
+                battle.clone(),
+                stacks,
+                obstacles,
+                occupancy,
+            )?;
+        } else {
+            battle_runtime::adopt_active_battle_from_rows_with_stacks(
+                session,
+                battle.clone(),
+                stacks,
+            )?;
+            discard_startup_rows(battle.id());
+        }
         Ok(battle)
     }
 }
@@ -280,13 +422,14 @@ fn create_champion_side_stacks(
             battle_stack.last_command_id = Some(command_id.key());
             battle_stack = battles::update_battle_stack(battle_stack)?;
         }
-        battles::create_battle_occupancy(
+        let occupancy = battles::create_battle_occupancy(
             battle_id,
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
             command_id,
         )?;
+        remember_startup_occupancy(battle_id, vec![occupancy]);
         rows.push(battle_stack);
     }
     Ok(rows)
@@ -349,13 +492,14 @@ fn create_town_defender_stacks(
             domm_game::BATTLE_GRID_WIDTH - 2,
             y,
         )?;
-        battles::create_battle_occupancy(
+        let occupancy = battles::create_battle_occupancy(
             battle_id,
             battle_stack.id(),
             battle_stack.battle_x,
             battle_stack.battle_y,
             command_id,
         )?;
+        remember_startup_occupancy(battle_id, vec![occupancy]);
         rows.push(battle_stack);
     }
     Ok(rows)
@@ -418,8 +562,11 @@ fn create_default_obstacles(
     command_id: Id<GameCommand>,
     battle_id: Id<Battle>,
 ) -> Result<(), ApiError> {
-    battles::create_battle_obstacle(battle_id, "rubble".to_string(), 5, 4, command_id)?;
-    battles::create_battle_obstacle(battle_id, "broken-cart".to_string(), 6, 5, command_id)?;
+    let obstacles = vec![
+        battles::create_battle_obstacle(battle_id, "rubble".to_string(), 5, 4, command_id)?,
+        battles::create_battle_obstacle(battle_id, "broken-cart".to_string(), 6, 5, command_id)?,
+    ];
+    remember_startup_obstacles(battle_id, obstacles);
     Ok(())
 }
 

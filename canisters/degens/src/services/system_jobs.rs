@@ -43,6 +43,13 @@ pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError>
     Ok(job)
 }
 
+pub(crate) fn schedule_new_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError> {
+    let job = system_jobs::create_system_job(draft)?;
+    #[cfg(target_arch = "wasm32")]
+    schedule_wakeup_for_upserted_job(&job)?;
+    Ok(job)
+}
+
 pub(crate) fn reschedule_job(
     job: SystemJob,
     due_at: Timestamp,

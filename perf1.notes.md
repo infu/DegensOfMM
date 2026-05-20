@@ -3018,3 +3018,27 @@ Decision:
 
 - Keep this cut. It removes an entire public update call from the route without hiding work in another endpoint.
 - The remaining activation spike is still about `7.13B`; reducing it requires eliminating durable battle startup rows/job scheduling or building the active battle runtime directly before durable projection.
+
+## Checkpoint: Cache Battle Startup Rows Until Runtime Adoption
+
+Implemented the next low-hanging Gate 5F cut without running another slow PocketIC benchmark yet:
+
+- Added a heap startup-row cache for battle stacks, battle occupancy, and battle obstacles created during staged battle startup.
+- Champion, neutral, and town battle starts now adopt `BattleRuntime` from the already-created rows when the cache is complete, instead of immediately re-reading tactical child rows from IcyDB.
+- Startup recovery still falls back to durable row reads when the cache is missing or incomplete, so upgrade/recovery paths keep working.
+- Brand-new battle timeout jobs now use direct `SystemJob` create during battle startup instead of paying the upsert key lookup that is only needed for reschedule/recovery paths.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Benchmark status:
+
+- Deferred by design. The last focused Gate J run took about 3.4 minutes, and the current instruction from the workflow is to batch more low-risk cuts before rerunning slow PocketIC tests.
+- Expected activation repo-op removals when the heap cache is complete: `battles.stacks_by_battle`, `battles.obstacles_by_battle`, `battles.occupancy_by_battle`, and `system_jobs.by_job_key`.
+
+Decision:
+
+- Keep pending focused Gate J validation. The code preserves durable row fallback and moves no logic to a hollow endpoint; it only reuses rows that were already created in the same staged startup sequence.

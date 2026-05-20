@@ -3746,3 +3746,19 @@ Decision:
 
 - Keep this checkpoint. Gate 5B is complete for the measured active first-playable route: fresh submit-move now has no route-visible stable repo operations and is far below the `0.3B-0.6B` target.
 - The remaining Gate J route cost is no longer move submit or town commands. The biggest useful next targets are query/projection reads (`get_visible_map_chunks`, `get_visible_objects`, `get_events_after`, `get_my_participant`, `get_champion_view`) and the durable setup/session creation floor.
+
+## Rejected Next Attempt: Broad Render Row Cache Exceeded Wasm Limit
+
+Tried a render-side heap cache for first-playable `MapChunk`, `VisibilityChunk`, and `ParticipantKnownObject` rows, seeded from setup bulk inserts and invalidated on movement visibility/known-object mutation.
+
+Result:
+
+- `cargo fmt --check` initially only needed formatting.
+- `cargo check -p domm-degens-canister --features benchmark` passed.
+- `cargo check -p domm-degens-canister` passed.
+- Benchmark Wasm code section became `0x00c01916`, which is over the IC code-section limit. The change was reverted before commit.
+
+Decision:
+
+- Do not retry the same broad row-cache shape without first freeing at least several KB of benchmark Wasm headroom.
+- A narrower projection cache may still be worthwhile, but it should cache final DTOs or reuse existing runtime fields with less new generic cache plumbing.

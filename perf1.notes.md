@@ -4648,3 +4648,41 @@ Decision:
 
 - Keep this checkpoint. The direct create path is bounded to the atomic state transition from lobby to starting, and the old idempotent path remains the recovery path.
 - The remaining Gate J repo costs are now mostly unavoidable durable creates/updates unless Gate 5H changes what must be projected during the hot setup route: two `SystemJob` creates, two participant creates, two session updates, two player creates, one session create, one setup command create, one visibility chunk update, one known object create, and one battle header create.
+
+## Checkpoint: Player Principal Cache
+
+The setup command checkpoint left a repeated caller-principal lookup cost across create/join/ready/start. This was not visible in the repo-op table because the player lookup path uses the simpler storage-result instrumentation, but the method timings showed the pattern clearly: `mark_ready` had almost no measured repo ops and still cost about `0.704B`.
+
+What changed:
+
+- Added a heap cache of registered `PlayerAccount` rows keyed by principal.
+- `register_player` seeds the cache after creating or loading a player.
+- `create_session`, `join_session`, `mark_ready`, `start_session`, and `get_my_player` use the cached player before durable `players.by_principal` fallback.
+- The durable fallback stays in place for callers that were registered before cache repair/adoption.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-player-principal-cache-gate-j` passed in `181.59s`
+
+Measured delta versus `20260520-setup-command-fastpath-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 12.5656B | 9.0628B | -27.9% |
+| Gate J scenario memory | 4012.0625 MB | 4012.0625 MB | flat |
+| Gate J scenario cycles | 0.0618T | 0.0583T | -5.7% |
+| `create_session` avg | 1.6563B | 0.9567B | -42.2% |
+| `join_session` avg | 1.1839B | 0.4826B | -59.2% |
+| `mark_ready` avg | 0.7042B | 0.0001B | ~-100.0% |
+| `start_session` avg | 2.1342B | 1.4372B | -32.7% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. A registered player row is stable enough to use as an active-process identity cache, and all callers still fall back to durable lookup on cache miss.
+- This drops the lobby setup route below `10B` total. The next large costs are durable row boundaries rather than repeated lookup reads: player creates, session/participant creates, session updates, setup command create, setup/battle job creates, visibility/object projection writes, and the battle header create.

@@ -34,6 +34,7 @@ thread_local! {
     static SESSION_ROW_CACHE: RefCell<Option<GameSession>> = const { RefCell::new(None) };
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
+    static PLAYER_PRINCIPAL_CACHE: RefCell<Vec<PlayerAccount>> = const { RefCell::new(Vec::new()) };
     static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
     static ACTIVE_SESSION_IDS_CACHE: RefCell<Option<Vec<Id<GameSession>>>> = const { RefCell::new(None) };
     static RUNTIME_LOBBY_COMMANDS: RefCell<Vec<LobbyCommand>> = const { RefCell::new(Vec::new()) };
@@ -132,6 +133,35 @@ fn remember_session_participant(participant: &GameParticipant) {
 
 fn seed_session_participant_cache(session_id: Id<GameSession>, participant: &GameParticipant) {
     let _ = remember_session_participants(session_id, vec![participant.clone()]);
+}
+
+fn cached_player_by_principal(actor_principal: Principal) -> Option<PlayerAccount> {
+    PLAYER_PRINCIPAL_CACHE.with_borrow(|players| {
+        players
+            .iter()
+            .find(|player| player.account_principal == actor_principal)
+            .cloned()
+    })
+}
+
+fn remember_player_account(player: &PlayerAccount) {
+    PLAYER_PRINCIPAL_CACHE.with_borrow_mut(|players| {
+        players.retain(|existing| existing.id != player.id);
+        players.push(player.clone());
+    });
+}
+
+fn find_player_by_principal(
+    actor_principal: Principal,
+) -> foundation::RepoResult<Option<PlayerAccount>> {
+    if let Some(player) = cached_player_by_principal(actor_principal) {
+        return Ok(Some(player));
+    }
+    let player = players::find_by_principal(actor_principal)?;
+    if let Some(player) = &player {
+        remember_player_account(player);
+    }
+    Ok(player)
 }
 
 fn cached_player_has_no_live_session(player_id: Id<PlayerAccount>) -> bool {
@@ -406,7 +436,7 @@ pub(crate) fn register_player(
         option_json(username.as_deref()),
         escape_json(&display_name)
     );
-    let existing_player = players::find_by_principal(actor_principal)?;
+    let existing_player = find_player_by_principal(actor_principal)?;
     let actor_player_id = existing_player.as_ref().map(EntityValue::id);
     let mut command = match begin_lobby_command(
         actor_principal,
@@ -428,6 +458,7 @@ pub(crate) fn register_player(
                 command_username(&username, caller),
                 Some(display_name),
             )?;
+            remember_player_account(&player);
             remember_player_has_no_live_session(player.id());
             player
         }
@@ -460,7 +491,7 @@ pub(crate) fn create_session(
 ) -> Result<LobbyCommandResponse, ApiError> {
     reject_anonymous(caller)?;
     let actor_principal = Principal::from(caller);
-    let player = players::find_by_principal(actor_principal)?;
+    let player = find_player_by_principal(actor_principal)?;
     let actor_player_id = player.as_ref().map(EntityValue::id);
     let payload_json = format!(
         r#"{{"name":"{}","ruleset_id":"{}","seed":{seed}}}"#,
@@ -984,7 +1015,7 @@ where
 {
     reject_anonymous(caller)?;
     let actor_principal = Principal::from(caller);
-    let player = players::find_by_principal(actor_principal)?;
+    let player = find_player_by_principal(actor_principal)?;
     let actor_player_id = player.as_ref().map(EntityValue::id);
     let command = match begin_lobby_command(
         actor_principal,
@@ -1762,7 +1793,7 @@ fn bump_event_seq_after_existing(
 }
 
 fn require_player(caller: CandidPrincipal) -> Result<PlayerAccount, ApiError> {
-    players::find_by_principal(Principal::from(caller))?.ok_or_else(|| {
+    find_player_by_principal(Principal::from(caller))?.ok_or_else(|| {
         public_error(
             "player_not_registered",
             "caller does not have a registered player",

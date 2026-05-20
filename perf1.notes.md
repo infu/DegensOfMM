@@ -6682,3 +6682,43 @@ Decision:
 
 - Keep this checkpoint. The runtime event merge path preserved endpoint coverage and removed exactly the three champion event rows.
 - Next bounded event/effect family should not add new shared code unless code-size headroom is freed; current benchmark headroom is only `783` bytes.
+
+## Scenario Runtime Event Measurement
+
+Time: `2026-05-20T23:57:00Z`.
+
+Cut:
+
+- Moved scenario quest/objective/world-event public events to the existing runtime-first event append helper.
+- Covered `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory`.
+- Kept all scenario domain rows and `CommandEffect` rows durable; this slice only removes active-turn public event-row writes from the hot path.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+- Direct benchmark Wasm size: `0x00bffb45` / `12,581,701` bytes, `1,211` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-scenario-runtime-events-local`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-champion-runtime-events-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `134 -> 129`.
+- Stable pages: `2049 -> 73729` became `2049 -> 71169`.
+- Scenario instructions: `58.0803B -> 55.6905B`, `-2.3898B`, `-4.1%`.
+- `events.create_game_event`: `9 -> 4` calls and `4.3015B -> 1.9090B`.
+- `effects.create_applied_command_effect`: stayed `12` calls.
+- `accept_quest`: `2.1420B -> 1.6649B`, `-22.3%`.
+- `claim_quest_reward`: `5.6817B -> 5.1985B`, `-8.5%`.
+- `sync_objectives`: `2.3633B -> 1.8836B`, `-20.3%`.
+- `sync_world_events`: `1.6580B -> 1.1802B`, `-28.8%`.
+- `sync_advanced_victory`: `3.7742B -> 3.2958B`, `-12.7%`.
+
+Decision:
+
+- Keep this checkpoint. The existing runtime event merge handled another five public-event rows without adding shared code.
+- Rotate again instead of polishing public events. The latest floor is now `effects.create_applied_command_effect` at `12` calls / `5.7096B`, `economy.create_resource_ledger_entry` at `5` calls / `2.3839B`, and the remaining `events.create_game_event` at `4` calls / `1.9090B`.

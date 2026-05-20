@@ -193,8 +193,8 @@ pub(crate) fn sync_objectives(
     );
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        &context,
         command.id(),
         format!(
             "scenario:objectives:{}:{}",
@@ -237,7 +237,7 @@ pub(crate) fn sync_world_events(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context =
+    let context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
@@ -268,8 +268,8 @@ pub(crate) fn sync_world_events(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        &context,
         command.id(),
         format!("scenario:world_event:{event_key}:{}", command.id()),
         "world_event_synced".to_string(),
@@ -344,8 +344,8 @@ pub(crate) fn sync_advanced_victory(
     );
     let result_json = receipt_json(&receipt);
     let session_id_text = context.session.id().to_string();
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        &context,
         command.id(),
         format!("scenario:victory:{}:{updated}", command.id()),
         "advanced_victory_synced".to_string(),
@@ -584,8 +584,8 @@ fn apply_accept_quest(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        context,
         command.id(),
         format!("scenario:quest_accept:{}:{}", quest.quest_key, command.id()),
         "quest_accepted".to_string(),
@@ -681,8 +681,8 @@ fn apply_claim_quest_reward(
         Some(resources_after),
     );
     let result_json = receipt_json(&receipt);
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
+    let event = command_response::append_runtime_or_fresh_public_event(
+        context,
         command.id(),
         format!("scenario:quest_claim:{}:{}", quest.quest_key, command.id()),
         "quest_reward_claimed".to_string(),

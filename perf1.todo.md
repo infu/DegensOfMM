@@ -889,7 +889,8 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Apply a bounded cut to one random command family first, not all event/effect writers at once. First slice moved champion magic public events to `SessionTurnRuntime`.
 - [x] Preserve `get_events_after`, command-status results, and recovery tests; if a row is removed from the hot path, runtime event/effect visibility or flush coverage must replace it. Added runtime public-event append for active `SessionTurnRuntime`, kept durable fallback, and fixed runtime command status-by-nonce to check all game command receipts.
 - [x] Measure with endpoint-surface and compare against `20260520-final-command-receipts-local`. Artifact `target/benchmarks/20260520-champion-runtime-events-local` passed with `59/59` endpoints; `events.create_game_event` moved `12 -> 9`, row growth moved `137 -> 134`, scenario instructions moved `59.5007B -> 58.0803B` (`-2.4%`), and champion magic calls each dropped about `0.47B`.
-- [ ] Rotate to another bounded event/effect family after committing the champion event slice.
+- [x] Rotate to another bounded event/effect family after committing the champion event slice. Second slice moved scenario quest/objective/world-event public events to `SessionTurnRuntime`. Artifact `target/benchmarks/20260520-scenario-runtime-events-local` passed with `59/59` endpoints; `events.create_game_event` moved `9 -> 4`, row growth moved `134 -> 129`, scenario instructions moved `58.0803B -> 55.6905B` (`-4.1%`), and the five scenario command calls each avoided about one durable event-row write.
+- [ ] Rotate to another random bounded cluster instead of over-polishing public events. Candidate floors from the latest artifact: `effects.create_applied_command_effect` still `12` calls / `5.7096B`, `economy.create_resource_ledger_entry` still `5` calls / `2.3839B`, and the remaining `events.create_game_event` `4` calls / `1.9090B`.
 
 ## Expected Outcome
 

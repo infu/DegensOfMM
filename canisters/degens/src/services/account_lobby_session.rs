@@ -692,7 +692,6 @@ pub(crate) fn mark_ready(
             }
             let mut participant = require_participant_for_player(session.id(), player.id())?;
             participant.ready_turn = session.current_turn;
-            let participant = sessions::update_participant(participant)?;
             remember_session_participant(&participant);
             let session_id_text = session.id().to_string();
             let participant_id_text = participant.id().to_string();
@@ -1758,6 +1757,13 @@ fn require_participant_for_player(
     session_id: Id<GameSession>,
     player_id: Id<PlayerAccount>,
 ) -> Result<GameParticipant, ApiError> {
+    if let Some(participant) = cached_session_participants(session_id).and_then(|participants| {
+        participants
+            .into_iter()
+            .find(|participant| participant.player_id == player_id.key())
+    }) {
+        return Ok(participant);
+    }
     sessions::find_participant_by_session_player(session_id, player_id)?.ok_or_else(|| {
         public_error(
             "participant_not_found",

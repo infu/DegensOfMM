@@ -4500,3 +4500,39 @@ Decision:
 
 - Keep this checkpoint. It removes the last lobby idempotency repo op from Gate J without weakening replay for principals that already have a durable player row.
 - Fresh register receipts are still runtime-backed, so Gate 5H must define their flush/upgrade/status retention policy together with other runtime lobby receipts.
+
+## Checkpoint: Heap Lobby Ready State
+
+After the register idempotency skip, the two `mark_ready` calls still wrote durable `GameParticipant` rows just to set `ready_turn`. Gate J already has a real-row-backed participant heap cache from create/join, and `start_session` reads that cache through `participants_for_session`.
+
+What changed:
+
+- `mark_ready` now mutates the cached participant row and records it in the participant cache instead of calling `sessions.update_participant`.
+- `require_participant_for_player` checks cached participants first before falling back to the durable participant lookup.
+- The start-session readiness gate continues to use `participants_for_session`, so it sees the heap ready state in the active lobby route.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfcba1`
+- Focused Gate J `20260520-lobby-ready-heap-gate-j` passed in `181.34s`
+
+Measured delta versus `20260520-register-idempotency-skip-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 22.6822B | 20.3124B | -10.4% |
+| Gate J scenario memory | 4076.1250 MB | 4076.1250 MB | flat |
+| `mark_ready` avg | 1.8906B | 0.7052B | -62.7% |
+| `start_session` avg | 4.9534B | 4.9503B | flat |
+| `sessions.update_participant` total | 0.9594B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes ready-state durable writes from the lobby hot path and still lets `start_session` observe readiness from the real-row cache.
+- Durable participant readiness is now part of the runtime flush/upgrade gap. Gate 5H needs to decide whether lobby readiness is flushed, snapshotted, or considered ephemeral once the session has started.

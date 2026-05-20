@@ -5454,3 +5454,34 @@ Gate J measurement:
 - `start_session` moved `1.4339B -> 1.9238B` avg because it now owns the participant durability boundary.
 - Net route win comes from two individual participant inserts (`sessions.create_participant`, `0.9607B` total) becoming one `sessions.insert_participants_atomic` call (`0.4870B` total).
 - Remaining measured repo-operation floor is durable row maintenance: `players.create_player_account` `0.9518B` total, `system_jobs.create_system_job` `0.9574B`, `sessions.update_session` `0.9547B`, `commands.create_game_command` `0.4791B`, `battles.create_battle` `0.4801B`, `sessions.create_game_session` `0.4794B`, and `sessions.insert_participants_atomic` `0.4870B`.
+
+## Checkpoint: Heap-Only Starting Session State
+
+Gate 7.11 session update cut:
+
+- After participant batching, `start_session` owned both the participant durability boundary and the durable `lobby -> starting` session update.
+- The `starting` row update is only needed for recovery/progress, not for the hot public call itself. The setup job can accept a durable `lobby` row and treat its claimed setup job as the starting boundary.
+- Changed `start_session` to set `session.state = "starting"` in heap and response/cache only, without immediately updating the durable `GameSession`.
+- Changed setup job processing to accept a durable `lobby` session row, switch it to local `starting`, and still persist the final `active` state when setup completes.
+- Added non-benchmark upgrade flush for a cached `starting` session row so upgrade between `start_session` and setup completion preserves progress semantics.
+- Preserved the native replay/progress path by preventing the native post-job refresh from overwriting heap `starting` with durable `lobby` before setup has reached `active`.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister start_session_replay_while_starting_reuses_original_nonce_and_cursor -- --nocapture` passed in `21.18s`
+
+Gate J measurement:
+
+- Focused Gate J `20260520-160417-gate7-starting-session-heap-gate-j` passed in `189.78s` on git `38e10b1`.
+- Scenario instructions improved versus `20260520-155903-gate7-participant-flush-clean-gate-j`: `4.8377B -> 4.3593B` (`-9.9%`).
+- `start_session` moved `1.9238B -> 1.4451B` avg.
+- `sessions.update_session` moved from two calls (`0.9547B` total) to one call (`0.4762B` total).
+- Scenario memory stayed flat at `3980.0625 MB`; row growth stayed flat at `35`; cycles moved `0.0529T -> 0.0524T`.
+- Remaining measured repo-operation floor is now: `players.create_player_account` `0.9518B`, `system_jobs.create_system_job` `0.9568B`, `sessions.insert_participants_atomic` `0.4870B`, `commands.create_game_command` `0.4791B`, `battles.create_battle` `0.4806B`, `sessions.create_game_session` `0.4794B`, and `sessions.update_session` `0.4762B`.
+
+Decision:
+
+- Keep it. This is exactly the aggregate/projection pattern: heap state answers active progress immediately, durable state is written at the setup completion boundary or upgrade barrier.

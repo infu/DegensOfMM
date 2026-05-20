@@ -20,6 +20,17 @@ pub(crate) fn create_player_account(
     username: Option<String>,
     display_name: Option<String>,
 ) -> RepoResult<PlayerAccount> {
+    foundation::storage_result(
+        "players.create_player_account",
+        try_create_player_account(account_principal, username, display_name),
+    )
+}
+
+pub(crate) fn try_create_player_account(
+    account_principal: Principal,
+    username: Option<String>,
+    display_name: Option<String>,
+) -> Result<PlayerAccount, icydb::Error> {
     let player = PlayerAccount {
         account_principal,
         username,
@@ -27,7 +38,9 @@ pub(crate) fn create_player_account(
         ..Default::default()
     };
 
-    foundation::insert("players.create_player_account", player)
+    crate::metrics::benchmark_repo_operation("players.create_player_account", || {
+        crate::db().insert(player)
+    })
 }
 
 pub(crate) fn load_player_account(id: Id<PlayerAccount>) -> RepoResult<Option<PlayerAccount>> {

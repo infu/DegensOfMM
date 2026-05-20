@@ -5277,3 +5277,29 @@ Decision:
 
 - Keep the direct-insert cleanups because they simplify the create path and do not break behavior, but stop expecting them to move Gate J materially.
 - The next Gate 7 work needs to reduce durable row count or defer row writes with a real heap-first/barrier model. Generated `Create<T>` materialization is not the measured floor; stable row insert/update/index maintenance is.
+
+## Checkpoint: Insert-First Player Registration
+
+Gate 7 fresh-registration slice:
+
+- `register_player` previously did a durable `players.by_principal` lookup before creating a new player. In Gate J both player principals are fresh, so this paid a stable pre-read and then a stable insert.
+- `PlayerAccount.account_principal` is already a unique index, so the hot path now tries `players.create_player_account` first and only performs the principal lookup on IcyDB conflict.
+- Runtime nonce replay still returns the original runtime lobby command before any insert attempt.
+- Durable replay/conflict behavior is preserved for already registered principals: on conflict, the service loads the existing player and checks durable lobby command idempotency before creating a new runtime response.
+- Repository duplicate-principal errors remain sanitized through the existing `icydb_repository_error` mapping.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister register_player_fast_path_replays_runtime_nonce -- --nocapture`
+- `cargo test -p domm-degens-canister repository_insert_many_atomic_and_storage_errors_are_sanitized -- --nocapture`
+
+Additional finding:
+
+- Attempted `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture`; it failed after `147.15s` because a seeded due `turn_resolution` job did not block a new old-turn movement command. The failure is in the turn-close guard path, not the registration assertions, and is now tracked as Gate 7.8.
+
+Decision:
+
+- Keep it. This is a real read-removal slice: fresh registration now relies on the unique index for correctness and saves the durable pre-read on the common new-player path.

@@ -27,6 +27,60 @@ fn bootstrap_service_memory() {
     .expect("service tests should reserve the generated canister memory range");
 }
 
+#[test]
+fn register_player_fast_path_replays_runtime_nonce() {
+    bootstrap_service_memory();
+
+    let player = Principal::self_authenticating(b"service-register-fast-path");
+    let registered = account_lobby_session::register_player(
+        player,
+        Some("service-fast-register".to_string()),
+        Some("Service Fast Register".to_string()),
+        "nonce:service-fast-register:one".to_string(),
+    )
+    .expect("fresh registration should not trap");
+    assert_eq!(registered.status, CommandStatus::Applied);
+    let player_id = match &registered.result {
+        LobbyCommandResult::Player(view) => view.player_id.clone(),
+        other => panic!("register returned unexpected result: {other:?}"),
+    };
+
+    let replay = account_lobby_session::register_player(
+        player,
+        Some("service-fast-register".to_string()),
+        Some("Service Fast Register".to_string()),
+        "nonce:service-fast-register:one".to_string(),
+    )
+    .expect("runtime registration replay should not trap");
+    assert_eq!(replay.command_id, registered.command_id);
+
+    let mismatch = account_lobby_session::register_player(
+        player,
+        Some("service-fast-register-renamed".to_string()),
+        Some("Service Fast Register".to_string()),
+        "nonce:service-fast-register:one".to_string(),
+    )
+    .expect("runtime registration mismatch should return a command response");
+    assert_eq!(mismatch.status, CommandStatus::Failed);
+    assert_eq!(
+        mismatch.error.expect("mismatch should carry error").code,
+        "duplicate_nonce_payload_mismatch"
+    );
+
+    let second_nonce = account_lobby_session::register_player(
+        player,
+        Some("service-fast-register".to_string()),
+        Some("Service Fast Register".to_string()),
+        "nonce:service-fast-register:two".to_string(),
+    )
+    .expect("registered principal with a new nonce should return the existing player");
+    let second_player_id = match &second_nonce.result {
+        LobbyCommandResult::Player(view) => view.player_id.clone(),
+        other => panic!("register second nonce returned unexpected result: {other:?}"),
+    };
+    assert_eq!(second_player_id, player_id);
+}
+
 fn create_ready_two_player_lobby(prefix: &str) -> (Principal, Principal, String) {
     let player_one_seed = format!("{prefix}-player-one");
     let player_two_seed = format!("{prefix}-player-two");

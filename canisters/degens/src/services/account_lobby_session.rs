@@ -14,6 +14,7 @@ use domm_game::{
     first_playable_content_manifest, first_playable_scenario,
 };
 use icydb::{
+    ErrorKind, RuntimeErrorKind,
     traits::EntityValue,
     types::{Id, Principal, Timestamp, Ulid},
 };
@@ -493,38 +494,167 @@ pub(crate) fn register_player(
         option_json(username.as_deref()),
         escape_json(&display_name)
     );
-    let existing_player = find_player_by_principal(actor_principal)?;
-    let actor_player_id = existing_player.as_ref().map(EntityValue::id);
-    let mut command = match begin_lobby_command(
-        actor_principal,
-        actor_player_id,
-        "register_player",
-        &client_nonce,
-        payload_json,
-        existing_player.is_some(),
-    )? {
-        LobbyCommandAction::Apply(command) => command,
-        LobbyCommandAction::Return(response) => return Ok(response),
-    };
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        return Ok(failed_lobby_response(
+            actor_principal,
+            "register_player",
+            &client_nonce,
+            payload_hash(
+                "register_player",
+                &actor_principal.to_string(),
+                &client_nonce,
+                &payload_json,
+            ),
+            public_error(
+                "payload_too_large",
+                "lobby command payload is too large",
+                false,
+            ),
+            0,
+        ));
+    }
 
-    let player = match existing_player {
-        Some(player) => player,
-        None => {
-            let player = players::create_player_account(
+    let client_nonce_u64 = nonce_u64("register_player", &client_nonce);
+    let hash = payload_hash(
+        "register_player",
+        &actor_principal.to_string(),
+        &client_nonce,
+        &payload_json,
+    );
+    if let Some(existing) = runtime_lobby_command_by_idempotency(actor_principal, client_nonce_u64)
+    {
+        if existing.payload_hash != hash {
+            return Ok(failed_lobby_response(
                 actor_principal,
-                command_username(&username, caller),
-                Some(display_name),
-            )?;
-            remember_player_account(&player);
-            remember_player_has_no_live_session(player.id());
-            player
+                "register_player",
+                &client_nonce,
+                hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce} was reused with a different payload"),
+                    false,
+                ),
+                0,
+            ));
         }
-    };
+        if matches!(existing.status.as_str(), "pending" | "applying") {
+            let player = match find_player_by_principal(actor_principal)? {
+                Some(player) => player,
+                None => try_create_player_for_registration(
+                    actor_principal,
+                    &username,
+                    caller,
+                    Some(display_name),
+                )
+                .map_err(|error| {
+                    foundation::map_storage_error("players.create_player_account", error)
+                })?,
+            };
+            return apply_register_player_command(existing, &client_nonce, player);
+        }
+        return response_from_lobby_command(existing, &client_nonce);
+    }
+
+    match try_create_player_for_registration(actor_principal, &username, caller, Some(display_name))
+    {
+        Ok(player) => {
+            let command = runtime_lobby_command(
+                actor_principal,
+                Some(player.id()),
+                client_nonce_u64,
+                hash,
+                "register_player",
+                payload_json,
+            );
+            remember_runtime_lobby_command(&command);
+            apply_register_player_command(command, &client_nonce, player)
+        }
+        Err(error) if is_icydb_conflict(&error) => {
+            let player = match find_player_by_principal(actor_principal)? {
+                Some(player) => player,
+                None => {
+                    return Err(foundation::map_storage_error(
+                        "players.create_player_account",
+                        error,
+                    ));
+                }
+            };
+            if let Some(existing) = commands_events_effects::find_lobby_command_by_idempotency(
+                actor_principal,
+                client_nonce_u64,
+            )? {
+                if existing.payload_hash != hash {
+                    return Ok(failed_lobby_response(
+                        actor_principal,
+                        "register_player",
+                        &client_nonce,
+                        hash,
+                        public_error(
+                            "duplicate_nonce_payload_mismatch",
+                            format!(
+                                "client nonce {client_nonce} was reused with a different payload"
+                            ),
+                            false,
+                        ),
+                        0,
+                    ));
+                }
+                if matches!(existing.status.as_str(), "pending" | "applying") {
+                    return apply_register_player_command(existing, &client_nonce, player);
+                }
+                return response_from_lobby_command(existing, &client_nonce);
+            }
+
+            let command = runtime_lobby_command(
+                actor_principal,
+                Some(player.id()),
+                client_nonce_u64,
+                hash,
+                "register_player",
+                payload_json,
+            );
+            remember_runtime_lobby_command(&command);
+            apply_register_player_command(command, &client_nonce, player)
+        }
+        Err(error) => Err(foundation::map_storage_error(
+            "players.create_player_account",
+            error,
+        )),
+    }
+}
+
+pub(crate) fn get_my_player(caller: CandidPrincipal) -> Result<PlayerView, ApiError> {
+    reject_anonymous(caller)?;
+    let player = require_player(caller)?;
+    Ok(player_view(&player))
+}
+
+fn try_create_player_for_registration(
+    actor_principal: Principal,
+    username: &Option<String>,
+    caller: CandidPrincipal,
+    display_name: Option<String>,
+) -> Result<PlayerAccount, icydb::Error> {
+    let player = players::try_create_player_account(
+        actor_principal,
+        command_username(username, caller),
+        display_name,
+    )?;
+    remember_player_account(&player);
+    remember_player_has_no_live_session(player.id());
+    Ok(player)
+}
+
+fn apply_register_player_command(
+    mut command: LobbyCommand,
+    client_nonce: &str,
+    player: PlayerAccount,
+) -> Result<LobbyCommandResponse, ApiError> {
     command.actor_player_id = Some(player.id);
     let player_view = player_view(&player);
     apply_lobby_command(
         command,
-        &client_nonce,
+        client_nonce,
         Some(format!(r#"{{"player_id":"{}"}}"#, player.id())),
         Vec::new(),
         vec![changed("player", &player_view.player_id, "upsert")],
@@ -533,10 +663,11 @@ pub(crate) fn register_player(
     )
 }
 
-pub(crate) fn get_my_player(caller: CandidPrincipal) -> Result<PlayerView, ApiError> {
-    reject_anonymous(caller)?;
-    let player = require_player(caller)?;
-    Ok(player_view(&player))
+fn is_icydb_conflict(error: &icydb::Error) -> bool {
+    matches!(
+        error.kind(),
+        &ErrorKind::Runtime(RuntimeErrorKind::Conflict)
+    )
 }
 
 pub(crate) fn create_session(

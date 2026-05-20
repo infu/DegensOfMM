@@ -3392,3 +3392,32 @@ Decision:
 
 - Keep only the dead-code cleanup. It does not claim a gameplay performance delta.
 - Do not spend more time on local town guard shortcuts. The remaining safe route is the broader Gate 5E/5H runtime turn/deadline/job authority or a larger code-size freeing pass that can support a proven guard.
+
+## Checkpoint: Remove Pass-Through Battle Phase Wrappers
+
+Removed the remaining `crate::metrics::benchmark_phase` wrappers from `battle.rs` and deleted the unused `benchmark_phase` helper from `metrics`.
+
+Why:
+
+- `benchmark_phase` is already a pass-through and `take_current_phases()` returns an empty vector, so phase summaries are not produced anymore.
+- The wrappers still cost benchmark Wasm code size and create friction for the next runtime rewrite.
+- Method-level and repo-operation benchmark measurements remain intact.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`
+
+Measured code section:
+
+| artifact | code section | IC limit | headroom |
+| --- | ---: | ---: | ---: |
+| after small dead-code cleanup | `12,582,756` bytes (`0x00bfff64`) | `12,582,912` bytes (`0x00c00000`) | `156` bytes |
+| after phase-wrapper removal | `12,579,221` bytes (`0x00bff195`) | `12,582,912` bytes (`0x00c00000`) | `3,691` bytes |
+
+Decision:
+
+- Keep this cleanup. It is behavior-preserving and gives enough headroom for a small runtime/contact cut before a larger code-size freeing pass is needed.

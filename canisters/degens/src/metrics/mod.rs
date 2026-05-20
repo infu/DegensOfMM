@@ -88,15 +88,6 @@ pub(crate) fn benchmark_query<T>(
 }
 
 #[cfg(feature = "benchmark")]
-pub(crate) fn benchmark_phase<T>(
-    _method: &'static str,
-    _phase: &'static str,
-    body: impl FnOnce() -> T,
-) -> T {
-    body()
-}
-
-#[cfg(feature = "benchmark")]
 pub(crate) fn benchmark_repo_operation<T>(operation: &'static str, body: impl FnOnce() -> T) -> T {
     let stable_memory_pages_before = canic_cdk::api::stable_size();
     let instruction_before = canic_cdk::api::instruction_counter();
@@ -140,15 +131,6 @@ pub(crate) fn benchmark_query<T>(
     _method: &'static str,
     body: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
-    body()
-}
-
-#[cfg(not(feature = "benchmark"))]
-pub(crate) fn benchmark_phase<T>(
-    _method: &'static str,
-    _phase: &'static str,
-    body: impl FnOnce() -> T,
-) -> T {
     body()
 }
 

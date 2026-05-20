@@ -47,19 +47,30 @@ pub(crate) fn create_turn_ready(
     foundation::create("turn_ready.create_turn_ready", input)
 }
 
+pub(crate) struct MarkTurnReadyResult {
+    pub ready: ParticipantTurnReady,
+    pub created: bool,
+}
+
 pub(crate) fn mark_turn_ready(
     session_id: Id<GameSession>,
     participant_id: Id<GameParticipant>,
     turn_number: u32,
     command_id: Option<Id<GameCommand>>,
     ended_at: Timestamp,
-) -> RepoResult<ParticipantTurnReady> {
+) -> RepoResult<MarkTurnReadyResult> {
     if let Some(mut ready) = find_turn_ready(session_id, participant_id, turn_number)? {
         if ready.command_id.is_none() {
             ready.command_id = command_id.map(|id| id.key());
-            return update_turn_ready(ready);
+            return update_turn_ready(ready).map(|ready| MarkTurnReadyResult {
+                ready,
+                created: false,
+            });
         }
-        return Ok(ready);
+        return Ok(MarkTurnReadyResult {
+            ready,
+            created: false,
+        });
     }
 
     create_turn_ready(
@@ -69,6 +80,10 @@ pub(crate) fn mark_turn_ready(
         command_id,
         ended_at,
     )
+    .map(|ready| MarkTurnReadyResult {
+        ready,
+        created: true,
+    })
 }
 
 pub(crate) fn load_turn_ready(

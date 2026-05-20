@@ -651,7 +651,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Stop durable `last_command_id`-only writes in `sync_world_generation` for existing `SkirmishSettingsState` and unchanged `ProceduralMapState` rows. The generated world state is already materialized; manual sync does not need to rewrite rows only for diagnostic command metadata.
 - [x] Stop durable `last_command_id`-only writes in `sync_world_events` when the current deterministic `WorldEventState` row already exists.
 - [ ] Measure the worldgen/events cut with the next batched endpoint-surface/focused benchmark and verify `worldgen.update_skirmish_settings`, unchanged `worldgen.update_procedural_map`, and existing-row `scenario.update_world_event_state` drop on the fresh sync path.
-- [ ] Rotate again after a bounded measurement or another small independent cut.
+- [x] Rotate again after a bounded measurement or another small independent cut. Picked the map-turn readiness cluster because `end_turn` remains `8.0200B` and pays stable participant/ready list reads plus an event absence read on the fresh path.
+
+### 16. Round-Robin Endpoint Cluster: Map-Turn Readiness
+
+- [x] Rotate to `end_turn` from endpoint-surface: current cost `8.0200B`, with `sessions.participants_by_session_status` (`2` calls, `0.7053B`), `turn_ready.by_session_turn` (`2` calls, `0.7036B`), and `events.by_session_event_key` (`0.7036B`) still visible in the method repo-op trace.
+- [x] Track whether `mark_turn_ready` created a fresh `ParticipantTurnReady` row so fresh `end_turn` can use `append_fresh_public_event` while replay/recovery keeps the idempotent event lookup.
+- [x] Let a complete active `SessionTurnRuntime` answer `end_turn` ready/participant counts after marking the caller ready. Partial/cold runtimes fall back to the existing durable participant and ready-row pages so the shortcut cannot schedule a turn close from an incomplete participant set.
+- [x] Add runtime completeness flags for participant and ready hydration, including carry-forward to the next turn where a complete participant roster implies an empty ready set is complete.
+- [x] Verify the map-turn readiness cut with `cargo fmt`, `git diff --check`, and `cargo check -p domm-degens-canister`.
+- [ ] Re-run the benchmark-feature gates once the environment issue is cleared. Native `cargo check -p domm-degens-canister --features benchmark` currently fails in pre-existing benchmark-only lobby setup code (`process_setup_session_job` is cfg'd out), and `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark` currently fails before DoMM code because the host build-script linker points to a missing Nix `ld-wrapper.sh`.
+- [ ] Measure the next batched endpoint-surface/focused run and verify fresh `end_turn` drops `events.by_session_event_key` and, when the runtime is complete, drops the durable participant/ready count pages.
+- [ ] Rotate again after measurement or one more small independent cut.
 
 ## Expected Outcome
 

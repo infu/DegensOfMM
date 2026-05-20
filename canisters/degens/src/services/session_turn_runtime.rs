@@ -40,6 +40,8 @@ pub(crate) struct SessionTurnRuntime {
     pub turn_duration_ms: u64,
     pub closing: bool,
     pub generation: u64,
+    pub participants_complete: bool,
+    pub ready_complete: bool,
     pub participants: Vec<SessionTurnParticipant>,
     pub ready_participants: BTreeSet<String>,
     pub champion_snapshots: Vec<Champion>,
@@ -73,6 +75,8 @@ impl SessionTurnRuntime {
             turn_duration_ms,
             closing: false,
             generation: 0,
+            participants_complete: false,
+            ready_complete: false,
             participants: Vec::new(),
             ready_participants: BTreeSet::new(),
             champion_snapshots: Vec::new(),
@@ -203,6 +207,32 @@ impl SessionTurnRuntime {
         self.mark_dirty();
     }
 
+    pub(crate) fn readiness_counts(&self) -> Option<RuntimeReadinessCounts> {
+        if !self.participants_complete || !self.ready_complete {
+            return None;
+        }
+        let mut participant_count = 0_usize;
+        let mut ready_count = 0_usize;
+        for participant in self
+            .participants
+            .iter()
+            .filter(|participant| participant.status == "active")
+        {
+            participant_count = participant_count.saturating_add(1);
+            if self
+                .ready_participants
+                .contains(&participant.participant_id)
+            {
+                ready_count = ready_count.saturating_add(1);
+            }
+        }
+        Some(RuntimeReadinessCounts {
+            ready_count,
+            participant_count,
+            all_ready: participant_count != 0 && ready_count >= participant_count,
+        })
+    }
+
     pub(crate) fn upsert_intent(&mut self, intent: RuntimeMovementIntent) {
         if let Some(existing) = self
             .intents
@@ -269,6 +299,12 @@ pub(crate) struct SessionTurnParticipant {
     pub slot_index: u8,
     pub status: String,
     pub participant: Option<GameParticipant>,
+}
+
+pub(crate) struct RuntimeReadinessCounts {
+    pub ready_count: usize,
+    pub participant_count: usize,
+    pub all_ready: bool,
 }
 
 #[derive(Clone)]
@@ -908,6 +944,7 @@ fn latest_runtime_before(session_id: &str, turn_number: u32) -> Option<SessionTu
 }
 
 fn carry_forward_runtime_state(runtime: &mut SessionTurnRuntime, previous: SessionTurnRuntime) {
+    let participants_complete = previous.participants_complete;
     for participant in previous
         .participants
         .into_iter()
@@ -931,6 +968,8 @@ fn carry_forward_runtime_state(runtime: &mut SessionTurnRuntime, previous: Sessi
     for cell in previous.contact_index {
         runtime.upsert_contact_cell(cell);
     }
+    runtime.participants_complete = participants_complete;
+    runtime.ready_complete = participants_complete;
 }
 
 pub(crate) fn ensure_active_turn_runtime(session: &mut GameSession) -> Result<(), ApiError> {
@@ -974,7 +1013,9 @@ fn hydrate_active_turn_rows(
     )?
     .items;
     hydrate_runtime_participants(runtime, &participants)?;
+    runtime.participants_complete = true;
     hydrate_runtime_ready_rows(session, runtime)?;
+    runtime.ready_complete = true;
     hydrate_runtime_champions_and_occupancy(session, runtime, &participants)?;
     hydrate_runtime_town_contacts(session, runtime)?;
     hydrate_runtime_world_object_contacts(session, runtime)?;

@@ -5757,3 +5757,39 @@ Verification:
 Expected measurement:
 
 - Next endpoint-surface/focused run should save roughly `0.95B` from `sync_world_generation` and `0.48B` from `sync_world_events`, before addressing their larger shared command/effect/event/session floor.
+
+## Round-Robin Pivot: Map-Turn Readiness Cluster
+
+New cluster:
+
+- Rotated from worldgen/events to `end_turn` rather than continuing to polish the same endpoint family.
+- Last measured endpoint-surface cost: `end_turn` `8.0200B`.
+- Hot repo ops in that method:
+  - `sessions.participants_by_session_status`: `2` calls, `0.7053B` total.
+  - `turn_ready.by_session_turn`: `2` calls, `0.7036B` total.
+  - `events.by_session_event_key`: `1` call, `0.7036B`.
+  - Shared command/event/session write floor remains after these cuts.
+
+Cut:
+
+- `mark_turn_ready` now returns whether it created the `ParticipantTurnReady` row.
+- Fresh `end_turn` uses `append_fresh_public_event` only when the ready row was just created; replay/recovery still uses the idempotent event lookup.
+- `SessionTurnRuntime` now tracks whether participants and ready rows are complete.
+- `end_turn` reads ready count, participant count, and `all_ready` from the runtime only when both completeness flags are true; otherwise it falls back to the previous durable participant/ready pages.
+- Carry-forward to a new turn preserves participant completeness and marks the new empty ready set complete when the previous roster was complete.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister`
+
+Blocked verification:
+
+- Native `cargo check -p domm-degens-canister --features benchmark` currently fails before this cut is exercised because `process_setup_session_job` is cfg'd out under `feature = "benchmark"` but still referenced in a native-only block.
+- Wasm benchmark check currently fails before DoMM code because host build scripts link through rustup's `gcc-ld` wrapper, which points at missing `/nix/store/.../ld-wrapper.sh`.
+
+Expected measurement:
+
+- Fresh `end_turn` should drop `events.by_session_event_key` (`~0.70B`).
+- Hot complete-runtime `end_turn` should also drop the durable participant/ready count pages (`~1.4B` in the last trace), while cold/partial-runtime paths retain the old stable reads for correctness.

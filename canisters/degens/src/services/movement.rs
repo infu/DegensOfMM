@@ -422,34 +422,29 @@ pub(crate) fn end_turn(
         GameCommandAction::Return(response) => return Ok(response),
     };
 
-    let ready = turn_ready::mark_turn_ready(
+    let ready_mark = turn_ready::mark_turn_ready(
         context.session.id(),
         context.participant.id(),
         context.session.current_turn,
         Some(command.id()),
         Timestamp::now(),
     )?;
+    let ready = ready_mark.ready;
     let runtime_session_id = context.session.id().to_string();
-    session_turn_runtime::with_runtime_mut(
+    let runtime_readiness = session_turn_runtime::with_runtime_mut(
         &runtime_session_id,
         context.session.current_turn,
-        |runtime| runtime.mark_ready(context.participant.id().to_string()),
-    );
-
-    let participants = sessions::page_participants_by_session_status(
-        context.session.id(),
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    let ready_rows = turn_ready::page_turn_ready_by_session_turn(
-        context.session.id(),
-        context.session.current_turn,
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    let all_ready =
-        !participants.items.is_empty() && ready_rows.items.len() >= participants.items.len();
+        |runtime| {
+            runtime.mark_ready(context.participant.id().to_string());
+            runtime.readiness_counts()
+        },
+    )
+    .flatten();
+    let readiness = match runtime_readiness {
+        Some(readiness) => readiness,
+        None => durable_turn_readiness_counts(&context.session)?,
+    };
+    let all_ready = readiness.all_ready;
     let mut changed_subjects = vec![command_response::changed(
         "participant_turn_ready",
         &ready.id().to_string(),
@@ -481,21 +476,33 @@ pub(crate) fn end_turn(
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
     let participant_id_text = context.participant.id().to_string();
-    let ready_count = ready_rows.items.len();
-    let participant_count = participants.items.len();
+    let ready_count = readiness.ready_count;
+    let participant_count = readiness.participant_count;
     let event_key = format!("end_turn:{session_id_text}:{current_turn}:{participant_id_text}");
     let event_payload = format!(
         r#"{{"turn_number":{current_turn},"ready_count":{ready_count},"participant_count":{participant_count},"all_ready":{all_ready}}}"#
     );
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        event_key,
-        "participant_turn_ready".to_string(),
-        Some("participant".to_string()),
-        Some(participant_id_text),
-        event_payload,
-    )?;
+    let event = if ready_mark.created {
+        command_response::append_fresh_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "participant_turn_ready".to_string(),
+            Some("participant".to_string()),
+            Some(participant_id_text),
+            event_payload,
+        )?
+    } else {
+        command_response::append_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "participant_turn_ready".to_string(),
+            Some("participant".to_string()),
+            Some(participant_id_text),
+            event_payload,
+        )?
+    };
 
     command_response::apply_command(
         caller,
@@ -509,6 +516,35 @@ pub(crate) fn end_turn(
         vec![event],
         changed_subjects,
     )
+}
+
+fn durable_turn_readiness_counts(
+    session: &GameSession,
+) -> Result<session_turn_runtime::RuntimeReadinessCounts, ApiError> {
+    let participants = sessions::page_participants_by_session_status(
+        session.id(),
+        "active",
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    if participants.items.is_empty() {
+        return Ok(session_turn_runtime::RuntimeReadinessCounts {
+            ready_count: 0,
+            participant_count: 0,
+            all_ready: false,
+        });
+    }
+    let ready_rows = turn_ready::page_turn_ready_by_session_turn(
+        session.id(),
+        session.current_turn,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    Ok(session_turn_runtime::RuntimeReadinessCounts {
+        ready_count: ready_rows.items.len(),
+        participant_count: participants.items.len(),
+        all_ready: ready_rows.items.len() >= participants.items.len(),
+    })
 }
 
 pub(crate) fn sync_session_turn(

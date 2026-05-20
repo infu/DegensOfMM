@@ -737,7 +737,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Resolve recruit target champions from `SessionTurnRuntime` snapshots by id or first-playable start coordinate before falling back to stable `Champion` rows.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `submit_dwelling_recruit`, `preview_dwelling_recruit`, and `get_dwelling_pool` avoid stable object/champion resolution where snapshots are present. The visible repo-op target is the `champions.load_champion` call in `submit_dwelling_recruit` (`~0.71B`); object lookup savings may show only in method instructions if those repo ops are not traced.
-- [ ] Rotate again before deeper dwelling-only changes.
+- [x] Rotate again before deeper dwelling-only changes. Randomly picked `claim_quest_reward` from the remaining heavy endpoint list.
+
+### 26. Random Endpoint Cluster: Claim Quest Reward
+
+- [x] Randomly rotate to `claim_quest_reward` after the dwelling runtime-resolution cut.
+- [x] Replace the post-claim full scenario rule sweep with a targeted `rule:quest-victory` increment. This keeps the quest-victory rule current without scanning objectives, active rules, participants, and every participant's claimed quests in the claim command.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `claim_quest_reward` drops the scenario objective/status, participant/status, and claimed-quest scan floor from the previous full-rule sweep. Expected savings are roughly `3.5B-4.2B` on the current route before considering the fresh event/effect cut already queued.
+- [ ] Rotate again before deeper quest-only changes.
 
 ## Expected Outcome
 

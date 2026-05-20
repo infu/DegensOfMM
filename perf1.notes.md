@@ -6082,3 +6082,29 @@ Expected measurement:
 
 - `submit_dwelling_recruit` should drop the visible `champions.load_champion` read when the target champion snapshot is present, about `0.71B`.
 - Dwelling object runtime lookup should reduce method instructions for `get_dwelling_pool`, `preview_dwelling_recruit`, and `submit_dwelling_recruit` if those calls were previously touching stable object rows.
+
+## Random Pivot: Claim Quest Reward
+
+New cluster:
+
+- Randomly picked `claim_quest_reward` from the remaining heavy endpoint list after the dwelling cut.
+- Current cost: `14.1557B`.
+- The latest trace shows the command paying a full scenario rule sweep after one quest claim: objective scans, active-rule scans, participant scans, claimed-quest scans, and one rule update.
+
+Cut:
+
+- `claim_quest_reward` now calls a targeted `sync_quest_victory_rule_after_claim` helper instead of `sync_scenario_rule_rows`.
+- The helper loads `rule:quest-victory`, increments `current_value`, computes `victory_state`, and updates only when value/state changes.
+- This preserves the direct rule touched by the claim while avoiding unrelated conquest/objective/max-turn rule recomputation in the claim command.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- `claim_quest_reward` should drop the previous full-rule-sweep floor: `scenario.objectives_by_status`, `scenario.rules_by_status`, `sessions.participants_by_session_status`, and `scenario.quests_by_participant_status`.
+- The targeted helper adds one `scenario.rule_by_key` read and keeps the real `scenario.update_scenario_rule_state` when the quest-victory value changes.
+- Expected net save is roughly `3.5B-4.2B` on the current route, on top of the earlier fresh event/effect savings queued for the next benchmark.

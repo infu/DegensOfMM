@@ -609,7 +609,7 @@ fn apply_claim_quest_reward(
     quest.claimed_command_id = Some(command.id().key());
     quest.last_command_id = Some(command.id().key());
     let quest = scenario_progress::update_quest_state(quest)?;
-    sync_scenario_rule_rows(context, Some(command.id()))?;
+    sync_quest_victory_rule_after_claim(&context.session, command.id())?;
     let resources_after = balances_from_participant(&context.participant);
     let receipt = receipt(
         command.id().to_string(),
@@ -906,6 +906,35 @@ fn sync_scenario_rule_rows(
     command_id: Option<Id<GameCommand>>,
 ) -> Result<u32, ApiError> {
     sync_scenario_rule_rows_for_session(&context.session, command_id)
+}
+
+fn sync_quest_victory_rule_after_claim(
+    session: &GameSession,
+    command_id: Id<GameCommand>,
+) -> Result<(), ApiError> {
+    let Some(mut rule) =
+        scenario_progress::find_scenario_rule_by_key(session.id(), "rule:quest-victory")?
+    else {
+        return Ok(());
+    };
+    if rule.status != "active" {
+        return Ok(());
+    }
+    let previous_current_value = rule.current_value;
+    let previous_victory_state = rule.victory_state.clone();
+    rule.current_value = rule.current_value.saturating_add(1);
+    rule.victory_state = if rule.current_value >= rule.required_value {
+        "complete".to_string()
+    } else {
+        "active".to_string()
+    };
+    rule.last_checked_turn = session.current_turn;
+    rule.last_command_id = Some(command_id.key());
+    if rule.current_value != previous_current_value || rule.victory_state != previous_victory_state
+    {
+        scenario_progress::update_scenario_rule_state(rule)?;
+    }
+    Ok(())
 }
 
 fn sync_scenario_rule_rows_for_session(

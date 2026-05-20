@@ -20,8 +20,7 @@ use icydb::{
 
 use crate::repos::{
     battles, champions_artifacts, commands_events_effects, content, economy,
-    map_visibility_occupancy, movement, sessions, system_jobs as system_job_repo, towns,
-    turn_ready,
+    map_visibility_occupancy, movement, sessions, system_jobs as system_job_repo, turn_ready,
 };
 
 use super::{
@@ -4893,25 +4892,8 @@ fn load_champion_by_text(
 }
 
 fn load_town_by_text(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
-    if let Some(town) = town_runtime::cached_town_by_public_id(session.id(), town_id) {
-        return Ok(town);
-    }
-    if let Ok(id) = Ulid::from_str(town_id).map(Id::<Town>::from_key) {
-        let town = towns::load_town(id)?
-            .ok_or_else(|| public_error("town_not_found", "town not found", false))?;
-        town_runtime::projection_for_town(&town)?;
-        return Ok(town);
-    }
-    let scenario = domm_game::first_playable_scenario();
-    let start = scenario
-        .starts
-        .iter()
-        .find(|start| start.town_key == town_id)
-        .ok_or_else(|| public_error("town_not_found", "town not found", false))?;
-    let town = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
-        .ok_or_else(|| public_error("town_not_found", "town not found", false))?;
-    town_runtime::projection_for_town(&town)?;
-    Ok(town)
+    town_runtime::load_town_by_public_id(session.id(), town_id)?
+        .ok_or_else(|| public_error("town_not_found", "town not found", false))
 }
 
 fn validate_path_limit(path: &[MoveCoord]) -> Result<(), ApiError> {

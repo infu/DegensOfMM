@@ -857,25 +857,8 @@ fn load_offer_for_town(
 }
 
 fn resolve_town(session: &GameSession, town_id: &str) -> Result<Town, ApiError> {
-    if let Some(town) = town_runtime::cached_town_by_public_id(session.id(), town_id) {
-        return Ok(town);
-    }
-    if let Ok(id) = session_context::parse_id::<Town>(town_id, "town_id") {
-        let town = towns::load_town(id)?
-            .ok_or_else(|| public_error("not_found", "town not found", false))?;
-        town_runtime::projection_for_town(&town)?;
-        return Ok(town);
-    }
-    let scenario = domm_game::first_playable_scenario();
-    let start = scenario
-        .starts
-        .iter()
-        .find(|start| start.town_key == town_id)
-        .ok_or_else(|| public_error("not_found", "town not found", false))?;
-    let town = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
-        .ok_or_else(|| public_error("not_found", "town not found", false))?;
-    town_runtime::projection_for_town(&town)?;
-    Ok(town)
+    town_runtime::load_town_by_public_id(session.id(), town_id)?
+        .ok_or_else(|| public_error("not_found", "town not found", false))
 }
 
 fn resolve_dwelling_object(

@@ -77,11 +77,47 @@ pub(crate) fn cached_town_by_public_id(session_id: Id<GameSession>, town_id: &st
     {
         return Some(town);
     }
+    if let Some(town) = cached_town_by_alias(session_id, town_id) {
+        return Some(town);
+    }
     let start = domm_game::first_playable_scenario()
         .starts
         .into_iter()
         .find(|start| start.town_key == town_id)?;
     cached_town_by_xy(session_id, start.town_x, start.town_y)
+}
+
+pub(crate) fn load_town_by_public_id(
+    session_id: Id<GameSession>,
+    town_id: &str,
+) -> Result<Option<Town>, ApiError> {
+    if let Some(town) = cached_town_by_public_id(session_id, town_id) {
+        return Ok(Some(town));
+    }
+    if let Ok(id) = Ulid::from_str(town_id) {
+        let Some(town) = towns::load_town(Id::<Town>::from_key(id))? else {
+            return Ok(None);
+        };
+        projection_for_town(&town)?;
+        return Ok(Some(town));
+    }
+    if let Some(start) = domm_game::first_playable_scenario()
+        .starts
+        .into_iter()
+        .find(|start| start.town_key == town_id)
+    {
+        let Some(town) = towns::find_town_by_session_xy(session_id, start.town_x, start.town_y)?
+        else {
+            return Ok(None);
+        };
+        projection_for_town(&town)?;
+        return Ok(Some(town));
+    }
+    let Some(town) = load_town_by_alias(session_id, town_id)? else {
+        return Ok(None);
+    };
+    projection_for_town(&town)?;
+    Ok(Some(town))
 }
 
 fn cached_town_by_id(session_id: Id<GameSession>, town_id: Id<Town>) -> Option<Town> {
@@ -91,6 +127,19 @@ fn cached_town_by_id(session_id: Id<GameSession>, town_id: Id<Town>) -> Option<T
             .values()
             .find(|projection| {
                 projection.town.session_id == session_id.key() && projection.town.id() == town_id
+            })
+            .map(|projection| projection.town.clone())
+    })
+}
+
+fn cached_town_by_alias(session_id: Id<GameSession>, alias: &str) -> Option<Town> {
+    TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .values()
+            .find(|projection| {
+                projection.town.session_id == session_id.key()
+                    && town_alias_matches(&projection.town, alias)
             })
             .map(|projection| projection.town.clone())
     })
@@ -108,6 +157,40 @@ fn cached_town_by_xy(session_id: Id<GameSession>, town_x: u16, town_y: u16) -> O
             })
             .map(|projection| projection.town.clone())
     })
+}
+
+fn load_town_by_alias(session_id: Id<GameSession>, alias: &str) -> Result<Option<Town>, ApiError> {
+    for town in
+        towns::page_towns_by_session_status(session_id, "active", domm_game::MAX_LIST_LIMIT, None)?
+            .items
+    {
+        if town_alias_matches(&town, alias) {
+            return Ok(Some(town));
+        }
+    }
+    Ok(None)
+}
+
+fn town_alias_matches(town: &Town, alias: &str) -> bool {
+    town.name == alias || public_town_alias(&town.name).as_deref() == Some(alias)
+}
+
+fn public_town_alias(name: &str) -> Option<String> {
+    let mut slug = String::new();
+    let mut last_was_sep = true;
+    for ch in name.chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            last_was_sep = false;
+        } else if !last_was_sep {
+            slug.push('-');
+            last_was_sep = true;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    (!slug.is_empty()).then(|| format!("town:{slug}"))
 }
 
 pub(crate) fn mirror_town(town: &Town) {

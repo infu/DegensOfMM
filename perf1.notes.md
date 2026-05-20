@@ -4992,3 +4992,24 @@ Decision:
 
 - Keep it. This removes the remaining direct battle garrison read path from outside `TownProjection` while preserving durable survivor writes at the battle-resolution boundary.
 - The remaining TownProjection todo is now only non-start town aliases beyond the first-playable start list.
+
+## Checkpoint: Town Public Alias Resolution
+
+Gate 6 alias broadening slice:
+
+- Added `town_runtime::load_town_by_public_id` as the common resolver for town service, economy/tavern service, and movement town lookups.
+- The resolver supports cached/durable ULIDs, first-playable start keys, cached name aliases, and a bounded durable active-town scan for `town:<slugified Town.name>` aliases.
+- Durable alias misses hydrate `TownProjection`, so repeated calls by name alias reuse the projection.
+- Removed duplicated resolver logic from town/economy/movement services.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. There is no separate alias table or `Town` alias field in the schema, so name-derived aliases are the only concrete non-start alias source available without adding a new data model.
+- This completes the concrete Gate 6 TownProjection broadening items currently listed in `perf1.todo.md`.

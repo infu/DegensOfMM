@@ -25,7 +25,7 @@ use crate::repos::{
 
 use super::{
     battle as battle_service, battle_runtime, battle_start,
-    command_response::{self, GameCommandAction, GameCommandStart},
+    command_response::{self, GameCommandStart},
     economy_expansion, render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, system_jobs as system_job_service, town_runtime,
@@ -410,7 +410,7 @@ pub(crate) fn end_turn(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "end_turn",
@@ -418,8 +418,11 @@ pub(crate) fn end_turn(
         None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
 
     let ready_mark = turn_ready::mark_turn_ready(
@@ -504,17 +507,27 @@ pub(crate) fn end_turn(
         )?
     };
 
-    command_response::apply_command(
+    let result_json = format!(
+        r#"{{"command_kind":"end_turn","current_turn":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
+        current_turn, ready_count, participant_count, all_ready
+    );
+    let command_id_text = command.id().to_string();
+    command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
+        runtime_receipt,
         &client_nonce,
-        format!(
-            r#"{{"command_kind":"end_turn","current_turn":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
-            current_turn, ready_count, participant_count, all_ready
-        ),
+        result_json,
         vec![event],
         changed_subjects,
+        CommandResult::StrategicReceipt(StrategicCommandReceipt {
+            command_kind: "end_turn".to_string(),
+            command_id: command_id_text,
+            current_turn,
+            command_count: 1,
+            event_count: 1,
+        }),
     )
 }
 

@@ -6605,3 +6605,38 @@ Decision:
 
 - Keep this checkpoint. The shared command-row floor is now almost gone from endpoint-surface.
 - Next random cluster should be the remaining durable command rows, likely `accept_quest` and `end_turn`, then rotate to another mechanism because deeper receipt work will have diminishing returns.
+
+## Final Runtime Command Receipt Measurement
+
+Time: `2026-05-20T23:29:20Z`.
+
+Cut:
+
+- Moved the two remaining endpoint-surface durable command wrappers, `accept_quest` and `end_turn`, to runtime command receipts.
+- Kept quest rows, turn-ready rows, scheduled job behavior, public events, command effects, and changed subjects unchanged.
+- `end_turn` now constructs the same strategic receipt explicitly for `apply_runtime_command_with_result` instead of using durable `apply_command`.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bff4cd` / `12,580,045` bytes, `2,867` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-final-command-receipts-local`, passed.
+
+Measurement versus `20260520-command-receipts-scenario-champion-worldgen-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `139 -> 137`.
+- Stable pages: `2049 -> 75393` became `2049 -> 74881`.
+- Scenario instructions: `62.8131B -> 59.5007B`, `-3.3125B`, `-5.3%`.
+- `accept_quest`: `3.8038B -> 2.1359B`, `-43.8%`.
+- `end_turn`: `3.3238B -> 1.6573B`, `-50.1%`.
+- `commands.game_command_idempotency`: `2 -> 0` calls and `1.4147B -> 0`.
+- `commands.create_game_command`: `2 -> 0` calls and `0.9586B -> 0`.
+- `commands.update_game_command`: `2 -> 0` calls and `0.9593B -> 0`.
+
+Decision:
+
+- Keep this checkpoint. The endpoint-surface benchmark no longer shows any `commands.*` repo operations.
+- Rotate away from runtime command receipt work. The new shared floor is `events.create_game_event` at `12` calls / `5.7358B` and `effects.create_applied_command_effect` at `12` calls / `5.7024B`, followed by economy ledger rows at `5` calls / `2.3844B`.

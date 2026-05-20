@@ -20,7 +20,7 @@ use crate::repos::{
 };
 
 use super::{
-    command_response::{self, GameCommandAction},
+    command_response,
     session_context::{self, public_error},
     session_turn_runtime, system_jobs as system_job_service,
 };
@@ -96,7 +96,7 @@ pub(crate) fn accept_quest(
         r#"{{"quest_key":"{}"}}"#,
         command_response::escape_json(&quest_key)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "accept_quest",
@@ -104,10 +104,20 @@ pub(crate) fn accept_quest(
         None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
-    apply_accept_quest(caller, &mut context, quest_key, command, &client_nonce)
+    apply_accept_quest(
+        caller,
+        &mut context,
+        quest_key,
+        command,
+        runtime_receipt,
+        &client_nonce,
+    )
 }
 
 pub(crate) fn claim_quest_reward(
@@ -535,15 +545,17 @@ fn apply_accept_quest(
     context: &mut session_context::SessionCallerContext,
     quest_key: String,
     command: GameCommand,
+    runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
     let mut quest = load_quest(context, &quest_key)?;
     let transition = domm_game::quest_accept_transition(&quest.status);
     if !transition.allowed {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error(
                 transition
@@ -590,10 +602,11 @@ fn apply_accept_quest(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         context,
         command,
+        runtime_receipt,
         client_nonce,
         result_json,
         vec![event],

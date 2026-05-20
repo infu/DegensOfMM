@@ -877,10 +877,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 41. Random Endpoint Cluster: Remaining Durable Command Rows
 
-- [ ] Identify the final endpoint-surface durable `GameCommand` callers after Gate 40; likely `accept_quest` and `end_turn`.
-- [ ] Move the safe remaining active-session command wrappers onto runtime command receipts without touching unrelated domain rows.
-- [ ] Measure whether `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` disappear from endpoint-surface or if a durable fallback still remains.
-- [ ] Rotate again after this final command-row pass instead of spending more time on the same mechanism.
+- [x] Identify the final endpoint-surface durable `GameCommand` callers after Gate 40; artifact call traces showed `accept_quest` and `end_turn`.
+- [x] Move the safe remaining active-session command wrappers onto runtime command receipts without touching unrelated domain rows.
+- [x] Measure whether `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` disappear from endpoint-surface or if a durable fallback still remains. Artifact `target/benchmarks/20260520-final-command-receipts-local` passed with `59/59` endpoints; `commands.*` repo ops disappeared, row growth moved `139 -> 137`, scenario instructions moved `62.8131B -> 59.5007B` (`-5.3%`), `accept_quest` moved `3.8038B -> 2.1359B`, and `end_turn` moved `3.3238B -> 1.6573B`.
+- [x] Rotate again after this final command-row pass instead of spending more time on the same mechanism. Decision: command receipt work is done for endpoint-surface; next target should be shared `GameEvent`/`CommandEffect` rows or domain rows.
+
+### 42. Random Endpoint Cluster: Event/Effect Row Floor
+
+- [ ] Rotate away from runtime command receipts after `commands.*` repo ops disappear.
+- [ ] Analyze which of the 12 `events.create_game_event` and 12 `effects.create_applied_command_effect` writes are still required for public replay, history, flush barriers, or tests.
+- [ ] Apply a bounded cut to one random command family first, not all event/effect writers at once.
+- [ ] Preserve `get_events_after`, command-status results, and recovery tests; if a row is removed from the hot path, runtime event/effect visibility or flush coverage must replace it.
+- [ ] Measure with endpoint-surface and compare against `20260520-final-command-receipts-local`.
 
 ## Expected Outcome
 

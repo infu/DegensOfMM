@@ -3147,9 +3147,21 @@ Verification:
 
 Benchmark status:
 
-- Focused Gate J measurement is next.
-- Expected improvements: active `get_session` should drop from about `1.4128B` when runtime is present, and active caller queries should avoid repeated auth-context stable reads before their projection work.
+- Focused Gate J `20260520-runtime-session-query-fixed-gate-j` passed in `196.42s`.
+- The first attempted run `20260520-runtime-session-query-gate-j` failed at town build for the stale session reason below; the fixed run passed.
+
+Measured delta versus `20260520-neutral-startup-scan-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 161.1489B | 143.4896B | -11.0% |
+| `get_my_participant` avg | 2.8177B | 0.7040B | -75.0% |
+| `get_my_champions` avg | 2.8228B | 0.7076B | -74.9% |
+| `get_visible_map_chunks` avg | 3.5218B | 1.4064B | -60.1% |
+| `get_visible_objects` avg | 4.9506B | 2.8351B | -42.7% |
+| `get_champion_view` avg | 4.2611B | 2.1292B | -50.0% |
+| `get_session` avg | 1.4128B | 1.2561B | -11.1% |
 
 Decision:
 
-- Keep pending focused measurement after the query-only fix. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement.
+- Keep this cut. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement. `get_session` only partially improved because most Gate J calls happen before active runtime exists; the active calls are now near-zero instruction queries in the raw log.

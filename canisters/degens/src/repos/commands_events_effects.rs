@@ -179,6 +179,10 @@ pub(crate) fn load_lobby_command(id: Id<LobbyCommand>) -> RepoResult<Option<Lobb
     foundation::load_by_id("commands.load_lobby_command", id)
 }
 
+pub(crate) fn insert_lobby_command(command: LobbyCommand) -> RepoResult<LobbyCommand> {
+    foundation::insert("commands.insert_lobby_command", command)
+}
+
 pub(crate) fn create_lobby_command(
     actor_principal: Principal,
     actor_player_id: Option<Id<PlayerAccount>>,

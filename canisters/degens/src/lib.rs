@@ -56,6 +56,10 @@ fn init() {
 fn pre_upgrade_impl() {
     #[cfg(not(feature = "benchmark"))]
     {
+        if let Err(error) = services::account_lobby_session::flush_runtime_lobby_state_for_upgrade()
+        {
+            panic!("lobby runtime pre-upgrade flush failed: {}", error.message);
+        }
         if let Err(error) = services::session_turn_runtime::flush_runtime_projections_for_upgrade()
         {
             panic!(

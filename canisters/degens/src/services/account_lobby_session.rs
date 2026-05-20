@@ -290,6 +290,63 @@ fn remember_runtime_lobby_event(event: &ApiEventView) {
     });
 }
 
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_lobby_state_for_upgrade() -> Result<usize, ApiError> {
+    let commands = RUNTIME_LOBBY_COMMANDS.with_borrow(Clone::clone);
+    let events = RUNTIME_LOBBY_EVENTS.with_borrow(Clone::clone);
+    let mut flushed = 0_usize;
+    for command in commands {
+        let command_id = command.id();
+        if commands_events_effects::load_lobby_command(command_id)?.is_some() {
+            commands_events_effects::update_lobby_command(command)?;
+        } else {
+            commands_events_effects::insert_lobby_command(command)?;
+        }
+        flushed = flushed.saturating_add(1);
+    }
+    for event in events {
+        flush_runtime_lobby_event(&event)?;
+        flushed = flushed.saturating_add(1);
+    }
+    Ok(flushed)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_lobby_event(event: &ApiEventView) -> Result<(), ApiError> {
+    let session_id = parse_ulid_id::<GameSession>(&event.session_id)?;
+    if commands_events_effects::find_event_by_key(session_id, &event.event_key)?.is_some() {
+        return Ok(());
+    }
+    commands_events_effects::create_game_event(
+        session_id,
+        None,
+        None,
+        event.turn_number,
+        event.event_seq,
+        event.event_key.clone(),
+        event.audience_key.clone(),
+        event.event_type.clone(),
+        event.subject_kind.clone(),
+        event.subject_id_text.clone(),
+        event.payload.clone().unwrap_or_else(|| "{}".to_string()),
+    )?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn parse_ulid_id<E>(value: &str) -> Result<Id<E>, ApiError>
+where
+    E: icydb::traits::EntityKey<Key = Ulid>,
+{
+    Ulid::from_str(value).map(Id::from_key).map_err(|_| {
+        ApiError::new(
+            "invalid_runtime_lobby_snapshot_id",
+            "runtime lobby snapshot contains an invalid id",
+            true,
+        )
+    })
+}
+
 fn runtime_lobby_command(
     actor_principal: Principal,
     actor_player_id: Option<Id<PlayerAccount>>,

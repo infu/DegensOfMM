@@ -4833,3 +4833,22 @@ Verification:
 Decision:
 
 - Keep it as a low-risk broadening checkpoint. No PocketIC benchmark was run because this is a cache-miss behavior outside the current measured Gate J hot route.
+
+## Checkpoint: Runtime Lobby Upgrade Flush
+
+Gate 5H lobby receipt slice:
+
+- `pre_upgrade_impl` now flushes runtime lobby state before the session-turn/town/battle runtime upgrade work.
+- Heap `LobbyCommand` receipts are inserted or updated durably by id, so command status and idempotency can survive upgrade instead of depending only on the process-local cache.
+- Runtime lobby events are written to durable `GameEvent` rows idempotently by event key.
+- The flush is excluded from `feature=benchmark` builds to preserve the benchmark Wasm code-section headroom.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This closes the explicit runtime lobby receipt item for the `Upgrade` path, while the broader Gate 5H work for `StrongRead`, `RuntimeEviction`, `TurnAdvance`, command receipts, and resource ledger flushing remains open.

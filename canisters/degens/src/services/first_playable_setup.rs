@@ -20,6 +20,8 @@ use crate::repos::{
     neutrals, sessions, towns,
 };
 
+use super::town_runtime;
+
 #[derive(Clone)]
 pub(crate) struct FirstPlayableContentRows {
     pub factions: BTreeMap<String, FactionDefinition>,
@@ -456,8 +458,16 @@ fn seed_towns(
                 0,
             )?,
         };
+        town_runtime::seed_town(&town);
         if towns::find_town_building(town.id(), hall.id())?.is_none() {
-            towns::create_town_building(session.id(), town.id(), hall.id(), hall.slug.clone(), 1)?;
+            let building = towns::create_town_building(
+                session.id(),
+                town.id(),
+                hall.id(),
+                hall.slug.clone(),
+                1,
+            )?;
+            town_runtime::mirror_building(&building);
         }
         town_keys.insert(start.town_key.clone(), town.id());
     }

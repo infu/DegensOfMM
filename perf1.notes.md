@@ -3282,3 +3282,46 @@ Measured delta versus `20260520-query-town-cuts-slim-gate-j`:
 Decision:
 
 - Keep this cut. It fixed the town-view target and helped recruit, but the build regression shows the limit of read caching: first build now pays projection hydration while still doing durable command, resource, event, building, pool, and town writes. The next Gate 6 work needs to remove or batch durable writes rather than add more read-side cache polish.
+
+## Checkpoint: Runtime Town Commands And Seeded Projection
+
+Moved the first-playable town build/recruit path onto the active runtime model:
+
+- `submit_build_town_structure` and `submit_recruit_units` now create runtime command receipts, runtime events, and runtime resource deltas through `SessionTurnRuntime` instead of writing durable `GameCommand`, `GameEvent`, `ResourceLedgerEntry`, and participant update rows on the active path.
+- Town building, recruit-pool, and garrison mutations now update the heap `TownProjection` first instead of writing `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows during the hot call.
+- First-playable setup seeds the west/east town projection and mirrors the initial town hall, so first town reads and commands do not pay a durable hydration scan in the benchmark route.
+- Unit/building slug lookup now uses heap content caches after seed/create.
+- The fast town command turn guard reuses the same proven-open runtime predicate as map-turn commands before skipping the durable closure scan; after deadline, while closing, or with ready participants present it falls back to the durable guard.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-runtime-town-commands-gate-j` passed in `206.60s`.
+- Focused Gate J `20260520-runtime-town-slim-content-cache-gate-j` passed in `193.66s`.
+- Final focused Gate J `20260520-runtime-town-seeded-alias-slim2-gate-j` passed in `204.35s`.
+
+Measured final delta versus `20260520-town-projection-reads-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 123.9078B | 95.5145B | -22.9% |
+| Gate J scenario memory | 5084.8125 MB | 4620.4375 MB | -9.1% |
+| `get_town_view` avg | 0.7079B | 0.0016B | -99.8% |
+| `submit_build_town_structure` avg | 16.9860B | 0.7069B | -95.8% |
+| `submit_recruit_units` avg | 10.6436B | 0.0003B | ~-100.0% |
+| row growth | 43 | 43 | flat |
+| stable pages final | 82305 | 74881 | -9.0% |
+
+Code-size notes:
+
+- Attempts with a larger ruleset/content cache and generic first-playable alias resolver failed install just over the IC Wasm code-section limit.
+- The passing checkpoint keeps only unit/building slug caches and a narrow first-playable town alias resolver for `town:west`/`town:east`.
+
+Decision:
+
+- Keep this checkpoint. It moves town commands from the same row-normalized live mutation shape that made battles slow to the runtime/projection shape that benchmarks well.
+- Do not claim the durable boundary is complete. Runtime town command/event/resource/building/pool/garrison data still needs bounded flush/upgrade snapshot coverage for recovery/history.
+- `submit_build_town_structure` is now below `1B` but still slightly above the preferred `0.3B-0.6B` target, so the next town work should identify the remaining floor instead of adding more broad surface area.

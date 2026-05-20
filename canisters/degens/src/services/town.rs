@@ -1,18 +1,34 @@
 use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{GameCommand, GameEvent, GameParticipant, GameSession, Town};
+use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, Town};
 use domm_game::{
-    ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
+    ApiError, ApiTownView, BuildPreview, CommandPhase, CommandResponse, CommandResult,
+    CommandStatus, RecruitPreview, RecruitTarget, StrategicCommandReceipt,
 };
-use icydb::{traits::EntityValue, types::Id};
+use icydb::{
+    traits::EntityValue,
+    types::{Id, Ulid},
+};
 
-use crate::repos::{commands_events_effects, content, economy, sessions, towns};
+use crate::repos::{content, towns};
 
 use super::{
-    command_response::{self, GameCommandAction},
-    render_projection, session_context, session_turn_runtime, town_runtime,
+    command_response, render_projection, session_context, session_turn_runtime, town_runtime,
 };
+
+struct RuntimeTownCommand {
+    command_id: Id<GameCommand>,
+    command_id_text: String,
+    client_nonce: u64,
+    payload_hash: String,
+    command_type: String,
+}
+
+enum RuntimeTownCommandAction {
+    Apply(RuntimeTownCommand),
+    Return(CommandResponse),
+}
 
 pub(crate) fn get_town_view(
     caller: CandidPrincipal,
@@ -55,7 +71,8 @@ pub(crate) fn preview_build_town_structure(
     if building_slug == "freehold-training-yard" {
         return first_playable_build_preview(&context.participant, &town, building_slug);
     }
-    let ruleset_id = ruleset_id()?;
+    let ruleset_id =
+        Id::<domm_degens_schema::schema::RulesetDefinition>::from_key(context.session.ruleset_id);
     let building =
         content::find_building_by_ruleset_slug(ruleset_id, &building_slug)?.ok_or_else(|| {
             ApiError::new(
@@ -145,7 +162,9 @@ pub(crate) fn preview_recruit_units(
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let unit_slug = slug_from_public_id(&unit_id, "unit:");
-    let unit = content::find_unit_by_ruleset_slug(ruleset_id()?, &unit_slug)?
+    let ruleset_id =
+        Id::<domm_degens_schema::schema::RulesetDefinition>::from_key(context.session.ruleset_id);
+    let unit = content::find_unit_by_ruleset_slug(ruleset_id, &unit_slug)?
         .ok_or_else(|| ApiError::new("unit_not_found", "unit definition was not found", false))?;
     let total_cost = resource_balances(
         unit.gold_cost.saturating_mul(quantity),
@@ -193,7 +212,7 @@ pub(crate) fn submit_build_town_structure(
     building_def_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context = session_context::require_cached_active_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let building_slug = slug_from_public_id(&building_def_id, "building:");
     let payload_json = format!(
@@ -201,19 +220,19 @@ pub(crate) fn submit_build_town_structure(
         command_response::escape_json(&town_id),
         command_response::escape_json(&building_slug)
     );
-    let command = match command_response::begin_participant_command(
+    let command = match begin_runtime_town_command(
         caller,
         &context,
         "submit_build_town_structure",
         &client_nonce,
-        None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        RuntimeTownCommandAction::Apply(command) => command,
+        RuntimeTownCommandAction::Return(response) => return Ok(response),
     };
 
-    let ruleset_id = ruleset_id()?;
+    let ruleset_id =
+        Id::<domm_degens_schema::schema::RulesetDefinition>::from_key(context.session.ruleset_id);
     let building =
         content::find_building_by_ruleset_slug(ruleset_id, &building_slug)?.ok_or_else(|| {
             ApiError::new(
@@ -235,53 +254,50 @@ pub(crate) fn submit_build_town_structure(
     let missing_prerequisite =
         missing_required_building_slug(ruleset_id, &built_building_ids, &building)?;
     if town.owner_participant_id != Some(context.participant.id().key()) {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
             &client_nonce,
             ApiError::new("not_owner", "caller does not own this town", false),
-        );
+        ));
     }
     if built_building_ids.contains(&building.id) {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
             &client_nonce,
             ApiError::new("already_built", "town already has this building", false),
-        );
+        ));
     }
     if let Some(reason) = missing_prerequisite {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
             &client_nonce,
             ApiError::new(reason, "building prerequisite is missing", false),
-        );
+        ));
     }
-    spend_resources(
+    spend_resources_runtime(
         context.session.id(),
         &mut context.participant,
-        command.id(),
+        command.command_id,
         &format!("build:{building_slug}"),
         context.session.current_turn,
         &cost,
         "build",
     )?;
     context.participant.last_action_turn = context.session.current_turn;
-    context.participant = sessions::update_participant(context.participant.clone())?;
     session_turn_runtime::mirror_participant_update(&context.participant);
 
-    let building_row = towns::create_town_building(
-        context.session.id(),
-        town.id(),
+    let building_row = town_runtime::create_building(
+        &town,
         building.id(),
         building_slug.clone(),
         context.session.current_turn,
     )?;
-    town_runtime::mirror_building(&building_row);
     if let Some(unit_slug) = &building.unlocks_unit_slug {
         let unit = content::find_unit_by_ruleset_slug(ruleset_id, unit_slug)?.ok_or_else(|| {
             ApiError::new(
@@ -291,27 +307,25 @@ pub(crate) fn submit_build_town_structure(
             )
         })?;
         if town_runtime::recruit_pool(&town, unit.id())?.is_none() {
-            let pool = towns::create_town_recruit_pool(
-                context.session.id(),
-                town.id(),
+            town_runtime::create_recruit_pool(
+                &town,
                 unit.id(),
                 unit_slug.clone(),
                 u32::from(unit.weekly_growth),
                 1,
             )?;
-            town_runtime::mirror_recruit_pool(&pool);
         }
     }
     let mut town = town;
     town.last_built_turn = context.session.current_turn;
-    town.last_command_id = Some(command.id);
-    towns::update_town(town.clone())?;
+    town.last_command_id = Some(command.command_id.key());
     town_runtime::mirror_town(&town);
 
     let mut session = context.session.clone();
-    let events = append_town_command_events(
+    let events = append_runtime_town_command_events(
+        &context,
         &mut session,
-        command.id(),
+        &command.command_id_text,
         format!("town_build:{}:{building_slug}", town.id()),
         "town_building_built",
         &town.id().to_string(),
@@ -320,12 +334,11 @@ pub(crate) fn submit_build_town_structure(
     )?;
     context.session = session;
 
-    command_response::apply_command(
+    apply_runtime_town_command(
         caller,
         &context,
         command,
         &client_nonce,
-        command_response::result_json("submit_build_town_structure", context.session.current_turn),
         events,
         vec![
             command_response::changed("town", &town.id().to_string(), "update"),
@@ -348,7 +361,7 @@ pub(crate) fn submit_recruit_units(
     target: RecruitTarget,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context = session_context::require_cached_active_session_caller(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let unit_slug = slug_from_public_id(&unit_id, "unit:");
     if matches!(target, RecruitTarget::Champion { .. }) {
@@ -365,40 +378,41 @@ pub(crate) fn submit_recruit_units(
         quantity,
         recruit_target_json(&target)
     );
-    let command = match command_response::begin_participant_command(
+    let command = match begin_runtime_town_command(
         caller,
         &context,
         "submit_recruit_units",
         &client_nonce,
-        None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        RuntimeTownCommandAction::Apply(command) => command,
+        RuntimeTownCommandAction::Return(response) => return Ok(response),
     };
 
-    let unit = content::find_unit_by_ruleset_slug(ruleset_id()?, &unit_slug)?
+    let ruleset_id =
+        Id::<domm_degens_schema::schema::RulesetDefinition>::from_key(context.session.ruleset_id);
+    let unit = content::find_unit_by_ruleset_slug(ruleset_id, &unit_slug)?
         .ok_or_else(|| ApiError::new("unit_not_found", "unit definition was not found", false))?;
     let Some(mut pool) = town_runtime::recruit_pool(&town, unit.id())? else {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
             &client_nonce,
             ApiError::new("recruit_pool_empty", "no recruit pool is available", false),
-        );
+        ));
     };
     if town.owner_participant_id != Some(context.participant.id().key()) {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
             &client_nonce,
             ApiError::new("not_owner", "caller does not own this town", false),
-        );
+        ));
     }
     if quantity == 0 || pool.available < quantity {
-        return command_response::fail_command(
+        return Ok(fail_runtime_town_command(
             caller,
             &context,
             command,
@@ -408,7 +422,7 @@ pub(crate) fn submit_recruit_units(
                 "not enough units are available",
                 false,
             ),
-        );
+        ));
     }
     let total_cost = resource_balances(
         unit.gold_cost.saturating_mul(quantity),
@@ -419,39 +433,41 @@ pub(crate) fn submit_recruit_units(
         unit.ember_cost.saturating_mul(quantity),
         unit.aether_cost.saturating_mul(quantity),
     );
-    spend_resources(
+    spend_resources_runtime(
         context.session.id(),
         &mut context.participant,
-        command.id(),
+        command.command_id,
         &format!("recruit:{unit_slug}"),
         context.session.current_turn,
         &total_cost,
         "recruit",
     )?;
     context.participant.last_action_turn = context.session.current_turn;
-    context.participant = sessions::update_participant(context.participant.clone())?;
     session_turn_runtime::mirror_participant_update(&context.participant);
 
     pool.available = pool.available.saturating_sub(quantity);
-    pool.last_command_id = Some(command.id);
-    pool = towns::update_town_recruit_pool(pool)?;
+    pool.last_command_id = Some(command.command_id.key());
     town_runtime::mirror_recruit_pool(&pool);
 
-    let garrison = recruit_to_garrison(
+    let garrison = recruit_to_garrison_runtime(
         &town,
-        context.session.id(),
         unit.id(),
         unit_slug.clone(),
         unit.max_hp,
         quantity,
         target,
-        command.id(),
+        command.command_id,
     )?;
     let mut session = context.session.clone();
-    let events = append_town_command_events(
+    let events = append_runtime_town_command_events(
+        &context,
         &mut session,
-        command.id(),
-        format!("town_recruit:{}:{unit_slug}:{}", town.id(), command.id()),
+        &command.command_id_text,
+        format!(
+            "town_recruit:{}:{unit_slug}:{}",
+            town.id(),
+            command.command_id
+        ),
         "units_recruited",
         &town.id().to_string(),
         &context.participant.id().to_string(),
@@ -459,12 +475,11 @@ pub(crate) fn submit_recruit_units(
     )?;
     context.session = session;
 
-    command_response::apply_command(
+    apply_runtime_town_command(
         caller,
         &context,
         command,
         &client_nonce,
-        command_response::result_json("submit_recruit_units", context.session.current_turn),
         events,
         vec![
             command_response::changed("town", &town.id().to_string(), "update"),
@@ -487,6 +502,9 @@ fn resolve_town_by_session_id(
     session_id: Id<GameSession>,
     town_id: &str,
 ) -> Result<Town, ApiError> {
+    if let Some(town) = town_runtime::cached_town_by_public_id(session_id, town_id) {
+        return Ok(town);
+    }
     if let Ok(id) = session_context::parse_id::<Town>(town_id, "town_id") {
         return towns::load_town(id)?
             .ok_or_else(|| session_context::public_error("not_found", "town not found", false));
@@ -522,9 +540,287 @@ fn missing_required_building_slug(
     Ok(None)
 }
 
-fn recruit_to_garrison(
+fn begin_runtime_town_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_type: &str,
+    client_nonce_text: &str,
+    payload_json: String,
+) -> Result<RuntimeTownCommandAction, ApiError> {
+    let payload_hash = command_response::payload_hash(
+        command_type,
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        return Ok(RuntimeTownCommandAction::Return(
+            runtime_town_failed_response(
+                caller,
+                context,
+                Ulid::generate().to_string(),
+                command_type.to_string(),
+                client_nonce_text,
+                payload_hash,
+                session_context::public_error(
+                    "payload_too_large",
+                    "game command payload is too large",
+                    false,
+                ),
+            ),
+        ));
+    }
+
+    let client_nonce = command_response::nonce_u64(command_type, client_nonce_text);
+    let session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    if let Some(existing) = session_turn_runtime::command_receipt_by_nonce(
+        &session_id,
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != payload_hash {
+            return Ok(RuntimeTownCommandAction::Return(
+                runtime_town_failed_response(
+                    caller,
+                    context,
+                    Ulid::generate().to_string(),
+                    command_type.to_string(),
+                    client_nonce_text,
+                    payload_hash,
+                    session_context::public_error(
+                        "duplicate_nonce_payload_mismatch",
+                        format!(
+                            "client nonce {client_nonce_text} was reused with a different payload"
+                        ),
+                        false,
+                    ),
+                ),
+            ));
+        }
+        return Ok(RuntimeTownCommandAction::Return(existing.response));
+    }
+
+    ensure_town_command_runtime(context)?;
+    if !command_response::runtime_proves_pre_deadline_turn_open(context) {
+        command_response::ensure_map_turn_accepts_new_command(context, command_type)?;
+    }
+    let command_id = Id::<GameCommand>::from_key(Ulid::generate());
+    Ok(RuntimeTownCommandAction::Apply(RuntimeTownCommand {
+        command_id_text: command_id.to_string(),
+        command_id,
+        client_nonce,
+        payload_hash,
+        command_type: command_type.to_string(),
+    }))
+}
+
+fn ensure_town_command_runtime(
+    context: &session_context::SessionCallerContext,
+) -> Result<(), ApiError> {
+    let mut session = context.session.clone();
+    session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
+    session_turn_runtime::mirror_participant_update(&context.participant);
+    Ok(())
+}
+
+fn fail_runtime_town_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command: RuntimeTownCommand,
+    client_nonce_text: &str,
+    error: ApiError,
+) -> CommandResponse {
+    let response = runtime_town_failed_response(
+        caller,
+        context,
+        command.command_id_text.clone(),
+        command.command_type.clone(),
+        client_nonce_text,
+        command.payload_hash.clone(),
+        error,
+    );
+    remember_runtime_town_receipt(
+        context,
+        command,
+        client_nonce_text.to_string(),
+        response.clone(),
+    );
+    response
+}
+
+fn runtime_town_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    command_type: String,
+    client_nonce_text: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
+        caller,
+        context,
+        command_id,
+        command_type,
+        client_nonce_text,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    )
+}
+
+fn apply_runtime_town_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command: RuntimeTownCommand,
+    client_nonce_text: &str,
+    events: Vec<domm_game::ApiEventView>,
+    changed_subjects: Vec<domm_game::ChangedSubject>,
+) -> Result<CommandResponse, ApiError> {
+    let event_count = events.len() as u32;
+    let response = command_response::runtime_command_response(
+        caller,
+        context,
+        command.command_id_text.clone(),
+        command.command_type.clone(),
+        client_nonce_text,
+        command.payload_hash.clone(),
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        events,
+        changed_subjects,
+        CommandResult::StrategicReceipt(StrategicCommandReceipt {
+            command_kind: command.command_type.clone(),
+            command_id: command.command_id_text.clone(),
+            current_turn: context.session.current_turn,
+            command_count: 1,
+            event_count,
+        }),
+        None,
+    );
+    remember_runtime_town_receipt(
+        context,
+        command,
+        client_nonce_text.to_string(),
+        response.clone(),
+    );
+    session_context::remember_active_session_caller(caller, context);
+    Ok(response)
+}
+
+fn remember_runtime_town_receipt(
+    context: &session_context::SessionCallerContext,
+    command: RuntimeTownCommand,
+    client_nonce_text: String,
+    response: CommandResponse,
+) {
+    let receipt = session_turn_runtime::SessionTurnCommandReceipt {
+        command_id: command.command_id_text,
+        command_type: command.command_type,
+        actor_participant_id: context.participant.id().to_string(),
+        client_nonce_text,
+        client_nonce: command.client_nonce,
+        payload_hash: command.payload_hash,
+        response,
+    };
+    session_turn_runtime::with_runtime_mut(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+        |runtime| runtime.insert_command_receipt(receipt),
+    );
+}
+
+fn append_runtime_town_command_events(
+    context: &session_context::SessionCallerContext,
+    session: &mut GameSession,
+    command_id_text: &str,
+    event_key: String,
+    event_type: &str,
+    town_id: &str,
+    participant_id: &str,
+    detailed_payload: String,
+) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
+    let session_id = context.session.id().to_string();
+    let turn_number = context.session.current_turn;
+    session_turn_runtime::with_runtime_mut(&session_id, turn_number, |runtime| {
+        let audience_key = format!("participant:{participant_id}");
+        let private_event = push_runtime_town_event(
+            runtime,
+            session,
+            command_id_text,
+            format!("{event_key}:{audience_key}"),
+            audience_key,
+            event_type,
+            town_id,
+            detailed_payload,
+        )?;
+        let public_event = push_runtime_town_event(
+            runtime,
+            session,
+            command_id_text,
+            format!("{event_key}:public"),
+            "public".to_string(),
+            event_type,
+            town_id,
+            format!(
+                r#"{{"town_id":"{}","event_type":"{}","redacted":true}}"#,
+                command_response::escape_json(town_id),
+                command_response::escape_json(event_type)
+            ),
+        )?;
+        Ok(vec![private_event, public_event])
+    })
+    .ok_or_else(|| {
+        session_context::public_error(
+            "turn_runtime_missing",
+            "active turn runtime was not available",
+            true,
+        )
+    })?
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_runtime_town_event(
+    runtime: &mut session_turn_runtime::SessionTurnRuntime,
+    session: &mut GameSession,
+    command_id_text: &str,
+    event_key: String,
+    audience_key: String,
+    event_type: &str,
+    town_id: &str,
+    payload_json: String,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    let event_seq = session_turn_runtime::reserve_session_event_seq(runtime, session)?;
+    let event = domm_game::ApiEventView {
+        session_id: session.id().to_string(),
+        event_seq,
+        event_key,
+        audience_key,
+        turn_number: session.current_turn,
+        event_type: event_type.to_string(),
+        subject_kind: Some("town".to_string()),
+        subject_id_text: Some(town_id.to_string()),
+        payload: Some(payload_json),
+        redacted: false,
+    };
+    runtime.push_event(session_turn_runtime::SessionTurnEvent {
+        command_id: Some(command_id_text.to_string()),
+        event: event.clone(),
+        flushed: false,
+    });
+    Ok(event)
+}
+
+fn recruit_to_garrison_runtime(
     town: &Town,
-    session_id: Id<domm_degens_schema::schema::GameSession>,
     unit_id: Id<domm_degens_schema::schema::UnitDefinition>,
     unit_slug: String,
     front_hp: u16,
@@ -554,25 +850,12 @@ fn recruit_to_garrison(
             }
             stack.quantity = stack.quantity.saturating_add(quantity);
             stack.last_command_id = Some(command_id.key());
-            let stack = towns::update_town_garrison_stack(stack)?;
             town_runtime::mirror_garrison_stack(&stack);
             stack
         }
-        None => {
-            let mut stack = towns::create_town_garrison_stack(
-                session_id,
-                town.id(),
-                unit_id,
-                unit_slug,
-                slot_index,
-                quantity,
-                front_hp,
-                Some(command_id),
-            )?;
-            stack.last_command_id = Some(command_id.key());
-            town_runtime::mirror_garrison_stack(&stack);
-            stack
-        }
+        None => town_runtime::create_garrison_stack(
+            town, unit_id, unit_slug, slot_index, quantity, front_hp, command_id,
+        )?,
     };
     Ok(stack)
 }
@@ -598,14 +881,14 @@ fn recruit_target_json(target: &RecruitTarget) -> String {
     }
 }
 
-fn spend_resources(
+fn spend_resources_runtime(
     session_id: Id<domm_degens_schema::schema::GameSession>,
     participant: &mut GameParticipant,
     command_id: Id<domm_degens_schema::schema::GameCommand>,
-    ledger_prefix: &str,
+    _ledger_prefix: &str,
     turn_number: u32,
     cost: &domm_game::ResourceBalances,
-    reason: &str,
+    _reason: &str,
 ) -> Result<(), ApiError> {
     for (resource_key, amount) in [
         ("gold", i64::try_from(cost.gold).unwrap_or(i64::MAX)),
@@ -619,133 +902,53 @@ fn spend_resources(
         if amount == 0 {
             continue;
         }
-        apply_resource_delta(
-            session_id,
-            participant,
-            command_id,
-            format!("{ledger_prefix}:{resource_key}"),
+        let delta = -amount;
+        apply_resource_balance_delta(participant, resource_key, delta)?;
+        session_turn_runtime::record_resource_delta(
+            &session_id.to_string(),
             turn_number,
+            &participant.id().to_string(),
             resource_key,
-            -amount,
-            reason,
-        )?;
+            delta,
+        );
     }
     participant.last_resource_command_id = Some(command_id.key());
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn apply_resource_delta(
-    session_id: Id<domm_degens_schema::schema::GameSession>,
+fn apply_resource_balance_delta(
     participant: &mut GameParticipant,
-    command_id: Id<domm_degens_schema::schema::GameCommand>,
-    ledger_key: String,
-    turn_number: u32,
     resource_key: &str,
     delta: i64,
-    reason: &str,
-) -> Result<(), ApiError> {
-    if let Some(entry) = economy::find_resource_ledger_entry(command_id, &ledger_key)? {
-        reconcile_resource_balance(participant, resource_key, entry.balance_after)?;
-        return Ok(());
-    }
-    let balance_after = match resource_key {
+) -> Result<u64, ApiError> {
+    match resource_key {
         "gold" => {
             participant.gold = apply_u64_delta(participant.gold, delta)?;
-            participant.gold
+            Ok(participant.gold)
         }
         "wood" => {
             participant.wood = apply_u32_delta(participant.wood, delta)?;
-            u64::from(participant.wood)
+            Ok(u64::from(participant.wood))
         }
         "stone" => {
             participant.stone = apply_u32_delta(participant.stone, delta)?;
-            u64::from(participant.stone)
+            Ok(u64::from(participant.stone))
         }
         "iron" => {
             participant.iron = apply_u32_delta(participant.iron, delta)?;
-            u64::from(participant.iron)
+            Ok(u64::from(participant.iron))
         }
         "crystal" => {
             participant.crystal = apply_u32_delta(participant.crystal, delta)?;
-            u64::from(participant.crystal)
+            Ok(u64::from(participant.crystal))
         }
         "ember" => {
             participant.ember = apply_u32_delta(participant.ember, delta)?;
-            u64::from(participant.ember)
+            Ok(u64::from(participant.ember))
         }
         "aether" => {
             participant.aether = apply_u32_delta(participant.aether, delta)?;
-            u64::from(participant.aether)
-        }
-        _ => {
-            return Err(ApiError::new(
-                "unknown_resource",
-                "unknown resource key",
-                false,
-            ));
-        }
-    };
-    economy::create_resource_ledger_entry(
-        session_id,
-        participant.id(),
-        command_id,
-        ledger_key,
-        turn_number,
-        resource_key.to_string(),
-        delta,
-        balance_after,
-        reason.to_string(),
-        "applied".to_string(),
-    )?;
-    Ok(())
-}
-
-fn reconcile_resource_balance(
-    participant: &mut GameParticipant,
-    resource_key: &str,
-    balance_after: u64,
-) -> Result<(), ApiError> {
-    match resource_key {
-        "gold" => {
-            participant.gold = balance_after;
-            Ok(())
-        }
-        "wood" => {
-            participant.wood = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
-        }
-        "stone" => {
-            participant.stone = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
-        }
-        "iron" => {
-            participant.iron = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
-        }
-        "crystal" => {
-            participant.crystal = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
-        }
-        "ember" => {
-            participant.ember = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
-        }
-        "aether" => {
-            participant.aether = u32::try_from(balance_after).map_err(|_| {
-                ApiError::new("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            Ok(u64::from(participant.aether))
         }
         _ => Err(ApiError::new(
             "unknown_resource",
@@ -769,129 +972,6 @@ fn apply_u32_delta(value: u32, delta: i64) -> Result<u32, ApiError> {
     let value = apply_u64_delta(u64::from(value), delta)?;
     u32::try_from(value)
         .map_err(|_| ApiError::new("resource_cap_exceeded", "resource cap exceeded", false))
-}
-
-fn append_town_command_events(
-    session: &mut GameSession,
-    command_id: Id<GameCommand>,
-    event_key: String,
-    event_type: &str,
-    town_id: &str,
-    participant_id: &str,
-    detailed_payload: String,
-) -> Result<Vec<domm_game::ApiEventView>, ApiError> {
-    let audience_key = format!("participant:{participant_id}");
-    let mut next_event_seq = session.next_event_seq;
-    let private_event = append_town_event(
-        session,
-        command_id,
-        &mut next_event_seq,
-        format!("{event_key}:{audience_key}"),
-        audience_key,
-        event_type,
-        town_id,
-        detailed_payload,
-    )?;
-    let public_event = match append_town_event(
-        session,
-        command_id,
-        &mut next_event_seq,
-        format!("{event_key}:public"),
-        "public".to_string(),
-        event_type,
-        town_id,
-        format!(
-            r#"{{"town_id":"{}","event_type":"{}","redacted":true}}"#,
-            command_response::escape_json(town_id),
-            command_response::escape_json(event_type)
-        ),
-    ) {
-        Ok(event) => event,
-        Err(error) => {
-            if session.next_event_seq != next_event_seq {
-                session.next_event_seq = next_event_seq;
-                *session = sessions::update_session(session.clone())?;
-            }
-            return Err(error);
-        }
-    };
-    if session.next_event_seq != next_event_seq {
-        session.next_event_seq = next_event_seq;
-        *session = sessions::update_session(session.clone())?;
-    }
-    Ok(vec![private_event, public_event])
-}
-
-fn append_town_event(
-    session: &GameSession,
-    command_id: Id<GameCommand>,
-    next_event_seq: &mut u64,
-    event_key: String,
-    audience_key: String,
-    event_type: &str,
-    town_id: &str,
-    payload_json: String,
-) -> Result<domm_game::ApiEventView, ApiError> {
-    match commands_events_effects::create_game_event(
-        session.id(),
-        Some(command_id),
-        None,
-        session.current_turn,
-        *next_event_seq,
-        event_key.clone(),
-        audience_key,
-        event_type.to_string(),
-        Some("town".to_string()),
-        Some(town_id.to_string()),
-        payload_json,
-    ) {
-        Ok(event) => {
-            *next_event_seq = next_event_seq.saturating_add(1);
-            Ok(api_event_view(event))
-        }
-        Err(error) => {
-            if let Some(event) =
-                commands_events_effects::find_event_by_key(session.id(), &event_key)?
-            {
-                if *next_event_seq <= event.event_seq {
-                    *next_event_seq = event.event_seq.saturating_add(1);
-                }
-                Ok(api_event_view(event))
-            } else {
-                Err(error)
-            }
-        }
-    }
-}
-
-fn api_event_view(event: GameEvent) -> domm_game::ApiEventView {
-    domm_game::ApiEventView {
-        session_id: Id::<GameSession>::from_key(event.session_id).to_string(),
-        event_seq: event.event_seq,
-        event_key: event.event_key,
-        audience_key: event.audience_key,
-        turn_number: event.turn_number,
-        event_type: event.event_type,
-        subject_kind: event.subject_kind,
-        subject_id_text: event.subject_id_text,
-        payload: Some(event.payload_json),
-        redacted: false,
-    }
-}
-
-fn ruleset_id() -> Result<Id<domm_degens_schema::schema::RulesetDefinition>, ApiError> {
-    content::find_ruleset_by_slug_version(
-        domm_game::FIRST_PLAYABLE_RULESET_SLUG,
-        domm_game::FIRST_PLAYABLE_RULESET_VERSION,
-    )?
-    .map(|ruleset| ruleset.id())
-    .ok_or_else(|| {
-        ApiError::new(
-            "content_manifest_not_seeded",
-            "first playable content rows have not been seeded",
-            true,
-        )
-    })
 }
 
 fn resource_balances(

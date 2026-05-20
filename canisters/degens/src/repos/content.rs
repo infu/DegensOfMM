@@ -79,11 +79,23 @@ pub(crate) const MAP_OBJECT_SLUG_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
 
 thread_local! {
     static UNIT_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
+    static UNIT_SLUG_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
+    static BUILDING_SLUG_CACHE: RefCell<BTreeMap<String, BuildingDefinition>> = const { RefCell::new(BTreeMap::new()) };
+}
+
+fn content_slug_key(ruleset_id: Id<RulesetDefinition>, slug: &str) -> String {
+    format!("{}:{slug}", ruleset_id)
 }
 
 fn cache_unit(row: &UnitDefinition) {
     UNIT_CACHE.with(|cache| {
         cache.borrow_mut().insert(row.id().to_string(), row.clone());
+    });
+    UNIT_SLUG_CACHE.with(|cache| {
+        cache.borrow_mut().insert(
+            content_slug_key(Id::<RulesetDefinition>::from_key(row.ruleset_id), &row.slug),
+            row.clone(),
+        );
     });
 }
 
@@ -98,6 +110,45 @@ fn cache_units(rows: &[UnitDefinition]) {
             cache.insert(row.id().to_string(), row.clone());
         }
     });
+    UNIT_SLUG_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        for row in rows {
+            cache.insert(
+                content_slug_key(Id::<RulesetDefinition>::from_key(row.ruleset_id), &row.slug),
+                row.clone(),
+            );
+        }
+    });
+}
+
+fn cached_unit_by_slug(ruleset_id: Id<RulesetDefinition>, slug: &str) -> Option<UnitDefinition> {
+    UNIT_SLUG_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(&content_slug_key(ruleset_id, slug))
+            .cloned()
+    })
+}
+
+fn cache_building(row: &BuildingDefinition) {
+    BUILDING_SLUG_CACHE.with(|cache| {
+        cache.borrow_mut().insert(
+            content_slug_key(Id::<RulesetDefinition>::from_key(row.ruleset_id), &row.slug),
+            row.clone(),
+        );
+    });
+}
+
+fn cached_building_by_slug(
+    ruleset_id: Id<RulesetDefinition>,
+    slug: &str,
+) -> Option<BuildingDefinition> {
+    BUILDING_SLUG_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .get(&content_slug_key(ruleset_id, slug))
+            .cloned()
+    })
 }
 
 pub(crate) fn create_ruleset_definition(
@@ -338,6 +389,9 @@ pub(crate) fn find_unit_by_ruleset_slug(
     ruleset_id: Id<RulesetDefinition>,
     slug: &str,
 ) -> RepoResult<Option<UnitDefinition>> {
+    if let Some(row) = cached_unit_by_slug(ruleset_id, slug) {
+        return Ok(Some(row));
+    }
     let row = foundation::storage_result(
         UNIT_SLUG_LOOKUP.name,
         crate::db()
@@ -407,14 +461,19 @@ pub(crate) fn create_building_definition(
         effect_key: Some(building.effect_key),
     };
 
-    foundation::create("content.create_building_definition", input)
+    let row = foundation::create("content.create_building_definition", input)?;
+    cache_building(&row);
+    Ok(row)
 }
 
 pub(crate) fn find_building_by_ruleset_slug(
     ruleset_id: Id<RulesetDefinition>,
     slug: &str,
 ) -> RepoResult<Option<BuildingDefinition>> {
-    foundation::storage_result(
+    if let Some(row) = cached_building_by_slug(ruleset_id, slug) {
+        return Ok(Some(row));
+    }
+    let row = foundation::storage_result(
         BUILDING_SLUG_LOOKUP.name,
         crate::db()
             .load::<BuildingDefinition>()
@@ -424,7 +483,11 @@ pub(crate) fn find_building_by_ruleset_slug(
             .order_asc("slug")
             .limit(1)
             .try_entity(),
-    )
+    )?;
+    if let Some(row) = &row {
+        cache_building(row);
+    }
+    Ok(row)
 }
 
 pub(crate) fn load_building(id: Id<BuildingDefinition>) -> RepoResult<Option<BuildingDefinition>> {

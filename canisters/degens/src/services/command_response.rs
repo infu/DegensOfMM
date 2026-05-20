@@ -266,7 +266,10 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
     Ok(())
 }
 
-fn runtime_proves_pre_deadline_turn_open(context: &SessionCallerContext) -> bool {
+pub(crate) fn runtime_proves_pre_deadline_turn_open(context: &SessionCallerContext) -> bool {
+    if Timestamp::now() >= context.session.turn_deadline_at {
+        return false;
+    }
     let session_id = context.session.id().to_string();
     let Ok(deadline_ms) = u64::try_from(context.session.turn_deadline_at.as_millis()) else {
         return false;

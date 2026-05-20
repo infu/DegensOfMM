@@ -9,12 +9,13 @@ use std::{
 };
 
 use domm_degens_schema::schema::{
-    GameSession, Town, TownBuilding, TownGarrisonStack, TownRecruitPool, UnitDefinition,
+    BuildingDefinition, GameCommand, GameSession, Town, TownBuilding, TownGarrisonStack,
+    TownRecruitPool, UnitDefinition,
 };
 use domm_game::ApiError;
 use icydb::{
     traits::{EntityKey, EntityValue},
-    types::Id,
+    types::{Id, Timestamp, Ulid},
 };
 
 use crate::repos::towns;
@@ -53,6 +54,40 @@ pub(crate) fn projection_for_town(town: &Town) -> Result<TownProjection, ApiErro
         projections.borrow_mut().insert(key, projection.clone());
     });
     Ok(projection)
+}
+
+pub(crate) fn seed_town(town: &Town) {
+    let key = town_key(town);
+    TOWN_PROJECTIONS.with(|projections| {
+        projections.borrow_mut().insert(
+            key,
+            TownProjection {
+                town: town.clone(),
+                buildings: Vec::new(),
+                recruit_pools: Vec::new(),
+                garrison_stacks: Vec::new(),
+            },
+        );
+    });
+}
+
+pub(crate) fn cached_town_by_public_id(session_id: Id<GameSession>, town_id: &str) -> Option<Town> {
+    let (town_x, town_y) = match town_id {
+        "town:west" => (6, 24),
+        "town:east" => (41, 24),
+        _ => return None,
+    };
+    TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .values()
+            .find(|projection| {
+                projection.town.session_id == session_id.key()
+                    && projection.town.x == town_x
+                    && projection.town.y == town_y
+            })
+            .map(|projection| projection.town.clone())
+    })
 }
 
 pub(crate) fn mirror_town(town: &Town) {
@@ -141,6 +176,53 @@ pub(crate) fn built_building_ids(town: &Town) -> Result<BTreeSet<icydb::types::U
         .collect())
 }
 
+pub(crate) fn create_building(
+    town: &Town,
+    building_def_id: Id<BuildingDefinition>,
+    building_slug: String,
+    built_turn: u32,
+) -> Result<TownBuilding, ApiError> {
+    projection_for_town(town)?;
+    let now = Timestamp::now();
+    let row = TownBuilding {
+        id: Ulid::generate(),
+        session_id: town.session_id,
+        town_id: town.id().key(),
+        building_def_id: building_def_id.key(),
+        building_slug,
+        built_turn,
+        created_at: now,
+        updated_at: now,
+    };
+    mirror_building(&row);
+    Ok(row)
+}
+
+pub(crate) fn create_recruit_pool(
+    town: &Town,
+    unit_id: Id<UnitDefinition>,
+    unit_slug: String,
+    available: u32,
+    last_growth_week: u32,
+) -> Result<TownRecruitPool, ApiError> {
+    projection_for_town(town)?;
+    let now = Timestamp::now();
+    let row = TownRecruitPool {
+        id: Ulid::generate(),
+        session_id: town.session_id,
+        town_id: town.id().key(),
+        unit_id: unit_id.key(),
+        unit_slug,
+        available,
+        last_growth_week,
+        last_command_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+    mirror_recruit_pool(&row);
+    Ok(row)
+}
+
 pub(crate) fn garrison_stack(
     town: &Town,
     slot_index: u8,
@@ -150,6 +232,35 @@ pub(crate) fn garrison_stack(
         .garrison_stacks
         .into_iter()
         .find(|stack| stack.slot_index == slot_index))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn create_garrison_stack(
+    town: &Town,
+    unit_id: Id<UnitDefinition>,
+    unit_slug: String,
+    slot_index: u8,
+    quantity: u32,
+    front_hp: u16,
+    command_id: Id<GameCommand>,
+) -> Result<TownGarrisonStack, ApiError> {
+    projection_for_town(town)?;
+    let now = Timestamp::now();
+    let row = TownGarrisonStack {
+        id: Ulid::generate(),
+        session_id: town.session_id,
+        town_id: town.id().key(),
+        unit_id: unit_id.key(),
+        unit_slug,
+        slot_index,
+        quantity,
+        front_hp,
+        last_command_id: Some(command_id.key()),
+        created_at: now,
+        updated_at: now,
+    };
+    mirror_garrison_stack(&row);
+    Ok(row)
 }
 
 pub(crate) fn evict_town(session_id: Id<GameSession>, town_id: Id<Town>) {

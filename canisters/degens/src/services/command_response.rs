@@ -209,10 +209,17 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
     if !is_map_turn_sensitive_command(command_type) {
         return Ok(());
     }
+    let now = Timestamp::now();
+    if system_jobs::runtime_has_accepted_turn_closure_job(
+        context.session.id(),
+        context.session.current_turn,
+        now,
+    ) {
+        return Err(current_turn_closing_error());
+    }
     if runtime_proves_pre_deadline_turn_open(context) {
         return Ok(());
     }
-    let now = Timestamp::now();
     if now < context.session.turn_deadline_at {
         let page = system_jobs::page_system_jobs_by_session_status(
             context.session.id(),

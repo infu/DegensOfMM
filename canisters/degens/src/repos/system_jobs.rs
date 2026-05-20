@@ -1,5 +1,7 @@
 //! Repository boundary for durable canister-owned background work.
 
+use std::cell::RefCell;
+
 use domm_degens_schema::schema::{Battle, GameCommand, GameSession, SystemJob};
 use icydb::{
     db::query::FieldRef,
@@ -55,6 +57,18 @@ pub(crate) const STATUS_RUNNING: &str = "running";
 pub(crate) const STATUS_COMPLETED: &str = "completed";
 pub(crate) const STATUS_FAILED: &str = "failed";
 
+thread_local! {
+    static RUNTIME_TURN_CLOSURE_JOBS: RefCell<Vec<RuntimeTurnClosureJob>> = const { RefCell::new(Vec::new()) };
+}
+
+struct RuntimeTurnClosureJob {
+    job_key: String,
+    session_id_text: String,
+    turn_number: Option<u32>,
+    due_at: Timestamp,
+    status: String,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SystemJobDraft {
     pub job_key: String,
@@ -86,7 +100,9 @@ pub(crate) fn create_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> 
         ..Default::default()
     };
 
-    foundation::insert("system_jobs.create_system_job", job)
+    let job = foundation::insert("system_jobs.create_system_job", job)?;
+    remember_runtime_turn_closure_job(&job);
+    Ok(job)
 }
 
 pub(crate) fn upsert_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> {
@@ -116,7 +132,44 @@ pub(crate) fn load_system_job(id: Id<SystemJob>) -> RepoResult<Option<SystemJob>
 }
 
 pub(crate) fn update_system_job(job: SystemJob) -> RepoResult<SystemJob> {
-    foundation::update("system_jobs.update_system_job", job)
+    let job = foundation::update("system_jobs.update_system_job", job)?;
+    remember_runtime_turn_closure_job(&job);
+    Ok(job)
+}
+
+pub(crate) fn runtime_has_accepted_turn_closure_job(
+    session_id: Id<GameSession>,
+    current_turn: u32,
+    now: Timestamp,
+) -> bool {
+    let session_id_text = session_id.to_string();
+    RUNTIME_TURN_CLOSURE_JOBS.with_borrow(|jobs| {
+        jobs.iter().any(|job| {
+            job.session_id_text == session_id_text
+                && !job.turn_number.is_some_and(|turn| turn != current_turn)
+                && (job.status == STATUS_RUNNING
+                    || (job.status == STATUS_SCHEDULED && job.due_at <= now))
+        })
+    })
+}
+
+fn remember_runtime_turn_closure_job(job: &SystemJob) {
+    RUNTIME_TURN_CLOSURE_JOBS.with_borrow_mut(|jobs| {
+        jobs.retain(|existing| existing.job_key != job.job_key);
+        if job.job_kind != "turn_resolution" {
+            return;
+        }
+        if !matches!(job.status.as_str(), STATUS_SCHEDULED | STATUS_RUNNING) {
+            return;
+        }
+        jobs.push(RuntimeTurnClosureJob {
+            job_key: job.job_key.clone(),
+            session_id_text: job.session_id.to_string(),
+            turn_number: job.turn_number,
+            due_at: job.due_at,
+            status: job.status.clone(),
+        });
+    });
 }
 
 pub(crate) fn find_system_job_by_key(job_key: &str) -> RepoResult<Option<SystemJob>> {

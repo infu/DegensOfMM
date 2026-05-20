@@ -5303,3 +5303,29 @@ Additional finding:
 Decision:
 
 - Keep it. This is a real read-removal slice: fresh registration now relies on the unique index for correctness and saves the durable pre-read on the common new-player path.
+
+## Checkpoint: Runtime Turn-Resolution Closure Marker
+
+Gate 7.8 correctness slice:
+
+- The native `lobby_session_setup_recovers_from_starting_state_and_replays_nonce` check surfaced that `ensure_map_turn_accepts_new_command` could accept a new old-turn map command when an accepted `turn_resolution` job had just been inserted into durable storage.
+- The hot path was returning early from `runtime_proves_pre_deadline_turn_open`, so adding durable scans there would have undone earlier Gate J work.
+- Added a small heap marker in `repos::system_jobs` for scheduled/running `turn_resolution` jobs as they are created or updated.
+- `ensure_map_turn_accepts_new_command` now checks that marker before using the runtime-open fast path. Completing/failing a job updates the same cache through `update_system_job`, so the marker is removed when the durable job leaves scheduled/running state.
+- I first included `turn_deadline` jobs too, but the long native test runs past the 60s deadline and then failed on the real scheduled deadline. Narrowed the marker to explicit `turn_resolution` jobs to preserve the current runtime-fast deadline behavior while fixing the seeded accepted-job case.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Test follow-up:
+
+- Reran `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture`.
+- The original failure changed from "accepted turn job should block new old-turn movement" to a later failure at `canisters/degens/src/services/tests.rs:457`: `sync_session_turn` returned a new command id instead of the seeded pending sync command id.
+- Gate 7.8 stays open for that remaining seeded-sync replay issue.
+
+Decision:
+
+- Keep the marker. It fixes the accepted `turn_resolution` gap without reintroducing durable system-job scans on every runtime-open map command.

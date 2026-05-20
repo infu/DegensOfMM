@@ -15,7 +15,7 @@ use std::{
 use canic_cdk::structures::{
     Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
 };
-use domm_degens_schema::schema::{Battle, GameSession};
+use domm_degens_schema::schema::{Battle, BattleStack, GameSession};
 use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
 use icydb::{
     traits::{EntityKey, EntityValue},
@@ -235,6 +235,25 @@ pub(crate) fn adopt_active_battle_from_rows(
         return Ok(false);
     }
     let runtime = hydrate_runtime_from_rows(session, battle)?;
+    insert_runtime(runtime);
+    Ok(true)
+}
+
+pub(crate) fn adopt_active_battle_from_rows_with_stacks(
+    session: &GameSession,
+    battle: Battle,
+    stacks: Vec<BattleStack>,
+) -> Result<bool, domm_game::ApiError> {
+    if battle.state != "active" {
+        return Ok(false);
+    }
+    let battle_id = battle.id().to_string();
+    if contains_runtime(&battle_id) {
+        return Ok(false);
+    }
+    let state =
+        battle_rows::load_battle_state_from_row_with_stacks(session, battle.clone(), stacks)?;
+    let runtime = build_runtime_from_loaded_state(session, &battle, state);
     insert_runtime(runtime);
     Ok(true)
 }

@@ -46,10 +46,7 @@ pub(crate) fn load_battle_state_from_row(
     battle: Battle,
 ) -> Result<BattleState, ApiError> {
     let battle_id = battle.id();
-    let stacks = battles::list_battle_stacks(battle_id, MAX_LIST_LIMIT)?
-        .into_iter()
-        .map(stack_record)
-        .collect::<Vec<_>>();
+    let stacks = battles::list_battle_stacks(battle_id, MAX_LIST_LIMIT)?;
     let obstacles = battles::list_battle_obstacles(battle_id, MAX_LIST_LIMIT)?
         .into_iter()
         .map(obstacle_record)
@@ -59,7 +56,40 @@ pub(crate) fn load_battle_state_from_row(
         .map(occupancy_record)
         .collect::<Vec<_>>();
 
-    Ok(BattleState {
+    Ok(battle_state_from_loaded_rows(
+        session, battle, stacks, obstacles, occupancy,
+    ))
+}
+
+pub(crate) fn load_battle_state_from_row_with_stacks(
+    session: &GameSession,
+    battle: Battle,
+    stacks: Vec<BattleStack>,
+) -> Result<BattleState, ApiError> {
+    let battle_id = battle.id();
+    let obstacles = battles::list_battle_obstacles(battle_id, MAX_LIST_LIMIT)?
+        .into_iter()
+        .map(obstacle_record)
+        .collect::<Vec<_>>();
+    let occupancy = battles::list_battle_occupancy(battle_id, MAX_LIST_LIMIT)?
+        .into_iter()
+        .map(occupancy_record)
+        .collect::<Vec<_>>();
+
+    Ok(battle_state_from_loaded_rows(
+        session, battle, stacks, obstacles, occupancy,
+    ))
+}
+
+fn battle_state_from_loaded_rows(
+    session: &GameSession,
+    battle: Battle,
+    stacks: Vec<BattleStack>,
+    obstacles: Vec<BattleObstacleRecord>,
+    occupancy: Vec<BattleOccupancyRecord>,
+) -> BattleState {
+    let stacks = stacks.into_iter().map(stack_record).collect::<Vec<_>>();
+    BattleState {
         session_seed: session.seed.to_string(),
         battles: vec![battle_record(battle)],
         stacks,
@@ -67,7 +97,7 @@ pub(crate) fn load_battle_state_from_row(
         occupancy,
         commands: Vec::new(),
         events: Vec::new(),
-    })
+    }
 }
 
 pub(crate) fn persist_battle_state(

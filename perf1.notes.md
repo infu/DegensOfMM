@@ -2907,3 +2907,40 @@ Decision:
 
 - Keep this cut. It removes internal durable bookkeeping from battle startup while preserving the visible event and row-backed battle state used by current tests and clients.
 - Remaining Gate 5F work is now dominated by durable battle-start rows and job scheduling: battle creation/stack/occupancy/obstacle writes, final runtime adoption reads, timeout job scans/insert, neutral state update, and champion status update. The next meaningful step should stop adopting runtime by re-reading the rows just created, or move the entire contact handoff to a runtime aggregate.
+
+## Checkpoint: Reuse Battle Startup Stacks During Runtime Adoption
+
+Implemented a small runtime adoption cut:
+
+- `battle_rows` can now build a `BattleState` from a durable battle row plus already loaded stack rows.
+- `battle_runtime` has an adoption helper that reuses those stack rows and only reads obstacles/occupancy.
+- Champion and neutral battle activation pass the stack rows already loaded for initiative selection into runtime adoption, avoiding an immediate duplicate stack scan.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260520-battle-start-reuse-stacks-gate-j` passed in `207.49s`.
+- Removed the benchmark PocketIC server left with the hard TTL after the run.
+
+Measured delta versus Gate 5F.2 `20260520-battle-start-no-effect-stack-list-gate-j`:
+
+| metric | Gate 5F.2 | Gate 5F.3 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 171.2591B | 170.5444B | -0.4% |
+| Gate J memory | 5084.8125 MB | 5084.8125 MB | flat |
+| `sync_session_turn` avg | 2.1440B | 2.0789B | -3.0% |
+| guarded activation call | 7.8428B | 7.1346B | -9.0% |
+
+Measured repo-operation movement:
+
+| operation | Gate 5F.2 calls | Gate 5F.3 calls | note |
+| --- | ---: | ---: | --- |
+| `battles.stacks_by_battle` | 2 | 1 | runtime adoption reused selection stacks |
+| `battles.obstacles_by_battle` | 1 | 1 | still needed by adoption |
+| `battles.occupancy_by_battle` | 1 | 1 | still needed by adoption |
+
+Decision:
+
+- Keep this cut. It is small, but it proves the next larger direction: battle startup should hand a complete in-memory state into runtime instead of writing rows and then reading them back.
+- The remaining activation floor is now mostly timeout job scheduling, durable neutral/champion status writes, and the obstacle/occupancy adoption reads.

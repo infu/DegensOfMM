@@ -119,7 +119,11 @@ fn continue_champion_battle_start(
             battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;
             battle_service::schedule_battle_timeout_job(session.id(), &battle)?;
-            battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
+            battle_runtime::adopt_active_battle_from_rows_with_stacks(
+                session,
+                battle.clone(),
+                stacks,
+            )?;
             Ok(Some(battle))
         }
         _ => Ok(None),

@@ -3751,7 +3751,11 @@ fn continue_neutral_battle_start(
             neutral.state = "in_battle".to_string();
             neutral.last_command_id = Some(command_id.key());
             neutrals::update_neutral_army(neutral)?;
-            battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
+            battle_runtime::adopt_active_battle_from_rows_with_stacks(
+                session,
+                battle.clone(),
+                stacks,
+            )?;
             Ok(None)
         }
         _ => Ok(None),

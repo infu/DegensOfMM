@@ -72,30 +72,31 @@ pub(crate) fn create_battle(
     action_deadline_at: Option<Timestamp>,
     command_id: Id<GameCommand>,
 ) -> RepoResult<Battle> {
-    let input: Create<Battle> = Create::<Battle> {
-        session_id: Some(session_id.key()),
-        state: Some(state),
-        battle_type: Some(battle_type),
-        attacker_champion_id: Some(attacker_champion_id.map(|id| id.key())),
-        defender_champion_id: Some(defender_champion_id.map(|id| id.key())),
-        defender_town_id: Some(defender_town_id.map(|id| id.key())),
-        defender_neutral_army_id: Some(defender_neutral_army_id.map(|id| id.key())),
-        current_round: Some(1),
-        active_side: Some(active_side),
-        active_stack_id: Some(None),
-        grid_width: Some(grid_width),
-        grid_height: Some(grid_height),
-        max_rounds: Some(max_rounds),
-        turn_seed: Some(turn_seed),
-        winner_participant_id: Some(None),
-        created_turn: Some(created_turn),
-        action_deadline_at: Some(action_deadline_at),
-        resolved_at: Some(None),
-        cleanup_after_turn: Some(0),
-        last_command_id: Some(Some(command_id.key())),
+    let battle = Battle {
+        session_id: session_id.key(),
+        state,
+        battle_type,
+        attacker_champion_id: attacker_champion_id.map(|id| id.key()),
+        defender_champion_id: defender_champion_id.map(|id| id.key()),
+        defender_town_id: defender_town_id.map(|id| id.key()),
+        defender_neutral_army_id: defender_neutral_army_id.map(|id| id.key()),
+        current_round: 1,
+        active_side,
+        active_stack_id: None,
+        grid_width,
+        grid_height,
+        max_rounds,
+        turn_seed,
+        winner_participant_id: None,
+        created_turn,
+        action_deadline_at,
+        resolved_at: None,
+        cleanup_after_turn: 0,
+        last_command_id: Some(command_id.key()),
+        ..Default::default()
     };
 
-    foundation::create("battles.create_battle", input)
+    foundation::insert("battles.create_battle", battle)
 }
 
 pub(crate) fn update_battle(battle: Battle) -> RepoResult<Battle> {

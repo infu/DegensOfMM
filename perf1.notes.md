@@ -5204,3 +5204,21 @@ Verification:
 Decision:
 
 - Keep it. The next larger Gate 7 work should decide whether setup and battle timeout jobs can be heap-first wakeup hints with durable barrier projection, rather than just direct inserts.
+
+## Checkpoint: Direct Battle Header Insert
+
+Gate 7 setup/job floor slice:
+
+- The latest focused Gate J artifact also had one `battles.create_battle` call left in the route, created when movement reaches the neutral guard battle handoff.
+- Changed `battles::create_battle` to construct the typed `Battle` row directly and call `foundation::insert`.
+- This preserves the durable battle header row, child-row startup behavior, and active `BattleRuntime` adoption path; it only removes generated `Create<Battle>` materialization from the known-new header create.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep it. This is another small create-path cleanup; the big remaining Gate 7 decision is still whether to make setup/battle timeout wakeups heap-first and durably projected at barriers.

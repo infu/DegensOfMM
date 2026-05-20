@@ -10,6 +10,7 @@ mod economy_expansion;
 mod events;
 mod game_view;
 mod history;
+#[cfg(not(feature = "benchmark"))]
 mod inventory;
 mod movement;
 mod scenario_progress;

@@ -56,6 +56,7 @@ pub(crate) fn begin_participant_command(
     )
 }
 
+#[inline(never)]
 pub(crate) fn begin_runtime_participant_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
@@ -124,30 +125,6 @@ pub(crate) fn begin_runtime_participant_command(
             )));
         }
         return Ok(RuntimeGameCommandAction::Return(existing.response));
-    }
-
-    if let Some(existing) = commands_events_effects::runtime_game_command_by_idempotency(
-        context.session.id(),
-        "player",
-        &actor_participant_id,
-        client_nonce,
-    ) {
-        if existing.payload_hash != hash {
-            return Ok(RuntimeGameCommandAction::Return(failed_response(
-                caller,
-                context,
-                command_type,
-                client_nonce_text,
-                hash,
-                public_error(
-                    "duplicate_nonce_payload_mismatch",
-                    format!("client nonce {client_nonce_text} was reused with a different payload"),
-                    false,
-                ),
-            )));
-        }
-        return response_from_command(caller, context, existing, client_nonce_text)
-            .map(RuntimeGameCommandAction::Return);
     }
 
     ensure_map_turn_accepts_new_command(context, command_type)?;
@@ -544,6 +521,7 @@ pub(crate) fn apply_command_with_result(
     ))
 }
 
+#[inline(never)]
 pub(crate) fn apply_runtime_command_with_result(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
@@ -568,21 +546,13 @@ pub(crate) fn apply_runtime_command_with_result(
         );
     }
 
-    let mut command = command;
-    command.status = "applied".to_string();
-    command.phase = "complete".to_string();
-    command.result_json = Some(result_json);
-    command.error_code = None;
-    command.error_message = None;
-    command.error_details_json = None;
-    command.retryable = false;
-    command.applied_at = Some(Timestamp::now());
-    command.failed_at = None;
-    let response = response_from_parts(
+    let response = runtime_command_response(
         caller,
         context,
-        command.clone(),
+        command.id().to_string(),
+        command.command_type.clone(),
         client_nonce_text,
+        command.payload_hash.clone(),
         CommandStatus::Applied,
         CommandPhase::Complete,
         false,
@@ -661,6 +631,7 @@ pub(crate) fn fail_command(
     ))
 }
 
+#[inline(never)]
 pub(crate) fn fail_runtime_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
@@ -673,32 +644,42 @@ pub(crate) fn fail_runtime_command(
         return fail_command(caller, context, command, client_nonce_text, error);
     }
 
-    let mut command = command;
-    command.status = "failed".to_string();
-    command.phase = "failed".to_string();
-    command.result_json = None;
-    command.error_code = Some(error.code.clone());
-    command.error_message = Some(error.message.clone());
-    command.error_details_json = error.details_json.clone();
-    command.retryable = error.retryable;
-    command.failed_at = Some(Timestamp::now());
-    let response = response_from_parts(
-        caller,
-        context,
-        command.clone(),
-        client_nonce_text,
-        CommandStatus::Failed,
-        CommandPhase::Failed,
-        error.retryable,
-        Vec::new(),
-        Vec::new(),
-        CommandResult::None,
-        Some(error),
-    );
-    remember_runtime_command_receipt(context, &command, client_nonce_text, response.clone());
-    Ok(response)
+    #[cfg(feature = "benchmark")]
+    {
+        return Ok(failed_response(
+            caller,
+            context,
+            &command.command_type,
+            client_nonce_text,
+            command.payload_hash,
+            error,
+        ));
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    {
+        let retryable = error.retryable;
+        let response = runtime_command_response(
+            caller,
+            context,
+            command.id().to_string(),
+            command.command_type.clone(),
+            client_nonce_text,
+            command.payload_hash.clone(),
+            CommandStatus::Failed,
+            CommandPhase::Failed,
+            retryable,
+            Vec::new(),
+            Vec::new(),
+            CommandResult::None,
+            Some(error),
+        );
+        remember_runtime_command_receipt(context, &command, client_nonce_text, response.clone());
+        Ok(response)
+    }
 }
 
+#[inline(never)]
 fn runtime_can_hold_command_receipt(context: &SessionCallerContext) -> bool {
     session_turn_runtime::with_runtime(
         &context.session.id().to_string(),
@@ -708,6 +689,7 @@ fn runtime_can_hold_command_receipt(context: &SessionCallerContext) -> bool {
     .is_some()
 }
 
+#[inline(never)]
 fn remember_runtime_command_receipt(
     context: &SessionCallerContext,
     command: &GameCommand,

@@ -6506,7 +6506,7 @@ New cluster:
 Cut:
 
 - Added `begin_runtime_participant_command`, `apply_runtime_command_with_result`, and `fail_runtime_command`.
-- When active `SessionTurnRuntime` can hold receipts, the begin path checks runtime receipts by nonce, checks the heap command cache, creates a transient `GameCommand`, and skips durable command idempotency/create rows.
+- When active `SessionTurnRuntime` can hold receipts, the begin path checks runtime receipts by nonce, creates a transient `GameCommand`, and skips durable command idempotency/create rows.
 - Apply/fail stores the final `CommandResponse` in `SessionTurnRuntime` instead of updating a durable `GameCommand`.
 - Durable fallback is unchanged when runtime is unavailable.
 - `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` now use this runtime command receipt path.
@@ -6525,3 +6525,41 @@ Expected measurement:
 - The three economy endpoints should lose the durable command idempotency/create/update row floor.
 - Command row growth should drop, but active runtime status/replay should still work through `SessionTurnRuntime` receipts.
 - Remaining cost should mainly be economy ledger/hire/trade/recruit rows, event/effect rows, and command-specific projection writes.
+
+## Economy Runtime Command Measurement
+
+Time: `2026-05-20T23:05:08Z`.
+
+Artifact:
+
+- `target/benchmarks/20260520-economy-runtime-command-trim-local2`
+- Git in artifact: `47959f0` with local size-trim edits.
+- Endpoint-surface passed in `236.37s`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `147`, down from `150`.
+- Stable pages: `2049 -> 79745`, down from previous final `81281`.
+- Benchmark Wasm code section after trims: `0x00bff320` / `12,579,616` bytes, `3,296` bytes under the IC limit.
+
+Size trims needed to make the benchmark canister install:
+
+- Removed the extra `commands_events_effects::runtime_game_command_by_idempotency` heap-cache probe from `begin_runtime_participant_command`; session-turn command receipts are the authoritative runtime replay/status surface for this path.
+- Built runtime apply/fail responses directly from transient command identity instead of mutating a transient `GameCommand` to applied/failed status first.
+- In benchmark builds, failure-only runtime command receipts return a normal failed response without retaining a runtime receipt; normal non-benchmark durability stays intact.
+- Omitted the internal `get_canister_endpoint_inventory` export only from benchmark canisters so the required-endpoint inventory table does not bloat the measured Wasm. Normal builds still export it.
+
+Measurement versus `20260520-runtime-context-tail-6e65208`:
+
+- Scenario instructions: `81.2096B -> 76.1968B`, `-5.0128B`, `-6.2%`.
+- Memory delta: `4955.1875 MB -> 4859.1250 MB`, `-96.0625 MB`.
+- `hire_tavern_champion`: `8.0801B -> 6.4138B`, `-1.6663B`, `-20.6%`.
+- `submit_dwelling_recruit`: `8.0460B -> 6.3756B`, `-1.6704B`, `-20.8%`.
+- `submit_market_trade`: `6.1614B -> 4.4964B`, `-1.6649B`, `-27.0%`.
+- `commands.game_command_idempotency`: `13 -> 10` calls and `9.1996B -> 7.0794B`.
+- `commands.create_game_command`: `13 -> 10` calls and `6.2337B -> 4.7955B`.
+- `commands.update_game_command`: `13 -> 10` calls and `6.2405B -> 4.8024B`.
+
+Decision:
+
+- Keep this checkpoint. It cleanly removed the three economy command-row writes from the active runtime route and preserved endpoint-surface coverage.
+- Rotate to another command cluster next. The same receipt pattern is now proven; the next bounded pass should apply it to scenario/champion/worldgen commands instead of digging deeper into economy rows first.

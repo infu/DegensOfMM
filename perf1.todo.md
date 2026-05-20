@@ -863,9 +863,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Store applied/failed runtime command receipts in `SessionTurnRuntime` so active `get_command_status` and nonce replay can answer without durable `GameCommand` rows.
 - [x] Preserve non-benchmark upgrade durability by reusing the existing `SessionTurnCommandReceipt` payload fields and flush path.
 - [x] Move `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit` onto the runtime command receipt path while keeping durable resource ledger, hire/trade/recruit, event, effect, and projection rows unchanged.
-- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next endpoint-surface run and verify the three economy endpoints drop `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` from their hot traces while preserving endpoint coverage and event/query behavior.
-- [ ] Rotate again before deeper economy-only changes unless the benchmark shows this same runtime command receipt pattern should immediately be replicated to another command cluster.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, `git diff --check`, and a direct benchmark Wasm size check.
+- [x] Measure in the next endpoint-surface run and verify the three economy endpoints drop `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` from their hot traces while preserving endpoint coverage and event/query behavior. Artifact `target/benchmarks/20260520-economy-runtime-command-trim-local2` passed with `59/59` endpoints; command repo calls moved `13 -> 10`, row growth moved `150 -> 147`, scenario instructions moved `81.2096B -> 76.1968B` (`-6.2%`), `hire_tavern_champion` moved `8.0801B -> 6.4138B`, `submit_dwelling_recruit` moved `8.0460B -> 6.3756B`, and `submit_market_trade` moved `6.1614B -> 4.4964B`.
+- [x] Rotate again before deeper economy-only changes unless the benchmark shows this same runtime command receipt pattern should immediately be replicated to another command cluster. Decision: the pattern worked, so rotate to another command cluster and reuse it there instead of doing deeper economy row work first.
+
+### 40. Random Endpoint Cluster: Scenario/Champion/Worldgen Runtime Command Receipts
+
+- [ ] Rotate away from economy after the first receipt cut and apply the same runtime command receipt pattern to another heavy command cluster.
+- [ ] Pick a bounded set from the current heavy list: `claim_quest_reward`, `learn_champion_spell`, `sync_advanced_victory`, `sync_world_generation`, `sync_objectives`, `sync_world_events`, and `select_champion_level_up`.
+- [ ] Move those commands onto `begin_runtime_participant_command`/`apply_runtime_command_with_result`/`fail_runtime_command` only where active `SessionTurnRuntime` already exists, preserving durable fallback, events, effects, and domain rows.
+- [ ] Keep the benchmark Wasm under the IC code-section limit after the added call sites; if needed, trim benchmark-only internal surfaces before running PocketIC.
+- [ ] Verify with compile checks first, then measure in a batched endpoint-surface run and mark the real numbers here.
 
 ## Expected Outcome
 

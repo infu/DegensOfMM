@@ -5688,3 +5688,46 @@ Verification:
 Expected measurement:
 
 - Next batched endpoint-surface/focused run should remove the `events.by_session_event_key` and `effects.command_effect_by_command_key` repo-op reads from the fresh economy expansion calls, roughly `1.4B` per affected endpoint before deeper aggregate work.
+
+## Measurement: Batched Round-Robin Endpoint Surface
+
+Artifact:
+
+- `target/benchmarks/20260520-endpoint-rotations-76036c8`
+- Git sha: `76036c8`
+- Test: `pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint`
+- Result: passed in `213.33s`, covered `59/59` required endpoints.
+
+Suite delta versus `20260520-200503-48ee723/endpoint-surface`:
+
+| metric | before | after | delta |
+| --- | ---: | ---: | ---: |
+| endpoint-surface instructions | 199.6434B | 185.4812B | -14.1622B (-7.1%) |
+| row growth | 153 | 150 | -3 |
+| final stable pages | 83969 | 81281 | -2688 |
+
+Targeted endpoint deltas:
+
+| endpoint | before | after | delta |
+| --- | ---: | ---: | ---: |
+| `claim_quest_reward` | 18.1532B | 14.1430B | -4.0102B |
+| `accept_quest` | 10.3750B | 7.7999B | -2.5751B |
+| `sync_advanced_victory` | 16.5262B | 14.6139B | -1.9123B |
+| `sync_objectives` | 10.3832B | 10.3820B | -0.0013B |
+| `learn_champion_spell` | 10.8614B | 10.3807B | -0.4807B |
+| `cast_adventure_spell` | 9.6916B | 9.2153B | -0.4763B |
+| `select_champion_level_up` | 8.2911B | 7.8004B | -0.4907B |
+| `submit_dwelling_recruit` | 13.9243B | 12.5198B | -1.4045B |
+| `hire_tavern_champion` | 13.5124B | 12.1075B | -1.4048B |
+| `submit_market_trade` | 10.6367B | 9.2274B | -1.4093B |
+
+Repo-op confirmation:
+
+- Champion magic `commands.update_game_command` dropped from 2 calls to 1 call on `learn_champion_spell`, `cast_adventure_spell`, and `select_champion_level_up`.
+- Economy expansion fresh calls no longer show `events.by_session_event_key` or `effects.command_effect_by_command_key` for `submit_dwelling_recruit`, `hire_tavern_champion`, or `submit_market_trade`.
+- `claim_quest_reward` `scenario.update_scenario_rule_state` dropped from 4 updates to 1 update. `sync_advanced_victory` had no scenario rule row update in this route after the unchanged-row guard.
+
+Decision:
+
+- Keep the cuts. They are bounded, preserve endpoint coverage, and remove measured durable-row churn.
+- Per the round-robin rule, rotate to the next heavy cluster from the new ranking instead of immediately polishing these same endpoints.

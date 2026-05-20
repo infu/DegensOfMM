@@ -622,14 +622,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Rotate away from battle/setup and pick the scenario-progress endpoint cluster from endpoint-surface: `claim_quest_reward` (`18.1532B`), `sync_advanced_victory` (`16.5262B`), `sync_objectives` (`10.3832B`), `accept_quest` (`10.3750B`), and related scenario queries.
 - [x] Remove obvious hot-path scenario maintenance churn from quest accept/claim: do not schedule a scenario maintenance job from those commands when the command path already applies its direct quest/rule state.
 - [x] Stop rewriting unchanged scenario rule rows during sync; keep the touched count stable for existing job receipts, but only persist rule rows when value/victory/winner state changes.
-- [ ] Measure the scenario-progress cut with the smallest useful endpoint-surface or focused route and record before/after method and repo-op deltas.
+- [x] Measure the scenario-progress cut with the smallest useful endpoint-surface or focused route and record before/after method and repo-op deltas. Endpoint-surface `20260520-endpoint-rotations-76036c8` kept `59/59` coverage and moved `accept_quest` `10.3750B -> 7.7999B`, `claim_quest_reward` `18.1532B -> 14.1430B`, `sync_advanced_victory` `16.5262B -> 14.6139B`, and `sync_objectives` stayed flat at `10.3832B -> 10.3820B`. `claim_quest_reward` scenario rule updates dropped `4 -> 1`; `sync_advanced_victory` no longer rewrote rule rows in this route.
 - [ ] If scenario endpoints remain above `1B`, rotate to a different heavy endpoint cluster before coming back, unless the remaining shared command/event/session write floor is blocking several clusters.
 
 ### 12. Round-Robin Endpoint Cluster: Champion Magic
 
 - [x] Rotate to the champion-magic cluster from endpoint-surface: `learn_champion_spell` (`10.8614B`), `cast_adventure_spell` (`9.6916B`), `select_champion_level_up` (`8.2911B`), and related progression queries.
 - [x] Remove the redundant early durable `GameCommand` `applying` update from champion magic command paths. Champion/spell rows already carry `last_command_id` idempotency, and the final command update still persists the applied result.
-- [ ] Measure the champion-magic cut with the next batched endpoint-surface/focused benchmark and verify `commands.update_game_command` drops from two calls to one for these methods.
+- [x] Measure the champion-magic cut with the next batched endpoint-surface/focused benchmark and verify `commands.update_game_command` drops from two calls to one for these methods. Endpoint-surface `20260520-endpoint-rotations-76036c8` moved `learn_champion_spell` `10.8614B -> 10.3807B`, `cast_adventure_spell` `9.6916B -> 9.2153B`, and `select_champion_level_up` `8.2911B -> 7.8004B`; each now has one `commands.update_game_command` repo op instead of two.
 - [ ] If champion magic remains above `1B`, rotate to a different heavy cluster before deeper champion aggregation unless the remaining cost is shared command/event/session write floor.
 
 ### 13. Round-Robin Endpoint Cluster: Economy Expansion
@@ -637,8 +637,13 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Rotate to the economy-expansion cluster from endpoint-surface: `submit_dwelling_recruit` (`13.9243B`), `hire_tavern_champion` (`13.5124B`), `submit_market_trade` (`10.6367B`), and related preview queries.
 - [x] Add fresh-create command response helpers for public events and command effects so fresh commands can skip durable absence reads when another command-owned row proves this is not replay/recovery.
 - [x] Use those fresh helpers for market trade, tavern hire, and dwelling recruit after the corresponding `MarketTrade`, `ChampionHire`, or `DwellingRecruitment` row is newly created. Recovery/replay still falls back to idempotent `append_public_event`/`ensure_command_effect`.
-- [ ] Measure the economy-expansion cut with the next batched endpoint-surface/focused benchmark and verify `events.by_session_event_key` and `effects.command_effect_by_command_key` drop on the fresh paths.
+- [x] Measure the economy-expansion cut with the next batched endpoint-surface/focused benchmark and verify `events.by_session_event_key` and `effects.command_effect_by_command_key` drop on the fresh paths. Endpoint-surface `20260520-endpoint-rotations-76036c8` moved `submit_dwelling_recruit` `13.9243B -> 12.5198B`, `hire_tavern_champion` `13.5124B -> 12.1075B`, and `submit_market_trade` `10.6367B -> 9.2274B`; the fresh-path event/effect absence reads disappeared for all three.
 - [ ] If economy expansion remains above `1B`, rotate again before full economy/champion/town aggregation unless the remaining cost is shared command/event/session write floor.
+
+### 14. Batched Round-Robin Measurement
+
+- [x] Run one focused endpoint-surface benchmark after the scenario-progress, champion-magic, and economy-expansion rotations. Artifact `target/benchmarks/20260520-endpoint-rotations-76036c8` passed, covered `59/59` required endpoints, and moved scenario instructions `199.6434B -> 185.4812B` (`-14.1622B`, `-7.1%`) versus `20260520-200503-48ee723/endpoint-surface`. Row growth moved `153 -> 150`; final stable pages moved `83969 -> 81281`.
+- [ ] Rotate to the next heavy endpoint cluster from the new post-measurement ranking instead of continuing to polish scenario/champion/economy immediately.
 
 ## Expected Outcome
 

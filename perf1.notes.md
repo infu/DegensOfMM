@@ -3247,3 +3247,26 @@ Benchmark status:
 Decision:
 
 - Keep this checkpoint. It fixes the repeated child-row load shape for cached town views and gives the next step a single town aggregate to mutate. It does not yet solve the main `submit_build_town_structure`/`submit_recruit_units` cost because durable command, resource, event, building, pool, and garrison writes still happen in the hot call.
+
+## Checkpoint: Town Projection Read Cuts
+
+Extended the Gate 6 town projection scaffold into the remaining low-risk town read sites:
+
+- `preview_build_town_structure` uses cached projection building ids instead of paging `TownBuilding` rows.
+- `preview_recruit_units` uses cached projection recruit pools instead of paging `TownRecruitPool` rows.
+- `submit_build_town_structure` uses cached projection building ids for prerequisite/already-built checks.
+- Build unlock-pool validation uses cached projection recruit pools instead of a dedicated durable `find_town_recruit_pool` call.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Benchmark status:
+
+- No PocketIC benchmark was run for this small read batch. Measure after the next larger Gate 6 mutation batch so the run captures a meaningful route-level delta instead of another tiny row-scan-only checkpoint.
+
+Decision:
+
+- Keep this cut. It should help repeated previews and removes one more stable lookup from the build path after projection hydration. The major build/recruit costs remain durable command/resource/event/child-row writes.

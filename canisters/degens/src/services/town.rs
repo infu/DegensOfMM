@@ -73,7 +73,7 @@ pub(crate) fn preview_build_town_structure(
         building.ember_cost,
         building.aether_cost,
     );
-    let built_building_ids = built_building_ids(town.id())?;
+    let built_building_ids = town_runtime::built_building_ids(&town)?;
     let missing_prerequisite =
         missing_required_building_slug(ruleset_id, &built_building_ids, &building)?;
     let disabled_reason = if town.owner_participant_id != Some(context.participant.id().key()) {
@@ -156,11 +156,7 @@ pub(crate) fn preview_recruit_units(
         unit.ember_cost.saturating_mul(quantity),
         unit.aether_cost.saturating_mul(quantity),
     );
-    let available = towns::page_town_recruit_pools(town.id(), domm_game::MAX_LIST_LIMIT, None)?
-        .items
-        .into_iter()
-        .find(|pool| pool.unit_id == unit.id)
-        .map_or(0, |pool| pool.available);
+    let available = town_runtime::recruit_pool(&town, unit.id())?.map_or(0, |pool| pool.available);
     let target_slot_index = match target {
         RecruitTarget::TownGarrison { slot_index } => slot_index,
         RecruitTarget::Champion { slot_index, .. } => slot_index,
@@ -235,7 +231,7 @@ pub(crate) fn submit_build_town_structure(
         building.ember_cost,
         building.aether_cost,
     );
-    let built_building_ids = built_building_ids(town.id())?;
+    let built_building_ids = town_runtime::built_building_ids(&town)?;
     let missing_prerequisite =
         missing_required_building_slug(ruleset_id, &built_building_ids, &building)?;
     if town.owner_participant_id != Some(context.participant.id().key()) {
@@ -294,7 +290,7 @@ pub(crate) fn submit_build_town_structure(
                 true,
             )
         })?;
-        if towns::find_town_recruit_pool(town.id(), unit.id())?.is_none() {
+        if town_runtime::recruit_pool(&town, unit.id())?.is_none() {
             let pool = towns::create_town_recruit_pool(
                 context.session.id(),
                 town.id(),
@@ -503,18 +499,6 @@ fn resolve_town_by_session_id(
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))?;
     towns::find_town_by_session_xy(session_id, start.town_x, start.town_y)?
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))
-}
-
-fn built_building_ids(
-    town_id: Id<domm_degens_schema::schema::Town>,
-) -> Result<BTreeSet<icydb::types::Ulid>, ApiError> {
-    Ok(
-        towns::page_town_buildings(town_id, domm_game::MAX_LIST_LIMIT, None)?
-            .items
-            .into_iter()
-            .map(|building| building.building_def_id)
-            .collect(),
-    )
 }
 
 fn missing_required_building_slug(

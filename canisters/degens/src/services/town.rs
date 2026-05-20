@@ -1,18 +1,13 @@
 use std::collections::BTreeSet;
 
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{
-    GameCommand, GameEvent, GameParticipant, GameSession, PlayerAccount, Town,
-};
+use domm_degens_schema::schema::{GameCommand, GameEvent, GameParticipant, GameSession, Town};
 use domm_game::{
     ApiError, ApiTownView, BuildPreview, CommandResponse, RecruitPreview, RecruitTarget,
 };
-use icydb::{
-    traits::EntityValue,
-    types::{Id, Principal},
-};
+use icydb::{traits::EntityValue, types::Id};
 
-use crate::repos::{commands_events_effects, content, economy, players, sessions, towns};
+use crate::repos::{commands_events_effects, content, economy, sessions, towns};
 
 use super::{
     command_response::{self, GameCommandAction},
@@ -27,11 +22,11 @@ pub(crate) fn get_town_view(
     session_context::reject_anonymous(caller)?;
     let parsed_session_id = session_context::parse_id::<GameSession>(&session_id, "session_id")?;
     let town = resolve_town_by_session_id(parsed_session_id, &town_id)?;
-    if caller_owns_town(caller, &town)? {
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
+    if town.owner_participant_id == Some(context.participant.id().key()) {
         return render_projection::town_view(&town);
     }
 
-    let context = session_context::require_session_caller(caller, &session_id)?;
     if !render_projection::is_visible_at(
         &context.session,
         context.participant.id(),
@@ -53,7 +48,8 @@ pub(crate) fn preview_build_town_structure(
     town_id: String,
     building_def_id: String,
 ) -> Result<BuildPreview, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let building_slug = slug_from_public_id(&building_def_id, "building:");
     if building_slug == "freehold-training-yard" {
@@ -145,7 +141,8 @@ pub(crate) fn preview_recruit_units(
     quantity: u32,
     target: RecruitTarget,
 ) -> Result<RecruitPreview, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let unit_slug = slug_from_public_id(&unit_id, "unit:");
     let unit = content::find_unit_by_ruleset_slug(ruleset_id()?, &unit_slug)?
@@ -281,16 +278,13 @@ pub(crate) fn submit_build_town_structure(
     context.participant = sessions::update_participant(context.participant.clone())?;
     session_turn_runtime::mirror_participant_update(&context.participant);
 
-    let building_row = match towns::find_town_building(town.id(), building.id())? {
-        Some(row) => row,
-        None => towns::create_town_building(
-            context.session.id(),
-            town.id(),
-            building.id(),
-            building_slug.clone(),
-            context.session.current_turn,
-        )?,
-    };
+    let building_row = towns::create_town_building(
+        context.session.id(),
+        town.id(),
+        building.id(),
+        building_slug.clone(),
+        context.session.current_turn,
+    )?;
     if let Some(unit_slug) = &building.unlocks_unit_slug {
         let unit = content::find_unit_by_ruleset_slug(ruleset_id, unit_slug)?.ok_or_else(|| {
             ApiError::new(
@@ -507,23 +501,6 @@ fn resolve_town_by_session_id(
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))
 }
 
-fn caller_owns_town(caller: CandidPrincipal, town: &Town) -> Result<bool, ApiError> {
-    let Some(owner_participant_id) = town.owner_participant_id else {
-        return Ok(false);
-    };
-    let Some(participant) =
-        sessions::load_participant(Id::<GameParticipant>::from_key(owner_participant_id))?
-    else {
-        return Ok(false);
-    };
-    let Some(player) =
-        players::load_player_account(Id::<PlayerAccount>::from_key(participant.player_id))?
-    else {
-        return Ok(false);
-    };
-    Ok(player.account_principal == Principal::from(caller))
-}
-
 fn built_building_ids(
     town_id: Id<domm_degens_schema::schema::Town>,
 ) -> Result<BTreeSet<icydb::types::Ulid>, ApiError> {
@@ -593,10 +570,17 @@ fn recruit_to_garrison(
         }
         None => {
             let mut stack = towns::create_town_garrison_stack(
-                session_id, town_id, unit_id, unit_slug, slot_index, quantity, front_hp,
+                session_id,
+                town_id,
+                unit_id,
+                unit_slug,
+                slot_index,
+                quantity,
+                front_hp,
+                Some(command_id),
             )?;
             stack.last_command_id = Some(command_id.key());
-            towns::update_town_garrison_stack(stack)?
+            stack
         }
     };
     Ok(stack)

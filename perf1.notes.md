@@ -3165,3 +3165,41 @@ Measured delta versus `20260520-neutral-startup-scan-cache-gate-j`:
 Decision:
 
 - Keep this cut. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement. `get_session` only partially improved because most Gate J calls happen before active runtime exists; the active calls are now near-zero instruction queries in the raw log.
+
+## Checkpoint: Runtime Projection Query Cuts And Town Row Micro-Cuts
+
+Implemented a second Gate 5G projection batch plus two low-risk town row cuts:
+
+- `get_events_after`, `get_command_status`, and `get_command_status_by_nonce` now use query-only runtime caller context before durable caller/session/participant lookup.
+- `get_my_champions` checks runtime champion snapshots for owned champion ids before loading durable champion rows.
+- `get_visible_objects` uses the active runtime world-object snapshot map before paging all durable world objects.
+- `get_town_view` and town preview queries authenticate from runtime caller context, while `get_town_view` still renders real `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows.
+- `submit_build_town_structure` no longer performs a second building lookup after `built_building_ids` has already proved the target building is absent.
+- New town garrison stacks now write `last_command_id` during create, removing the immediate create-then-update pattern in recruitment and town-battle aftermath projection.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- First focused Gate J attempt `20260520-query-town-cuts-gate-j` failed install because the benchmark Wasm code section reached `12,593,503` bytes, `10,591` over the IC limit.
+- After trimming the generic runtime helper surface, focused Gate J `20260520-query-town-cuts-slim-gate-j` passed in `200.33s`.
+- Removed the PocketIC server left holding the benchmark pipe after the passing run.
+
+Measured delta versus `20260520-runtime-session-query-fixed-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 143.4896B | 128.8321B | -10.2% |
+| `get_events_after` avg | 2.8286B | 0.7095B | -74.9% |
+| `get_visible_objects` avg | 2.8351B | 1.4179B | -50.0% |
+| `get_town_view` avg | 4.2294B | 2.8189B | -33.3% |
+| `get_my_champions` avg | 0.7076B | ~0B | ~-100.0% |
+| `get_champion_view` avg | 2.1292B | 2.1326B | flat |
+| `submit_build_town_structure` avg | 16.9920B | 16.2855B | -4.2% |
+| `submit_recruit_units` avg | 12.5241B | 12.0437B | -3.8% |
+| `sync_session_turn` avg | 1.4784B | 1.4732B | -0.4% |
+
+Decision:
+
+- Keep this cut. The query changes materially reduce scenario cost without moving command paths onto stale runtime session rows. The town command micro-cuts are useful but small; getting build/recruit near `0.3B-0.6B` still requires the Gate 6 `TownRuntime`/resource-runtime rewrite, not more row-level polishing.

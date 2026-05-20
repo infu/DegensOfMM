@@ -1,8 +1,8 @@
 //! Repository boundary for towns, buildings, recruit pools, and garrisons.
 
 use domm_degens_schema::schema::{
-    BuildingDefinition, FactionDefinition, GameParticipant, GameSession, Town, TownBuilding,
-    TownGarrisonStack, TownRecruitPool, UnitDefinition,
+    BuildingDefinition, FactionDefinition, GameCommand, GameParticipant, GameSession, Town,
+    TownBuilding, TownGarrisonStack, TownRecruitPool, UnitDefinition,
 };
 use icydb::{Create, db::query::FieldRef, traits::EntityValue, types::Id};
 
@@ -399,6 +399,7 @@ pub(crate) fn create_town_garrison_stack(
     slot_index: u8,
     quantity: u32,
     front_hp: u16,
+    last_command_id: Option<Id<GameCommand>>,
 ) -> RepoResult<TownGarrisonStack> {
     let input: Create<TownGarrisonStack> = Create::<TownGarrisonStack> {
         session_id: Some(session_id.key()),
@@ -408,7 +409,7 @@ pub(crate) fn create_town_garrison_stack(
         slot_index: Some(slot_index),
         quantity: Some(quantity),
         front_hp: Some(front_hp),
-        last_command_id: Some(None),
+        last_command_id: Some(last_command_id.map(|id| id.key())),
     };
 
     foundation::create("towns.create_town_garrison_stack", input)

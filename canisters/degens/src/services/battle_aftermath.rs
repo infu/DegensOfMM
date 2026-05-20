@@ -394,7 +394,7 @@ fn write_town_garrison_survivors(
                     true,
                 )
             })?;
-        let mut stack = towns::create_town_garrison_stack(
+        towns::create_town_garrison_stack(
             session_id,
             town_id,
             unit.id(),
@@ -402,9 +402,8 @@ fn write_town_garrison_survivors(
             u8::try_from(slot_index).unwrap_or(u8::MAX),
             battle_stack.quantity,
             battle_stack.front_hp,
+            Some(command_id),
         )?;
-        stack.last_command_id = Some(command_id.key());
-        towns::update_town_garrison_stack(stack)?;
     }
     Ok(())
 }

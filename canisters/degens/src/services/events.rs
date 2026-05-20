@@ -56,7 +56,7 @@ pub(crate) fn get_events_after(
     limit: u32,
 ) -> Result<ApiEventPage, ApiError> {
     let limit = foundation::validate_list_limit(limit)?;
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     authorize_audience(&context, &audience_key)?;
 
     let fetch_limit = limit.saturating_add(1).min(MAX_LIST_LIMIT);
@@ -144,7 +144,7 @@ pub(crate) fn get_command_status(
     session_id: String,
     command_id_or_client_nonce: String,
 ) -> Result<CommandStatusView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let actor_principal = Principal::from(caller);
 
     if let Some(status) =
@@ -212,7 +212,7 @@ pub(crate) fn get_command_status_by_nonce(
     command_type: String,
     client_nonce: String,
 ) -> Result<CommandStatusView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let actor_principal = Principal::from(caller);
     if LOBBY_COMMAND_TYPES.contains(&command_type.as_str()) {
         let command = find_lobby_command_by_nonce(

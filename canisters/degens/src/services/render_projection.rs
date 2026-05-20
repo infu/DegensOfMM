@@ -188,16 +188,19 @@ pub(crate) fn my_champions(context: &SessionCallerContext) -> Result<Vec<Champio
             .iter()
             .take(MAX_OWNED_CHAMPIONS_VIEW as usize)
         {
-            let Some(champion) =
-                champions_artifacts::load_champion(Id::<Champion>::from_key(*champion_id))?
-            else {
-                continue;
-            };
-            let champion = session_turn_runtime::champion_snapshot(
+            let champion_id = Id::<Champion>::from_key(*champion_id);
+            let champion = match session_turn_runtime::champion_snapshot(
                 &context.session.id().to_string(),
-                &champion.id().to_string(),
-            )
-            .unwrap_or(champion);
+                &champion_id.to_string(),
+            ) {
+                Some(champion) => champion,
+                None => {
+                    let Some(champion) = champions_artifacts::load_champion(champion_id)? else {
+                        continue;
+                    };
+                    champion
+                }
+            };
             if champion.session_id != context.session.id().key()
                 || champion.participant_id != context.participant.id().key()
                 || champion.status != "active"
@@ -225,6 +228,16 @@ pub(crate) fn champion_view_by_id(
     context: &SessionCallerContext,
     champion_id: &str,
 ) -> Result<ChampionView, ApiError> {
+    if scenario_champion_belongs_to_participant(context, champion_id) {
+        for owned_champion_id in &context.participant.champion_ids {
+            if let Some(champion) = session_turn_runtime::champion_snapshot(
+                &context.session.id().to_string(),
+                &Id::<Champion>::from_key(*owned_champion_id).to_string(),
+            ) {
+                return champion_view(context, champion, true);
+            }
+        }
+    }
     let champion = resolve_champion(&context.session, champion_id)?;
     let own = champion.participant_id == context.participant.id().key();
     if !own
@@ -951,6 +964,13 @@ fn live_world_objects_by_coord(
     session_id: Id<GameSession>,
 ) -> Result<BTreeMap<(u16, u16), WorldObject>, ApiError> {
     let session_id_text = session_id.to_string();
+    let runtime_objects = session_turn_runtime::world_object_snapshots(&session_id_text);
+    if !runtime_objects.is_empty() {
+        return Ok(runtime_objects
+            .into_iter()
+            .map(|object| ((object.x, object.y), object))
+            .collect());
+    }
     let mut objects = map_visibility_occupancy::page_world_objects_by_session(
         session_id,
         domm_game::MAX_LIST_LIMIT,
@@ -1024,16 +1044,19 @@ fn fast_champion_for_known(
     }
     if scenario_champion_belongs_to_participant(context, &subject.subject_id_text) {
         for champion_id in &context.participant.champion_ids {
-            let Some(champion) =
-                champions_artifacts::load_champion(Id::<Champion>::from_key(*champion_id))?
-            else {
-                continue;
-            };
-            let champion = session_turn_runtime::champion_snapshot(
+            let champion_id = Id::<Champion>::from_key(*champion_id);
+            let champion = match session_turn_runtime::champion_snapshot(
                 &context.session.id().to_string(),
-                &champion.id().to_string(),
-            )
-            .unwrap_or(champion);
+                &champion_id.to_string(),
+            ) {
+                Some(champion) => champion,
+                None => {
+                    let Some(champion) = champions_artifacts::load_champion(champion_id)? else {
+                        continue;
+                    };
+                    champion
+                }
+            };
             if champion.session_id == context.session.id().key()
                 && champion.participant_id == context.participant.id().key()
             {
@@ -1687,6 +1710,13 @@ fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion
         .iter()
         .find(|start| start.champion_key == champion_id)
         .ok_or_else(|| public_error("not_found", "champion not found", false))?;
+    if let Some(champion) = session_turn_runtime::champion_snapshot_by_start(
+        &session.id().to_string(),
+        start.champion_x,
+        start.champion_y,
+    ) {
+        return Ok(champion);
+    }
     champions_artifacts::find_champion_by_session_xy(
         session.id(),
         start.champion_x,

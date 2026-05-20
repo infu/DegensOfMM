@@ -89,6 +89,21 @@ pub(crate) fn require_active_session_caller(
     Ok(context)
 }
 
+pub(crate) fn require_active_session_caller_runtime_first(
+    caller: CandidPrincipal,
+    session_id: &str,
+) -> Result<SessionCallerContext, ApiError> {
+    let context = require_session_caller_runtime_first(caller, session_id)?;
+    if context.session.state != "active" {
+        return Err(public_error(
+            "session_not_active",
+            "session is not active",
+            false,
+        ));
+    }
+    Ok(context)
+}
+
 pub(crate) fn require_cached_active_session_caller(
     caller: CandidPrincipal,
     session_id: &str,
@@ -190,6 +205,15 @@ pub(crate) fn participants_for_session(
 }
 
 pub(crate) fn session_summary(session: &GameSession) -> Result<SessionSummary, ApiError> {
+    if let Some((runtime_session, mut participants)) =
+        session_turn_runtime::latest_session_rows(&session.id().to_string())
+    {
+        let session_view = session_view_from_participants(&runtime_session, &mut participants)?;
+        return Ok(SessionSummary::from_session(
+            session_view,
+            runtime_session.current_turn,
+        ));
+    }
     let session_view = session_view(session)?;
     Ok(SessionSummary::from_session(
         session_view,

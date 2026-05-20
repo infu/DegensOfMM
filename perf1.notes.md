@@ -5784,9 +5784,11 @@ Verification:
 - `git diff --check`
 - `cargo check -p domm-degens-canister`
 
-Blocked verification:
+Benchmark-gate cleanup:
 
-- Native `cargo check -p domm-degens-canister --features benchmark` currently fails before this cut is exercised because `process_setup_session_job` is cfg'd out under `feature = "benchmark"` but still referenced in a native-only block.
+- Native `cargo check -p domm-degens-canister --features benchmark` initially failed because `process_setup_session_job` was cfg'd out under `feature = "benchmark"` but still referenced in a native-only block.
+- Narrowed setup-job recovery cfgs so native benchmark builds include the helper and only wasm benchmark builds keep the code-size exclusion.
+- Native benchmark-feature compile now passes.
 - Wasm benchmark check currently fails before DoMM code because host build scripts link through rustup's `gcc-ld` wrapper, which points at missing `/nix/store/.../ld-wrapper.sh`.
 
 Expected measurement:
@@ -5819,6 +5821,7 @@ Verification:
 
 - `cargo fmt`
 - `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
 - `git diff --check`
 
 Expected measurement:

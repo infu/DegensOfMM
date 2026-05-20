@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use std::time::Duration;
 
 use candid::Principal as CandidPrincipal;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), not(target_arch = "wasm32")))]
 use domm_degens_schema::schema::SystemJob;
 use domm_degens_schema::schema::{
     FactionDefinition, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
@@ -1987,7 +1987,7 @@ fn ensure_durable_setup_command(session: &GameSession) -> Result<GameCommand, Ap
     commands_events_effects::insert_game_command(command)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), not(target_arch = "wasm32")))]
 fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameCommand, ApiError> {
     if let Some(command_id) = job.command_id {
         if let Some(command) =
@@ -2006,7 +2006,7 @@ fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameC
     ensure_durable_setup_command(session)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), not(target_arch = "wasm32")))]
 pub(crate) fn process_setup_session_job(job: SystemJob) -> Result<(), ApiError> {
     let fallback = job.clone();
     if let Err(error) = process_setup_session_job_inner(job) {
@@ -2016,7 +2016,7 @@ pub(crate) fn process_setup_session_job(job: SystemJob) -> Result<(), ApiError> 
     Ok(())
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), not(target_arch = "wasm32")))]
 fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let session_id = Id::<GameSession>::from_key(job.session_id);
     let Some(mut session) = sessions::load_session(session_id)? else {

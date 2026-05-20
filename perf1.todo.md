@@ -660,7 +660,8 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Let a complete active `SessionTurnRuntime` answer `end_turn` ready/participant counts after marking the caller ready. Partial/cold runtimes fall back to the existing durable participant and ready-row pages so the shortcut cannot schedule a turn close from an incomplete participant set.
 - [x] Add runtime completeness flags for participant and ready hydration, including carry-forward to the next turn where a complete participant roster implies an empty ready set is complete.
 - [x] Verify the map-turn readiness cut with `cargo fmt`, `git diff --check`, and `cargo check -p domm-degens-canister`.
-- [ ] Re-run the benchmark-feature gates once the environment issue is cleared. Native `cargo check -p domm-degens-canister --features benchmark` currently fails in pre-existing benchmark-only lobby setup code (`process_setup_session_job` is cfg'd out), and `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark` currently fails before DoMM code because the host build-script linker points to a missing Nix `ld-wrapper.sh`.
+- [x] Restore the native benchmark-feature canister compile by narrowing setup-job recovery cfgs to exclude only wasm benchmark builds, not native benchmark checks. Verified with `cargo check -p domm-degens-canister --features benchmark`.
+- [ ] Re-run the wasm benchmark-feature gate once the environment issue is cleared. `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark` currently fails before DoMM code because the host build-script linker points to a missing Nix `ld-wrapper.sh`.
 - [ ] Measure the next batched endpoint-surface/focused run and verify fresh `end_turn` drops `events.by_session_event_key` and, when the runtime is complete, drops the durable participant/ready count pages.
 - [x] Rotate again after measurement or one more small independent cut. Picked the query-auth cluster because heavy read endpoints are still `2.8B-4.2B` while runtime-first game/town/event views are near zero.
 
@@ -670,7 +671,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `require_session_caller_runtime_first` for read-only champion progression, economy/tavern/dwelling, scenario progress, quest preview, and worldgen query endpoints.
 - [x] Use `require_active_session_caller_runtime_first` for read-only active previews: hire champion, market trade, and dwelling recruit.
 - [x] Leave update endpoints on their existing command-safe context paths for this cut.
-- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
 - [ ] Measure the next batched endpoint-surface/focused run and verify these queries lose the old durable caller/session/participant lookup floor when an active turn runtime is available.
 - [ ] Rotate again after the next batched measurement or another small independent low-risk cut.
 

@@ -37,14 +37,6 @@ pub(crate) fn require_session_caller(
     session_id: &str,
 ) -> Result<SessionCallerContext, ApiError> {
     reject_anonymous(caller)?;
-    if let Some((session, participant)) =
-        session_turn_runtime::caller_context_rows(&caller.to_text(), session_id)
-    {
-        return Ok(SessionCallerContext {
-            session,
-            participant,
-        });
-    }
     let player = require_player(caller)?;
     let session = load_session_from_text(session_id)?;
     let participant = sessions::find_participant_by_session_player(session.id(), player.id())?
@@ -64,6 +56,22 @@ pub(crate) fn require_session_caller(
         session,
         participant,
     })
+}
+
+pub(crate) fn require_session_caller_runtime_first(
+    caller: CandidPrincipal,
+    session_id: &str,
+) -> Result<SessionCallerContext, ApiError> {
+    reject_anonymous(caller)?;
+    if let Some((session, participant)) =
+        session_turn_runtime::caller_context_rows(&caller.to_text(), session_id)
+    {
+        return Ok(SessionCallerContext {
+            session,
+            participant,
+        });
+    }
+    require_session_caller(caller, session_id)
 }
 
 pub(crate) fn require_active_session_caller(

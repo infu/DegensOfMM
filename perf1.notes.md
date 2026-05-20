@@ -3135,7 +3135,7 @@ Decision:
 Implemented the first Gate 5G query/runtime projection cut:
 
 - `get_session` now renders active sessions from `SessionTurnRuntime` session/participant rows before falling back to durable session and participant reads.
-- `session_context::require_session_caller` now authenticates active-session callers from runtime caller rows before durable player/session/participant lookups.
+- Query-only caller context now authenticates active-session callers from runtime caller rows before durable player/session/participant lookups.
 - `get_my_participant` uses the same runtime caller rows before durable fallback.
 
 Verification:
@@ -3143,6 +3143,7 @@ Verification:
 - `cargo fmt --check`
 - `cargo check -p domm-degens-canister --features benchmark`
 - `cargo check -p domm-degens-canister`
+- Failed focused Gate J attempt `20260520-runtime-session-query-gate-j` exposed that the first version put runtime caller context in the shared command/query helper; `submit_build_town_structure` then used a stale runtime `GameSession.next_event_seq` and failed on `events.create_game_event`. Fixed by making runtime-first context query-only and leaving command paths on durable context.
 
 Benchmark status:
 
@@ -3151,4 +3152,4 @@ Benchmark status:
 
 Decision:
 
-- Keep pending focused measurement. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement.
+- Keep pending focused measurement after the query-only fix. This is a runtime-first query merge, not a view fabrication: durable fallback remains for lobby/setup/cache-miss paths, and active runtime already owns the session/participant snapshots used by movement.

@@ -15,7 +15,7 @@ pub(crate) fn get_game_view(
     request: GameViewRequest,
 ) -> Result<GameView, ApiError> {
     validate_game_view_request(&request)?;
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     // Keep the aggregate view as a session shell. Map/object/town/battle detail
     // stays on dedicated endpoints because combining them exceeds IC query caps
     // as the durable schema grows.
@@ -73,7 +73,7 @@ pub(crate) fn get_visible_map_chunks(
     limit: u32,
 ) -> Result<MapChunkPage, ApiError> {
     validate_viewport(&viewport)?;
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     render_projection::visible_map_chunks(&context, &viewport, cursor, limit)
 }
 
@@ -85,7 +85,7 @@ pub(crate) fn get_visible_objects(
     limit: u32,
 ) -> Result<ObjectViewPage, ApiError> {
     validate_viewport(&viewport)?;
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     render_projection::visible_objects(&context, &viewport, cursor, limit)
 }
 
@@ -95,7 +95,7 @@ pub(crate) fn get_object_view(
     subject_kind: String,
     subject_id_text: String,
 ) -> Result<ObjectView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     render_projection::object_view_by_subject(&context, &subject_kind, &subject_id_text)
 }
 
@@ -103,7 +103,7 @@ pub(crate) fn get_my_champions(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<Vec<ChampionView>, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     render_projection::my_champions(&context)
 }
 
@@ -112,7 +112,7 @@ pub(crate) fn get_champion_view(
     session_id: String,
     champion_id: String,
 ) -> Result<ChampionView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     render_projection::champion_view_by_id(&context, &champion_id)
 }
 

@@ -1306,11 +1306,7 @@ pub(crate) fn start_session(
                 session.state = "starting".to_string();
                 remember_session_row(&session);
             }
-            let setup_command = if started_now {
-                create_setup_command(&session)?
-            } else {
-                ensure_setup_command(&session)?
-            };
+            let setup_command = ensure_setup_command(&session)?;
             if started_now {
                 system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
                     job_key: setup_session_job_key(session.id()),
@@ -1388,12 +1384,7 @@ pub(crate) fn get_setup_progress(session_id: String) -> Result<SetupProgressView
 }
 
 fn setup_progress_view(session: &GameSession) -> Result<SetupProgressView, ApiError> {
-    let setup_command = commands_events_effects::find_game_command_by_idempotency(
-        session.id(),
-        "system",
-        SETUP_SYSTEM_ACTOR,
-        nonce_u64("setup_session", &session.id().to_string()),
-    )?;
+    let setup_command = setup_command_for_progress(session)?;
     let setup_job = system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?;
     let total_effect_count = u32::try_from(SETUP_EFFECTS.len()).unwrap_or(u32::MAX);
     let setup_complete = session.state == "active"
@@ -1870,6 +1861,14 @@ fn ensure_first_playable_content()
 
 fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
     let client_nonce = nonce_u64("setup_session", &session.id().to_string());
+    if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    ) {
+        return Ok(command);
+    }
     if let Some(command) = commands_events_effects::find_game_command_by_idempotency(
         session.id(),
         "system",
@@ -1879,13 +1878,15 @@ fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
         return Ok(command);
     }
 
-    create_setup_command(session)
+    let command = new_setup_command(session);
+    commands_events_effects::cache_runtime_game_command(&command);
+    Ok(command)
 }
 
-fn create_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
+fn new_setup_command(session: &GameSession) -> GameCommand {
     let client_nonce = nonce_u64("setup_session", &session.id().to_string());
     let scenario = first_playable_scenario();
-    commands_events_effects::create_game_command(
+    commands_events_effects::new_game_command(
         session.id(),
         "system".to_string(),
         SETUP_SYSTEM_ACTOR.to_string(),
@@ -1906,7 +1907,44 @@ fn create_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> 
             scenario.scenario_hash, FIRST_PLAYABLE_RULESET_ID
         ),
     )
-    .map_err(Into::into)
+}
+
+fn setup_command_for_progress(session: &GameSession) -> Result<Option<GameCommand>, ApiError> {
+    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
+    if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    ) {
+        return Ok(Some(command));
+    }
+    commands_events_effects::find_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    )
+}
+
+fn ensure_durable_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
+    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
+    if let Some(command) = commands_events_effects::find_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    )? {
+        return Ok(command);
+    }
+    let command = commands_events_effects::runtime_game_command_by_idempotency(
+        session.id(),
+        "system",
+        SETUP_SYSTEM_ACTOR,
+        client_nonce,
+    )
+    .unwrap_or_else(|| new_setup_command(session));
+    commands_events_effects::insert_game_command(command)
 }
 
 fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameCommand, ApiError> {
@@ -1924,7 +1962,7 @@ fn setup_command_for_job(session: &GameSession, job: &SystemJob) -> Result<GameC
         }
     }
 
-    ensure_setup_command(session)
+    ensure_durable_setup_command(session)
 }
 
 pub(crate) fn process_setup_session_job(job: SystemJob) -> Result<(), ApiError> {

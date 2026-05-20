@@ -44,6 +44,10 @@ fn remember_runtime_game_command(command: &GameCommand) {
     });
 }
 
+pub(crate) fn cache_runtime_game_command(command: &GameCommand) {
+    remember_runtime_game_command(command);
+}
+
 pub(crate) const GAME_COMMAND_IDEMPOTENCY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
     name: "commands.game_command_idempotency",
     entity: "GameCommand",
@@ -156,7 +160,40 @@ pub(crate) fn create_game_command(
     payload_hash: String,
     payload_json: String,
 ) -> RepoResult<GameCommand> {
-    let command = GameCommand {
+    let command = new_game_command(
+        session_id,
+        actor_kind,
+        actor_id_text,
+        actor_player_id,
+        actor_participant_id,
+        champion_id,
+        turn_number,
+        client_nonce,
+        command_type,
+        payload_hash,
+        payload_json,
+    );
+
+    let command = foundation::insert("commands.create_game_command", command)?;
+    remember_runtime_game_command(&command);
+    Ok(command)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn new_game_command(
+    session_id: Id<GameSession>,
+    actor_kind: String,
+    actor_id_text: String,
+    actor_player_id: Option<Id<PlayerAccount>>,
+    actor_participant_id: Option<Id<GameParticipant>>,
+    champion_id: Option<Id<Champion>>,
+    turn_number: u32,
+    client_nonce: u64,
+    command_type: String,
+    payload_hash: String,
+    payload_json: String,
+) -> GameCommand {
+    GameCommand {
         session_id: session_id.key(),
         actor_kind,
         actor_id_text,
@@ -178,11 +215,7 @@ pub(crate) fn create_game_command(
         applied_at: None,
         failed_at: None,
         ..Default::default()
-    };
-
-    let command = foundation::insert("commands.create_game_command", command)?;
-    remember_runtime_game_command(&command);
-    Ok(command)
+    }
 }
 
 pub(crate) fn update_game_command(command: GameCommand) -> RepoResult<GameCommand> {

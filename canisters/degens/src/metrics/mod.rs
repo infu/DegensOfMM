@@ -10,8 +10,8 @@ use std::{
 
 #[cfg(feature = "benchmark")]
 use crate::contract::{
-    DiagnosticBenchmarkCallPage, DiagnosticBenchmarkCallView, DiagnosticBenchmarkPhaseView,
-    DiagnosticBenchmarkRepoOpView, EndpointKind,
+    DiagnosticBenchmarkCallPage, DiagnosticBenchmarkCallView, DiagnosticBenchmarkRepoOpView,
+    EndpointKind,
 };
 
 #[cfg(feature = "benchmark")]
@@ -38,7 +38,6 @@ pub(crate) fn benchmark_update<T>(
     let instruction_after = canic_cdk::api::instruction_counter();
     let stable_memory_pages_after = canic_cdk::api::stable_size();
     let error_code = result.as_ref().err().map(|error| error.code.clone());
-    let phases = take_current_phases();
     let repo_ops = take_current_repo_ops();
 
     record_benchmark_call(DiagnosticBenchmarkCallView {
@@ -50,7 +49,7 @@ pub(crate) fn benchmark_update<T>(
         instruction_delta: instruction_after.saturating_sub(instruction_before),
         stable_memory_pages_before,
         stable_memory_pages_after,
-        phases,
+        phases: Vec::new(),
         repo_ops,
     });
 
@@ -188,11 +187,6 @@ fn next_sequence() -> u64 {
 #[cfg(feature = "benchmark")]
 fn reset_current_call_details() {
     CURRENT_BENCHMARK_REPO_OPS.with(|ops| ops.borrow_mut().clear());
-}
-
-#[cfg(feature = "benchmark")]
-fn take_current_phases() -> Vec<DiagnosticBenchmarkPhaseView> {
-    Vec::new()
 }
 
 #[cfg(feature = "benchmark")]

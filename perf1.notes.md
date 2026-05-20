@@ -5142,4 +5142,26 @@ Verification:
 
 Decision:
 
-- Keep it. The listed Gate 5H lifecycle reasons now have concrete entry points, but the Gate 5H parent stays open because durable battle command/event archive flushing remains blocked by the IC benchmark Wasm code-section limit.
+- Keep it. At this checkpoint the listed Gate 5H lifecycle reasons had concrete entry points, but the Gate 5H parent stayed open because durable battle command/event archive flushing was still blocked by the IC benchmark Wasm code-section limit.
+
+## Checkpoint: Battle Runtime Archive Barrier Flush
+
+Gate 5H archive durability slice:
+
+- Active and archived battle runtime command receipts now flush to durable `GameCommand` rows through the shared non-benchmark barrier path.
+- Active and archived battle runtime events now flush to durable `GameEvent` rows through the same barrier path.
+- Runtime battle command receipts retain payload JSON only in non-benchmark builds, keeping benchmark Wasm size and hot-route measurements unaffected.
+- The flush writes command receipts before events so events can link to an existing durable command when that command is available.
+- Active runtime events are marked flushed after a successful barrier pass; archived events remain safe because durable insertion is idempotent by event key.
+- The shared barrier already covers `Upgrade`, `StrongRead`, `TurnAdvance`, `BattleHandoff`, and `RuntimeEviction`, so this closes the earlier battle command/event archive blocker.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This resolves the previous code-section blocker by making the battle archive flush production-only while preserving the benchmark build as the fast-route measurement target.

@@ -44,6 +44,8 @@ struct RuntimeBattleCommandContext {
     client_nonce_text: String,
     client_nonce: u64,
     payload_hash: String,
+    #[cfg(not(feature = "benchmark"))]
+    payload_json: String,
     created_at_ms: u64,
 }
 
@@ -1457,6 +1459,8 @@ fn begin_runtime_battle_command(
             client_nonce_text: client_nonce_text.to_string(),
             client_nonce,
             payload_hash,
+            #[cfg(not(feature = "benchmark"))]
+            payload_json,
             created_at_ms: Timestamp::now().as_millis().try_into().unwrap_or(0),
         },
     ))
@@ -1501,6 +1505,8 @@ fn insert_runtime_battle_command_receipt(
         client_nonce_text: command.client_nonce_text,
         client_nonce: command.client_nonce,
         payload_hash: command.payload_hash,
+        #[cfg(not(feature = "benchmark"))]
+        payload_json: Some(command.payload_json),
         response,
     };
     battle_runtime::with_runtime_mut(battle_id, |runtime| {
@@ -2737,6 +2743,8 @@ fn apply_player_action_from_runtime(
         client_nonce_text: command.client_nonce.to_string(),
         client_nonce: command.client_nonce,
         payload_hash: command.payload_hash.clone(),
+        #[cfg(not(feature = "benchmark"))]
+        payload_json: command.payload_json.clone(),
         created_at_ms: command.created_at.as_millis().try_into().unwrap_or(0),
     };
     apply_player_action_from_runtime_parts(

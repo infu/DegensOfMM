@@ -35,6 +35,7 @@ pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
     flushed = flushed
         .saturating_add(super::session_turn_runtime::flush_runtime_projections_for_upgrade()?);
     flushed = flushed.saturating_add(super::town_runtime::flush_all_projections_to_durable()?);
+    flushed = flushed.saturating_add(super::battle_runtime::flush_runtime_archives_for_barrier()?);
     if reason == FLUSH_BARRIER_UPGRADE {
         super::battle_runtime::persist_snapshot_for_upgrade()
             .map_err(|message| ApiError::new("battle_runtime_snapshot_failed", message, true))?;

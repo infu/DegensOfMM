@@ -18,13 +18,19 @@ use canic_cdk::structures::{
 use domm_degens_schema::schema::{
     Battle, BattleObstacle, BattleOccupancy, BattleStack, GameSession,
 };
+#[cfg(not(feature = "benchmark"))]
+use domm_degens_schema::schema::{GameCommand, GameParticipant};
 use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
+#[cfg(not(feature = "benchmark"))]
+use icydb::types::Timestamp;
 use icydb::{
     traits::{EntityKey, EntityValue},
     types::{Id, Ulid},
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(not(feature = "benchmark"))]
+use crate::repos::commands_events_effects;
 use crate::repos::{battles as battle_repo, sessions as session_repo};
 
 use super::battle_rows;
@@ -345,6 +351,8 @@ pub(crate) struct BattleRuntimeCommandReceipt {
     pub client_nonce_text: String,
     pub client_nonce: u64,
     pub payload_hash: String,
+    #[cfg(not(feature = "benchmark"))]
+    pub payload_json: Option<String>,
     pub response: CommandResponse,
 }
 
@@ -640,6 +648,217 @@ pub(crate) fn archive_runtime_command_receipts(runtime: &BattleRuntime) {
             }
         }
     });
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_archives_for_barrier() -> Result<usize, ApiError> {
+    let active_runtimes = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .cloned()
+            .collect::<Vec<BattleRuntime>>()
+    });
+    let archived_events = ARCHIVED_SESSION_RUNTIME_EVENTS.with(|archived| {
+        archived
+            .borrow()
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let archived_receipts = ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| {
+        archived
+            .borrow()
+            .iter()
+            .flat_map(|(session_id, receipts)| {
+                receipts
+                    .iter()
+                    .cloned()
+                    .map(|receipt| (session_id.clone(), receipt))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut flushed = 0_usize;
+    let mut seen_receipts = BTreeSet::<String>::new();
+    for runtime in &active_runtimes {
+        for receipt in &runtime.command_receipts {
+            if seen_receipts.insert(receipt.command_id.clone())
+                && flush_runtime_command_receipt(runtime, receipt)?
+            {
+                flushed = flushed.saturating_add(1);
+            }
+        }
+    }
+    for (session_id, receipt) in &archived_receipts {
+        if seen_receipts.insert(receipt.command_id.clone())
+            && flush_runtime_command_receipt_for_session(session_id, receipt)?
+        {
+            flushed = flushed.saturating_add(1);
+        }
+    }
+
+    let mut seen_events = BTreeSet::<String>::new();
+    for runtime in &active_runtimes {
+        for runtime_event in runtime
+            .active_events
+            .iter()
+            .filter(|runtime_event| !runtime_event.flushed)
+        {
+            if seen_events.insert(runtime_event.event.event_key.clone())
+                && flush_runtime_event(runtime_event)?
+            {
+                flushed = flushed.saturating_add(1);
+            }
+        }
+    }
+    for runtime_event in &archived_events {
+        if seen_events.insert(runtime_event.event.event_key.clone())
+            && flush_runtime_event(runtime_event)?
+        {
+            flushed = flushed.saturating_add(1);
+        }
+    }
+
+    ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        for runtime in runtimes.borrow_mut().values_mut() {
+            for runtime_event in &mut runtime.active_events {
+                runtime_event.flushed = true;
+            }
+        }
+    });
+    Ok(flushed)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_command_receipt(
+    runtime: &BattleRuntime,
+    receipt: &BattleRuntimeCommandReceipt,
+) -> Result<bool, ApiError> {
+    flush_runtime_command_receipt_for_session(&runtime.session_id, receipt)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_command_receipt_for_session(
+    session_id_text: &str,
+    receipt: &BattleRuntimeCommandReceipt,
+) -> Result<bool, ApiError> {
+    let Some(payload_json) = receipt.payload_json.clone() else {
+        return Ok(false);
+    };
+    let session_id = parse_ulid_id::<GameSession>(session_id_text)?;
+    let command_id = parse_ulid_id::<GameCommand>(&receipt.command_id)?;
+    let actor_participant_id = parse_ulid_id::<GameParticipant>(&receipt.actor_participant_id)?;
+    if commands_events_effects::load_game_command(command_id)?.is_some()
+        || commands_events_effects::find_game_command_by_idempotency(
+            session_id,
+            "participant",
+            &receipt.actor_participant_id,
+            receipt.client_nonce,
+        )?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let now = Timestamp::now();
+    let error = receipt.response.error.clone();
+    let command = GameCommand {
+        id: command_id.key(),
+        session_id: session_id.key(),
+        actor_kind: "participant".to_string(),
+        actor_id_text: receipt.actor_participant_id.clone(),
+        actor_player_id: None,
+        actor_participant_id: Some(actor_participant_id.key()),
+        champion_id: None,
+        turn_number: receipt.response.durable_turn,
+        client_nonce: receipt.client_nonce,
+        command_type: receipt.command_type.clone(),
+        status: receipt.response.status.as_str().to_string(),
+        phase: receipt.response.phase.as_str().to_string(),
+        payload_hash: receipt.payload_hash.clone(),
+        payload_json,
+        result_json: Some(format!(
+            r#"{{"runtime_flushed":true,"command_id":"{}"}}"#,
+            receipt.command_id
+        )),
+        error_code: error.as_ref().map(|error| error.code.clone()),
+        error_message: error.as_ref().map(|error| error.message.clone()),
+        error_details_json: error.and_then(|error| error.details_json),
+        retryable: receipt.response.retryable,
+        applied_at: (receipt.response.status == domm_game::CommandStatus::Applied).then_some(now),
+        failed_at: receipt.response.error.as_ref().map(|_| now),
+        ..Default::default()
+    };
+    commands_events_effects::insert_game_command(command)?;
+    Ok(true)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_event(runtime_event: &BattleRuntimeEvent) -> Result<bool, ApiError> {
+    let session_id = parse_ulid_id::<GameSession>(&runtime_event.event.session_id)?;
+    if commands_events_effects::find_event_by_key(session_id, &runtime_event.event.event_key)?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let command_id = durable_command_id(runtime_event.command_id.as_deref())?;
+    commands_events_effects::create_game_event(
+        session_id,
+        command_id,
+        None,
+        runtime_event.event.turn_number,
+        runtime_event.event.event_seq,
+        runtime_event.event.event_key.clone(),
+        runtime_event.event.audience_key.clone(),
+        runtime_event.event.event_type.clone(),
+        runtime_event.event.subject_kind.clone(),
+        runtime_event.event.subject_id_text.clone(),
+        runtime_event
+            .event
+            .payload
+            .clone()
+            .unwrap_or_else(|| "{}".to_string()),
+    )?;
+    Ok(true)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCommand>>, ApiError> {
+    let Some(command_id_text) = command_id_text else {
+        return Ok(None);
+    };
+    let Ok(command_id) = try_parse_ulid_id::<GameCommand>(command_id_text) else {
+        return Ok(None);
+    };
+    if commands_events_effects::load_game_command(command_id)?.is_some() {
+        Ok(Some(command_id))
+    } else {
+        Ok(None)
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn parse_ulid_id<E>(value: &str) -> Result<Id<E>, ApiError>
+where
+    E: EntityKey<Key = Ulid>,
+{
+    try_parse_ulid_id(value).map_err(|_| {
+        ApiError::new(
+            "invalid_battle_runtime_archive_id",
+            "battle runtime archive contains an invalid id",
+            true,
+        )
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn try_parse_ulid_id<E>(value: &str) -> Result<Id<E>, ()>
+where
+    E: EntityKey<Key = Ulid>,
+{
+    Ulid::from_str(value).map(Id::from_key).map_err(|_| ())
 }
 
 pub(crate) fn snapshot_for_upgrade() -> BattleRuntimeSnapshot {

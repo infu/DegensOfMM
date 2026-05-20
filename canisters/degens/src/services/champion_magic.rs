@@ -36,7 +36,8 @@ pub(crate) fn select_champion_level_up(
     skill_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let champion_id = session_context::parse_id::<Champion>(&champion_id, "champion_id")?;
     let champion = require_owned_champion(&context, champion_id)?;
     let payload_json = format!(
@@ -79,7 +80,8 @@ pub(crate) fn learn_champion_spell(
     spell_slug: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let champion_id = session_context::parse_id::<Champion>(&champion_id, "champion_id")?;
     let champion = require_owned_champion(&context, champion_id)?;
     let payload_json = format!(
@@ -122,7 +124,8 @@ pub(crate) fn cast_adventure_spell(
     spell_slug: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let champion_id = session_context::parse_id::<Champion>(&champion_id, "champion_id")?;
     let champion = require_owned_champion(&context, champion_id)?;
     let payload_json = format!(

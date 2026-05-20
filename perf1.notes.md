@@ -6281,3 +6281,30 @@ Expected measurement:
 - Scenario update endpoints should lose the durable active-caller floor when an active turn runtime is present.
 - `sync_objectives` and `sync_advanced_victory` should avoid stable world-object coordinate lookups for central objectives when runtime snapshots are hydrated.
 - `sync_advanced_victory` should also avoid the immediate second objective active/complete status page sweep after syncing central objectives.
+
+## Random Pivot: Champion Magic Runtime-First Updates
+
+New cluster:
+
+- Rotated to champion magic after the scenario runtime-first/objective-summary cut.
+- The last measured champion magic update costs are still above target: `learn_champion_spell` `8.2591B`, `cast_adventure_spell` `7.0985B`, and `select_champion_level_up` `5.6901B`.
+- Runtime event-seq allocation is now in place, so event-emitting commands can use runtime-first caller context without relying on a stale durable session sequence copy.
+
+Cut:
+
+- `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` now use `require_active_session_caller_runtime_first`.
+- The existing `require_owned_champion` runtime snapshot lookup remains the champion ownership gate after caller context resolution.
+- Durable command, champion/spell, event, and effect writes are unchanged in this checkpoint.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- Champion magic update endpoints should drop the durable active-caller lookup floor when active turn runtime context is available.
+- Any remaining multi-billion cost after that should be command/idempotency writes, champion/spell row writes, event/effect creation, or spell definition/spellbook lookups.

@@ -791,7 +791,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve durable fallback behavior for cold runtimes, maintenance jobs, and direct rule-sync callers.
 - [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify scenario update endpoints drop durable caller/session/participant lookup floor plus `map.world_object_by_session_xy`/objective status re-page work where runtime snapshots are present.
-- [ ] Rotate again before deeper scenario-only changes unless the next benchmark shows this same shared auth/objective floor still dominates several endpoints.
+- [x] Rotate again before deeper scenario-only changes unless the next benchmark shows this same shared auth/objective floor still dominates several endpoints. Picked champion magic update auth because the runtime-event-seq prerequisite is now in place and this hits three still-heavy endpoints.
+
+### 32. Random Endpoint Cluster: Champion Magic Runtime-First Updates
+
+- [x] Rotate to champion magic update auth after the scenario runtime-first/objective-summary cut.
+- [x] Switch `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` to `require_active_session_caller_runtime_first`.
+- [x] Keep the existing runtime champion snapshot ownership check and durable fallback after caller context resolution.
+- [x] Preserve existing durable command, champion/spell row, event, and effect writes; this cut only removes the durable active-caller floor when an active runtime has the caller context.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify the champion magic update endpoints drop the old caller/session/participant lookup floor while keeping event sequence uniqueness.
+- [ ] Rotate again before deeper champion-only changes unless the next benchmark shows this auth floor remains shared across several update clusters.
 
 ## Expected Outcome
 

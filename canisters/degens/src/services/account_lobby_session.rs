@@ -30,6 +30,7 @@ const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
 
 thread_local! {
+    static SESSION_ROW_CACHE: RefCell<Option<GameSession>> = const { RefCell::new(None) };
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
     static PLAYER_NO_LIVE_SESSION_CACHE: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
@@ -40,6 +41,20 @@ thread_local! {
 struct SessionParticipantCache {
     session_id: Id<GameSession>,
     participants: Vec<GameParticipant>,
+}
+
+fn cached_session_row(session_id: Id<GameSession>) -> Option<GameSession> {
+    SESSION_ROW_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|session| session.id() == session_id)
+            .cloned()
+    })
+}
+
+fn remember_session_row(session: &GameSession) {
+    SESSION_ROW_CACHE.with(|cache| *cache.borrow_mut() = Some(session.clone()));
 }
 
 fn cached_session_view(session_id: &str) -> Option<SessionView> {
@@ -722,6 +737,7 @@ pub(crate) fn start_session(
             if started_now {
                 session.state = "starting".to_string();
                 session = sessions::update_session(session)?;
+                remember_session_row(&session);
             }
             let setup_command = ensure_setup_command(&session)?;
             if started_now {
@@ -748,10 +764,12 @@ pub(crate) fn start_session(
                     if setup_complete {
                         session.state = "active".to_string();
                         session = sessions::update_session(session)?;
+                        remember_session_row(&session);
                     }
                 }
                 if let Some(updated) = sessions::load_session(session.id())? {
                     session = updated;
+                    remember_session_row(&session);
                 }
             }
             session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
@@ -1590,6 +1608,7 @@ fn append_session_event_with_command(
         Ok(event) => {
             session.next_event_seq = event_seq.saturating_add(1);
             *session = sessions::update_session(session.clone())?;
+            remember_session_row(session);
             Ok(event)
         }
         Err(error) => {
@@ -1613,6 +1632,7 @@ fn bump_event_seq_after_existing(
     if session.next_event_seq <= existing_event_seq {
         session.next_event_seq = next;
         *session = sessions::update_session(session.clone())?;
+        remember_session_row(session);
     }
     Ok(())
 }
@@ -1640,13 +1660,18 @@ fn load_player_from_text(player_id: &str) -> Result<PlayerAccount, ApiError> {
 
 fn load_session_from_text(session_id: &str) -> Result<GameSession, ApiError> {
     let id = parse_id::<GameSession>(session_id, "session_id")?;
-    sessions::load_session(id)?.ok_or_else(|| {
+    if let Some(session) = cached_session_row(id) {
+        return Ok(session);
+    }
+    let session = sessions::load_session(id)?.ok_or_else(|| {
         public_error(
             "session_not_found",
             format!("session was not found: {session_id}"),
             false,
         )
-    })
+    })?;
+    remember_session_row(&session);
+    Ok(session)
 }
 
 fn require_participant_for_player(

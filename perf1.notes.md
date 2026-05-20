@@ -4342,3 +4342,43 @@ Decision:
 
 - Keep this checkpoint. It removes five durable absence probes from the measured setup route while still allowing durable fallback before an actor enters the runtime-receipt path.
 - This is another reason Gate 5H must define receipt durability/history clearly: within a process, heap receipts are now the fresh lobby nonce authority after the actor's first runtime lobby command.
+
+## Checkpoint: Lobby Session Row Cache
+
+After the runtime actor idempotency skip, `sessions.load_session` was still visible at 4 calls and `2.8136B` total, all from the lobby setup command path. The route repeatedly loaded the same session row after it had just been created or updated.
+
+What changed:
+
+- Added a single current-session heap row cache for `GameSession`.
+- `load_session_from_text` checks that cache before durable `sessions.load_session`.
+- Successful lobby event sequence updates refresh the cached row.
+- Start-session state transitions and native setup recovery updates refresh the cached row.
+- Durable fallback remains the source on cache miss.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfbb2b`
+- Focused Gate J `20260520-lobby-session-row-cache-gate-j` passed in `182.49s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-lobby-idempotency-skip-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 32.8175B | 30.0113B | -8.6% |
+| Gate J scenario memory | 4108.2500 MB | 4108.2500 MB | flat |
+| `join_session` avg | 3.5380B | 2.8393B | -19.7% |
+| `mark_ready` avg | 3.5496B | 2.8469B | -19.8% |
+| `start_session` avg | 5.6609B | 4.9582B | -12.4% |
+| `sessions.load_session` total | 2.8136B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66689 | 66689 | flat |
+
+Decision:
+
+- Keep this checkpoint. It is a direct reuse of the real session row after successful durable writes, with durable fallback when the heap row is absent.
+- The remaining largest setup floors are now `sessions.update_session` (`2.8624B`), `sessions.by_state_current_turn` (`2.1095B`), and lobby/game event creates (`1.9B`).

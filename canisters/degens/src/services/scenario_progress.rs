@@ -22,7 +22,7 @@ use crate::repos::{
 use super::{
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
-    system_jobs as system_job_service,
+    session_turn_runtime, system_jobs as system_job_service,
 };
 
 pub(crate) fn get_objective_progress(
@@ -89,7 +89,8 @@ pub(crate) fn accept_quest(
     quest_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     ensure_known_quest(&quest_key)?;
     let payload_json = format!(
         r#"{{"quest_key":"{}"}}"#,
@@ -115,7 +116,8 @@ pub(crate) fn claim_quest_reward(
     quest_key: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     ensure_known_quest(&quest_key)?;
     let payload_json = format!(
         r#"{{"quest_key":"{}"}}"#,
@@ -140,7 +142,8 @@ pub(crate) fn sync_objectives(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -152,7 +155,7 @@ pub(crate) fn sync_objectives(
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
     };
-    let touched = sync_objective_rows(&mut context, Some(command.id()))?;
+    let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
     let receipt = receipt(
         command.id().to_string(),
         "sync_objectives",
@@ -170,7 +173,11 @@ pub(crate) fn sync_objectives(
     let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
-        format!("scenario:objectives:{}:{touched}", command.id()),
+        format!(
+            "scenario:objectives:{}:{}",
+            command.id(),
+            objective_summary.touched
+        ),
         "objectives_synced".to_string(),
         Some("session".to_string()),
         Some(session_id_text.clone()),
@@ -206,7 +213,8 @@ pub(crate) fn sync_world_events(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -272,7 +280,8 @@ pub(crate) fn sync_advanced_victory(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let command = match command_response::begin_participant_command(
         caller,
         &context,
@@ -284,8 +293,12 @@ pub(crate) fn sync_advanced_victory(
         GameCommandAction::Apply(command) => command,
         GameCommandAction::Return(response) => return Ok(response),
     };
-    sync_objective_rows(&mut context, Some(command.id()))?;
-    let updated = sync_scenario_rule_rows(&context, Some(command.id()))?;
+    let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
+    let updated = sync_scenario_rule_rows_for_session_with_completed_objectives(
+        &context.session,
+        Some(command.id()),
+        Some(objective_summary.completed),
+    )?;
     let receipt = receipt(
         command.id().to_string(),
         "sync_advanced_victory",
@@ -412,14 +425,21 @@ fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError
     command = commands_events_effects::update_game_command(command)?;
 
     let touched = match job.job_kind.as_str() {
-        "scenario_objectives" => sync_objective_rows_for_session(session.id(), Some(command.id()))?,
+        "scenario_objectives" => {
+            sync_objective_rows_for_session(session.id(), Some(command.id()))?.touched
+        }
         "world_events" => {
             ensure_current_world_event(&session, Some(command.id()))?;
             1
         }
         "advanced_victory" => {
-            sync_objective_rows_for_session(session.id(), Some(command.id()))?;
-            sync_scenario_rule_rows_for_session(&session, Some(command.id()))?
+            let objective_summary =
+                sync_objective_rows_for_session(session.id(), Some(command.id()))?;
+            sync_scenario_rule_rows_for_session_with_completed_objectives(
+                &session,
+                Some(command.id()),
+                Some(objective_summary.completed),
+            )?
         }
         _ => {
             system_job_repo::fail_system_job(
@@ -798,28 +818,49 @@ fn ensure_opening_quest(
     Ok(())
 }
 
+#[derive(Clone, Copy, Default)]
+struct ObjectiveSyncSummary {
+    touched: u32,
+    completed: u32,
+}
+
 fn sync_objective_rows(
     context: &mut session_context::SessionCallerContext,
     command_id: Option<Id<GameCommand>>,
-) -> Result<u32, ApiError> {
+) -> Result<ObjectiveSyncSummary, ApiError> {
     sync_objective_rows_for_session(context.session.id(), command_id)
 }
 
 fn sync_objective_rows_for_session(
     session_id: Id<GameSession>,
     command_id: Option<Id<GameCommand>>,
-) -> Result<u32, ApiError> {
-    let mut touched = 0_u32;
+) -> Result<ObjectiveSyncSummary, ApiError> {
+    let mut summary = ObjectiveSyncSummary::default();
     for seed in &domm_game::first_playable_scenario().central_objectives {
-        let Some(object) =
-            map_visibility_occupancy::find_world_object_by_session_xy(session_id, seed.x, seed.y)?
-        else {
+        let Some(object) = central_objective_world_object(session_id, seed.x, seed.y)? else {
             continue;
         };
+        if object.owner_participant_id.is_some() {
+            summary.completed = summary.completed.saturating_add(1);
+        }
         ensure_objective_row_for_object(session_id, &object, &seed.key, command_id)?;
-        touched = touched.saturating_add(1);
+        summary.touched = summary.touched.saturating_add(1);
     }
-    Ok(touched)
+    Ok(summary)
+}
+
+fn central_objective_world_object(
+    session_id: Id<GameSession>,
+    x: u16,
+    y: u16,
+) -> Result<Option<WorldObject>, ApiError> {
+    let session_id_text = session_id.to_string();
+    if let Some(Some(object)) = session_turn_runtime::world_object_at(&session_id_text, x, y)
+        && object.session_id == session_id.key()
+    {
+        return Ok(Some(object));
+    }
+    map_visibility_occupancy::find_world_object_by_session_xy(session_id, x, y)
 }
 
 fn ensure_objective_row_for_object(
@@ -901,13 +942,6 @@ fn ensure_current_world_event(
     }
 }
 
-fn sync_scenario_rule_rows(
-    context: &session_context::SessionCallerContext,
-    command_id: Option<Id<GameCommand>>,
-) -> Result<u32, ApiError> {
-    sync_scenario_rule_rows_for_session(&context.session, command_id)
-}
-
 fn sync_quest_victory_rule_after_claim(
     session: &GameSession,
     command_id: Id<GameCommand>,
@@ -941,11 +975,24 @@ fn sync_scenario_rule_rows_for_session(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<u32, ApiError> {
-    let objectives = objective_rows_for_session(session.id())?;
-    let completed_objectives = objectives
-        .iter()
-        .filter(|row| row.status == "complete")
-        .count() as u32;
+    sync_scenario_rule_rows_for_session_with_completed_objectives(session, command_id, None)
+}
+
+fn sync_scenario_rule_rows_for_session_with_completed_objectives(
+    session: &GameSession,
+    command_id: Option<Id<GameCommand>>,
+    completed_objectives: Option<u32>,
+) -> Result<u32, ApiError> {
+    let completed_objectives = match completed_objectives {
+        Some(completed) => completed,
+        None => {
+            let objectives = objective_rows_for_session(session.id())?;
+            objectives
+                .iter()
+                .filter(|row| row.status == "complete")
+                .count() as u32
+        }
+    };
     let mut touched = 0_u32;
     for mut rule in scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items
     {

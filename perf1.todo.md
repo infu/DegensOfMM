@@ -780,7 +780,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve durable `GameEvent` creation; this cut only removes the per-event session sequence write when the active runtime already owns a reserved block.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `sessions.update_session` drops from public event paths. Expected savings are about `0.48B` on each fresh public-event command while preserving event sequence uniqueness.
-- [ ] Rotate again before deeper event/feed-only changes.
+- [x] Rotate again before deeper event/feed-only changes. Picked a scenario-progress update cluster now that runtime event sequence allocation makes runtime-first event-emitting commands safer.
+
+### 31. Random Endpoint Cluster: Scenario Runtime-First And Objective Summary
+
+- [x] Rotate back to the scenario-progress update cluster after economy participant mirroring and runtime event-seq allocation, rather than continuing event/feed-only work.
+- [x] Switch scenario update endpoints (`accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory`) to `require_active_session_caller_runtime_first` so active-turn commands can use heap session/participant snapshots before durable caller/session/participant lookups.
+- [x] Resolve central-objective world objects from `SessionTurnRuntime` world-object snapshots before falling back to durable map/object rows.
+- [x] Return an `ObjectiveSyncSummary` from objective sync and pass the just-computed completed-objective count into advanced-victory rule sync, avoiding a second objective status page sweep on that path.
+- [x] Preserve durable fallback behavior for cold runtimes, maintenance jobs, and direct rule-sync callers.
+- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify scenario update endpoints drop durable caller/session/participant lookup floor plus `map.world_object_by_session_xy`/objective status re-page work where runtime snapshots are present.
+- [ ] Rotate again before deeper scenario-only changes unless the next benchmark shows this same shared auth/objective floor still dominates several endpoints.
 
 ## Expected Outcome
 

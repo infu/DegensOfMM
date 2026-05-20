@@ -6254,3 +6254,30 @@ Expected measurement:
 
 - Fresh public-event commands should stop paying one `sessions.update_session` each when an active turn runtime has sequence headroom.
 - This should unblock later runtime-first auth for event-emitting commands, because event creation no longer depends on mutating a possibly stale runtime session copy.
+
+## Random Pivot: Scenario Runtime-First And Objective Summary
+
+New cluster:
+
+- Rotated back to scenario progress after the runtime event-seq cut because event-emitting update endpoints can now safely use active runtime caller context without depending on a stale durable `GameSession.next_event_seq` copy.
+- The last measured scenario update costs are still high: `sync_advanced_victory` `12.2543B`, `claim_quest_reward` `9.2372B`, `sync_objectives` `8.0271B`, `accept_quest` `6.3948B`, and `sync_world_events` `5.9111B`.
+
+Cut:
+
+- `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` now use `require_active_session_caller_runtime_first`.
+- Central objective sync checks `SessionTurnRuntime` world-object snapshots before falling back to durable `WorldObject` lookup by session coordinate.
+- Objective sync now returns touched and completed counts; `sync_advanced_victory` and advanced-victory maintenance jobs reuse the completed count instead of re-paging objective rows immediately after syncing them.
+- Cold-runtime and maintenance fallback behavior remains durable-row based.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- Scenario update endpoints should lose the durable active-caller floor when an active turn runtime is present.
+- `sync_objectives` and `sync_advanced_victory` should avoid stable world-object coordinate lookups for central objectives when runtime snapshots are hydrated.
+- `sync_advanced_victory` should also avoid the immediate second objective active/complete status page sweep after syncing central objectives.

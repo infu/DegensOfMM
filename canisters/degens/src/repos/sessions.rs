@@ -4,7 +4,6 @@ use domm_degens_schema::schema::{
     FactionDefinition, GameParticipant, GameSession, PlayerAccount, RulesetDefinition,
 };
 use icydb::{
-    Create,
     db::query::FieldRef,
     types::{Id, Timestamp},
 };
@@ -48,28 +47,29 @@ pub(crate) fn create_game_session(
     map_height: u16,
     turn_deadline_at: Timestamp,
 ) -> RepoResult<GameSession> {
-    let input: Create<GameSession> = Create::<GameSession> {
-        ruleset_id: Some(ruleset_id.key()),
-        created_by_player_id: Some(created_by_player_id.key()),
-        name: Some(name),
-        state: Some("lobby".to_string()),
-        seed: Some(seed),
-        map_width: Some(map_width),
-        map_height: Some(map_height),
-        chunk_size: Some(16),
-        simultaneous_turns: Some(true),
-        turn_duration_ms: Some(60_000),
-        max_turns: Some(30),
-        turn_catchup_cap: Some(10),
-        current_turn: Some(1),
-        next_event_seq: Some(1),
-        turn_deadline_at: Some(turn_deadline_at),
-        winner_participant_id: Some(None),
-        finish_reason: Some(None),
-        last_command_id: Some(None),
+    let session = GameSession {
+        ruleset_id: ruleset_id.key(),
+        created_by_player_id: created_by_player_id.key(),
+        name,
+        state: "lobby".to_string(),
+        seed,
+        map_width,
+        map_height,
+        chunk_size: 16,
+        simultaneous_turns: true,
+        turn_duration_ms: 60_000,
+        max_turns: 30,
+        turn_catchup_cap: 10,
+        current_turn: 1,
+        next_event_seq: 1,
+        turn_deadline_at,
+        winner_participant_id: None,
+        finish_reason: None,
+        last_command_id: None,
+        ..Default::default()
     };
 
-    foundation::create("sessions.create_game_session", input)
+    foundation::insert("sessions.create_game_session", session)
 }
 
 pub(crate) fn load_session(id: Id<GameSession>) -> RepoResult<Option<GameSession>> {
@@ -105,32 +105,33 @@ pub(crate) fn create_participant(
     slot_index: u8,
     color_key: String,
 ) -> RepoResult<GameParticipant> {
-    let input: Create<GameParticipant> = Create::<GameParticipant> {
-        session_id: Some(session_id.key()),
-        player_id: Some(player_id.key()),
-        faction_id: Some(faction_id.key()),
-        slot_index: Some(slot_index),
-        team_index: Some(0),
-        color_key: Some(color_key),
-        primary_color: Some(None),
-        secondary_color: Some(None),
-        status: Some("active".to_string()),
-        gold: Some(10_000),
-        wood: Some(10),
-        stone: Some(10),
-        iron: Some(3),
-        crystal: Some(3),
-        ember: Some(3),
-        aether: Some(3),
-        last_income_turn: Some(0),
-        last_action_turn: Some(0),
-        ready_turn: Some(0),
-        last_command_id: Some(None),
-        last_resource_command_id: Some(None),
-        champion_ids: Some(Vec::new()),
+    let participant = GameParticipant {
+        session_id: session_id.key(),
+        player_id: player_id.key(),
+        faction_id: faction_id.key(),
+        slot_index,
+        team_index: 0,
+        color_key,
+        primary_color: None,
+        secondary_color: None,
+        status: "active".to_string(),
+        gold: 10_000,
+        wood: 10,
+        stone: 10,
+        iron: 3,
+        crystal: 3,
+        ember: 3,
+        aether: 3,
+        last_income_turn: 0,
+        last_action_turn: 0,
+        ready_turn: 0,
+        last_command_id: None,
+        last_resource_command_id: None,
+        champion_ids: Vec::new(),
+        ..Default::default()
     };
 
-    foundation::create("sessions.create_participant", input)
+    foundation::insert("sessions.create_participant", participant)
 }
 
 pub(crate) fn load_participant(id: Id<GameParticipant>) -> RepoResult<Option<GameParticipant>> {

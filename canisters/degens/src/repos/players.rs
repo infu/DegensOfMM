@@ -2,7 +2,6 @@
 
 use domm_degens_schema::schema::PlayerAccount;
 use icydb::{
-    Create,
     db::query::FieldRef,
     types::{Id, Principal},
 };
@@ -21,13 +20,14 @@ pub(crate) fn create_player_account(
     username: Option<String>,
     display_name: Option<String>,
 ) -> RepoResult<PlayerAccount> {
-    let input: Create<PlayerAccount> = Create::<PlayerAccount> {
-        account_principal: Some(account_principal),
-        username: Some(username),
-        display_name: Some(display_name),
+    let player = PlayerAccount {
+        account_principal,
+        username,
+        display_name,
+        ..Default::default()
     };
 
-    foundation::create("players.create_player_account", input)
+    foundation::insert("players.create_player_account", player)
 }
 
 pub(crate) fn load_player_account(id: Id<PlayerAccount>) -> RepoResult<Option<PlayerAccount>> {

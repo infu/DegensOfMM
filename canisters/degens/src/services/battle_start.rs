@@ -114,20 +114,7 @@ fn continue_champion_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
-            let attacker_stacks = battles::page_battle_stacks_by_side(
-                battle.id(),
-                "attacker",
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            let defender_stacks = battles::page_battle_stacks_by_side(
-                battle.id(),
-                "defender",
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            let mut stacks = attacker_stacks.items;
-            stacks.extend(defender_stacks.items);
+            let mut stacks = battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT)?;
             battle.state = "active".to_string();
             battle.action_deadline_at = Some(fresh_action_deadline_at());
             battle = set_initial_active_stack(session, &mut battle, &mut stacks)?;

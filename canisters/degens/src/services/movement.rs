@@ -3603,7 +3603,6 @@ fn mark_neutral_encounter_pending(
         command_id,
         &mut pending[pending_index],
         neutral_id,
-        &object_id,
         coord,
     )?
     else {
@@ -3645,7 +3644,6 @@ fn start_neutral_battle(
     command_id: Id<GameCommand>,
     pending_move: &mut PendingMovement,
     neutral_id: Id<NeutralArmy>,
-    object_id: &str,
     coord: MoveCoord,
 ) -> Result<Option<Battle>, ApiError> {
     if let Some(existing) = battles::find_battle_by_attacker(pending_move.champion.id())? {
@@ -3659,12 +3657,8 @@ fn start_neutral_battle(
                     existing,
                     pending_move,
                     neutral_id,
-                    object_id,
                 );
             }
-            ensure_neutral_battle_started_effect(
-                session, command_id, &existing, neutral_id, object_id,
-            )?;
             battle_runtime::adopt_active_battle_from_rows(session, existing.clone())?;
             return Ok(Some(existing));
         }
@@ -3704,7 +3698,6 @@ fn continue_neutral_battle_start(
     mut battle: Battle,
     pending_move: &PendingMovement,
     neutral_id: Id<NeutralArmy>,
-    object_id: &str,
 ) -> Result<Option<Battle>, ApiError> {
     match battle.state.as_str() {
         "starting" => {
@@ -3742,20 +3735,7 @@ fn continue_neutral_battle_start(
             Ok(None)
         }
         "starting_obstacles" => {
-            let attacker_stacks = battles::page_battle_stacks_by_side(
-                battle.id(),
-                "attacker",
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            let defender_stacks = battles::page_battle_stacks_by_side(
-                battle.id(),
-                "defender",
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            let mut stacks = attacker_stacks.items;
-            stacks.extend(defender_stacks.items);
+            let mut stacks = battles::list_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT)?;
             if let Some(active_stack) = select_initial_active_stack(session, &battle, &mut stacks) {
                 battle.active_stack_id = Some(active_stack.id().key());
                 battle.active_side = active_stack.side.clone();
@@ -3771,46 +3751,11 @@ fn continue_neutral_battle_start(
             neutral.state = "in_battle".to_string();
             neutral.last_command_id = Some(command_id.key());
             neutrals::update_neutral_army(neutral)?;
-            ensure_neutral_battle_started_effect(
-                session, command_id, &battle, neutral_id, object_id,
-            )?;
             battle_runtime::adopt_active_battle_from_rows(session, battle.clone())?;
             Ok(None)
         }
         _ => Ok(None),
     }
-}
-
-fn ensure_neutral_battle_started_effect(
-    session: &GameSession,
-    command_id: Id<GameCommand>,
-    battle: &Battle,
-    neutral_id: Id<NeutralArmy>,
-    object_id: &str,
-) -> Result<(), ApiError> {
-    let effect_key = format!("battle:{}", battle.id());
-    if commands_events_effects::find_applied_command_effect_by_session_key(
-        session.id(),
-        &effect_key,
-    )?
-    .is_some()
-    {
-        return Ok(());
-    }
-    command_response::ensure_command_effect(
-        session.id(),
-        command_id,
-        effect_key,
-        "battle_started".to_string(),
-        "battle".to_string(),
-        battle.id().to_string(),
-        format!(
-            r#"{{"battle_id":"{}","battle_type":"neutral","neutral_army_id":"{}","object_id":"{}"}}"#,
-            battle.id(),
-            neutral_id,
-            command_response::escape_json(object_id)
-        ),
-    )
 }
 
 fn create_neutral_battle_attacker_stacks(

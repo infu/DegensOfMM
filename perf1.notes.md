@@ -2867,3 +2867,43 @@ Decision:
 
 - Keep this cut. It removes real stable reads and one normal-path startup sync call without hollowing out battle creation or hiding work in a new slow endpoint.
 - Gate 5F remains open. The remaining contact path is still row-backed: battle stacks, occupancy, obstacles, battle-start effects, timeout jobs, neutral state, and champion in-battle status are still durable startup writes/reads. The next large cut should move neutral/champion battle handoff into runtime first, then project durable rows only at the flush boundary.
+
+## Checkpoint: Neutral Battle Start Effect Removal And Stack List Read
+
+Implemented the second low-risk Gate 5F cut:
+
+- Removed the internal neutral `battle_started` `CommandEffect` from the movement contact hot path. The durable battle row and the public `neutral_encounter_pending` event remain the recovery/client signal.
+- Final champion/neutral battle activation now loads all battle stacks once with `battles::list_battle_stacks` for initiative selection instead of paging attacker and defender sides separately.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Focused Gate J `20260520-battle-start-no-effect-stack-list-gate-j` passed in `199.36s`.
+- Removed the benchmark PocketIC server left with the hard TTL after the run.
+
+Measured delta versus Gate 5F.1 `20260520-battle-start-cache-attacker-gate-j`:
+
+| metric | Gate 5F.1 | Gate 5F.2 | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 174.5569B | 171.2591B | -1.9% |
+| Gate J memory | 5084.8750 MB | 5084.8125 MB | flat |
+| scenario calls | 54 | 54 | flat |
+| row growth | 43 | 43 | flat |
+| `sync_session_turn` avg | 2.4438B | 2.1440B | -12.3% |
+| `submit_move_intent` avg | 0.7108B | 0.7108B | flat |
+
+Measured repo-operation movement:
+
+| operation | Gate 5F.1 calls | Gate 5F.2 calls | note |
+| --- | ---: | ---: | --- |
+| `effects.command_effect_by_command_key` | 1 | 0 | removed neutral battle-start effect command lookup |
+| `effects.command_effect_by_session_status` | 2 | 0 | removed neutral battle-start effect session lookup |
+| `effects.create_applied_command_effect` | 1 | 0 | removed neutral battle-start effect row |
+| `battles.stacks_by_side` | 6 | 2 | final activation no longer pages both sides |
+| `battles.stacks_by_battle` | 1 | 2 | one extra all-stack read replaces two side pages |
+
+Decision:
+
+- Keep this cut. It removes internal durable bookkeeping from battle startup while preserving the visible event and row-backed battle state used by current tests and clients.
+- Remaining Gate 5F work is now dominated by durable battle-start rows and job scheduling: battle creation/stack/occupancy/obstacle writes, final runtime adoption reads, timeout job scans/insert, neutral state update, and champion status update. The next meaningful step should stop adopting runtime by re-reading the rows just created, or move the entire contact handoff to a runtime aggregate.

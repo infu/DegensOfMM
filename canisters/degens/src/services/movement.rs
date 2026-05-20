@@ -695,6 +695,10 @@ fn sync_session_turn_with_command(
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
         if !command.is_runtime() {
             reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
+            session_turn_runtime::remove_runtime(
+                &context.session.id().to_string(),
+                context.session.current_turn,
+            );
         }
         let response = complete_sync_command_response(
             caller,

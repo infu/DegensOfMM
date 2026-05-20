@@ -5354,3 +5354,27 @@ Test follow-up:
 Decision:
 
 - Keep it. It restores seeded durable command recovery for runtime sync without putting stable command-idempotency reads back into the hot runtime path.
+
+## Checkpoint: Durable Follow-Up After Incomplete Manual Sync
+
+Gate 7.8 mixed durable/runtime movement recovery slice:
+
+- After the runtime `GameCommand` cache, the long setup/replay test progressed to a movement-position failure.
+- The first seeded durable `sync_session_turn` correctly reused the durable command and parked partial movement in durable rows, but the next sync went back through runtime-only state and left the final champion position in heap instead of durable storage.
+- Changed incomplete durable/manual sync handling to evict the current-turn runtime after rescheduling current-turn jobs. That makes the follow-up sync continue from durable partial movement rows instead of mixing `DurableBridge` and `RuntimeOnly` state for the same pending movement.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Test follow-up:
+
+- Reran `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture`.
+- The prior resource-pile position failure at `canisters/degens/src/services/tests.rs:479` is passed.
+- The same test now fails later at `canisters/degens/src/services/tests.rs:605` because a neutral encounter leaves the durable champion row `active` instead of `in_battle`. Gate 7.8 remains open for battle-handoff projection durability in this recovery route.
+
+Decision:
+
+- Keep it. The durable recovery route should stay durable until the parked movement is finished; this keeps the fast runtime path unchanged for normal Gate J commands.

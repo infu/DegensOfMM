@@ -56,22 +56,10 @@ fn init() {
 fn pre_upgrade_impl() {
     #[cfg(not(feature = "benchmark"))]
     {
-        if let Err(error) = services::account_lobby_session::flush_runtime_lobby_state_for_upgrade()
+        if let Err(error) =
+            services::flush_barrier::flush_barrier(services::flush_barrier::FLUSH_BARRIER_UPGRADE)
         {
-            panic!("lobby runtime pre-upgrade flush failed: {}", error.message);
-        }
-        if let Err(error) = services::session_turn_runtime::flush_runtime_projections_for_upgrade()
-        {
-            panic!(
-                "session-turn runtime pre-upgrade projection flush failed: {}",
-                error.message
-            );
-        }
-        if let Err(error) = services::town_runtime::flush_all_projections_to_durable() {
-            panic!(
-                "town runtime pre-upgrade projection flush failed: {}",
-                error.message
-            );
+            panic!("upgrade flush barrier failed: {}", error.message);
         }
     }
     if let Err(error) = services::battle_runtime::persist_snapshot_for_upgrade() {

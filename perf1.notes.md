@@ -5014,3 +5014,22 @@ Decision:
 - Keep it. There is no separate alias table or `Town` alias field in the schema, so name-derived aliases are the only concrete non-start alias source available without adding a new data model.
 - This completes the concrete Gate 6 TownProjection broadening items currently listed in `perf1.todo.md`.
 - Gate 5G parent is also now marked complete because its listed query/status overlays are covered by Gate 5G.1-5G.28, and the remaining town projection broadening dependency has been closed by Gate 6.10-6.13.
+
+## Checkpoint: Upgrade Flush Barrier Entry Point
+
+Gate 5H barrier boundary slice:
+
+- Added `services::flush_barrier::flush_barrier("Upgrade")` as the common non-benchmark entry point for durable projection barriers.
+- `pre_upgrade` now calls that barrier for lobby receipts/events, session-turn rows/events/commands/resource ledgers, and town projections before persisting the battle runtime snapshot.
+- The barrier rejects unsupported reasons for now, so this does not claim the full Gate 5H contract for `TurnAdvance`, `BattleHandoff`, `RuntimeEviction`, or `StrongRead`.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. It creates the reusable boundary without broadening hot-path behavior yet, and leaves the non-upgrade reasons as explicit follow-up work.

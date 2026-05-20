@@ -637,7 +637,7 @@ pub(crate) fn escape_json(value: &str) -> String {
         .replace('\t', "\\t")
 }
 
-fn response_from_command(
+pub(crate) fn response_from_command(
     caller: CandidPrincipal,
     context: &SessionCallerContext,
     command: GameCommand,

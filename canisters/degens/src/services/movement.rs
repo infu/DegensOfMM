@@ -591,6 +591,42 @@ pub(crate) fn sync_session_turn(
         context.session.current_turn,
     );
     let command = if has_runtime {
+        if let Some(existing) = commands_events_effects::runtime_game_command_by_idempotency(
+            context.session.id(),
+            "player",
+            &actor_participant_id,
+            client_nonce_u64,
+        ) {
+            if existing.payload_hash != command_payload_hash {
+                return Ok(runtime_sync_failed_response(
+                    caller,
+                    &context,
+                    existing.id().to_string(),
+                    &client_nonce,
+                    command_payload_hash,
+                    public_error(
+                        "duplicate_nonce_payload_mismatch",
+                        format!("client nonce {client_nonce} was reused with a different payload"),
+                        false,
+                    ),
+                ));
+            }
+            if matches!(existing.status.as_str(), "pending" | "applying") {
+                return sync_session_turn_with_command(
+                    caller,
+                    context,
+                    client_nonce,
+                    payload_json,
+                    SyncTurnCommand::Durable(existing),
+                );
+            }
+            return command_response::response_from_command(
+                caller,
+                &context,
+                existing,
+                &client_nonce,
+            );
+        }
         let command_key = Ulid::generate();
         let command_id = Id::<GameCommand>::from_key(command_key);
         SyncTurnCommand::Runtime {

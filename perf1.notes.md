@@ -5329,3 +5329,28 @@ Test follow-up:
 Decision:
 
 - Keep the marker. It fixes the accepted `turn_resolution` gap without reintroducing durable system-job scans on every runtime-open map command.
+
+## Checkpoint: Runtime GameCommand Idempotency Cache
+
+Gate 7.8 seeded sync-command recovery slice:
+
+- After the turn-resolution marker, the long native setup/replay test progressed to a seeded pending `sync_session_turn` command mismatch.
+- The runtime-fast `sync_session_turn` path intentionally skipped durable idempotency lookup when a `SessionTurnRuntime` existed, so it ignored a durable pending command seeded in the same heap and generated a runtime command id instead.
+- Added a bounded heap cache for created/updated durable `GameCommand` rows keyed by `(session_id, actor_kind, actor_id_text, client_nonce)`.
+- `sync_session_turn` now checks that heap cache before generating a runtime command. If it finds a pending/applying durable command, it runs through the durable command path; if it finds an applied/failed command, it returns the normal command response. This avoids adding a stable idempotency lookup to every runtime sync.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Test follow-up:
+
+- Reran `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture`.
+- The prior command-id mismatch at `canisters/degens/src/services/tests.rs:457` is passed.
+- The same test now fails later at `canisters/degens/src/services/tests.rs:479` because the champion is not on the expected resource-pile tile after sync. Gate 7.8 remains open for that movement-position issue.
+
+Decision:
+
+- Keep it. It restores seeded durable command recovery for runtime sync without putting stable command-idempotency reads back into the hot runtime path.

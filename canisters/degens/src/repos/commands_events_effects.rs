@@ -16,12 +16,32 @@ use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
 thread_local! {
     static EVENT_FEED_CACHE: RefCell<Option<EventFeedCache>> = const { RefCell::new(None) };
+    static GAME_COMMAND_CACHE: RefCell<Vec<GameCommand>> = const { RefCell::new(Vec::new()) };
 }
 
 struct EventFeedCache {
     session_key: String,
     audience_key: String,
     rows: Vec<GameEvent>,
+}
+
+const GAME_COMMAND_CACHE_LIMIT: usize = 256;
+
+fn remember_runtime_game_command(command: &GameCommand) {
+    GAME_COMMAND_CACHE.with_borrow_mut(|commands| {
+        commands.retain(|existing| {
+            existing.id != command.id
+                && (existing.session_id != command.session_id
+                    || existing.actor_kind != command.actor_kind
+                    || existing.actor_id_text != command.actor_id_text
+                    || existing.client_nonce != command.client_nonce)
+        });
+        commands.push(command.clone());
+        let overflow = commands.len().saturating_sub(GAME_COMMAND_CACHE_LIMIT);
+        if overflow > 0 {
+            commands.drain(0..overflow);
+        }
+    });
 }
 
 pub(crate) const GAME_COMMAND_IDEMPOTENCY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {
@@ -97,7 +117,29 @@ pub(crate) fn load_game_command(id: Id<GameCommand>) -> RepoResult<Option<GameCo
 }
 
 pub(crate) fn insert_game_command(command: GameCommand) -> RepoResult<GameCommand> {
-    foundation::insert("commands.insert_game_command", command)
+    let command = foundation::insert("commands.insert_game_command", command)?;
+    remember_runtime_game_command(&command);
+    Ok(command)
+}
+
+pub(crate) fn runtime_game_command_by_idempotency(
+    session_id: Id<GameSession>,
+    actor_kind: &str,
+    actor_id_text: &str,
+    client_nonce: u64,
+) -> Option<GameCommand> {
+    let session_key = session_id.key();
+    GAME_COMMAND_CACHE.with_borrow(|commands| {
+        commands
+            .iter()
+            .find(|command| {
+                command.session_id == session_key
+                    && command.actor_kind == actor_kind
+                    && command.actor_id_text == actor_id_text
+                    && command.client_nonce == client_nonce
+            })
+            .cloned()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -138,11 +180,15 @@ pub(crate) fn create_game_command(
         ..Default::default()
     };
 
-    foundation::insert("commands.create_game_command", command)
+    let command = foundation::insert("commands.create_game_command", command)?;
+    remember_runtime_game_command(&command);
+    Ok(command)
 }
 
 pub(crate) fn update_game_command(command: GameCommand) -> RepoResult<GameCommand> {
-    foundation::update("commands.update_game_command", command)
+    let command = foundation::update("commands.update_game_command", command)?;
+    remember_runtime_game_command(&command);
+    Ok(command)
 }
 
 pub(crate) fn page_game_commands_by_session_status(

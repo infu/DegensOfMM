@@ -6020,6 +6020,7 @@ Cut:
 - Successful fresh `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` now use `append_fresh_public_event` and `create_fresh_command_effect`.
 - Successful fresh `sync_world_generation` now uses `create_fresh_command_effect`.
 - This is the same pattern already measured for economy and champion magic: `begin_participant_command` returns completed replay responses before the fresh event/effect code runs, so the fresh path does not need to prove absence with a stable read.
+- Existing objective progress rows are no longer rewritten during objective sync when owner/progress/status/score fields are unchanged and only `last_command_id` would move. This targets the two `scenario.update_objective_progress` writes in the current `sync_objectives` and `sync_advanced_victory` traces.
 
 Verification:
 
@@ -6031,4 +6032,5 @@ Expected measurement:
 
 - Scenario commands that emit both public event and command effect should save about `1.4B` each if the route still uses the fresh command path.
 - `sync_world_generation` should save about `0.7B` from the effect absence read.
+- Objective sync commands should save about `0.95B` in the current unchanged-objective route.
 - Remaining costs after this cut will still include durable command create/idempotency/update, event/effect create, session update for event seq, and the scenario row scans/updates themselves.

@@ -835,6 +835,11 @@ fn ensure_objective_row_for_object(
     let status = domm_game::objective_status(progress_value, 1).to_string();
     match scenario_progress::find_objective_by_key(session_id, objective_key)? {
         Some(mut row) => {
+            let previous_participant_id = row.participant_id;
+            let previous_object_id = row.object_id;
+            let previous_progress_value = row.progress_value;
+            let previous_status = row.status.clone();
+            let previous_last_scored_turn = row.last_scored_turn;
             row.participant_id = owner.map(|id| id.key());
             row.object_id = Some(object.id().key());
             row.progress_value = progress_value;
@@ -843,7 +848,16 @@ fn ensure_objective_row_for_object(
             if let Some(command_id) = command_id {
                 row.last_command_id = Some(command_id.key());
             }
-            scenario_progress::update_objective_progress(row)
+            if row.participant_id != previous_participant_id
+                || row.object_id != previous_object_id
+                || row.progress_value != previous_progress_value
+                || row.status != previous_status
+                || row.last_scored_turn != previous_last_scored_turn
+            {
+                scenario_progress::update_objective_progress(row)
+            } else {
+                Ok(row)
+            }
         }
         None => scenario_progress::create_objective_progress(
             session_id,

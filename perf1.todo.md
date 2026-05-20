@@ -716,8 +716,9 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Rotate to scenario/worldgen after champion magic, battle-state, and match-history cuts.
 - [x] Use `append_fresh_public_event` and `create_fresh_command_effect` for successful fresh `accept_quest`, `claim_quest_reward`, `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` paths. `begin_participant_command` still returns completed replays before these fresh creates.
 - [x] Use `create_fresh_command_effect` for successful fresh `sync_world_generation`.
+- [x] Stop rewriting existing objective progress rows during objective sync when owner/progress/status/score fields are unchanged and only `last_command_id` would move. The touched count still reports scanned objectives.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads. Expected savings are about `1.4B` for scenario commands that emit both event/effect and about `0.7B` for `sync_world_generation`.
+- [ ] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads plus unchanged `scenario.update_objective_progress` writes. Expected savings are about `1.4B` for scenario commands that emit both event/effect, about `0.7B` for `sync_world_generation`, and about `0.95B` for objective sync commands in the current unchanged-objective route.
 - [ ] Rotate again before deeper scenario/worldgen-only changes.
 
 ## Expected Outcome

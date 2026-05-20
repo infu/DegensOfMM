@@ -51,6 +51,12 @@ That win is not enough by itself. Real tests and real gameplay must still pass t
 
 The new perf1 goal is therefore scenario-level speed, not one endpoint vanity. Use the battle runtime as the proof pattern and modernize the next highest-impact systems quickly.
 
+Round-robin hot-endpoint rule:
+
+- Do not keep polishing one endpoint after a bounded improvement pass. Pick a different expensive endpoint or endpoint cluster from the latest benchmark summaries, improve it as much as practical, record the baseline/delta, then rotate again.
+- The next target may be chosen from the top measured costs, route criticality, or a randomized pick among still-heavy endpoints. Avoid repeatedly returning to the same endpoint unless it blocks scenario flow or a regression makes the benchmark unreliable.
+- A checkpoint is good enough to rotate when it has removed the obvious storage/runtime smell, reached the `0.3B-0.6B` target band, or exposed a larger shared dependency that should be handled as its own cluster.
+
 Priority order:
 
 | priority | target | why now | first target |
@@ -433,6 +439,7 @@ When a todo item is completed:
 - [x] Define a setup/query projection pass if Gate J/K/L still spend too much time before reaching the core gameplay endpoint being optimized. `perf1.impl.md` lists runtime overlays for `get_game_view`, events/status, participant/champion/object/map views, and `preview_move_path`.
 - [x] Define a town/economy aggregate once session-turn movement is no longer the dominant route cost, or sooner if endpoint-surface/full-suite shows town dominates setup. `perf1.impl.md` sequences `EconomyRuntime` before `TownRuntime` after champion overlay work.
 - [x] Define a champion aggregate/projection contract that movement, aftermath, town, spells, and views can share. `perf1.impl.md` defines current `SessionTurnRuntime` champion deltas and defers full champion ownership to `ChampionOverlay`/`ChampionRuntime`.
+- [x] Adopt the round-robin hot-endpoint rule: after a bounded pass on one endpoint or cluster, rotate to another heavy endpoint instead of maximizing the same one indefinitely.
 - [ ] Repeat the same benchmark discipline before and after each aggregate migration.
 
 ### 8. Gate 5: Session-Turn / Champion-Movement Runtime

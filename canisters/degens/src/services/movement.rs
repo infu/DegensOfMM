@@ -4212,33 +4212,6 @@ fn apply_world_object_at(
     })
 }
 
-#[allow(dead_code)]
-fn hide_known_world_object(
-    participant_id: Id<GameParticipant>,
-    object: &WorldObject,
-    turn_number: u32,
-) -> Result<(), ApiError> {
-    let Some(subject_id_text) = object
-        .instance_json
-        .as_deref()
-        .and_then(|json| json_string_field(json, "scenario_key"))
-    else {
-        return Ok(());
-    };
-    let Some(mut known) = map_visibility_occupancy::find_known_object(
-        participant_id,
-        "world_object",
-        &subject_id_text,
-    )?
-    else {
-        return Ok(());
-    };
-    known.visibility = "hidden".to_string();
-    known.last_seen_turn = turn_number;
-    map_visibility_occupancy::update_known_object(known)?;
-    Ok(())
-}
-
 fn durable_gold_income(
     session: &GameSession,
     participant: &GameParticipant,

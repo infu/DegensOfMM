@@ -4,10 +4,10 @@ use domm_degens_schema::schema::{
     SystemJob, WorldEventState, WorldObject,
 };
 use domm_game::{
-    AdvancedScenarioReceipt, ApiError, ChangedSubject, CommandResponse, CommandResult,
-    OPENING_QUEST_KEY, OPENING_QUEST_OBJECTIVE_KEY, OPENING_QUEST_REWARD_GOLD,
-    ObjectiveProgressRecord, ObjectiveProgressView, QuestPreview, QuestProgressView,
-    ResourceBalances, ScenarioRuleView, ScenarioRulesView, WorldEventView, WorldEventsView,
+    AdvancedScenarioReceipt, ApiError, CommandResponse, CommandResult, OPENING_QUEST_KEY,
+    OPENING_QUEST_OBJECTIVE_KEY, OPENING_QUEST_REWARD_GOLD, ObjectiveProgressRecord,
+    ObjectiveProgressView, QuestPreview, QuestProgressView, ResourceBalances, ScenarioRuleView,
+    ScenarioRulesView, WorldEventView, WorldEventsView,
 };
 use icydb::{
     traits::EntityValue,
@@ -1223,9 +1223,4 @@ fn option_json(value: Option<&str>) -> String {
     value
         .map(|value| format!(r#""{}""#, command_response::escape_json(value)))
         .unwrap_or_else(|| "null".to_string())
-}
-
-#[allow(dead_code)]
-fn changed(kind: &str, id: &str, operation: &str) -> ChangedSubject {
-    command_response::changed(kind, id, operation)
 }

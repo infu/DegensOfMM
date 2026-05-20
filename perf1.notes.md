@@ -3361,3 +3361,34 @@ Decision:
 - Keep the single-slot cache. It is the larger scenario win and makes repeated setup/lobby polling near-free.
 - Keep the slug prerequisite check because it removes an unnecessary content lookup path, even though the measured town command floor is currently dominated by the safe turn-closure guard.
 - Do not keep the unsafe/fatter town fast guard until code-size headroom exists for a safe version. The remaining town target is now explicitly the `system_jobs.by_session_status_due` guard cost.
+
+## Checkpoint: Small Dead-Code Headroom Cleanup
+
+Removed two unused helpers:
+
+- `movement::hide_known_world_object`
+- the local `scenario_progress::changed` wrapper around `command_response::changed`
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`
+
+Measured code section:
+
+| artifact | code section | IC limit | headroom |
+| --- | ---: | ---: | ---: |
+| benchmark Wasm after cleanup | `12,582,756` bytes (`0x00bfff64`) | `12,582,912` bytes (`0x00c00000`) | `156` bytes |
+
+Town guard experiment:
+
+- Tried using a looser runtime-open town guard and a cache freshness check to avoid the remaining town `system_jobs.by_session_status_due` scans.
+- The first installable attempt still showed `submit_build_town_structure` at `1.4111B`, `submit_recruit_units` at `0.7062B`, and the same two `system_jobs.by_session_status_due` calls under each town command.
+- The cache/guard variants were either over the IC code-section limit or did not remove the measured job scans, so they were reverted.
+
+Decision:
+
+- Keep only the dead-code cleanup. It does not claim a gameplay performance delta.
+- Do not spend more time on local town guard shortcuts. The remaining safe route is the broader Gate 5E/5H runtime turn/deadline/job authority or a larger code-size freeing pass that can support a proven guard.

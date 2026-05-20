@@ -3710,3 +3710,39 @@ Decision:
 - Keep both cuts. Town build/recruit are now below the `0.3B-0.6B` target in the measured first-playable route.
 - Mark the town safe-guard floor done, but keep the durable flush/upgrade and broader town projection work open.
 - Track the remaining `system_jobs.by_session_status_due` scans under Gate 5B.5: late `submit_move_intent` seq 61 still pays `0.7063B` while the other move submits are already `0.0088B` and `0.0003B`.
+
+## Checkpoint: Top-Level Runtime Guard Removes Last Submit-Move Job Scan
+
+The relaxed runtime-open proof removed town command scans because town command begin checked that proof before calling `ensure_map_turn_accepts_new_command`. Direct callers, especially `submit_move_intent`, still called `ensure_map_turn_accepts_new_command` directly. That function only checked the runtime proof inside the `now < context.session.turn_deadline_at` branch, so an expired durable deadline forced the durable job scan even when the active runtime was open.
+
+What changed:
+
+- `ensure_map_turn_accepts_new_command` now checks `runtime_proves_pre_deadline_turn_open(context)` immediately after confirming the command is map-turn-sensitive.
+- If runtime proves the active turn is open, the guard returns before durable deadline branching and before `SystemJob` page scans.
+- Fallback behavior remains unchanged when the runtime proof is absent: pre-deadline and post-deadline paths still inspect durable jobs, and `end_turn` duplicate-ready protection remains reachable when a participant is already ready.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bff704`
+- Focused Gate J `20260520-runtime-guard-top-level-gate-j` passed in `192.11s`
+- Leftover PocketIC server from the run was killed; a follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-seed-content-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 59.6702B | 58.9607B | -1.2% |
+| `submit_move_intent` avg | 0.2385B | 0.0031B | -98.7% |
+| `submit_move_intent` seq 61 | 0.7063B | 0.0003B | ~-100.0% |
+| `system_jobs.by_session_status_due` route calls | 2 | 0 | -100.0% |
+| `submit_build_town_structure` | 0.0003B | 0.0003B | flat |
+| `submit_recruit_units` | 0.0003B | 0.0003B | flat |
+| `sync_session_turn` avg | 0.4985B | 0.4985B | flat |
+
+Decision:
+
+- Keep this checkpoint. Gate 5B is complete for the measured active first-playable route: fresh submit-move now has no route-visible stable repo operations and is far below the `0.3B-0.6B` target.
+- The remaining Gate J route cost is no longer move submit or town commands. The biggest useful next targets are query/projection reads (`get_visible_map_chunks`, `get_visible_objects`, `get_events_after`, `get_my_participant`, `get_champion_view`) and the durable setup/session creation floor.

@@ -209,21 +209,21 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
     if !is_map_turn_sensitive_command(command_type) {
         return Ok(());
     }
+    if runtime_proves_pre_deadline_turn_open(context) {
+        return Ok(());
+    }
     let now = Timestamp::now();
     if now < context.session.turn_deadline_at {
-        if !runtime_proves_pre_deadline_turn_open(context) {
-            let page = system_jobs::page_system_jobs_by_session_status(
-                context.session.id(),
-                system_jobs::STATUS_SCHEDULED,
-                domm_game::MAX_LIST_LIMIT,
-                None,
-            )?;
-            for job in page.items {
-                if is_current_turn_closure_job(&job, context.session.current_turn)
-                    && job.due_at <= now
-                {
-                    return Err(current_turn_closing_error());
-                }
+        let page = system_jobs::page_system_jobs_by_session_status(
+            context.session.id(),
+            system_jobs::STATUS_SCHEDULED,
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?;
+        for job in page.items {
+            if is_current_turn_closure_job(&job, context.session.current_turn) && job.due_at <= now
+            {
+                return Err(current_turn_closing_error());
             }
         }
     } else {

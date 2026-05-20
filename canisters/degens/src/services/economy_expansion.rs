@@ -955,22 +955,55 @@ fn resolve_dwelling_object(
     session: &GameSession,
     object_id: &str,
 ) -> Result<WorldObject, ApiError> {
+    let session_id_text = session.id().to_string();
     if let Ok(id) = session_context::parse_id::<WorldObject>(object_id, "object_id") {
+        let object_id_text = id.to_string();
+        if let Some(object) =
+            session_turn_runtime::world_object_by_id(&session_id_text, &object_id_text)
+        {
+            if object.session_id != session.id().key() {
+                return Err(public_error(
+                    "object_wrong_session",
+                    "dwelling object does not belong to this session",
+                    false,
+                ));
+            }
+            return Ok(object);
+        }
         return map_visibility_occupancy::load_world_object(id)?
             .ok_or_else(|| public_error("not_found", "dwelling object not found", false));
     }
     let scenario = domm_game::first_playable_scenario();
-    let object = scenario
+    let seed = scenario
         .external_dwellings
         .iter()
         .find(|object| object.key == object_id)
         .ok_or_else(|| public_error("not_found", "dwelling object not found", false))?;
-    map_visibility_occupancy::find_world_object_by_session_xy(session.id(), object.x, object.y)?
+    if let Some(Some(object)) =
+        session_turn_runtime::world_object_at(&session_id_text, seed.x, seed.y)
+    {
+        return Ok(object);
+    }
+    map_visibility_occupancy::find_world_object_by_session_xy(session.id(), seed.x, seed.y)?
         .ok_or_else(|| public_error("not_found", "dwelling object not found", false))
 }
 
 fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion, ApiError> {
+    let session_id_text = session.id().to_string();
     if let Ok(id) = session_context::parse_id::<Champion>(champion_id, "champion_id") {
+        let champion_id_text = id.to_string();
+        if let Some(champion) =
+            session_turn_runtime::champion_snapshot(&session_id_text, &champion_id_text)
+        {
+            if champion.session_id != session.id().key() {
+                return Err(public_error(
+                    "champion_wrong_session",
+                    "champion does not belong to this session",
+                    false,
+                ));
+            }
+            return Ok(champion);
+        }
         let champion = champions_artifacts::load_champion(id)?
             .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
         if champion.session_id != session.id().key() {
@@ -988,6 +1021,13 @@ fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion
         .iter()
         .find(|start| start.champion_key == champion_id)
         .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
+    if let Some(champion) = session_turn_runtime::champion_snapshot_by_start(
+        &session_id_text,
+        start.champion_x,
+        start.champion_y,
+    ) {
+        return Ok(champion);
+    }
     let champion = champions_artifacts::find_champion_by_session_xy(
         session.id(),
         start.champion_x,

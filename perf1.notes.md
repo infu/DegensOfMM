@@ -6057,3 +6057,28 @@ Verification:
 Expected measurement:
 
 - `hire_tavern_champion` should drop `champions.update_champion` and `map.update_occupancy_cell`, about `0.96B` combined in the current route.
+
+## Round-Robin Pivot: Dwelling Runtime Resolution
+
+New cluster:
+
+- Rotated from tavern hire to dwelling recruit/read paths.
+- Current costs: `submit_dwelling_recruit` `12.5253B`, `preview_dwelling_recruit` `2.1339B`, and `get_dwelling_pool` `1.4121B`.
+- The latest `submit_dwelling_recruit` trace still shows `champions.load_champion` at about `0.71B`; object lookup savings may not be visible in repo-op traces.
+
+Cut:
+
+- Dwelling object resolution now checks `SessionTurnRuntime` world-object snapshots by id and first-playable coordinate before stable `WorldObject` reads.
+- Recruit target champion resolution now checks `SessionTurnRuntime` champion snapshots by id and first-playable start coordinate before stable `Champion` reads.
+- Stable fallbacks remain unchanged for cold runtime, missing snapshots, and non-scenario ids.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- `submit_dwelling_recruit` should drop the visible `champions.load_champion` read when the target champion snapshot is present, about `0.71B`.
+- Dwelling object runtime lookup should reduce method instructions for `get_dwelling_pool`, `preview_dwelling_recruit`, and `submit_dwelling_recruit` if those calls were previously touching stable object rows.

@@ -728,7 +728,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Stop updating a freshly created champion occupancy cell solely to stamp `last_command_id`; the occupancy create remains durable and authoritative.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `hire_tavern_champion` drops `champions.update_champion` and `map.update_occupancy_cell`. Expected savings are about `0.96B` on the current route.
-- [ ] Rotate again before deeper tavern/economy-only changes.
+- [x] Rotate again before deeper tavern/economy-only changes. Picked dwelling object/champion resolution because those paths can reuse existing session-turn snapshots before stable loads.
+
+### 25. Round-Robin Endpoint Cluster: Dwelling Runtime Resolution
+
+- [x] Rotate to dwelling recruit/read paths after tavern hire metadata writes.
+- [x] Resolve dwelling world objects from `SessionTurnRuntime` snapshots by id or first-playable coordinate before falling back to stable `WorldObject` rows.
+- [x] Resolve recruit target champions from `SessionTurnRuntime` snapshots by id or first-playable start coordinate before falling back to stable `Champion` rows.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `submit_dwelling_recruit`, `preview_dwelling_recruit`, and `get_dwelling_pool` avoid stable object/champion resolution where snapshots are present. The visible repo-op target is the `champions.load_champion` call in `submit_dwelling_recruit` (`~0.71B`); object lookup savings may show only in method instructions if those repo ops are not traced.
+- [ ] Rotate again before deeper dwelling-only changes.
 
 ## Expected Outcome
 

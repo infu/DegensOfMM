@@ -4815,3 +4815,21 @@ Decision:
 - Keep this checkpoint. It does not change the hot Gate J route, so no PocketIC benchmark was run.
 - This makes upgrade safer for the current runtime town path: visible town/building/pool/garrison changes, participant resource snapshots, and runtime event feed rows now have a pre-upgrade durable projection.
 - Remaining Gate 5H/6 work is still real: heap command receipt rows, detailed resource ledger history, lobby runtime receipts, `StrongRead`/`RuntimeEviction`/`TurnAdvance` flush reasons, and non-first-playable town variants are not solved by this checkpoint.
+
+## Checkpoint: Town Projection Cache-Miss Adoption
+
+Small Gate 6 broadening step:
+
+- `resolve_town_by_session_id` now hydrates `TownProjection` immediately after durable town id or scenario xy fallback loads a real town row.
+- Cached id/start-alias paths still return from heap first, so the Gate J route should stay unchanged.
+- This avoids repeated child-row scans for repeated non-alias town calls after the first durable miss.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it as a low-risk broadening checkpoint. No PocketIC benchmark was run because this is a cache-miss behavior outside the current measured Gate J hot route.

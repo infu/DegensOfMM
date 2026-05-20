@@ -3616,3 +3616,41 @@ Decision:
 - Keep this checkpoint. The measured Gate J contact route now meets the Gate 5F `0.3B-0.6B` average sync target at `0.4984B`.
 - Mark Gate 5F done for the measured route, with the explicit scope that durable projection/recovery is still Gate 5H work.
 - Do not spend the next checkpoint on source stack cache broadening. The remaining large route costs are now session/lobby setup, system-job scans, and query-side durable snapshot reads.
+
+## Checkpoint: Champion Detail Stack Cache And Empty Spellbook Shortcut
+
+Changed `get_champion_view` so first-playable champion army stack rows are seeded into a heap cache from setup/update code, and the champion detail renderer uses that cache before falling back to `ChampionArmyStack` scans. Also added a safe spellbook shortcut: if the champion lacks `sour_sorcery`, it cannot learn first-tier spells, so the public champion detail view returns an empty spell list without scanning `ChampionSpell`.
+
+What changed:
+
+- `first_playable_setup` mirrors the actual starting champion stack rows into `render_projection`.
+- `render_projection::champion_stacks` uses cached real rows before durable stack scans.
+- Champion stack cache entries are invalidated by battle aftermath survivor writes and champion recruitment writes.
+- The non-persistent query-side artifact cache experiment was removed after confirming query heap writes do not survive across separate query calls.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bff5a7`, about `2.6 KB` under the IC limit
+- Focused Gate J `20260520-champion-detail-cache-gate-j` passed in `63.84s`
+- Leftover PocketIC server from the run was killed; a follow-up process scan only matched the `pgrep` command itself.
+
+Measured delta versus `20260520-seeded-source-army-stacks-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 64.6025B | 61.7790B | -4.4% |
+| `get_champion_view` avg | 2.1180B | 0.7090B | -66.5% |
+| `get_champion_view` seq 51 | 2.1156B | 0.7091B | -66.5% |
+| `get_champion_view` seq 73 | 2.1203B | 0.7089B | -66.6% |
+| `sync_session_turn` avg | 0.4984B | 0.4985B | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It moves `get_champion_view` into the `0.3B-0.8B` query target band for Gate J.
+- The remaining `0.709B` champion detail cost is the durable banner equipment read. Because query mutations do not persist, eliminating it needs an update-path artifact projection seed or a broader champion detail projection cache.
+- Do not chase that next without freeing more code size. Current benchmark Wasm headroom is only about `2.6 KB`.

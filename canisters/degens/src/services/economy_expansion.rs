@@ -18,6 +18,7 @@ use crate::repos::{
 
 use super::{
     command_response::{self, GameCommandAction},
+    render_projection,
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -1051,6 +1052,7 @@ fn recruit_to_champion(
                 stack.quantity = stack.quantity.saturating_add(quantity);
                 stack.last_command_id = Some(command_id.key());
                 champions_artifacts::update_champion_army_stack(stack)?;
+                render_projection::invalidate_champion_detail(champion_id);
                 return Ok(());
             }
             continue;
@@ -1066,6 +1068,7 @@ fn recruit_to_champion(
         )?;
         stack.last_command_id = Some(command_id.key());
         champions_artifacts::update_champion_army_stack(stack)?;
+        render_projection::invalidate_champion_detail(champion_id);
         return Ok(());
     }
     Err(public_error(

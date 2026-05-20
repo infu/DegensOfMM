@@ -20,7 +20,7 @@ use crate::repos::{
     neutrals, sessions, towns,
 };
 
-use super::{battle_start, town_runtime};
+use super::{battle_start, render_projection, town_runtime};
 
 #[derive(Clone)]
 pub(crate) struct FirstPlayableContentRows {
@@ -540,6 +540,7 @@ fn seed_champions(
             };
             seeded_stacks.push(row);
         }
+        render_projection::remember_champion_stack_rows(champion.id(), seeded_stacks.clone());
         battle_start::remember_seeded_champion_army_stacks(champion.id(), seeded_stacks);
         champion_keys.insert(start.champion_key.clone(), champion.id());
     }

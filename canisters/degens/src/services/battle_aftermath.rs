@@ -11,7 +11,7 @@ use crate::repos::{
 };
 
 use super::{
-    command_response, scenario_progress,
+    command_response, render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -367,7 +367,9 @@ fn write_champion_survivors(
         stack.front_hp = battle_stack.front_hp;
         stack.status = battle_stack.status;
         stack.last_command_id = Some(command_id.key());
+        let stack_champion_id = Id::<Champion>::from_key(stack.champion_id);
         champions_artifacts::update_champion_army_stack(stack)?;
+        render_projection::invalidate_champion_detail(stack_champion_id);
     }
     Ok(())
 }

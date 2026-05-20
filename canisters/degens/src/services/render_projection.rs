@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap};
 
 use domm_degens_schema::schema::{
-    ArtifactInstance, Champion, GameParticipant, GameSession, NeutralArmy, ParticipantKnownObject,
-    SpellDefinition, Town, VisibilityChunk, WorldObject,
+    ArtifactInstance, Champion, ChampionArmyStack, GameParticipant, GameSession, NeutralArmy,
+    ParticipantKnownObject, SpellDefinition, Town, VisibilityChunk, WorldObject,
 };
 use domm_game::{
     ActionAffordance, ApiError, ApiTownView, ArtifactView, ChampionArmyStackRecord, ChampionView,
@@ -24,6 +24,42 @@ use super::{
 };
 
 const MAX_OWNED_CHAMPIONS_VIEW: u32 = 16;
+
+thread_local! {
+    static CHAMPION_STACK_ROWS: RefCell<Vec<(String, Vec<ChampionArmyStack>)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn remember_champion_stack_rows(
+    champion_id: Id<Champion>,
+    rows: Vec<ChampionArmyStack>,
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let key = champion_id.to_string();
+    CHAMPION_STACK_ROWS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+        cache.push((key, rows));
+    });
+}
+
+pub(crate) fn invalidate_champion_detail(champion_id: Id<Champion>) {
+    let key = champion_id.to_string();
+    CHAMPION_STACK_ROWS.with_borrow_mut(|cache| {
+        cache.retain(|(existing, _)| existing != &key);
+    });
+}
+
+fn cached_champion_stack_rows(champion_id: Id<Champion>) -> Option<Vec<ChampionArmyStack>> {
+    let key = champion_id.to_string();
+    CHAMPION_STACK_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|(existing, _)| existing == &key)
+            .map(|(_, rows)| rows.clone())
+    })
+}
 
 pub(crate) fn visible_map_chunks(
     context: &SessionCallerContext,
@@ -295,7 +331,7 @@ fn champion_view(
         Vec::new()
     };
     let spell_slugs = if own {
-        learned_spell_slugs(champion.id())?
+        learned_spell_slugs(&champion)?
     } else {
         Vec::new()
     };
@@ -354,37 +390,48 @@ fn champion_summary_view(champion: Champion, own: bool) -> ChampionView {
 
 fn champion_stacks(champion: &Champion) -> Result<Vec<ChampionArmyStackRecord>, ApiError> {
     let champion_id = champion.id();
-    champions_artifacts::list_champion_army_stacks(
-        champion_id,
-        u32::from(domm_game::MAX_ARMY_SLOTS),
-    )?
-    .into_iter()
-    .map(|stack| {
-        let unit_slug = known_champion_unit_slug(champion, stack.slot_index).map_or_else(
-            || {
-                content::load_unit(Id::from_key(stack.unit_id))?
-                    .map(|unit| unit.slug)
-                    .ok_or_else(|| {
-                        public_error("unit_not_found", "champion stack unit was not found", false)
-                    })
-            },
-            Ok,
-        )?;
-        Ok(ChampionArmyStackRecord {
-            stack_id: stack.id().to_string(),
-            session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
-            champion_id: champion_id.to_string(),
-            unit_slug,
-            slot_index: stack.slot_index,
-            quantity: stack.quantity,
-            front_hp: stack.front_hp,
-            status: stack.status,
-            last_command_id: stack
-                .last_command_id
-                .map(|id| Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()),
+    let rows = match cached_champion_stack_rows(champion_id) {
+        Some(rows) => rows,
+        None => {
+            let rows = champions_artifacts::list_champion_army_stacks(
+                champion_id,
+                u32::from(domm_game::MAX_ARMY_SLOTS),
+            )?;
+            remember_champion_stack_rows(champion_id, rows.clone());
+            rows
+        }
+    };
+    rows.into_iter()
+        .map(|stack| {
+            let unit_slug = known_champion_unit_slug(champion, stack.slot_index).map_or_else(
+                || {
+                    content::load_unit(Id::from_key(stack.unit_id))?
+                        .map(|unit| unit.slug)
+                        .ok_or_else(|| {
+                            public_error(
+                                "unit_not_found",
+                                "champion stack unit was not found",
+                                false,
+                            )
+                        })
+                },
+                Ok,
+            )?;
+            Ok(ChampionArmyStackRecord {
+                stack_id: stack.id().to_string(),
+                session_id: Id::<GameSession>::from_key(stack.session_id).to_string(),
+                champion_id: champion_id.to_string(),
+                unit_slug,
+                slot_index: stack.slot_index,
+                quantity: stack.quantity,
+                front_hp: stack.front_hp,
+                status: stack.status,
+                last_command_id: stack.last_command_id.map(|id| {
+                    Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
+                }),
+            })
         })
-    })
-    .collect()
+        .collect()
 }
 
 fn known_champion_unit_slug(champion: &Champion, slot_index: u8) -> Option<String> {
@@ -418,7 +465,11 @@ fn equipped_artifacts(champion_id: Id<Champion>) -> Result<Vec<ArtifactView>, Ap
     Ok(artifacts)
 }
 
-fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiError> {
+fn learned_spell_slugs(champion: &Champion) -> Result<Vec<String>, ApiError> {
+    if !champion.skill_keys.iter().any(|key| key == "sour_sorcery") {
+        return Ok(Vec::new());
+    }
+    let champion_id = champion.id();
     let page =
         champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?;
     let mut slugs = Vec::new();

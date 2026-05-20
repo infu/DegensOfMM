@@ -421,7 +421,7 @@ fn remember_player_account(player: &PlayerAccount) {
     });
 }
 
-fn find_player_by_principal(
+pub(crate) fn find_player_by_principal(
     actor_principal: Principal,
 ) -> foundation::RepoResult<Option<PlayerAccount>> {
     if let Some(player) = cached_player_by_principal(actor_principal) {

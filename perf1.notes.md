@@ -5929,3 +5929,27 @@ Verification:
 Expected measurement:
 
 - `get_battle_state` should drop by roughly the same `~2.1B` query-auth floor removed from the other read endpoints when an active turn runtime has caller context.
+
+## Round-Robin Pivot: Match-History Player Cache
+
+New cluster:
+
+- Rotated from battle-state query auth to match history.
+- Current cost: `get_match_history` `1.4046B`.
+- The endpoint does not take a session id, so it cannot use `SessionTurnRuntime` caller context. It still pays a durable player principal lookup before paging match history.
+
+Cut:
+
+- Exposed the existing lobby/session `find_player_by_principal` helper as `pub(crate)`.
+- `get_match_history` now uses that helper, so a warm `PLAYER_PRINCIPAL_CACHE` from registration/lobby calls avoids `players.by_principal` and still falls back to durable lookup if cold.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- In the endpoint-surface route, the player cache should be warm from registration/session setup, so `get_match_history` should drop by roughly one durable principal lookup (`~0.70B`).
+- The remaining cost should be the bounded `history.by_player_finished_at` page and DTO assembly.

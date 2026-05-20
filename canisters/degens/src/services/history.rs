@@ -6,7 +6,9 @@ use icydb::{
     types::{Id, Principal},
 };
 
-use crate::repos::{aftermath_history, players};
+use crate::repos::aftermath_history;
+
+use super::account_lobby_session;
 
 pub(crate) fn get_match_history(
     caller: CandidPrincipal,
@@ -20,13 +22,14 @@ pub(crate) fn get_match_history(
             false,
         ));
     }
-    let player = players::find_by_principal(Principal::from(caller))?.ok_or_else(|| {
-        ApiError::new(
-            "player_not_registered",
-            "caller does not have a registered player",
-            false,
-        )
-    })?;
+    let player = account_lobby_session::find_player_by_principal(Principal::from(caller))?
+        .ok_or_else(|| {
+            ApiError::new(
+                "player_not_registered",
+                "caller does not have a registered player",
+                false,
+            )
+        })?;
     let limit = crate::repos::foundation::validate_list_limit(limit)?;
     let fetch_limit = cursor.saturating_add(limit).min(domm_game::MAX_LIST_LIMIT);
     let page = aftermath_history::page_match_history(player.id(), fetch_limit, None)?;

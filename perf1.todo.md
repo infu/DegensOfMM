@@ -695,7 +695,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `require_session_caller_runtime_first` before checking the battle runtime so the endpoint avoids the old durable caller/session/participant lookup when active runtime context is available.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `get_battle_state` drops the same `~2.1B` query-auth floor as the other runtime-first query endpoints.
-- [ ] Rotate again before another battle-only optimization.
+- [x] Rotate again before another battle-only optimization. Picked match-history query cache reuse because `get_match_history` remains `1.4046B` and still pays a player principal lookup before the history page.
+
+### 21. Round-Robin Endpoint Cluster: Match-History Player Cache
+
+- [x] Rotate to `get_match_history` after the battle-state query-auth cut.
+- [x] Expose the existing lobby/session `find_player_by_principal` helper as `pub(crate)` so history can reuse the heap `PLAYER_PRINCIPAL_CACHE` populated by registration/lobby calls.
+- [x] Route `get_match_history` through that cached helper before falling back to the durable `players.by_principal` lookup.
+- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `get_match_history` drops the durable player principal lookup floor when the player cache is warm.
+- [ ] Rotate again before deeper history-only changes.
 
 ## Expected Outcome
 

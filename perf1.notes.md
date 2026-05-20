@@ -4686,3 +4686,21 @@ Decision:
 
 - Keep this checkpoint. A registered player row is stable enough to use as an active-process identity cache, and all callers still fall back to durable lookup on cache miss.
 - This drops the lobby setup route below `10B` total. The next large costs are durable row boundaries rather than repeated lookup reads: player creates, session/participant creates, session updates, setup command create, setup/battle job creates, visibility/object projection writes, and the battle header create.
+
+## Rejected Experiment: Heap-Only Starting Session
+
+Tried moving the `lobby -> starting` `GameSession` update out of `start_session` and letting the setup job read the starting session from the heap cache before the final active-state durable update.
+
+Measured run:
+
+- Focused Gate J `20260520-heap-starting-session-gate-j` passed in `180.80s`
+- Scenario instructions improved `9.0628B -> 8.5842B` (-5.3%)
+- `start_session` improved `1.4372B -> 0.9601B` (-33.2%)
+- `sessions.update_session` route calls moved `2 -> 1`
+- Scenario cycles regressed `0.0583T -> 0.1232T` (+111.3%)
+- The extra measured cycles appeared on a `get_session` poll where setup/timer work was charged: sequence 20 recorded `65.3891B` cycles and `142.7 MB` memory growth.
+
+Decision:
+
+- Do not keep this code change. A small instruction win is not worth a large cycle regression and muddier timer attribution.
+- Revisit this only as part of Gate 5H when setup jobs become explicit runtime wakeup hints with a real flush/recovery barrier, not as an isolated skipped session update.

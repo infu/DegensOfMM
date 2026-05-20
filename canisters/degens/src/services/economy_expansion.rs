@@ -421,7 +421,7 @@ fn apply_hire_command(
         Some(id) => champions_artifacts::load_champion(Id::<Champion>::from_key(id))?
             .ok_or_else(|| public_error("champion_not_found", "hired champion missing", true))?,
         None => {
-            let mut champion = champions_artifacts::create_champion(
+            let champion = champions_artifacts::create_champion(
                 context.session.id(),
                 context.participant.id(),
                 Id::from_key(offer.champion_class_id),
@@ -449,8 +449,6 @@ fn apply_hire_command(
                 5,
                 0,
             )?;
-            champion.last_command_id = Some(command.id().key());
-            let champion = champions_artifacts::update_champion(champion)?;
             session_turn_runtime::mirror_champion_update(&champion);
             champion
         }
@@ -1160,7 +1158,7 @@ fn recruit_to_champion(
 
 fn ensure_champion_occupancy(
     session_id: Id<GameSession>,
-    command_id: Id<GameCommand>,
+    _command_id: Id<GameCommand>,
     champion: &Champion,
 ) -> Result<(), ApiError> {
     let occupant_id = champion.id().to_string();
@@ -1174,7 +1172,7 @@ fn ensure_champion_occupancy(
     {
         return Ok(());
     }
-    let mut occupancy = map_visibility_occupancy::create_occupancy_cell(
+    map_visibility_occupancy::create_occupancy_cell(
         session_id,
         champion.x,
         champion.y,
@@ -1186,8 +1184,6 @@ fn ensure_champion_occupancy(
         0,
         true,
     )?;
-    occupancy.last_command_id = Some(command_id.key());
-    map_visibility_occupancy::update_occupancy_cell(occupancy)?;
     Ok(())
 }
 

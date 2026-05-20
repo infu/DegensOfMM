@@ -6034,3 +6034,26 @@ Expected measurement:
 - `sync_world_generation` should save about `0.7B` from the effect absence read.
 - Objective sync commands should save about `0.95B` in the current unchanged-objective route.
 - Remaining costs after this cut will still include durable command create/idempotency/update, event/effect create, session update for event seq, and the scenario row scans/updates themselves.
+
+## Round-Robin Pivot: Tavern Hire Metadata Writes
+
+New cluster:
+
+- Rotated from scenario/worldgen to `hire_tavern_champion`.
+- Current cost: `12.1146B`.
+- The latest trace shows `champions.create_champion` followed by `champions.update_champion`, and `map.create_occupancy_cell` followed by `map.update_occupancy_cell`. Both updates only stamp `last_command_id` after a fresh create.
+
+Cut:
+
+- Freshly created hired champions are no longer immediately updated only to set `last_command_id`; the `ChampionHire` row and command receipt already provide the command link.
+- Freshly created champion occupancy cells are no longer immediately updated only to set `last_command_id`; the occupancy create remains durable and authoritative.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- `hire_tavern_champion` should drop `champions.update_champion` and `map.update_occupancy_cell`, about `0.96B` combined in the current route.

@@ -719,7 +719,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Stop rewriting existing objective progress rows during objective sync when owner/progress/status/score fields are unchanged and only `last_command_id` would move. The touched count still reports scanned objectives.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify the targeted scenario/worldgen traces drop fresh `effects.command_effect_by_command_key` and `events.by_session_event_key` absence reads plus unchanged `scenario.update_objective_progress` writes. Expected savings are about `1.4B` for scenario commands that emit both event/effect, about `0.7B` for `sync_world_generation`, and about `0.95B` for objective sync commands in the current unchanged-objective route.
-- [ ] Rotate again before deeper scenario/worldgen-only changes.
+- [x] Rotate again before deeper scenario/worldgen-only changes. Picked tavern hire metadata-only writes because the trace still shows `champions.update_champion` and `map.update_occupancy_cell` immediately after fresh creates.
+
+### 24. Round-Robin Endpoint Cluster: Tavern Hire Metadata Writes
+
+- [x] Rotate to `hire_tavern_champion` after the scenario/worldgen cuts.
+- [x] Stop updating a freshly created hired champion solely to stamp `last_command_id`; the durable `ChampionHire` command row already links the command to the new champion.
+- [x] Stop updating a freshly created champion occupancy cell solely to stamp `last_command_id`; the occupancy create remains durable and authoritative.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `hire_tavern_champion` drops `champions.update_champion` and `map.update_occupancy_cell`. Expected savings are about `0.96B` on the current route.
+- [ ] Rotate again before deeper tavern/economy-only changes.
 
 ## Expected Outcome
 

@@ -6308,3 +6308,49 @@ Expected measurement:
 
 - Champion magic update endpoints should drop the durable active-caller lookup floor when active turn runtime context is available.
 - Any remaining multi-billion cost after that should be command/idempotency writes, champion/spell row writes, event/effect creation, or spell definition/spellbook lookups.
+
+## Measurement: Runtime-Context Rotations
+
+Artifact:
+
+- `target/benchmarks/20260520-runtime-context-rotations-d1765d7`
+- Git: `d1765d7`.
+- Endpoint-surface passed in `184.63s`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `150`.
+- Stable pages: `2049 -> 81281`.
+- The absolute query log path worked; generated summaries include query instruction values.
+
+Scenario delta versus `20260520-random-rotations-43ccf1f`:
+
+- `113.5880B -> 95.9404B`, `-17.6476B`, `-15.5%`.
+
+Targeted endpoint deltas:
+
+- `sync_advanced_victory`: `12.2543B -> 5.4449B`, `-6.8094B`, `-55.6%`.
+- `sync_objectives`: `8.0271B -> 4.0345B`, `-3.9925B`, `-49.7%`.
+- `accept_quest`: `6.3948B -> 3.7947B`, `-2.6001B`, `-40.7%`.
+- `cast_adventure_spell`: `7.0985B -> 4.5114B`, `-2.5871B`, `-36.4%`.
+- `select_champion_level_up`: `5.6901B -> 3.1065B`, `-2.5836B`, `-45.4%`.
+- `sync_world_events`: `5.9111B -> 3.3316B`, `-2.5795B`, `-43.6%`.
+- `learn_champion_spell`: `8.2591B -> 5.6836B`, `-2.5754B`, `-31.2%`.
+- `claim_quest_reward`: `9.2372B -> 7.3452B`, `-1.8920B`, `-20.5%`.
+- `hire_tavern_champion`: `11.1497B -> 10.1886B`, `-0.9612B`, `-8.6%`.
+- `submit_dwelling_recruit`: `11.1059B -> 10.1479B`, `-0.9580B`, `-8.6%`.
+- `submit_market_trade`: `9.2251B -> 8.2701B`, `-0.9550B`, `-10.4%`.
+
+Repo-op confirmation:
+
+- `sessions.update_session`: `12` calls / `5.7216B -> 0`.
+- `sessions.update_participant`: `4` calls / `1.9207B -> 1` call / `0.4798B`.
+- `sessions.load_session`: `15` calls / `10.5423B -> 7` calls / `4.9236B`.
+- `sessions.participants_by_session_status`: `2` calls / `0.7045B -> 0`.
+- `scenario.objectives_by_status`: `4` calls / `1.4076B -> 0`.
+- `scenario.quests_by_participant_status`: `4` calls / `1.4110B -> 0`.
+- `scenario.quests_by_session_key` is now present at `4` calls / `1.4076B`; this replaces the old participant-by-participant quest sweep with a direct self-healing quest-key count.
+
+Next target:
+
+- Rotate to economy update runtime-first auth for `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade`.
+- This should remove the same active-caller durable floor from the current top three endpoints before any deeper economy/town aggregate work.

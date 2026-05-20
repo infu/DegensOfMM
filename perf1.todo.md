@@ -769,7 +769,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep the durable `sessions.update_participant` fallback when no current active runtime exists, preserving cold/recovery paths.
 - [x] Keep durable resource ledger rows unchanged so replay/recovery idempotency still has an authoritative command ledger.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `sessions.update_participant` drops by up to three calls in the endpoint-surface route. Expected savings are about `0.48B` each on `hire_tavern_champion`, `submit_market_trade`, and `submit_dwelling_recruit`.
+- [x] Measure in the next batched run and verify `sessions.update_participant` drops by up to three calls in the endpoint-surface route. Artifact `target/benchmarks/20260520-runtime-context-rotations-d1765d7` moved `sessions.update_participant` from `4` calls / `1.9207B` to `1` call / `0.4798B`; `hire_tavern_champion` moved `11.1497B -> 10.1886B`, `submit_market_trade` `9.2251B -> 8.2701B`, and `submit_dwelling_recruit` `11.1059B -> 10.1479B`.
 - [x] Rotate again before deeper economy-only changes. Randomly picked runtime event-seq allocation from the remaining subagent proposals.
 
 ### 30. Random Cross-Cut: Runtime Event Sequence Allocation
@@ -779,7 +779,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Make public event creation consume that runtime-reserved sequence first, falling back to the old durable `sessions.update_session` path when no active runtime sequence is available.
 - [x] Preserve durable `GameEvent` creation; this cut only removes the per-event session sequence write when the active runtime already owns a reserved block.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `sessions.update_session` drops from public event paths. Expected savings are about `0.48B` on each fresh public-event command while preserving event sequence uniqueness.
+- [x] Measure in the next batched run and verify `sessions.update_session` drops from public event paths. Artifact `target/benchmarks/20260520-runtime-context-rotations-d1765d7` moved `sessions.update_session` from `12` calls / `5.7216B` to zero calls while preserving `59/59` endpoint coverage and row/event counts.
 - [x] Rotate again before deeper event/feed-only changes. Picked a scenario-progress update cluster now that runtime event sequence allocation makes runtime-first event-emitting commands safer.
 
 ### 31. Random Endpoint Cluster: Scenario Runtime-First And Objective Summary
@@ -790,7 +790,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Return an `ObjectiveSyncSummary` from objective sync and pass the just-computed completed-objective count into advanced-victory rule sync, avoiding a second objective status page sweep on that path.
 - [x] Preserve durable fallback behavior for cold runtimes, maintenance jobs, and direct rule-sync callers.
 - [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify scenario update endpoints drop durable caller/session/participant lookup floor plus `map.world_object_by_session_xy`/objective status re-page work where runtime snapshots are present.
+- [x] Measure in the next batched run and verify scenario update endpoints drop durable caller/session/participant lookup floor plus `map.world_object_by_session_xy`/objective status re-page work where runtime snapshots are present. Artifact `target/benchmarks/20260520-runtime-context-rotations-d1765d7` moved `accept_quest` `6.3948B -> 3.7947B`, `claim_quest_reward` `9.2372B -> 7.3452B`, `sync_objectives` `8.0271B -> 4.0345B`, `sync_world_events` `5.9111B -> 3.3316B`, and `sync_advanced_victory` `12.2543B -> 5.4449B`. `scenario.objectives_by_status` and `scenario.quests_by_participant_status` disappeared from repo ops; `scenario.quests_by_session_key` replaced the old participant quest sweep.
 - [x] Rotate again before deeper scenario-only changes unless the next benchmark shows this same shared auth/objective floor still dominates several endpoints. Picked champion magic update auth because the runtime-event-seq prerequisite is now in place and this hits three still-heavy endpoints.
 
 ### 32. Random Endpoint Cluster: Champion Magic Runtime-First Updates
@@ -800,8 +800,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Keep the existing runtime champion snapshot ownership check and durable fallback after caller context resolution.
 - [x] Preserve existing durable command, champion/spell row, event, and effect writes; this cut only removes the durable active-caller floor when an active runtime has the caller context.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify the champion magic update endpoints drop the old caller/session/participant lookup floor while keeping event sequence uniqueness.
-- [ ] Rotate again before deeper champion-only changes unless the next benchmark shows this auth floor remains shared across several update clusters.
+- [x] Measure in the next batched run and verify the champion magic update endpoints drop the old caller/session/participant lookup floor while keeping event sequence uniqueness. Artifact `target/benchmarks/20260520-runtime-context-rotations-d1765d7` moved `select_champion_level_up` `5.6901B -> 3.1065B`, `learn_champion_spell` `8.2591B -> 5.6836B`, and `cast_adventure_spell` `7.0985B -> 4.5114B`.
+- [x] Rotate again before deeper champion-only changes unless the next benchmark shows this auth floor remains shared across several update clusters. Pick economy update auth next because the same runtime-first caller-context floor is still visible in the three highest remaining endpoints.
+
+### 33. Batched Runtime-Context Rotation Measurement
+
+- [x] Run endpoint-surface after economy participant mirroring, runtime event-seq allocation, scenario runtime-first/objective-summary, and champion magic runtime-first update cuts. Artifact `target/benchmarks/20260520-runtime-context-rotations-d1765d7` passed in `184.63s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `113.5880B -> 95.9404B` (`-17.6476B`, `-15.5%`) versus `20260520-random-rotations-43ccf1f`.
+- [x] Confirm query instruction logging worked with the absolute `DOMM_BENCH_QUERY_LOG_PATH`; generated summary includes query instruction values instead of the previous `n/a` query artifact issue.
+- [x] Confirm the largest removed repo operations: `sessions.update_session` (`12 -> 0` calls), `sessions.update_participant` (`4 -> 1` calls), `sessions.load_session` (`15 -> 7` calls), `sessions.participants_by_session_status` (`2 -> 0` calls), `scenario.objectives_by_status` (`4 -> 0` calls), and `scenario.quests_by_participant_status` (`4 -> 0` calls).
+- [x] Pick the next rotated target from the new heavy list rather than continuing champion-only work. Next target: economy update runtime-first auth for `hire_tavern_champion`, `submit_dwelling_recruit`, and `submit_market_trade`, then rotate again before deeper economy aggregate work.
 
 ## Expected Outcome
 

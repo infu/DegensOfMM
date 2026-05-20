@@ -149,6 +149,14 @@ pub(crate) fn runtime_lobby_command_by_idempotency(
     })
 }
 
+fn runtime_lobby_actor_present(actor_principal: Principal) -> bool {
+    RUNTIME_LOBBY_COMMANDS.with_borrow(|commands| {
+        commands
+            .iter()
+            .any(|command| command.actor_principal == actor_principal)
+    })
+}
+
 fn remember_runtime_lobby_command(command: &LobbyCommand) {
     RUNTIME_LOBBY_COMMANDS.with_borrow_mut(|commands| {
         commands.retain(|existing| {
@@ -960,28 +968,33 @@ fn begin_lobby_command(
         return response_from_lobby_command(existing, client_nonce_text)
             .map(LobbyCommandAction::Return);
     }
-    if let Some(existing) =
-        commands_events_effects::find_lobby_command_by_idempotency(actor_principal, client_nonce)?
-    {
-        if existing.payload_hash != hash {
-            return Ok(LobbyCommandAction::Return(failed_lobby_response(
-                actor_principal,
-                command_type,
-                client_nonce_text,
-                hash,
-                public_error(
-                    "duplicate_nonce_payload_mismatch",
-                    format!("client nonce {client_nonce_text} was reused with a different payload"),
-                    false,
-                ),
-                0,
-            )));
+    if !runtime_lobby_actor_present(actor_principal) {
+        if let Some(existing) = commands_events_effects::find_lobby_command_by_idempotency(
+            actor_principal,
+            client_nonce,
+        )? {
+            if existing.payload_hash != hash {
+                return Ok(LobbyCommandAction::Return(failed_lobby_response(
+                    actor_principal,
+                    command_type,
+                    client_nonce_text,
+                    hash,
+                    public_error(
+                        "duplicate_nonce_payload_mismatch",
+                        format!(
+                            "client nonce {client_nonce_text} was reused with a different payload"
+                        ),
+                        false,
+                    ),
+                    0,
+                )));
+            }
+            if matches!(existing.status.as_str(), "pending" | "applying") {
+                return Ok(LobbyCommandAction::Apply(existing));
+            }
+            return response_from_lobby_command(existing, client_nonce_text)
+                .map(LobbyCommandAction::Return);
         }
-        if matches!(existing.status.as_str(), "pending" | "applying") {
-            return Ok(LobbyCommandAction::Apply(existing));
-        }
-        return response_from_lobby_command(existing, client_nonce_text)
-            .map(LobbyCommandAction::Return);
     }
 
     let command = runtime_lobby_command(

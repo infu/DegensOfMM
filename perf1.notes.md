@@ -4302,3 +4302,43 @@ Decision:
 
 - Keep this checkpoint. It is a small but clean setup win, and the negative-only shape avoids stale positive active-session decisions.
 - The next big setup floor is now `commands.lobby_command_idempotency` at about `4.924B`, followed by session load/update/state scans.
+
+## Checkpoint: Runtime Actor Lobby Idempotency Skip
+
+After the negative player live-session cache, the biggest remaining setup floor was still `commands.lobby_command_idempotency`: 7 durable absence probes, `4.9244B` total. We already keep fresh lobby receipts in heap, so after an actor has a runtime receipt in this process, the heap receipt cache can act as the immediate nonce authority for later fresh lobby commands.
+
+What changed:
+
+- Added a helper to detect whether an actor already has any runtime lobby receipt.
+- `begin_lobby_command` still checks runtime receipts by `(actor, nonce)` first.
+- If the actor has no runtime lobby receipt yet, it still checks durable `LobbyCommand` idempotency rows for old persisted receipts.
+- If the actor already has a runtime lobby receipt, fresh commands skip the durable absence probe and create a new heap receipt directly.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfb2c1`
+- Focused Gate J `20260520-lobby-idempotency-skip-gate-j` passed in `182.01s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-player-no-live-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 36.3147B | 32.8175B | -9.6% |
+| Gate J scenario memory | 4108.3125 MB | 4108.2500 MB | flat |
+| `create_session` avg | 9.6384B | 8.9368B | -7.3% |
+| `join_session` avg | 4.2439B | 3.5380B | -16.6% |
+| `mark_ready` avg | 4.2460B | 3.5496B | -16.4% |
+| `start_session` avg | 6.3575B | 5.6609B | -11.0% |
+| `commands.lobby_command_idempotency` total | 4.9244B | 1.4096B | -71.4% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66689 | 66689 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes five durable absence probes from the measured setup route while still allowing durable fallback before an actor enters the runtime-receipt path.
+- This is another reason Gate 5H must define receipt durability/history clearly: within a process, heap receipts are now the fresh lobby nonce authority after the actor's first runtime lobby command.

@@ -2,7 +2,6 @@
 
 use domm_degens_schema::schema::{Battle, GameCommand, GameSession, SystemJob};
 use icydb::{
-    Create,
     db::query::FieldRef,
     types::{Id, Timestamp},
 };
@@ -69,24 +68,25 @@ pub(crate) struct SystemJobDraft {
 }
 
 pub(crate) fn create_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> {
-    let input: Create<SystemJob> = Create::<SystemJob> {
-        job_key: Some(draft.job_key),
-        job_kind: Some(draft.job_kind),
-        session_id: Some(draft.session_id.key()),
-        battle_id: Some(draft.battle_id.map(|id| id.key())),
-        turn_number: Some(draft.turn_number),
-        due_at: Some(draft.due_at),
-        status: Some(STATUS_SCHEDULED.to_string()),
-        lease_owner: Some(None),
-        lease_expires_at: Some(None),
-        attempt_count: Some(0),
-        generation: Some(0),
-        command_id: Some(draft.command_id.map(|id| id.key())),
-        cursor_json: Some(draft.cursor_json),
-        last_error: Some(None),
+    let job = SystemJob {
+        job_key: draft.job_key,
+        job_kind: draft.job_kind,
+        session_id: draft.session_id.key(),
+        battle_id: draft.battle_id.map(|id| id.key()),
+        turn_number: draft.turn_number,
+        due_at: draft.due_at,
+        status: STATUS_SCHEDULED.to_string(),
+        lease_owner: None,
+        lease_expires_at: None,
+        attempt_count: 0,
+        generation: 0,
+        command_id: draft.command_id.map(|id| id.key()),
+        cursor_json: draft.cursor_json,
+        last_error: None,
+        ..Default::default()
     };
 
-    foundation::create("system_jobs.create_system_job", input)
+    foundation::insert("system_jobs.create_system_job", job)
 }
 
 pub(crate) fn upsert_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> {

@@ -5165,3 +5165,23 @@ Verification:
 Decision:
 
 - Keep it. This resolves the previous code-section blocker by making the battle archive flush production-only while preserving the benchmark build as the fast-route measurement target.
+
+## Checkpoint: Direct SystemJob Inserts
+
+Gate 7 setup/job floor slice:
+
+- Latest focused Gate J artifact before this checkpoint is `20260520-runtime-visibility-known-projection-bounded-gate-j`.
+- That route is down to `6.6772B` scenario instructions, and the largest remaining repo-operation groups are durable row creates/updates: player accounts, session, participants, session updates, setup command, battle row, and two `SystemJob` creates.
+- Changed `system_jobs::create_system_job` from generated `Create<SystemJob>` input materialization to constructing the typed `SystemJob` row directly and calling `foundation::insert`.
+- This mirrors the already-kept direct insert pattern for `PlayerAccount`, `GameSession`, and `GameParticipant`.
+- Semantics stay the same: durable job rows are still created, indexed, and scheduled; this is a row construction overhead cut, not heap-job scheduling.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep it. It is a small low-risk cut against the remaining job floor before taking on larger heap-first setup/timer work.

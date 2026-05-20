@@ -584,6 +584,11 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Gate 6.13: broaden town public-id resolution beyond first-playable start keys by centralizing town resolution in `town_runtime::load_town_by_public_id`. It now supports cached/durable ULIDs, first-playable start keys, cached name aliases, and bounded durable fallback for `town:<slugified Town.name>` aliases such as `town:west-woe`, hydrating `TownProjection` on durable misses. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `cargo check -p domm-degens-canister --features benchmark`.
 - [x] Drive the remaining safe-guard town command floor from `1.4111B`/`0.7062B` into the `0.3B-0.6B` target range, or free enough code-size headroom for a safe runtime-open guard that avoids the two `system_jobs.by_session_status_due` scans. Completed by Gate 6.5 and Gate 6.6: focused Gate J `20260520-seed-content-cache-gate-j` measures both `submit_build_town_structure` and `submit_recruit_units` at `0.0003B` in the first-playable route.
 
+### 10. Gate 7: Remaining Setup And Job Floor
+
+- [ ] Gate 7: reduce the remaining Gate J durable setup/job floor. Latest focused artifact `20260520-runtime-visibility-known-projection-bounded-gate-j` measures `6.6772B` scenario instructions with the largest repo-operation costs now coming from durable player/session/participant creates, two session updates, one setup command create, one battle create, and two `SystemJob` creates.
+- [x] Gate 7.1: use a direct typed `SystemJob` insert for known-new job creation instead of generated `Create<SystemJob>` materialization. This targets the two remaining `system_jobs.create_system_job` calls in Gate J while preserving durable timer/job semantics. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

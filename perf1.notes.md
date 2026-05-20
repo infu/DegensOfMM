@@ -3808,3 +3808,28 @@ Decision:
 
 - Keep the checkpoint. It is a small but clean projection-cache win, with no row growth or stable-memory change and enough code-size headroom to install.
 - Do not broaden this into a general content row cache until more code-size headroom exists. The next useful query targets remain `get_visible_map_chunks`, `get_visible_objects`, `get_events_after`, and the remaining `get_champion_view` banner equipment read.
+
+## Rejected Next Attempt: Public Durable Event Cache Exceeded Wasm Limit
+
+Tried a bounded public `GameEvent` cache in `commands_events_effects` so `get_events_after(session, "public", 0, ...)` could reuse public durable events created during the current session instead of scanning the IcyDB event feed on every query.
+
+Correctness shape tested:
+
+- Cache only public events.
+- Populate from `create_game_event`.
+- Answer only when the cache has seen the session feed from `event_seq == 1`.
+- Disable the cache for the session on overflow so partial feeds fall back to IcyDB.
+- Keep participant/private audiences on the durable fallback.
+
+Result:
+
+- `cargo fmt --check` passed.
+- `cargo check -p domm-degens-canister --features benchmark` passed.
+- `cargo check -p domm-degens-canister` passed.
+- Benchmark Wasm code section became `0x00c00a0e`, about `2.6 KB` over the IC code-section ceiling.
+- The change was reverted before benchmark.
+
+Decision:
+
+- Do not retry the repo-level `Vec<GameEvent>` cache shape without freeing at least several KB of code size.
+- If we revisit `get_events_after`, prefer a smaller session-runtime event-feed projection or a broader code-size cleanup first.

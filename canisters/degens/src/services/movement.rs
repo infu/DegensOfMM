@@ -244,6 +244,8 @@ pub(crate) fn submit_move_intent(
                 client_nonce_text: client_nonce,
                 client_nonce: client_nonce_u64,
                 payload_hash: command_payload_hash,
+                #[cfg(not(feature = "benchmark"))]
+                payload_json: None,
                 response: response.clone(),
             });
             Ok(response)
@@ -873,6 +875,8 @@ fn remember_runtime_sync_receipt(
         client_nonce_text,
         client_nonce,
         payload_hash,
+        #[cfg(not(feature = "benchmark"))]
+        payload_json: None,
         response,
     };
     let inserted = session_turn_runtime::with_runtime_mut(

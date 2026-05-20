@@ -16,7 +16,10 @@ use domm_degens_schema::schema::{
 };
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 #[cfg(not(feature = "benchmark"))]
-use icydb::{traits::EntityKey, types::Ulid};
+use icydb::{
+    traits::EntityKey,
+    types::{Timestamp, Ulid},
+};
 use icydb::{traits::EntityValue, types::Id};
 
 #[cfg(not(feature = "benchmark"))]
@@ -341,6 +344,8 @@ pub(crate) struct SessionTurnCommandReceipt {
     pub client_nonce_text: String,
     pub client_nonce: u64,
     pub payload_hash: String,
+    #[cfg(not(feature = "benchmark"))]
+    pub payload_json: Option<String>,
     pub response: CommandResponse,
 }
 
@@ -1172,6 +1177,11 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             sessions::update_participant(participant)?;
             flushed = flushed.saturating_add(1);
         }
+        for receipt in &runtime.command_receipts {
+            if flush_runtime_command_receipt(runtime, receipt)? {
+                flushed = flushed.saturating_add(1);
+            }
+        }
     }
     for runtime in &runtimes {
         for runtime_event in runtime
@@ -1191,6 +1201,61 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
         }
     });
     Ok(flushed)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_command_receipt(
+    runtime: &SessionTurnRuntime,
+    receipt: &SessionTurnCommandReceipt,
+) -> Result<bool, ApiError> {
+    let Some(payload_json) = receipt.payload_json.clone() else {
+        return Ok(false);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let command_id = parse_ulid_id::<GameCommand>(&receipt.command_id)?;
+    let actor_participant_id = parse_ulid_id::<GameParticipant>(&receipt.actor_participant_id)?;
+    if commands_events_effects::load_game_command(command_id)?.is_some()
+        || commands_events_effects::find_game_command_by_idempotency(
+            session_id,
+            "participant",
+            &receipt.actor_participant_id,
+            receipt.client_nonce,
+        )?
+        .is_some()
+    {
+        return Ok(false);
+    }
+    let now = Timestamp::now();
+    let error = receipt.response.error.clone();
+    let command = GameCommand {
+        id: command_id.key(),
+        session_id: session_id.key(),
+        actor_kind: "participant".to_string(),
+        actor_id_text: receipt.actor_participant_id.clone(),
+        actor_player_id: None,
+        actor_participant_id: Some(actor_participant_id.key()),
+        champion_id: None,
+        turn_number: runtime.turn_number,
+        client_nonce: receipt.client_nonce,
+        command_type: receipt.command_type.clone(),
+        status: receipt.response.status.as_str().to_string(),
+        phase: receipt.response.phase.as_str().to_string(),
+        payload_hash: receipt.payload_hash.clone(),
+        payload_json,
+        result_json: Some(format!(
+            r#"{{"runtime_flushed":true,"command_id":"{}"}}"#,
+            receipt.command_id
+        )),
+        error_code: error.as_ref().map(|error| error.code.clone()),
+        error_message: error.as_ref().map(|error| error.message.clone()),
+        error_details_json: error.and_then(|error| error.details_json),
+        retryable: receipt.response.retryable,
+        applied_at: (receipt.response.status == domm_game::CommandStatus::Applied).then_some(now),
+        failed_at: receipt.response.error.as_ref().map(|_| now),
+        ..Default::default()
+    };
+    commands_events_effects::insert_game_command(command)?;
+    Ok(true)
 }
 
 #[cfg(not(feature = "benchmark"))]

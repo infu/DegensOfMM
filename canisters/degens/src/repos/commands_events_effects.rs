@@ -96,6 +96,10 @@ pub(crate) fn load_game_command(id: Id<GameCommand>) -> RepoResult<Option<GameCo
     foundation::load_by_id("commands.load_game_command", id)
 }
 
+pub(crate) fn insert_game_command(command: GameCommand) -> RepoResult<GameCommand> {
+    foundation::insert("commands.insert_game_command", command)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn create_game_command(
     session_id: Id<GameSession>,

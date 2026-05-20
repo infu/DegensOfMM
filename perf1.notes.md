@@ -4852,3 +4852,22 @@ Verification:
 Decision:
 
 - Keep it. This closes the explicit runtime lobby receipt item for the `Upgrade` path, while the broader Gate 5H work for `StrongRead`, `RuntimeEviction`, `TurnAdvance`, command receipts, and resource ledger flushing remains open.
+
+## Checkpoint: Runtime Town Command Upgrade Flush
+
+Gate 5H town command receipt slice:
+
+- Non-benchmark `SessionTurnCommandReceipt` now keeps optional payload JSON.
+- Runtime town commands populate that payload; movement and sync receipts leave it empty for now.
+- The `Upgrade` flush inserts a durable `GameCommand` row for runtime receipts with payload JSON when neither the command id nor the participant nonce already exists durably.
+- The durable row preserves command id, command type, actor participant, nonce, payload hash/json, status, phase, retryable flag, and error fields. Result JSON is a small runtime-flush marker rather than a full replay payload.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it as the town command half of the upgrade flush. Resource ledger history and movement/sync runtime receipts remain open because they need more payload/state than the current generic receipt holds.

@@ -5559,3 +5559,30 @@ Decision:
 
 - Reverted the code changes and kept only this note/todo update.
 - Next Gate 7 work should target a tiny active-battle timeout runtime wakeup or add narrowly scoped job-key attribution for seq72 before attempting another cut.
+
+## Checkpoint: Gate 7 System Job Attribution
+
+Gate 7.15.1 attribution slice:
+
+- Added benchmark-only operation labels for `SystemJob` creation so Gate J can distinguish active battle timeout job creation from other system-job inserts without changing the benchmark harness.
+- To stay under the IC benchmark Wasm code-section limit, the labels are intentionally short: `sj.bt` for `battle_timeout`, `sj.other` for non-battle-timeout job creates.
+- Benchmark Wasm code section fit at `0x00bfffe6`, 26 bytes under the limit.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-180501-gate7-system-job-attribution-gate-j` passed in `56.71s`.
+
+Gate J measurement:
+
+- Route shape stayed accepted: `87` calls, `row_commands=5`, `row_events=3`, `row_growth=35`, stable pages `2049 -> 65665`, and `battles.create_battle` remained present.
+- Scenario stayed at the accepted baseline: `3.8788B`.
+- Seq18 `start_session` measured `sj.other` at `0.4778B`, which is the setup-session job create.
+- Seq72 `sync_session_turn` measured `sj.bt` at `0.4789B`, proving the remaining late system-job create is the active battle timeout job.
+
+Decision:
+
+- Keep the attribution labels for benchmark builds. They are cheap enough to fit and prevent more blind edits.
+- Gate 7.15 should now cut `battle_timeout` scheduling specifically: active battle runtime should own the live timeout wakeup, with durable timeout job projection/flushing at battle resolution or upgrade/recovery boundaries.

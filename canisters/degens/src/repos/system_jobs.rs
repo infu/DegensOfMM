@@ -82,6 +82,10 @@ pub(crate) struct SystemJobDraft {
 }
 
 pub(crate) fn create_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> {
+    #[cfg(feature = "benchmark")]
+    let operation = create_system_job_operation(&draft.job_kind);
+    #[cfg(not(feature = "benchmark"))]
+    let operation = "system_jobs.create_system_job";
     let job = SystemJob {
         job_key: draft.job_key,
         job_kind: draft.job_kind,
@@ -100,9 +104,17 @@ pub(crate) fn create_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> 
         ..Default::default()
     };
 
-    let job = foundation::insert("system_jobs.create_system_job", job)?;
+    let job = foundation::insert(operation, job)?;
     remember_runtime_turn_closure_job(&job);
     Ok(job)
+}
+
+#[cfg(feature = "benchmark")]
+fn create_system_job_operation(job_kind: &str) -> &'static str {
+    match job_kind {
+        "battle_timeout" => "sj.bt",
+        _ => "sj.other",
+    }
 }
 
 pub(crate) fn upsert_system_job(draft: SystemJobDraft) -> RepoResult<SystemJob> {

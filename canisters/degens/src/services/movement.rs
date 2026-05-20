@@ -6,8 +6,8 @@ use std::{
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     Battle, BattleObstacle, BattleOccupancy, BattleStack, Champion, GameCommand, GameEvent,
-    GameParticipant, GameSession, MovementIntent, NeutralArmy, SystemJob, Town, UnitDefinition,
-    WorldObject,
+    GameParticipant, GameSession, MovementIntent, NeutralArmy, ParticipantKnownObject, SystemJob,
+    Town, UnitDefinition, WorldObject,
 };
 use domm_game::{
     ApiError, CommandPhase, CommandResponse, CommandResult, CommandStatus, MoveCoord,
@@ -3321,10 +3321,26 @@ fn refresh_champion_visibility(
 
     let participant_id = pending_move.participant.id();
     let mut updated_rows = 0_u32;
+    let mut durable_rows = 0_u32;
+    let use_projection_cache =
+        session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn);
     for ((chunk_x, chunk_y), tiles) in by_chunk {
-        let Some(mut visibility) =
+        let mut cache_hit = false;
+        let Some(mut visibility) = (if use_projection_cache {
+            if let Some(visibility) = render_projection::cached_visibility_chunk(
+                session.id(),
+                participant_id,
+                chunk_x,
+                chunk_y,
+            ) {
+                cache_hit = true;
+                Some(visibility)
+            } else {
+                map_visibility_occupancy::find_visibility_chunk(participant_id, chunk_x, chunk_y)?
+            }
+        } else {
             map_visibility_occupancy::find_visibility_chunk(participant_id, chunk_x, chunk_y)?
-        else {
+        }) else {
             continue;
         };
         let width = chunk_width(session, chunk_x);
@@ -3341,10 +3357,15 @@ fn refresh_champion_visibility(
         visibility.discovered_blob = Blob::from(discovered);
         visibility.visible_blob = Blob::from(visible);
         visibility.visible_turn = session.current_turn;
-        map_visibility_occupancy::update_visibility_chunk(visibility)?;
+        if cache_hit {
+            render_projection::remember_visibility_chunk(&visibility);
+        } else {
+            map_visibility_occupancy::update_visibility_chunk(visibility)?;
+            durable_rows = durable_rows.saturating_add(1);
+        }
         updated_rows = updated_rows.saturating_add(1);
     }
-    if updated_rows > 0 {
+    if durable_rows > 0 {
         render_projection::invalidate_visibility_chunks(session.id(), participant_id);
     }
 
@@ -3362,7 +3383,41 @@ fn create_known_object_if_missing(
     chunk_x: u16,
     chunk_y: u16,
     redacted_json: String,
+    persistence_mode: MovementPersistenceMode,
 ) -> Result<bool, ApiError> {
+    if persistence_mode == MovementPersistenceMode::RuntimeOnly
+        && render_projection::known_object_cache_loaded(session.id(), participant_id)
+    {
+        if render_projection::cached_known_object(
+            session.id(),
+            participant_id,
+            subject_kind,
+            subject_id_text,
+        )
+        .is_some()
+        {
+            return Ok(false);
+        }
+        let now = Timestamp::now();
+        let known_object = ParticipantKnownObject {
+            id: Ulid::generate(),
+            session_id: session.id().key(),
+            participant_id: participant_id.key(),
+            subject_kind: subject_kind.to_string(),
+            subject_id_text: subject_id_text.to_string(),
+            x,
+            y,
+            chunk_x,
+            chunk_y,
+            visibility: "visible".to_string(),
+            last_seen_turn: session.current_turn,
+            redacted_json: Some(redacted_json),
+            created_at: now,
+            updated_at: now,
+        };
+        render_projection::remember_known_object(&known_object);
+        return Ok(true);
+    }
     if map_visibility_occupancy::find_known_object(participant_id, subject_kind, subject_id_text)?
         .is_some()
     {
@@ -4225,6 +4280,7 @@ fn apply_world_object_at(
             object.chunk_x,
             object.chunk_y,
             known_redacted_json("world_object", &subject_id_text),
+            persistence_mode,
         )?;
     }
 

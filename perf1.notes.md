@@ -4748,3 +4748,41 @@ Decision:
 
 - Do not keep this code change. A small instruction win is not worth a large cycle regression and muddier timer attribution.
 - Revisit this only as part of Gate 5H when setup jobs become explicit runtime wakeup hints with a real flush/recovery barrier, not as an isolated skipped session update.
+
+## Checkpoint: Runtime Visibility And Known-Object Projection Writes
+
+Revisited the earlier rejected visibility/known-object write deferral with a smaller design that fit the benchmark Wasm limit.
+
+Implementation:
+
+- `render_projection` now exposes narrow heap helpers for cached `VisibilityChunk` and `ParticipantKnownObject` rows.
+- `refresh_champion_visibility` updates the heap visibility projection when an active `SessionTurnRuntime` exists and the cached row is present; it still falls back to durable `VisibilityChunk` reads/writes on cache miss.
+- `create_known_object_if_missing` appends newly discovered known objects to the heap known-object projection on runtime-mode movement when that participant cache is already loaded; non-runtime and cache-miss paths still use durable rows.
+- `get_object_view` checks the heap known-object cache before durable lookup so active runtime discoveries are not hidden from the API view.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc`: code section `0x00bfe14a`, about `7.8 KB` under the IC limit
+- Focused Gate J `20260520-runtime-visibility-known-projection-bounded-gate-j` passed in `315.43s`
+
+Measured delta versus `20260520-direct-insert-create-rows-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 9.0582B | 6.6772B | -26.3% |
+| Gate J scenario memory | 4012.0625 MB | 3980.0625 MB | -0.8% |
+| Gate J scenario cycles | 0.0583T | 0.0548T | -6.1% |
+| `sync_session_turn` avg | 0.3797B | 0.1440B | -62.1% |
+| `map.update_visibility_chunk` route calls | 1 | 0 | removed |
+| `map.create_known_object` route calls | 1 | 0 | removed |
+| row growth | 35 | 35 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes the last measured movement visibility/known-object durable projection writes from Gate J without broadening the canister enough to hit the IC code-section limit.
+- Gate 5D is complete for the measured route: movement resolver state now stays in runtime/projection caches unless a durable fallback is required.
+- The durability contract is still explicitly Gate 5H work. Visibility and known-object runtime projection must be included in `flush_barrier(StrongRead|Upgrade|RuntimeEviction)` instead of reintroducing hot-path stable writes.

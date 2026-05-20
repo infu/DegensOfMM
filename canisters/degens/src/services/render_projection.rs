@@ -78,6 +78,47 @@ pub(crate) fn remember_known_objects(rows: &[ParticipantKnownObject]) {
     });
 }
 
+pub(crate) fn remember_known_object(row: &ParticipantKnownObject) {
+    KNOWN_OBJECT_ROWS.with_borrow_mut(|cache| {
+        cache.push(row.clone());
+    });
+}
+
+pub(crate) fn known_object_cache_loaded(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+) -> bool {
+    let session_key = session_id.key();
+    let participant_key = participant_id.key();
+    KNOWN_OBJECT_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .any(|row| row.session_id == session_key && row.participant_id == participant_key)
+    })
+}
+
+pub(crate) fn cached_known_object(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    subject_kind: &str,
+    subject_id_text: &str,
+) -> Option<ParticipantKnownObject> {
+    let session_key = session_id.key();
+    let participant_key = participant_id.key();
+    KNOWN_OBJECT_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .rev()
+            .find(|row| {
+                row.session_id == session_key
+                    && row.participant_id == participant_key
+                    && row.subject_kind == subject_kind
+                    && row.subject_id_text == subject_id_text
+            })
+            .cloned()
+    })
+}
+
 pub(crate) fn remember_known_object_if_cached(
     session_id: Id<GameSession>,
     participant_id: Id<GameParticipant>,
@@ -114,6 +155,38 @@ pub(crate) fn remember_visibility_chunks(rows: &[VisibilityChunk]) {
     VISIBILITY_CHUNK_ROWS.with_borrow_mut(|cache| {
         cache.extend(rows.iter().cloned());
     });
+}
+
+pub(crate) fn remember_visibility_chunk(row: &VisibilityChunk) {
+    VISIBILITY_CHUNK_ROWS.with_borrow_mut(|cache| {
+        if let Some(existing) = cache.iter_mut().find(|existing| existing.id() == row.id()) {
+            *existing = row.clone();
+        } else {
+            cache.push(row.clone());
+        }
+    });
+}
+
+pub(crate) fn cached_visibility_chunk(
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    chunk_x: u16,
+    chunk_y: u16,
+) -> Option<VisibilityChunk> {
+    let session_key = session_id.key();
+    let participant_key = participant_id.key();
+    VISIBILITY_CHUNK_ROWS.with_borrow(|cache| {
+        cache
+            .iter()
+            .rev()
+            .find(|row| {
+                row.session_id == session_key
+                    && row.participant_id == participant_key
+                    && row.chunk_x == chunk_x
+                    && row.chunk_y == chunk_y
+            })
+            .cloned()
+    })
 }
 
 pub(crate) fn invalidate_visibility_chunks(
@@ -339,17 +412,34 @@ pub(crate) fn object_view_by_subject(
             false,
         ));
     }
-    let Some(known) = map_visibility_occupancy::find_known_object(
+    let known = if let Some(known) = cached_known_object(
+        context.session.id(),
         context.participant.id(),
         subject_kind,
         subject_id_text,
-    )?
-    else {
-        return Err(public_error(
-            "not_visible",
-            "object is not visible or known to this participant",
-            false,
-        ));
+    ) {
+        known
+    } else {
+        if known_object_cache_loaded(context.session.id(), context.participant.id()) {
+            return Err(public_error(
+                "not_visible",
+                "object is not visible or known to this participant",
+                false,
+            ));
+        }
+        let Some(known) = map_visibility_occupancy::find_known_object(
+            context.participant.id(),
+            subject_kind,
+            subject_id_text,
+        )?
+        else {
+            return Err(public_error(
+                "not_visible",
+                "object is not visible or known to this participant",
+                false,
+            ));
+        };
+        known
     };
     if known.visibility == "hidden" {
         return Err(public_error(

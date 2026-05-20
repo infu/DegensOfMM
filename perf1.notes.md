@@ -5397,3 +5397,20 @@ Verification:
 Decision:
 
 - Keep it. Runtime battle handoff must not leave direct durable champion reads behind heap state when a barrier has explicitly run.
+
+## Checkpoint: Gate 7 Registration/Recovery Benchmark
+
+Gate J measurement after insert-first registration and recovery fixes:
+
+- Focused Gate J `20260520-152224-gate7-registration-recovery-gate-j` passed in `199.82s`.
+- Scenario: `2 players; map 48x48; 3 movement paths; 0 battle actions; 2 town reads; 4 event reads; benchmark route`.
+- Scenario instructions improved versus `20260520-143448-gate7-direct-create-gate-j`: `6.6790B -> 5.3075B` (`-20.5%`).
+- Scenario memory stayed flat at `3980.0625 MB`; row growth stayed flat at `35`; cycles moved `0.0548T -> 0.0534T`.
+- `register_player` dropped from `1.1756B` avg to `0.4760B` avg (`-59.5%`) because the durable pre-read was removed for fresh principals.
+- `start_session` stayed flat (`1.4340B -> 1.4339B`), `sync_session_turn` stayed flat (`0.1439B -> 0.1438B`), and the tiny town command calls stayed around `0.0018B-0.0019B`.
+- Remaining measured repo-operation floor is still durable row maintenance: `sessions.create_participant` `0.9607B` total, `system_jobs.create_system_job` `0.9554B`, `sessions.update_session` `0.9542B`, `players.create_player_account` `0.9518B`, `battles.create_battle` `0.4800B`, `sessions.create_game_session` `0.4794B`, and `commands.create_game_command` `0.4776B`.
+
+Decision:
+
+- Keep the insert-first registration slice. It produced the first material Gate 7 scenario reduction after the neutral direct-create pass.
+- Next performance work should target the setup/session durable row count: `start_session` still pays roughly one session update plus setup command/job writes, and session creation still pays durable session plus participant creates.

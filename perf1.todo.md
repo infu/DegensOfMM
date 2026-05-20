@@ -686,7 +686,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `create_fresh_command_effect` for successful fresh champion skill, spell learning, and adventure spell mutation paths. Existing early-idempotent replay paths still return without creating duplicate effects.
 - [x] Use `append_fresh_public_event` for the matching successful fresh champion magic public events. Existing early-idempotent replay paths still return without creating duplicate events.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `effects.command_effect_by_command_key` and `events.by_session_event_key` disappear from fresh `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` traces.
+- [x] Measure in the next batched run and verify `effects.command_effect_by_command_key` and `events.by_session_event_key` disappear from fresh `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` traces. Artifact `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49` moved `select_champion_level_up` `7.8004B -> 6.3975B` (`-1.4029B`, `-18.0%`), `learn_champion_spell` `10.3807B -> 8.9726B` (`-1.4081B`, `-13.6%`), and `cast_adventure_spell` `9.2153B -> 7.8120B` (`-1.4033B`, `-15.2%`). Global fresh-path absence reads dropped from `9 -> 6` for `effects.command_effect_by_command_key` and from `8 -> 5` for `events.by_session_event_key`, matching the three champion magic commands.
 - [x] Rotate again before doing another deeper champion-only optimization. Picked the battle-state read path because `get_battle_state` still costs `2.1106B` on the endpoint-surface invalid-id path.
 
 ### 20. Round-Robin Endpoint Cluster: Battle-State Query Auth
@@ -694,7 +694,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Rotate to `get_battle_state` after the champion magic fresh event/effect cut.
 - [x] Use `require_session_caller_runtime_first` before checking the battle runtime so the endpoint avoids the old durable caller/session/participant lookup when active runtime context is available.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `get_battle_state` drops the same `~2.1B` query-auth floor as the other runtime-first query endpoints.
+- [x] Measure in the next batched run and verify `get_battle_state` drops the same `~2.1B` query-auth floor as the other runtime-first query endpoints. Artifact `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49` moved the endpoint-surface invalid-id path from `2.1106B -> 0.0000B` (`25,847` instructions), removing the durable auth floor before the invalid battle response.
 - [x] Rotate again before another battle-only optimization. Picked match-history query cache reuse because `get_match_history` remains `1.4046B` and still pays a player principal lookup before the history page.
 
 ### 21. Round-Robin Endpoint Cluster: Match-History Player Cache
@@ -703,8 +703,13 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Expose the existing lobby/session `find_player_by_principal` helper as `pub(crate)` so history can reuse the heap `PLAYER_PRINCIPAL_CACHE` populated by registration/lobby calls.
 - [x] Route `get_match_history` through that cached helper before falling back to the durable `players.by_principal` lookup.
 - [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, and `git diff --check`.
-- [ ] Measure in the next batched run and verify `get_match_history` drops the durable player principal lookup floor when the player cache is warm.
-- [ ] Rotate again before deeper history-only changes.
+- [x] Measure in the next batched run and verify `get_match_history` drops the durable player principal lookup floor when the player cache is warm. Artifact `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49` moved `get_match_history` `1.4046B -> 0.7029B` (`-0.7017B`, `-50.0%`), matching one avoided durable principal lookup.
+- [x] Rotate again before deeper history-only changes. Next rotation should target a different still-heavy update cluster rather than history.
+
+### 22. Batched Round-Robin Measurement
+
+- [x] Run endpoint-surface after champion magic fresh event/effect, battle-state query auth, and match-history player-cache cuts. Artifact `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49` passed in `198.09s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `152.4118B -> 145.4290B` (`-6.9828B`, `-4.6%`) versus `20260520-roundrobin-worldgen-endturn-query-35c9c27`.
+- [ ] Rotate to another still-heavy endpoint cluster from the latest ranking instead of polishing the same champion/battle/history cuts. Current candidates are `sync_advanced_victory` (`14.6173B`), `claim_quest_reward` (`14.1557B`), `submit_dwelling_recruit` (`12.5253B`), `hire_tavern_champion` (`12.1146B`), `sync_objectives` (`10.3812B`), `submit_market_trade` (`9.2295B`), `learn_champion_spell` (`8.9726B`), `sync_world_generation` (`7.8909B`), `cast_adventure_spell` (`7.8120B`), `accept_quest` (`7.7979B`), `sync_world_events` (`7.3200B`), `select_champion_level_up` (`6.3975B`), and `end_turn` (`5.9115B`).
 
 ## Expected Outcome
 

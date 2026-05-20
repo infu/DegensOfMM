@@ -5953,3 +5953,56 @@ Expected measurement:
 
 - In the endpoint-surface route, the player cache should be warm from registration/session setup, so `get_match_history` should drop by roughly one durable principal lookup (`~0.70B`).
 - The remaining cost should be the bounded `history.by_player_finished_at` page and DTO assembly.
+
+## Measurement: Round-Robin Champion, Battle-State, Match-History
+
+Artifact:
+
+- `target/benchmarks/20260520-roundrobin-champion-battle-history-c783e49`
+- Passed in `198.09s`.
+- Git: `c783e49`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `150` (unchanged from prior run).
+- Stable pages: `2049 -> 81281` (unchanged from prior run).
+
+Scenario delta versus `20260520-roundrobin-worldgen-endturn-query-35c9c27`:
+
+- `152.4118B -> 145.4290B`, `-6.9828B`, `-4.6%`.
+- Versus the earlier endpoint-rotation run, the combined recent cuts moved `185.4812B -> 145.4290B`, `-40.0522B`, `-21.6%`.
+
+Targeted endpoint deltas:
+
+- `get_battle_state`: `2.1106B -> 0.0000B`, `-2.1106B`, `-100.0%`; the measured invalid-id path now costs `25,847` instructions.
+- `learn_champion_spell`: `10.3807B -> 8.9726B`, `-1.4081B`, `-13.6%`.
+- `cast_adventure_spell`: `9.2153B -> 7.8120B`, `-1.4033B`, `-15.2%`.
+- `select_champion_level_up`: `7.8004B -> 6.3975B`, `-1.4029B`, `-18.0%`.
+- `get_match_history`: `1.4046B -> 0.7029B`, `-0.7017B`, `-50.0%`.
+
+Repo-op confirmation:
+
+- `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` no longer show `effects.command_effect_by_command_key` or `events.by_session_event_key`; they keep the required `effects.create_applied_command_effect` and `events.create_game_event` rows.
+- Global `effects.command_effect_by_command_key` calls dropped `9 -> 6`.
+- Global `events.by_session_event_key` calls dropped `8 -> 5`.
+- `get_battle_state` has no repo ops in the measured path after the runtime-first auth change.
+- `get_match_history` has no repo-op trace because query repo ops are not fully instrumented, but the `0.7017B` delta matches the avoided durable principal lookup.
+
+Post-measurement heavy endpoints:
+
+- `sync_advanced_victory`: `14.6173B`.
+- `claim_quest_reward`: `14.1557B`.
+- `submit_dwelling_recruit`: `12.5253B`.
+- `hire_tavern_champion`: `12.1146B`.
+- `sync_objectives`: `10.3812B`.
+- `submit_market_trade`: `9.2295B`.
+- `learn_champion_spell`: `8.9726B`.
+- `sync_world_generation`: `7.8909B`.
+- `cast_adventure_spell`: `7.8120B`.
+- `accept_quest`: `7.7979B`.
+- `sync_world_events`: `7.3200B`.
+- `select_champion_level_up`: `6.3975B`.
+- `end_turn`: `5.9115B`.
+
+Next decision:
+
+- Rotate away from champion/battle/history. The best next low-risk cluster is likely the shared update context/command floor on scenario/economy/worldgen endpoints, but only if the runtime participant/session state is authoritative enough for those command paths. Otherwise target the next obvious endpoint-specific durable metadata churn from the latest repo-op trace.

@@ -5052,3 +5052,14 @@ Verification:
 Decision:
 
 - Keep it. This makes `Upgrade` a real shared barrier boundary instead of a partial wrapper, without adding any hot-path IcyDB writes.
+
+## Checkpoint: Gate 5E Parent Closure
+
+Checklist hygiene:
+
+- Marked the Gate 5E parent complete because its concrete runtime-open/job-deadline subitems are all complete.
+- The later Gate 5F.11 focused run measured `sync_session_turn` at `0.4984B`, which is below Gate 5E's original `0.6B-0.9B` target band.
+
+Decision:
+
+- Keep the parent closed. Remaining runtime durability/barrier work is tracked under Gate 5H, not Gate 5E.

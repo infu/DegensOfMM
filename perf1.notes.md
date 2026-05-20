@@ -4575,3 +4575,42 @@ Decision:
 
 - Keep this checkpoint. Static content seeding belongs in install/upgrade repair, not on the first player `create_session` command.
 - This is a deliberate cost shift: initial stable pages now start higher because ruleset/faction rows are preseeded. That is acceptable for gameplay latency, but install/upgrade benchmarks should track it separately.
+
+## Checkpoint: New Setup Job Scheduling
+
+After the first-playable content cache, `start_session` was still paying the idempotent job upsert path for a setup job that is known to be new in the successful lobby-start route. That path read by job key and then scanned due/leased job indexes while scheduling the timer.
+
+What changed:
+
+- `start_session` now calls `schedule_new_job` for the initial `setup_session` job when `started_now` is true.
+- The normal idempotent `schedule_job` path remains available for recovered/replayed jobs and other callers.
+- The durable `SystemJob` row is still created and the timer wakeup is still requested; this only removes redundant scans from the hot lobby start.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfdc4e`
+- Focused Gate J `20260520-setup-new-job-gate-j` passed in `196.40s`
+
+Measured delta versus `20260520-content-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 15.3820B | 13.2728B | -13.7% |
+| Gate J scenario memory | 4012.1250 MB | 4012.1250 MB | flat |
+| Gate J scenario cycles | 0.0647T | 0.0625T | -3.3% |
+| `start_session` avg | 4.9492B | 2.8398B | -42.6% |
+| `system_jobs.by_job_key` total | 0.7060B | 0B | removed |
+| `system_jobs.by_status_due` total | 0.7024B | 0B | removed |
+| `system_jobs.by_status_lease` total | 0.7022B | 0B | removed |
+| row growth | 35 | 35 | flat |
+| stable pages final | 66177 | 66177 | flat |
+
+Decision:
+
+- Keep this checkpoint. A newly started lobby does not need the idempotent job-key probe before inserting its first setup job.
+- This leaves `system_jobs.create_system_job` as a real durable boundary. Gate 5H should decide whether setup/turn/battle jobs are durable barriers or runtime wakeup hints with delayed durable projection.

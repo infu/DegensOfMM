@@ -821,7 +821,7 @@ pub(crate) fn start_session(
             }
             let setup_command = ensure_setup_command(&session)?;
             if started_now {
-                system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+                system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
                     job_key: setup_session_job_key(session.id()),
                     job_kind: "setup_session".to_string(),
                     session_id: session.id(),

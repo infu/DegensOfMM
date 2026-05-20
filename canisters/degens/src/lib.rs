@@ -35,6 +35,12 @@ icydb::start!();
 
 #[canic_cdk::init]
 fn init() {
+    if let Err(error) = services::account_lobby_session::repair_first_playable_content_cache() {
+        canic_cdk::eprintln!(
+            "first playable content cache init repair failed: {}",
+            error.message
+        );
+    }
     if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
         canic_cdk::eprintln!(
             "active session admission cache init repair failed: {}",
@@ -67,6 +73,12 @@ fn post_upgrade() {
     if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
         canic_cdk::eprintln!(
             "active session admission cache post-upgrade repair failed: {}",
+            error.message
+        );
+    }
+    if let Err(error) = services::account_lobby_session::repair_first_playable_content_cache() {
+        canic_cdk::eprintln!(
+            "first playable content cache post-upgrade repair failed: {}",
             error.message
         );
     }

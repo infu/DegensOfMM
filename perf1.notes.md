@@ -4536,3 +4536,42 @@ Decision:
 
 - Keep this checkpoint. It removes ready-state durable writes from the lobby hot path and still lets `start_session` observe readiness from the real-row cache.
 - Durable participant readiness is now part of the runtime flush/upgrade gap. Gate 5H needs to decide whether lobby readiness is flushed, snapshotted, or considered ephemeral once the session has started.
+
+## Checkpoint: First-Playable Content Cache
+
+After heap lobby ready state, `create_session` was still paying first-playable ruleset/faction creation and lookup costs. These rows are static content, so paying that during a player command is the wrong place for the cost.
+
+What changed:
+
+- Added a first-playable content heap cache for the `RulesetDefinition` and faction rows needed by lobby setup.
+- Seed/repair the cache during install and post-upgrade.
+- `ensure_first_playable_content` returns the cached rows on the hot path.
+- `faction_for_slot` checks cached first-playable factions before falling back to durable content lookup.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- Benchmark Wasm build: code section `0x00bfdbe6`
+- Focused Gate J `20260520-content-cache-gate-j` passed in `193.86s`
+
+Measured delta versus `20260520-lobby-ready-heap-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 20.3124B | 15.3820B | -24.3% |
+| Gate J scenario memory | 4076.1250 MB | 4012.1250 MB | -1.6% route delta |
+| stable pages start | 1025 | 2049 | +1024 pages at install |
+| stable pages final | 66177 | 66177 | flat |
+| `create_session` avg | 5.8788B | 1.6563B | -71.8% |
+| `join_session` avg | 1.8894B | 1.1839B | -37.3% |
+| `content.create_ruleset_definition` total | 0.4720B | 0B | moved to install |
+| `content.create_faction_definition` total | 0.9440B | 0B | moved to install |
+| row growth | 35 | 35 | flat in Gate J tracked entities |
+
+Decision:
+
+- Keep this checkpoint. Static content seeding belongs in install/upgrade repair, not on the first player `create_session` command.
+- This is a deliberate cost shift: initial stable pages now start higher because ruleset/faction rows are preseeded. That is acceptable for gameplay latency, but install/upgrade benchmarks should track it separately.

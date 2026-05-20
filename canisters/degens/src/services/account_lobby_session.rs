@@ -30,6 +30,7 @@ const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
 
 thread_local! {
+    static FIRST_PLAYABLE_CONTENT_CACHE: RefCell<Option<(RulesetDefinition, Vec<FactionDefinition>)>> = const { RefCell::new(None) };
     static SESSION_ROW_CACHE: RefCell<Option<GameSession>> = const { RefCell::new(None) };
     static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
     static SESSION_PARTICIPANT_CACHE: RefCell<Option<SessionParticipantCache>> = const { RefCell::new(None) };
@@ -43,6 +44,14 @@ thread_local! {
 struct SessionParticipantCache {
     session_id: Id<GameSession>,
     participants: Vec<GameParticipant>,
+}
+
+fn cached_first_playable_content() -> Option<(RulesetDefinition, Vec<FactionDefinition>)> {
+    FIRST_PLAYABLE_CONTENT_CACHE.with_borrow(Clone::clone)
+}
+
+fn remember_first_playable_content(rows: &(RulesetDefinition, Vec<FactionDefinition>)) {
+    FIRST_PLAYABLE_CONTENT_CACHE.with_borrow_mut(|cache| *cache = Some(rows.clone()));
 }
 
 fn cached_session_row(session_id: Id<GameSession>) -> Option<GameSession> {
@@ -147,6 +156,10 @@ pub(crate) fn repair_active_session_admission_cache() -> Result<(), ApiError> {
     let ids = active_session_ids_from_durable()?;
     ACTIVE_SESSION_IDS_CACHE.with_borrow_mut(|cache| *cache = Some(ids));
     Ok(())
+}
+
+pub(crate) fn repair_first_playable_content_cache() -> foundation::RepoResult<()> {
+    ensure_first_playable_content().map(|_| ())
 }
 
 fn cached_active_session_count() -> Option<u32> {
@@ -1325,6 +1338,9 @@ fn changed_subjects_for_result(result: &LobbyCommandResult) -> Vec<ChangedSubjec
 
 fn ensure_first_playable_content()
 -> foundation::RepoResult<(RulesetDefinition, Vec<FactionDefinition>)> {
+    if let Some(rows) = cached_first_playable_content() {
+        return Ok(rows);
+    }
     let manifest = first_playable_content_manifest();
     let ruleset = match content::find_ruleset_by_slug_version(
         FIRST_PLAYABLE_RULESET_SLUG,
@@ -1354,7 +1370,9 @@ fn ensure_first_playable_content()
         factions.push(row);
     }
 
-    Ok((ruleset, factions))
+    let rows = (ruleset, factions);
+    remember_first_playable_content(&rows);
+    Ok(rows)
 }
 
 fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
@@ -1894,6 +1912,13 @@ fn faction_for_slot(
         .ok_or_else(|| public_error("player_cap_reached", "player cap reached", false))?
         .faction_slug
         .clone();
+    if let Some((_ruleset, factions)) = cached_first_playable_content()
+        && let Some(faction) = factions
+            .into_iter()
+            .find(|faction| faction.ruleset_id == ruleset_id.key() && faction.slug == slug)
+    {
+        return Ok(faction);
+    }
     content::find_faction_by_ruleset_slug(ruleset_id, &slug)?.ok_or_else(|| {
         public_error(
             "faction_not_found",

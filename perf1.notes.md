@@ -3539,3 +3539,40 @@ Decision:
 - Keep this checkpoint. It is a small, targeted absence-proof cut and the benchmark moved exactly where expected.
 - Do not broaden this pattern blindly. For recovered or already-in-battle champions, the durable probe remains the fallback.
 - Remaining Gate 5F cost is now mostly activation boundary work and source army stack reads.
+
+## Checkpoint: Neutral Activation Boundary Kept In Heap Runtime
+
+Changed the final neutral battle startup activation sync to keep the active battle header and neutral `in_battle` projection in heap runtime instead of writing both durable rows immediately. The hot path still schedules the battle timeout job and adopts active `BattleRuntime` from the heap startup rows.
+
+Why:
+
+- After Gate 5F.9, the activation sync was dominated by three durable projection operations: `battles.update_battle`, `neutrals.load_neutral_army`, and `neutrals.update_neutral_army`.
+- Runtime already has the active battle, champion state, tactical rows, and event surface needed for the player-visible handoff.
+- The durable active battle header and neutral state now belong to the Gate 5H flush/barrier contract rather than the movement hot path.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bfdbbc`, about `9.3 KB` under the IC limit
+- Focused Gate J `20260520-neutral-activation-heap-boundary-gate-j` passed in `262.93s`
+
+Measured delta versus `20260520-neutral-start-skip-fresh-attacker-probe-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 67.6589B | 66.0030B | -2.4% |
+| `sync_session_turn` avg | 0.8049B | 0.6390B | -20.6% |
+| activation sync seq 72 | 2.1389B | 0.4804B | -77.5% |
+| `battles.update_battle` calls | 1 | 0 | -100.0% |
+| `neutrals.load_neutral_army` calls | 1 | 0 | -100.0% |
+| `neutrals.update_neutral_army` calls | 1 | 0 | -100.0% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. The individual activation call is now inside the target band at `0.4804B`.
+- Do not mark Gate 5F complete yet because the whole `sync_session_turn` average is still `0.6390B`, slightly above the `0.3B-0.6B` target.
+- The next useful cuts are source stack reads (`champions.army_stacks_by_champion`, `neutrals.stacks_by_army`) or making the timeout job heap-first. The timeout job is more behavior-sensitive, so prefer source-stack reads or code-size freeing first.

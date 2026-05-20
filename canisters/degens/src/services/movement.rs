@@ -3787,16 +3787,9 @@ fn continue_neutral_battle_start(
             }
             battle.state = "active".to_string();
             battle.action_deadline_at = Some(battle_start::fresh_action_deadline_at());
-            battle = battles::update_battle(battle)?;
             discard_neutral_starting_battle(pending_move.champion.id());
             battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
 
-            let mut neutral = neutrals::load_neutral_army(neutral_id)?.ok_or_else(|| {
-                public_error("neutral_army_not_found", "neutral army not found", true)
-            })?;
-            neutral.state = "in_battle".to_string();
-            neutral.last_command_id = Some(command_id.key());
-            neutrals::update_neutral_army(neutral)?;
             if let Some((_, obstacles, occupancy)) = cached_rows {
                 battle_runtime::adopt_active_battle_from_loaded_rows(
                     session,

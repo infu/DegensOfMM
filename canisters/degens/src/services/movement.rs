@@ -4227,9 +4227,6 @@ fn apply_world_object_at(
     }
 
     if persistence_mode == MovementPersistenceMode::RuntimeOnly {
-        if object.scoring_kind == "mine" {
-            map_visibility_occupancy::update_world_object(object.clone())?;
-        }
         session_turn_runtime::mirror_world_object_update(&object);
     } else {
         map_visibility_occupancy::create_participant_object_visit(

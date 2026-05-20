@@ -3895,3 +3895,42 @@ Decision:
 
 - Reverted before commit.
 - Do not skip the durable `GameSession` turn-advance projection by itself. It needs a proper Gate 5H flush/barrier and battle handoff contract so later commands do not drift into extra durable fallback work.
+
+## Checkpoint: Runtime Mine Capture Stops Stable WorldObject Update
+
+After runtime income started trusting `SessionTurnRuntime` world-object snapshots, the remaining Gate J movement-sync route still wrote one durable `WorldObject` row for the unguarded mine capture:
+
+- `map.update_world_object` appeared once in the route at `0.4789B`.
+- Object views already merge active runtime world-object snapshots before durable rows.
+- Income now reads the active runtime mine owner/state snapshot before falling back to durable owned-mine scans.
+
+What changed:
+
+- Runtime-mode `apply_world_object_at` now mirrors captured mine state into `SessionTurnRuntime` only.
+- The legacy/durable movement path still writes `ParticipantObjectVisit` and updates the durable `WorldObject` row.
+- This intentionally defers the active-route durable mine projection to Gate 5H flush/barrier work; the hot route remains gameplay-correct through runtime snapshots.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build: code section `0x00bffc93`
+- Focused Gate J `20260520-runtime-mine-object-delta-gate-j` passed in `197.28s`
+- The leftover PocketIC server from the run was killed; follow-up process scan only matched the `pgrep` command.
+
+Measured delta versus `20260520-runtime-income-trust-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 56.8715B | 56.3951B | -0.8% |
+| `sync_session_turn` avg | 0.4277B | 0.3800B | -11.2% |
+| `map.update_world_object` route calls | 1 | 0 | -100.0% |
+| route call count | 87 | 87 | flat |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It removes one more stable write from the active movement sync without changing the route shape or final row/page counts.
+- Next low-risk Gate 5D candidates are harder: `map.update_visibility_chunk` and `map.create_known_object` require runtime query overlays before they can be removed safely from the hot route.

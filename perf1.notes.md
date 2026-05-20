@@ -5640,3 +5640,25 @@ Verification so far:
 Next:
 
 - Measure with the smallest useful endpoint-surface/focused route when ready. If scenario endpoints remain over `1B`, rotate again before trying to fully aggregate scenario progress.
+
+## Round-Robin Pivot: Champion Magic Cluster
+
+New cluster:
+
+- Rotated to champion magic from endpoint-surface `20260520-200503-48ee723`: `learn_champion_spell` `10.8614B`, `cast_adventure_spell` `9.6916B`, and `select_champion_level_up` `8.2911B`.
+- Each command showed two `commands.update_game_command` calls in the benchmark repo-op summary, about `0.96B` total. The first update only marks the command as `applying` before mutating a champion/spell row.
+
+Cut:
+
+- Removed the early durable `GameCommand` `applying` update from `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell`.
+- The champion/spell rows already use `last_command_id` to make replay/recovery idempotent, and `apply_command_with_result` still performs the final durable applied command update.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`
+
+Expected measurement:
+
+- Next endpoint-surface/focused run should show `commands.update_game_command` dropping from two calls to one for the three champion-magic endpoints, saving roughly one durable update floor per call before any deeper champion aggregate work.

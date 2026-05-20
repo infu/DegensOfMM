@@ -625,6 +625,13 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [ ] Measure the scenario-progress cut with the smallest useful endpoint-surface or focused route and record before/after method and repo-op deltas.
 - [ ] If scenario endpoints remain above `1B`, rotate to a different heavy endpoint cluster before coming back, unless the remaining shared command/event/session write floor is blocking several clusters.
 
+### 12. Round-Robin Endpoint Cluster: Champion Magic
+
+- [x] Rotate to the champion-magic cluster from endpoint-surface: `learn_champion_spell` (`10.8614B`), `cast_adventure_spell` (`9.6916B`), `select_champion_level_up` (`8.2911B`), and related progression queries.
+- [x] Remove the redundant early durable `GameCommand` `applying` update from champion magic command paths. Champion/spell rows already carry `last_command_id` idempotency, and the final command update still persists the applied result.
+- [ ] Measure the champion-magic cut with the next batched endpoint-surface/focused benchmark and verify `commands.update_game_command` drops from two calls to one for these methods.
+- [ ] If champion magic remains above `1B`, rotate to a different heavy cluster before deeper champion aggregation unless the remaining cost is shared command/event/session write floor.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

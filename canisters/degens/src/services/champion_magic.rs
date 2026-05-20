@@ -6,7 +6,7 @@ use domm_game::{
 };
 use icydb::{traits::EntityValue, types::Id};
 
-use crate::repos::{champions_artifacts, commands_events_effects, content};
+use crate::repos::{champions_artifacts, content};
 
 use super::{
     command_response::{self, GameCommandAction},
@@ -160,7 +160,7 @@ pub(crate) fn cast_adventure_spell(
 
 fn apply_level_choice(
     context: &session_context::SessionCallerContext,
-    mut command: GameCommand,
+    command: GameCommand,
     mut champion: Champion,
     skill_key: &str,
 ) -> Result<
@@ -171,9 +171,6 @@ fn apply_level_choice(
     ),
     ApiError,
 > {
-    command.status = "applying".to_string();
-    command.phase = "applying".to_string();
-    command = commands_events_effects::update_game_command(command)?;
     if champion.last_command_id == Some(command.id().key())
         && champion.skill_keys.iter().any(|key| key == skill_key)
     {
@@ -287,7 +284,7 @@ fn apply_level_choice(
 
 fn apply_spell_learning(
     context: &session_context::SessionCallerContext,
-    mut command: GameCommand,
+    command: GameCommand,
     mut champion: Champion,
     spell_slug: &str,
 ) -> Result<
@@ -298,9 +295,6 @@ fn apply_spell_learning(
     ),
     ApiError,
 > {
-    command.status = "applying".to_string();
-    command.phase = "applying".to_string();
-    command = commands_events_effects::update_game_command(command)?;
     let spell =
         content::find_spell_by_ruleset_slug(Id::from_key(context.session.ruleset_id), spell_slug)?
             .ok_or_else(|| {
@@ -405,7 +399,7 @@ fn apply_spell_learning(
 
 fn apply_adventure_cast(
     context: &session_context::SessionCallerContext,
-    mut command: GameCommand,
+    command: GameCommand,
     mut champion: Champion,
     spell_slug: &str,
 ) -> Result<
@@ -416,9 +410,6 @@ fn apply_adventure_cast(
     ),
     ApiError,
 > {
-    command.status = "applying".to_string();
-    command.phase = "applying".to_string();
-    command = commands_events_effects::update_game_command(command)?;
     let spell = require_known_spell(&champion, spell_slug, context)?;
     if spell.target_type != "self_champion" {
         return Err(public_error(

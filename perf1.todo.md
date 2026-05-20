@@ -650,7 +650,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Rotate to the world generation/events cluster from endpoint-surface: `sync_world_generation` (`8.8428B`), `sync_world_events` (`7.7969B`), and related worldgen queries.
 - [x] Stop durable `last_command_id`-only writes in `sync_world_generation` for existing `SkirmishSettingsState` and unchanged `ProceduralMapState` rows. The generated world state is already materialized; manual sync does not need to rewrite rows only for diagnostic command metadata.
 - [x] Stop durable `last_command_id`-only writes in `sync_world_events` when the current deterministic `WorldEventState` row already exists.
-- [ ] Measure the worldgen/events cut with the next batched endpoint-surface/focused benchmark and verify `worldgen.update_skirmish_settings`, unchanged `worldgen.update_procedural_map`, and existing-row `scenario.update_world_event_state` drop on the fresh sync path.
+- [x] Measure the worldgen/events cut with the next batched endpoint-surface/focused benchmark and verify `worldgen.update_skirmish_settings`, unchanged `worldgen.update_procedural_map`, and existing-row `scenario.update_world_event_state` drop on the fresh sync path. Artifact `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27` moved `sync_world_generation` `8.8428B -> 7.8874B` (`-0.9554B`, `-10.8%`) and `sync_world_events` `7.7969B -> 7.3189B` (`-0.4780B`, `-6.1%`); those three metadata write repo ops are gone.
 - [x] Rotate again after a bounded measurement or another small independent cut. Picked the map-turn readiness cluster because `end_turn` remains `8.0200B` and pays stable participant/ready list reads plus an event absence read on the fresh path.
 
 ### 16. Round-Robin Endpoint Cluster: Map-Turn Readiness
@@ -661,8 +661,8 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Add runtime completeness flags for participant and ready hydration, including carry-forward to the next turn where a complete participant roster implies an empty ready set is complete.
 - [x] Verify the map-turn readiness cut with `cargo fmt`, `git diff --check`, and `cargo check -p domm-degens-canister`.
 - [x] Restore the native benchmark-feature canister compile by narrowing setup-job recovery cfgs to exclude only wasm benchmark builds, not native benchmark checks. Verified with `cargo check -p domm-degens-canister --features benchmark`.
-- [ ] Re-run the wasm benchmark-feature gate once the environment issue is cleared. `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark` currently fails before DoMM code because the host build-script linker points to a missing Nix `ld-wrapper.sh`.
-- [ ] Measure the next batched endpoint-surface/focused run and verify fresh `end_turn` drops `events.by_session_event_key` and, when the runtime is complete, drops the durable participant/ready count pages.
+- [x] Re-run the wasm benchmark-feature gate after repairing the local rustup `gcc-ld/ld.lld` wrapper to point at the current Nix `ld-wrapper.sh`. Verified with `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`.
+- [x] Measure the next batched endpoint-surface/focused run and verify fresh `end_turn` drops `events.by_session_event_key` and, when the runtime is complete, drops the durable participant/ready count pages. Artifact `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27` moved `end_turn` `8.0200B -> 5.9048B` (`-2.1152B`, `-26.4%`); `events.by_session_event_key`, `sessions.participants_by_session_status`, and `turn_ready.by_session_turn` are gone from the method repo-op trace.
 - [x] Rotate again after measurement or one more small independent cut. Picked the query-auth cluster because heavy read endpoints are still `2.8B-4.2B` while runtime-first game/town/event views are near zero.
 
 ### 17. Round-Robin Endpoint Cluster: Query Auth Runtime-First
@@ -671,9 +671,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `require_session_caller_runtime_first` for read-only champion progression, economy/tavern/dwelling, scenario progress, quest preview, and worldgen query endpoints.
 - [x] Use `require_active_session_caller_runtime_first` for read-only active previews: hire champion, market trade, and dwelling recruit.
 - [x] Leave update endpoints on their existing command-safe context paths for this cut.
-- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
-- [ ] Measure the next batched endpoint-surface/focused run and verify these queries lose the old durable caller/session/participant lookup floor when an active turn runtime is available.
-- [ ] Rotate again after the next batched measurement or another small independent low-risk cut.
+- [x] Verify with `cargo fmt`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [x] Measure the next batched endpoint-surface/focused run and verify these queries lose the old durable caller/session/participant lookup floor when an active turn runtime is available. Artifact `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27` moved the targeted query cluster by roughly `-2.10B` per endpoint: `preview_dwelling_recruit` `4.2313B -> 2.1225B`, `get_dwelling_pool` `3.5232B -> 1.4200B`, `preview_champion_progression` `3.5225B -> 1.4125B`, scenario reads `~3.518B -> ~1.409B`, and worldgen reads `~2.812B -> ~0.704B`.
+- [ ] Rotate again after the next batched measurement or another small independent low-risk cut. Current post-measurement heavy cluster is still update endpoints with shared command/effect/event/session floors: `sync_advanced_victory` (`14.6192B`), `claim_quest_reward` (`14.1430B`), `submit_dwelling_recruit` (`12.5198B`), `hire_tavern_champion` (`12.1075B`), `sync_objectives` (`10.3820B`), `learn_champion_spell` (`10.3807B`), `submit_market_trade` (`9.2274B`), and `cast_adventure_spell` (`9.2153B`).
+
+### 18. Batched Round-Robin Measurement
+
+- [x] Run endpoint-surface after worldgen/events, map-turn readiness, query-auth, and benchmark-gate cleanup. Artifact `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27` passed in `192.61s`, covered `59/59` required endpoints, kept row growth `150`, kept stable pages `2049 -> 81281`, and moved scenario instructions `185.4812B -> 152.4118B` (`-33.0694B`, `-17.8%`) versus `20260520-endpoint-rotations-76036c8`.
+- [ ] Pick the next endpoint cluster using the round-robin rule rather than polishing the same query/end-turn/worldgen cuts.
 
 ## Expected Outcome
 

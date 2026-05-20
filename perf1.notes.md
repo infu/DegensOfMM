@@ -5789,7 +5789,9 @@ Benchmark-gate cleanup:
 - Native `cargo check -p domm-degens-canister --features benchmark` initially failed because `process_setup_session_job` was cfg'd out under `feature = "benchmark"` but still referenced in a native-only block.
 - Narrowed setup-job recovery cfgs so native benchmark builds include the helper and only wasm benchmark builds keep the code-size exclusion.
 - Native benchmark-feature compile now passes.
-- Wasm benchmark check currently fails before DoMM code because host build scripts link through rustup's `gcc-ld` wrapper, which points at missing `/nix/store/.../ld-wrapper.sh`.
+- Wasm benchmark check initially failed before DoMM code because host build scripts linked through rustup's `gcc-ld` wrapper, which pointed at a missing `/nix/store/.../ld-wrapper.sh`.
+- Repaired the local rustup `gcc-ld/ld.lld` wrapper to point at the current Nix `ld-wrapper.sh`.
+- Wasm benchmark-feature compile now passes.
 
 Expected measurement:
 
@@ -5822,9 +5824,58 @@ Verification:
 - `cargo fmt`
 - `cargo check -p domm-degens-canister`
 - `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`
 - `git diff --check`
 
 Expected measurement:
 
 - These endpoints should avoid the durable player/session/participant lookup when an active `SessionTurnRuntime` has the caller row, matching the shape already used by cheap game/town/event views.
 - The remaining query cost after that will identify whether stable child-row reads or DTO assembly dominate each endpoint.
+
+## Measurement: Round-Robin Worldgen, End-Turn, Query Auth
+
+Artifact:
+
+- `target/benchmarks/20260520-roundrobin-worldgen-endturn-query-35c9c27`
+- Passed in `192.61s`.
+- Git: `35c9c27`.
+- Coverage: `59/59` required endpoints.
+- Calls: `146`.
+- Row growth: `150` (unchanged from prior run).
+- Stable pages: `2049 -> 81281` (unchanged from prior run).
+
+Scenario delta versus `20260520-endpoint-rotations-76036c8`:
+
+- `185.4812B -> 152.4118B`, `-33.0694B`, `-17.8%`.
+- Cycles moved `0.1971T -> 0.1935T`.
+- Memory stayed essentially flat: `4955.5625 MB -> 4955.5 MB`.
+
+Targeted endpoint deltas:
+
+- `end_turn`: `8.0200B -> 5.9048B`, `-2.1152B`, `-26.4%`.
+- `sync_world_generation`: `8.8428B -> 7.8874B`, `-0.9554B`, `-10.8%`.
+- `sync_world_events`: `7.7969B -> 7.3189B`, `-0.4780B`, `-6.1%`.
+- `preview_dwelling_recruit`: `4.2313B -> 2.1225B`, `-2.1088B`, `-49.8%`.
+- `get_dwelling_pool`: `3.5232B -> 1.4200B`, `-2.1032B`, `-59.7%`.
+- `preview_champion_progression`: `3.5225B -> 1.4125B`, `-2.1101B`, `-59.9%`.
+- `get_objective_progress`: `3.5182B -> 1.4106B`, `-2.1076B`, `-59.9%`.
+- `get_scenario_rules`: `3.5182B -> 1.4080B`, `-2.1102B`, `-60.0%`.
+- Worldgen/scenario light reads (`get_world_events`, `preview_quest`, `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, `get_siege_rules`) each dropped by about `2.105B-2.110B`.
+
+Repo-op confirmation:
+
+- `end_turn` no longer shows `events.by_session_event_key`, `sessions.participants_by_session_status`, or `turn_ready.by_session_turn`.
+- `sync_world_generation` no longer shows `worldgen.update_skirmish_settings` or unchanged `worldgen.update_procedural_map`.
+- `sync_world_events` no longer shows existing-row `scenario.update_world_event_state`.
+- Query endpoints have no repo-op trace in the benchmark, but their instruction deltas confirm the runtime-first caller context removed the old durable lookup floor.
+
+Post-measurement heavy endpoints:
+
+- `sync_advanced_victory`: `14.6192B`.
+- `claim_quest_reward`: `14.1430B`.
+- `submit_dwelling_recruit`: `12.5198B`.
+- `hire_tavern_champion`: `12.1075B`.
+- `sync_objectives`: `10.3820B`.
+- `learn_champion_spell`: `10.3807B`.
+- `submit_market_trade`: `9.2274B`.
+- `cast_adventure_spell`: `9.2153B`.

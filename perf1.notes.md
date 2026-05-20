@@ -5241,3 +5241,22 @@ Verification:
 Decision:
 
 - Keep it. This broadens the low-risk direct-insert cleanup before larger heap-first setup/job work.
+
+## Checkpoint: Generic Direct GameEvent Creates
+
+Gate 7 projection/history create-path slice:
+
+- `commands_events_effects::create_game_event` still used generated `Create<GameEvent>` materialization even though the caller already supplies every required event field.
+- Changed it to build the typed `GameEvent` row directly and call `foundation::insert`.
+- Kept `remember_created_event` unchanged so public event-feed cache behavior is preserved.
+- This helps durable projection/history fallback paths and barrier flushes without changing active runtime event buffers.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep it. It is the same low-risk direct-insert pattern as `GameCommand`, `SystemJob`, and `Battle` header rows.

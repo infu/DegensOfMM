@@ -303,21 +303,22 @@ pub(crate) fn create_game_event(
     subject_id_text: Option<String>,
     payload_json: String,
 ) -> RepoResult<GameEvent> {
-    let input: Create<GameEvent> = Create::<GameEvent> {
-        session_id: Some(session_id.key()),
-        command_id: Some(command_id.map(|id| id.key())),
-        actor_participant_id: Some(actor_participant_id.map(|id| id.key())),
-        turn_number: Some(turn_number),
-        event_seq: Some(event_seq),
-        event_key: Some(event_key),
-        audience_key: Some(audience_key),
-        event_type: Some(event_type),
-        subject_kind: Some(subject_kind),
-        subject_id_text: Some(subject_id_text),
-        payload_json: Some(payload_json),
+    let event = GameEvent {
+        session_id: session_id.key(),
+        command_id: command_id.map(|id| id.key()),
+        actor_participant_id: actor_participant_id.map(|id| id.key()),
+        turn_number,
+        event_seq,
+        event_key,
+        audience_key,
+        event_type,
+        subject_kind,
+        subject_id_text,
+        payload_json,
+        ..Default::default()
     };
 
-    let event = foundation::create("events.create_game_event", input)?;
+    let event = foundation::insert("events.create_game_event", event)?;
     remember_created_event(&event);
     Ok(event)
 }

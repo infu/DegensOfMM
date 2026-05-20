@@ -6563,3 +6563,45 @@ Decision:
 
 - Keep this checkpoint. It cleanly removed the three economy command-row writes from the active runtime route and preserved endpoint-surface coverage.
 - Rotate to another command cluster next. The same receipt pattern is now proven; the next bounded pass should apply it to scenario/champion/worldgen commands instead of digging deeper into economy rows first.
+
+## Scenario/Champion/Worldgen Runtime Command Measurement
+
+Time: `2026-05-20T23:18:12Z`.
+
+Cut:
+
+- Rotated away from economy into scenario, champion magic, and worldgen command wrappers.
+- Moved `claim_quest_reward`, `sync_objectives`, `sync_world_events`, `sync_advanced_victory`, `select_champion_level_up`, `learn_champion_spell`, `cast_adventure_spell`, and `sync_world_generation` to `begin_runtime_participant_command` plus runtime apply/fail.
+- Kept durable fallback behavior and left domain rows, events, effects, quest/rule rows, champion spell/skill rows, and worldgen state rows unchanged.
+- Left `accept_quest` durable for the next small pass because it was outside the bounded heavy set.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bff3f3` / `12,579,827` bytes, `3,085` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-command-receipts-scenario-champion-worldgen-local`, passed in `236.37s`.
+
+Measurement versus `20260520-economy-runtime-command-trim-local2`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `147 -> 139`.
+- Stable pages: `2049 -> 79745` became `2049 -> 75393`.
+- Scenario instructions: `76.1968B -> 62.8131B`, `-13.3836B`, `-17.6%`.
+- `claim_quest_reward`: `7.3463B -> 5.6788B`, `-22.7%`.
+- `learn_champion_spell`: `5.6836B -> 4.0121B`, `-29.4%`.
+- `cast_adventure_spell`: `4.5114B -> 2.8451B`, `-36.9%`.
+- `select_champion_level_up`: `3.1065B -> 1.4363B`, `-53.8%`.
+- `sync_advanced_victory`: `5.4461B -> 3.7732B`, `-30.7%`.
+- `sync_world_generation`: `5.0832B -> 3.4009B`, `-33.1%`.
+- `sync_objectives`: `4.0341B -> 2.3623B`, `-41.4%`.
+- `sync_world_events`: `3.3294B -> 1.6561B`, `-50.3%`.
+- `commands.game_command_idempotency`: `10 -> 2` calls and `7.0794B -> 1.4147B`.
+- `commands.create_game_command`: `10 -> 2` calls and `4.7955B -> 0.9586B`.
+- `commands.update_game_command`: `10 -> 2` calls and `4.8024B -> 0.9593B`.
+
+Decision:
+
+- Keep this checkpoint. The shared command-row floor is now almost gone from endpoint-surface.
+- Next random cluster should be the remaining durable command rows, likely `accept_quest` and `end_turn`, then rotate to another mechanism because deeper receipt work will have diminishing returns.

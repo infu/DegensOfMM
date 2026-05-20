@@ -869,11 +869,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 40. Random Endpoint Cluster: Scenario/Champion/Worldgen Runtime Command Receipts
 
-- [ ] Rotate away from economy after the first receipt cut and apply the same runtime command receipt pattern to another heavy command cluster.
-- [ ] Pick a bounded set from the current heavy list: `claim_quest_reward`, `learn_champion_spell`, `sync_advanced_victory`, `sync_world_generation`, `sync_objectives`, `sync_world_events`, and `select_champion_level_up`.
-- [ ] Move those commands onto `begin_runtime_participant_command`/`apply_runtime_command_with_result`/`fail_runtime_command` only where active `SessionTurnRuntime` already exists, preserving durable fallback, events, effects, and domain rows.
-- [ ] Keep the benchmark Wasm under the IC code-section limit after the added call sites; if needed, trim benchmark-only internal surfaces before running PocketIC.
-- [ ] Verify with compile checks first, then measure in a batched endpoint-surface run and mark the real numbers here.
+- [x] Rotate away from economy after the first receipt cut and apply the same runtime command receipt pattern to another heavy command cluster.
+- [x] Pick a bounded set from the current heavy list: `claim_quest_reward`, `learn_champion_spell`, `sync_advanced_victory`, `sync_world_generation`, `sync_objectives`, `sync_world_events`, and `select_champion_level_up`. Also included `cast_adventure_spell` because it shares the exact champion magic command wrapper.
+- [x] Move those commands onto `begin_runtime_participant_command`/`apply_runtime_command_with_result`/`fail_runtime_command` only where active `SessionTurnRuntime` already exists, preserving durable fallback, events, effects, and domain rows.
+- [x] Keep the benchmark Wasm under the IC code-section limit after the added call sites; direct build measured code section `0x00bff3f3` / `12,579,827` bytes, `3,085` bytes under the limit.
+- [x] Verify with compile checks first, then measure in a batched endpoint-surface run and mark the real numbers here. Artifact `target/benchmarks/20260520-command-receipts-scenario-champion-worldgen-local` passed with `59/59` endpoints; command repo calls moved `10 -> 2`, row growth moved `147 -> 139`, scenario instructions moved `76.1968B -> 62.8131B` (`-17.6%`), and each converted method dropped about `1.67B` instructions.
+
+### 41. Random Endpoint Cluster: Remaining Durable Command Rows
+
+- [ ] Identify the final endpoint-surface durable `GameCommand` callers after Gate 40; likely `accept_quest` and `end_turn`.
+- [ ] Move the safe remaining active-session command wrappers onto runtime command receipts without touching unrelated domain rows.
+- [ ] Measure whether `commands.game_command_idempotency`, `commands.create_game_command`, and `commands.update_game_command` disappear from endpoint-surface or if a durable fallback still remains.
+- [ ] Rotate again after this final command-row pass instead of spending more time on the same mechanism.
 
 ## Expected Outcome
 

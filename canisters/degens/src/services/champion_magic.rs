@@ -9,7 +9,7 @@ use icydb::{traits::EntityValue, types::Id};
 use crate::repos::{champions_artifacts, content};
 
 use super::{
-    command_response::{self, GameCommandAction},
+    command_response,
     session_context::{self, public_error},
     session_turn_runtime,
 };
@@ -45,7 +45,7 @@ pub(crate) fn select_champion_level_up(
         command_response::escape_json(&champion.id().to_string()),
         command_response::escape_json(&skill_key)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "select_champion_level_up",
@@ -53,23 +53,32 @@ pub(crate) fn select_champion_level_up(
         Some(champion.id()),
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     match apply_level_choice(&context, command.clone(), champion, &skill_key) {
-        Ok((receipt, events, changed)) => command_response::apply_command_with_result(
+        Ok((receipt, events, changed)) => command_response::apply_runtime_command_with_result(
             caller,
             &context,
             command,
+            runtime_receipt,
             &client_nonce,
             magic_receipt_json(&receipt),
             events,
             changed,
             CommandResult::ChampionMagic(receipt),
         ),
-        Err(error) => {
-            command_response::fail_command(caller, &context, command, &client_nonce, error)
-        }
+        Err(error) => command_response::fail_runtime_command(
+            caller,
+            &context,
+            command,
+            runtime_receipt,
+            &client_nonce,
+            error,
+        ),
     }
 }
 
@@ -89,7 +98,7 @@ pub(crate) fn learn_champion_spell(
         command_response::escape_json(&champion.id().to_string()),
         command_response::escape_json(&spell_slug)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "learn_champion_spell",
@@ -97,23 +106,32 @@ pub(crate) fn learn_champion_spell(
         Some(champion.id()),
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     match apply_spell_learning(&context, command.clone(), champion, &spell_slug) {
-        Ok((receipt, events, changed)) => command_response::apply_command_with_result(
+        Ok((receipt, events, changed)) => command_response::apply_runtime_command_with_result(
             caller,
             &context,
             command,
+            runtime_receipt,
             &client_nonce,
             magic_receipt_json(&receipt),
             events,
             changed,
             CommandResult::ChampionMagic(receipt),
         ),
-        Err(error) => {
-            command_response::fail_command(caller, &context, command, &client_nonce, error)
-        }
+        Err(error) => command_response::fail_runtime_command(
+            caller,
+            &context,
+            command,
+            runtime_receipt,
+            &client_nonce,
+            error,
+        ),
     }
 }
 
@@ -133,7 +151,7 @@ pub(crate) fn cast_adventure_spell(
         command_response::escape_json(&champion.id().to_string()),
         command_response::escape_json(&spell_slug)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "cast_adventure_spell",
@@ -141,23 +159,32 @@ pub(crate) fn cast_adventure_spell(
         Some(champion.id()),
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     match apply_adventure_cast(&context, command.clone(), champion, &spell_slug) {
-        Ok((receipt, events, changed)) => command_response::apply_command_with_result(
+        Ok((receipt, events, changed)) => command_response::apply_runtime_command_with_result(
             caller,
             &context,
             command,
+            runtime_receipt,
             &client_nonce,
             magic_receipt_json(&receipt),
             events,
             changed,
             CommandResult::ChampionMagic(receipt),
         ),
-        Err(error) => {
-            command_response::fail_command(caller, &context, command, &client_nonce, error)
-        }
+        Err(error) => command_response::fail_runtime_command(
+            caller,
+            &context,
+            command,
+            runtime_receipt,
+            &client_nonce,
+            error,
+        ),
     }
 }
 

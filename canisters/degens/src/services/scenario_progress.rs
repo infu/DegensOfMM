@@ -123,7 +123,7 @@ pub(crate) fn claim_quest_reward(
         r#"{{"quest_key":"{}"}}"#,
         command_response::escape_json(&quest_key)
     );
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "claim_quest_reward",
@@ -131,10 +131,20 @@ pub(crate) fn claim_quest_reward(
         None,
         payload_json,
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
-    apply_claim_quest_reward(caller, &mut context, quest_key, command, &client_nonce)
+    apply_claim_quest_reward(
+        caller,
+        &mut context,
+        quest_key,
+        command,
+        runtime_receipt,
+        &client_nonce,
+    )
 }
 
 pub(crate) fn sync_objectives(
@@ -144,7 +154,7 @@ pub(crate) fn sync_objectives(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "sync_objectives",
@@ -152,8 +162,11 @@ pub(crate) fn sync_objectives(
         None,
         "{}".to_string(),
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
     let receipt = receipt(
@@ -192,10 +205,11 @@ pub(crate) fn sync_objectives(
         session_id_text,
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
+        runtime_receipt,
         &client_nonce,
         result_json,
         vec![event],
@@ -215,7 +229,7 @@ pub(crate) fn sync_world_events(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "sync_world_events",
@@ -223,8 +237,11 @@ pub(crate) fn sync_world_events(
         None,
         "{}".to_string(),
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     let event_row = ensure_current_world_event(&context.session, Some(command.id()))?;
     let event_key = event_row.event_key.clone();
@@ -259,10 +276,11 @@ pub(crate) fn sync_world_events(
         event_key,
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
+        runtime_receipt,
         &client_nonce,
         result_json,
         vec![event],
@@ -282,7 +300,7 @@ pub(crate) fn sync_advanced_victory(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "sync_advanced_victory",
@@ -290,8 +308,11 @@ pub(crate) fn sync_advanced_victory(
         None,
         "{}".to_string(),
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
     let updated = sync_scenario_rule_rows_for_session_with_completed_objectives(
@@ -331,10 +352,11 @@ pub(crate) fn sync_advanced_victory(
         session_id_text,
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
+        runtime_receipt,
         &client_nonce,
         result_json,
         vec![event],
@@ -589,6 +611,7 @@ fn apply_claim_quest_reward(
     context: &mut session_context::SessionCallerContext,
     quest_key: String,
     command: GameCommand,
+    runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
     let mut quest = load_quest(context, &quest_key)?;
@@ -599,10 +622,11 @@ fn apply_claim_quest_reward(
         quest.reward_gold,
     );
     if !transition.allowed {
-        return command_response::fail_command(
+        return command_response::fail_runtime_command(
             caller,
             context,
             command,
+            runtime_receipt,
             client_nonce,
             public_error(
                 transition
@@ -662,10 +686,11 @@ fn apply_claim_quest_reward(
         quest.quest_key.clone(),
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         context,
         command,
+        runtime_receipt,
         client_nonce,
         result_json,
         vec![event],

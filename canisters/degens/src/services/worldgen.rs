@@ -15,7 +15,7 @@ use icydb::{traits::EntityValue, types::Id};
 use crate::repos::worldgen;
 
 use super::{
-    command_response::{self, GameCommandAction},
+    command_response,
     session_context::{self, public_error},
 };
 
@@ -96,7 +96,7 @@ pub(crate) fn sync_world_generation(
 ) -> Result<CommandResponse, ApiError> {
     let context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
-    let command = match command_response::begin_participant_command(
+    let (command, runtime_receipt) = match command_response::begin_runtime_participant_command(
         caller,
         &context,
         "sync_world_generation",
@@ -104,8 +104,11 @@ pub(crate) fn sync_world_generation(
         None,
         "{}".to_string(),
     )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
+        command_response::RuntimeGameCommandAction::Apply {
+            command,
+            runtime_receipt,
+        } => (command, runtime_receipt),
+        command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
 
     let map = ensure_seeded_worldgen_state(&context.session, Some(command.id()))?;
@@ -121,10 +124,11 @@ pub(crate) fn sync_world_generation(
         session_id_text,
         result_json.clone(),
     )?;
-    command_response::apply_command_with_result(
+    command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
+        runtime_receipt,
         &client_nonce,
         result_json,
         Vec::new(),

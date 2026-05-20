@@ -3504,3 +3504,38 @@ Decision:
 - Keep this checkpoint. It is the first whole-route sync number inside the `0.6B-0.9B` band.
 - Do not mark Gate 5F complete yet because the stated target is `0.3B-0.6B`; remaining contact cost is mostly durable battle header create/update, source army reads, neutral update, and timeout job creation.
 - The next useful cuts should target the remaining activation boundary, not tactical row micro-work.
+
+## Checkpoint: Fresh Neutral Contact Skips Attacker Battle Probe
+
+Changed fresh neutral contact startup to skip the durable `battles.by_attacker` probe when the active runtime champion snapshot is not already in battle. Recovery/in-battle cases still use the durable probe.
+
+Why:
+
+- After Gate 5F.8, the fresh path has heap startup state and an active champion snapshot before the neutral contact begins.
+- The durable probe was only proving absence for a brand-new battle and cost about `0.7057B`.
+- Existing mid-start recovery is already delegated to Gate 5H because tactical startup rows are heap-owned.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build for `domm-degens-canister --features benchmark`: code section `0x00bfe29a`, about `7.5 KB` under the IC limit
+- Focused Gate J `20260520-neutral-start-skip-fresh-attacker-probe-gate-j` passed in `269.37s`
+
+Measured delta versus `20260520-neutral-start-heap-tactical-rows-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 68.3627B | 67.6589B | -1.0% |
+| `sync_session_turn` avg | 0.8750B | 0.8049B | -8.0% |
+| neutral startup sync seq 69 | 1.8891B | 1.1849B | -37.3% |
+| `battles.by_attacker` calls | 1 | 0 | -100.0% |
+| row growth | 35 | 35 | flat |
+| stable pages final | 71041 | 71041 | flat |
+
+Decision:
+
+- Keep this checkpoint. It is a small, targeted absence-proof cut and the benchmark moved exactly where expected.
+- Do not broaden this pattern blindly. For recovered or already-in-battle champions, the durable probe remains the fallback.
+- Remaining Gate 5F cost is now mostly activation boundary work and source army stack reads.

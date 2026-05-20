@@ -3660,7 +3660,9 @@ fn start_neutral_battle(
             neutral_id,
         );
     }
-    if let Some(existing) = battles::find_battle_by_attacker(pending_move.champion.id())? {
+    if should_probe_existing_neutral_battle(pending_move)
+        && let Some(existing) = battles::find_battle_by_attacker(pending_move.champion.id())?
+    {
         if existing.defender_neutral_army_id == Some(neutral_id.key())
             && (existing.state == "active" || existing.state.starts_with("starting"))
         {
@@ -3704,6 +3706,10 @@ fn start_neutral_battle(
     battle_start::remember_startup_stacks(battle.id(), stacks);
     remember_neutral_starting_battle(&battle);
     Ok(None)
+}
+
+fn should_probe_existing_neutral_battle(pending_move: &PendingMovement) -> bool {
+    pending_move.champion.status == "in_battle" || pending_move.champion.in_battle_id.is_some()
 }
 
 fn continue_neutral_battle_start(

@@ -257,7 +257,7 @@ pub(crate) fn get_battle_state(
     battle_id: String,
     now_ms: u64,
 ) -> Result<BattleView, ApiError> {
-    let context = session_context::require_session_caller(caller, &session_id)?;
+    let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let participant_id = context.participant.id().to_string();
     let canonical_session_id = context.session.id().to_string();
     if let Some(view) = battle_runtime::with_runtime(&battle_id, |runtime| {

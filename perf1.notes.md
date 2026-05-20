@@ -5906,3 +5906,26 @@ Expected measurement:
 
 - Each fresh champion magic command should drop `effects.command_effect_by_command_key` (`~0.70B`) and `events.by_session_event_key` (`~0.70B`) if the endpoint trace still had both absence reads.
 - Expected endpoint improvement is roughly `~1.4B` per fresh champion magic command before the remaining command create/update, champion row, event/effect create, session update, and content/champion reads dominate.
+
+## Round-Robin Pivot: Battle-State Query Auth
+
+New cluster:
+
+- Rotated from champion magic to a remaining read-path outlier.
+- Current cost: `get_battle_state` `2.1106B` on the endpoint-surface invalid-id path.
+- Shape matches the query-auth smell fixed earlier: the endpoint used durable caller/session/participant lookup before checking battle runtime or parsing the battle id.
+
+Cut:
+
+- `get_battle_state` now uses `require_session_caller_runtime_first`.
+- Durable lookup remains the fallback when no active runtime caller row is available.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `git diff --check`
+
+Expected measurement:
+
+- `get_battle_state` should drop by roughly the same `~2.1B` query-auth floor removed from the other read endpoints when an active turn runtime has caller context.

@@ -687,7 +687,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Use `append_fresh_public_event` for the matching successful fresh champion magic public events. Existing early-idempotent replay paths still return without creating duplicate events.
 - [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify `effects.command_effect_by_command_key` and `events.by_session_event_key` disappear from fresh `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` traces.
-- [ ] Rotate again before doing another deeper champion-only optimization.
+- [x] Rotate again before doing another deeper champion-only optimization. Picked the battle-state read path because `get_battle_state` still costs `2.1106B` on the endpoint-surface invalid-id path.
+
+### 20. Round-Robin Endpoint Cluster: Battle-State Query Auth
+
+- [x] Rotate to `get_battle_state` after the champion magic fresh event/effect cut.
+- [x] Use `require_session_caller_runtime_first` before checking the battle runtime so the endpoint avoids the old durable caller/session/participant lookup when active runtime context is available.
+- [x] Verify with `cargo fmt --check`, `cargo check -p domm-degens-canister`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `get_battle_state` drops the same `~2.1B` query-auth floor as the other runtime-first query endpoints.
+- [ ] Rotate again before another battle-only optimization.
 
 ## Expected Outcome
 

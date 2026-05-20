@@ -5520,3 +5520,23 @@ Gate J measurement:
 Decision:
 
 - Keep it. This is the same heap-first boundary used for lobby command receipts and starting session state: the public route returns from runtime state, and durable setup history is pushed to the job/recovery boundary.
+
+## Rejected Attempt: Heap-Only Runtime Turn Advance Session Row
+
+Gate 7 follow-up attempt:
+
+- Tried to remove the remaining runtime `sync_session_turn` durable `sessions.update_session` call from the benchmark hot path.
+- The code compiled and, after a benchmark-only dead barrier trim, fit the IC Wasm code-section limit at `0x00bffe88`.
+- Focused Gate J `20260520-164825-gate7-runtime-turn-session-gate-j` passed on git `d46c607` and reported scenario instructions `3.8788B -> 2.9235B`.
+
+Why it was rejected:
+
+- The route shape changed: calls moved `87 -> 86`, and `battles.create_battle` disappeared from the measured repo operations.
+- Final stable memory increased `3980.0625 MB -> 4356.375 MB`.
+- Benchmark row diagnostics changed from `row_commands=5,row_events=3` to `row_commands=10,row_events=5`.
+- That means the measured gain was not a clean removal of one session update; it also changed how far the route progressed and where projections/history landed.
+
+Decision:
+
+- Reverted as `c4b0c20`.
+- The next session-update cut needs a fuller runtime merge contract for all callers/endpoints that cross the turn boundary, and the benchmark must preserve the same call count and battle handoff behavior before it can be marked done.

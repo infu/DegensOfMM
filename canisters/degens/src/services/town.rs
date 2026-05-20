@@ -11,7 +11,7 @@ use crate::repos::{commands_events_effects, content, economy, sessions, towns};
 
 use super::{
     command_response::{self, GameCommandAction},
-    render_projection, session_context, session_turn_runtime,
+    render_projection, session_context, session_turn_runtime, town_runtime,
 };
 
 pub(crate) fn get_town_view(
@@ -285,6 +285,7 @@ pub(crate) fn submit_build_town_structure(
         building_slug.clone(),
         context.session.current_turn,
     )?;
+    town_runtime::mirror_building(&building_row);
     if let Some(unit_slug) = &building.unlocks_unit_slug {
         let unit = content::find_unit_by_ruleset_slug(ruleset_id, unit_slug)?.ok_or_else(|| {
             ApiError::new(
@@ -294,7 +295,7 @@ pub(crate) fn submit_build_town_structure(
             )
         })?;
         if towns::find_town_recruit_pool(town.id(), unit.id())?.is_none() {
-            towns::create_town_recruit_pool(
+            let pool = towns::create_town_recruit_pool(
                 context.session.id(),
                 town.id(),
                 unit.id(),
@@ -302,12 +303,14 @@ pub(crate) fn submit_build_town_structure(
                 u32::from(unit.weekly_growth),
                 1,
             )?;
+            town_runtime::mirror_recruit_pool(&pool);
         }
     }
     let mut town = town;
     town.last_built_turn = context.session.current_turn;
     town.last_command_id = Some(command.id);
     towns::update_town(town.clone())?;
+    town_runtime::mirror_town(&town);
 
     let mut session = context.session.clone();
     let events = append_town_command_events(
@@ -380,7 +383,7 @@ pub(crate) fn submit_recruit_units(
 
     let unit = content::find_unit_by_ruleset_slug(ruleset_id()?, &unit_slug)?
         .ok_or_else(|| ApiError::new("unit_not_found", "unit definition was not found", false))?;
-    let Some(mut pool) = towns::find_town_recruit_pool(town.id(), unit.id())? else {
+    let Some(mut pool) = town_runtime::recruit_pool(&town, unit.id())? else {
         return command_response::fail_command(
             caller,
             &context,
@@ -436,10 +439,11 @@ pub(crate) fn submit_recruit_units(
     pool.available = pool.available.saturating_sub(quantity);
     pool.last_command_id = Some(command.id);
     pool = towns::update_town_recruit_pool(pool)?;
+    town_runtime::mirror_recruit_pool(&pool);
 
     let garrison = recruit_to_garrison(
+        &town,
         context.session.id(),
-        town.id(),
         unit.id(),
         unit_slug.clone(),
         unit.max_hp,
@@ -535,8 +539,8 @@ fn missing_required_building_slug(
 }
 
 fn recruit_to_garrison(
+    town: &Town,
     session_id: Id<domm_degens_schema::schema::GameSession>,
-    town_id: Id<domm_degens_schema::schema::Town>,
     unit_id: Id<domm_degens_schema::schema::UnitDefinition>,
     unit_slug: String,
     front_hp: u16,
@@ -555,7 +559,7 @@ fn recruit_to_garrison(
         }
     };
     let slot_index = requested_slot.unwrap_or(0);
-    let stack = match towns::find_town_garrison_stack(town_id, slot_index)? {
+    let stack = match town_runtime::garrison_stack(town, slot_index)? {
         Some(mut stack) => {
             if stack.unit_id != unit_id.key() {
                 return Err(ApiError::new(
@@ -566,12 +570,14 @@ fn recruit_to_garrison(
             }
             stack.quantity = stack.quantity.saturating_add(quantity);
             stack.last_command_id = Some(command_id.key());
-            towns::update_town_garrison_stack(stack)?
+            let stack = towns::update_town_garrison_stack(stack)?;
+            town_runtime::mirror_garrison_stack(&stack);
+            stack
         }
         None => {
             let mut stack = towns::create_town_garrison_stack(
                 session_id,
-                town_id,
+                town.id(),
                 unit_id,
                 unit_slug,
                 slot_index,
@@ -580,6 +586,7 @@ fn recruit_to_garrison(
                 Some(command_id),
             )?;
             stack.last_command_id = Some(command_id.key());
+            town_runtime::mirror_garrison_stack(&stack);
             stack
         }
     };

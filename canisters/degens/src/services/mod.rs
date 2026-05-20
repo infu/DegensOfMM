@@ -26,4 +26,5 @@ pub(crate) mod system_jobs;
 #[cfg(test)]
 mod tests;
 pub(crate) mod town;
+pub(crate) mod town_runtime;
 pub(crate) mod worldgen;

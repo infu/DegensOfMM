@@ -20,7 +20,7 @@ use crate::repos::{
 
 use super::{
     session_context::{SessionCallerContext, public_error},
-    session_turn_runtime,
+    session_turn_runtime, town_runtime,
 };
 
 const MAX_OWNED_CHAMPIONS_VIEW: u32 = 16;
@@ -442,8 +442,23 @@ fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiErro
 }
 
 pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
+    let projection = town_runtime::projection_for_town(town)?;
+    town_view_from_parts(
+        &projection.town,
+        projection.buildings,
+        projection.recruit_pools,
+        projection.garrison_stacks,
+    )
+}
+
+fn town_view_from_parts(
+    town: &Town,
+    building_rows: Vec<domm_degens_schema::schema::TownBuilding>,
+    recruit_pool_rows: Vec<domm_degens_schema::schema::TownRecruitPool>,
+    garrison_rows: Vec<domm_degens_schema::schema::TownGarrisonStack>,
+) -> Result<ApiTownView, ApiError> {
     let faction_slug = town_faction_slug(town);
-    let buildings = towns::list_town_buildings(town.id(), 16)?
+    let buildings = building_rows
         .into_iter()
         .map(|row| {
             Ok(TownBuildingRecord {
@@ -455,7 +470,7 @@ pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let recruit_pools = towns::list_town_recruit_pools(town.id(), 16)?
+    let recruit_pools = recruit_pool_rows
         .into_iter()
         .map(|row| {
             Ok(TownRecruitPoolRecord {
@@ -471,26 +486,25 @@ pub(crate) fn town_view(town: &Town) -> Result<ApiTownView, ApiError> {
             })
         })
         .collect::<Result<Vec<_>, ApiError>>()?;
-    let garrison_stacks =
-        towns::list_town_garrison(town.id(), u32::from(domm_game::MAX_ARMY_SLOTS))?
-            .into_iter()
-            .map(|row| {
-                Ok(domm_game::ArmyStackRecord {
-                    stack_id: row.id().to_string(),
-                    session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
-                    owner_kind: "town".to_string(),
-                    owner_id: town.id().to_string(),
-                    unit_slug: row.unit_slug,
-                    slot_index: row.slot_index,
-                    quantity: row.quantity,
-                    front_hp: row.front_hp,
-                    status: "active".to_string(),
-                    last_command_id: row.last_command_id.map(|id| {
-                        Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
-                    }),
-                })
+    let garrison_stacks = garrison_rows
+        .into_iter()
+        .map(|row| {
+            Ok(domm_game::ArmyStackRecord {
+                stack_id: row.id().to_string(),
+                session_id: Id::<GameSession>::from_key(row.session_id).to_string(),
+                owner_kind: "town".to_string(),
+                owner_id: town.id().to_string(),
+                unit_slug: row.unit_slug,
+                slot_index: row.slot_index,
+                quantity: row.quantity,
+                front_hp: row.front_hp,
+                status: "active".to_string(),
+                last_command_id: row.last_command_id.map(|id| {
+                    Id::<domm_degens_schema::schema::GameCommand>::from_key(id).to_string()
+                }),
             })
-            .collect::<Result<Vec<_>, ApiError>>()?;
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
     Ok(ApiTownView {
         town: TownRecord {
             town_id: town.id().to_string(),

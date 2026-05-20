@@ -3223,3 +3223,27 @@ Verification:
 Decision:
 
 - Keep this cleanup. It does not claim a gameplay performance delta, but it is necessary engineering work before adding the larger `TownRuntime` surface.
+
+## Checkpoint: Town Projection Cache Scaffold
+
+Implemented the first Gate 6 town runtime scaffold:
+
+- Added a heap `TownProjection` cache keyed by `(session_id, town_id)` and backed by real durable town rows on cache miss.
+- `get_town_view` now renders from the cached projection after hydration instead of reloading `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` rows on every render.
+- Recruitment pool and garrison-slot lookup can read the hydrated projection during `submit_recruit_units`.
+- Existing durable writers still run, but now mirror changes into the cache when it exists: build rows, recruit pools, garrison stacks, captured town ownership, and weekly recruit growth.
+- Battle aftermath evicts the town projection before delete/recreate survivor garrison writes, so the next read reloads truthful rows.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Benchmark status:
+
+- No PocketIC benchmark was run for this checkpoint. This is the low-risk cache scaffold before the larger Gate 6 change that makes build/recruit mutate runtime first and defers durable child-row writes.
+
+Decision:
+
+- Keep this checkpoint. It fixes the repeated child-row load shape for cached town views and gives the next step a single town aggregate to mutate. It does not yet solve the main `submit_build_town_structure`/`submit_recruit_units` cost because durable command, resource, event, building, pool, and garrison writes still happen in the hot call.

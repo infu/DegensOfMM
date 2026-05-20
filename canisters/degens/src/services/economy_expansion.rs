@@ -19,7 +19,7 @@ use crate::repos::{
 use super::{
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
-    session_turn_runtime,
+    session_turn_runtime, town_runtime,
 };
 
 pub(crate) fn get_tavern_offers(
@@ -833,7 +833,8 @@ fn materialize_town_recruit_growth(
             .min(domm_game::RECRUIT_POOL_CAP);
         pool.last_growth_week = current_week;
         pool.last_command_id = Some(command_id.key());
-        towns::update_town_recruit_pool(pool)?;
+        let pool = towns::update_town_recruit_pool(pool)?;
+        town_runtime::mirror_recruit_pool(&pool);
         touched = touched.saturating_add(1);
     }
     Ok(touched)

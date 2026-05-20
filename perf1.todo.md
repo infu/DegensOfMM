@@ -519,6 +519,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 9. Gate 6: Town/Economy Runtime And Projection
 
+- [x] Gate 6.1: add a heap `TownProjection` cache keyed by `(session_id, town_id)` for town rows, buildings, recruit pools, and garrison stacks; hydrate it from durable rows on cache miss, render `get_town_view` from that real-row-backed projection, use it for recruitment pool/garrison lookup, and mirror current town/building/recruit/garrison writers plus battle aftermath/economy growth invalidation. Verified with `cargo fmt --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`. No PocketIC benchmark in this checkpoint; this is the cache scaffold before the larger durable-write deferral needed to move build/recruit toward `0.3B-0.6B`.
 - [ ] Add `TownRuntime`/`TownProjection` keyed by `(session_id, town_id)` with buildings, recruit pools, garrison, tavern offers/growth, and last command metadata; hydrate once from rows and snapshot/restore on upgrade.
 - [ ] Make `preview_build_town_structure`, `preview_recruit_units`, `submit_build_town_structure`, and `submit_recruit_units` read/mutate runtime town/resource projection first, with durable fallback only when no runtime exists.
 - [ ] Move town command receipts/events/resource deltas into `SessionTurnRuntime`; defer `GameCommand`, `GameEvent`, `CommandEffect`, `ResourceLedgerEntry`, `TownBuilding`, `TownRecruitPool`, and `TownGarrisonStack` writes to flush.

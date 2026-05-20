@@ -13,7 +13,7 @@ use crate::repos::{
 use super::{
     command_response, scenario_progress,
     session_context::{self, public_error},
-    session_turn_runtime,
+    session_turn_runtime, town_runtime,
 };
 
 pub(crate) fn apply_resolved_battle_aftermath(
@@ -224,6 +224,7 @@ fn apply_town_aftermath(
     town.unrest_until_turn = battle.created_turn.saturating_add(2);
     town.last_command_id = Some(command_id.key());
     town = towns::update_town(town)?;
+    town_runtime::mirror_town(&town);
     write_town_garrison_survivors(session.id(), battle.id(), town_id, command_id)?;
 
     let mut champion = champions_artifacts::load_champion(champion_id)?
@@ -377,6 +378,7 @@ fn write_town_garrison_survivors(
     town_id: Id<Town>,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
+    town_runtime::evict_town(session_id, town_id);
     for stack in towns::page_town_garrison(town_id, MAX_LIST_LIMIT, None)?.items {
         towns::delete_town_garrison_stack(stack.id())?;
     }

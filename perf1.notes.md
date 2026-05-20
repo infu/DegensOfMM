@@ -4687,6 +4687,50 @@ Decision:
 - Keep this checkpoint. A registered player row is stable enough to use as an active-process identity cache, and all callers still fall back to durable lookup on cache miss.
 - This drops the lobby setup route below `10B` total. The next large costs are durable row boundaries rather than repeated lookup reads: player creates, session/participant creates, session updates, setup command create, setup/battle job creates, visibility/object projection writes, and the battle header create.
 
+## Checkpoint: Direct Inserts For Lobby Create Rows
+
+A worker investigated whether the generated create-input path for lobby row creation had measurable overhead. The patch changed `PlayerAccount`, `GameSession`, and `GameParticipant` creation to build full typed rows and call `foundation::insert` while still going through IcyDB validation, index maintenance, and relation checks.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Worker ran repository smoke tests for create/read/update/page/delete and insert-many/error sanitization
+- Focused Gate J `20260520-direct-insert-create-rows-gate-j` passed in `187.32s`
+
+Measured delta versus `20260520-player-principal-cache-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 9.0628B | 9.0582B | -0.05% |
+| Gate J scenario memory | 4012.0625 MB | 4012.0625 MB | flat |
+| Gate J scenario cycles | 0.0583T | 0.0583T | flat |
+| `register_player` avg | 1.1756B | 1.1756B | flat |
+| `create_session` avg | 0.9567B | 0.9577B | flat/noise |
+| `join_session` avg | 0.4826B | 0.4833B | flat/noise |
+| `start_session` avg | 1.4372B | 1.4346B | flat/noise |
+
+Decision:
+
+- Keep the patch for now because it is verified and does not regress the route, but do not treat it as a major performance win.
+- This confirms the remaining durable create cost is inside IcyDB insert/index/relation work, not the generated create-input wrapper.
+
+## Rejected Experiment: Heap Visibility/Known-Object Projection Writes
+
+Tried to remove `map.update_visibility_chunk` and `map.create_known_object` from the Gate J movement route by making movement update active render-projection caches when those caches were known complete for the first-playable participant.
+
+Result:
+
+- The patch compiled in normal and benchmark canister checks after fixes.
+- Focused Gate J could not install the benchmark Wasm.
+- Benchmark Wasm code section was `12,595,116` bytes, exceeding the IC limit of `12,582,912` bytes by `12,204` bytes.
+
+Decision:
+
+- Rejected for now due code size. The idea is directionally correct, but the helper surface was too large for the current canister budget.
+- Revisit only after code-size headroom is recovered or after a smaller design is found. The target repo ops remain `map.update_visibility_chunk` and `map.create_known_object`, about `0.95B` combined in Gate J.
+
 ## Rejected Experiment: Heap-Only Starting Session
 
 Tried moving the `lobby -> starting` `GameSession` update out of `start_session` and letting the setup job read the starting session from the heap cache before the final active-state durable update.

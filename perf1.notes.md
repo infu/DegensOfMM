@@ -3265,8 +3265,20 @@ Verification:
 
 Benchmark status:
 
-- No PocketIC benchmark was run for this small read batch. Measure after the next larger Gate 6 mutation batch so the run captures a meaningful route-level delta instead of another tiny row-scan-only checkpoint.
+- Focused Gate J `20260520-town-projection-reads-gate-j` passed in `200.88s`.
+- Removed the PocketIC server left holding the benchmark pipe after the passing run.
+
+Measured delta versus `20260520-query-town-cuts-slim-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 128.8321B | 123.9078B | -3.8% |
+| `get_town_view` avg | 2.8189B | 0.7079B | -74.9% |
+| `submit_recruit_units` avg | 12.0437B | 10.6436B | -11.6% |
+| `submit_build_town_structure` avg | 16.2855B | 16.9860B | +4.3% |
+| `sync_session_turn` avg | 1.4732B | 1.4720B | flat |
+| `towns.buildings_by_town` repo op | 2 calls | 0 calls | removed |
 
 Decision:
 
-- Keep this cut. It should help repeated previews and removes one more stable lookup from the build path after projection hydration. The major build/recruit costs remain durable command/resource/event/child-row writes.
+- Keep this cut. It fixed the town-view target and helped recruit, but the build regression shows the limit of read caching: first build now pays projection hydration while still doing durable command, resource, event, building, pool, and town writes. The next Gate 6 work needs to remove or batch durable writes rather than add more read-side cache polish.

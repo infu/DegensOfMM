@@ -5540,3 +5540,22 @@ Decision:
 
 - Reverted as `c4b0c20`.
 - The next session-update cut needs a fuller runtime merge contract for all callers/endpoints that cross the turn boundary, and the benchmark must preserve the same call count and battle handoff behavior before it can be marked done.
+
+## Rejected Attempt: Battle Handoff Map-Deadline Marker
+
+Gate 7.14 probe:
+
+- Tried a very small cut for the remaining seq72 `system_jobs.create_system_job`: mark sessions that emitted a battle-handoff event and skip the next map-turn deadline recreate.
+- A first active-runtime scan version was too large for the benchmark Wasm limit. The one-shot marker version fit only after trimming benchmark-only timer restoration code; final code section was `0x00bffec6`.
+- Focused Gate J `20260520-174411-gate7-battle-handoff-deadline-gate-j` and broader marker rerun `20260520-174959-gate7-battle-handoff-marker-gate-j` both passed.
+
+Why it was rejected:
+
+- Route shape stayed healthy: `87` calls, `row_commands=5`, `row_events=3`, `row_growth=35`, final stable pages `65665`, and `battles.create_battle` remained present.
+- Performance did not improve. Scenario instructions moved from the accepted `3.8788B` baseline to `3.8802B`, and seq72 still showed `system_jobs.create_system_job` at about `0.4790B`.
+- That means the remaining seq72 `SystemJob` create is not the map-turn deadline recreate this probe targeted. It is more likely the active battle timeout/setup job created during battle activation, but the next edit should prove the job key before changing semantics.
+
+Decision:
+
+- Reverted the code changes and kept only this note/todo update.
+- Next Gate 7 work should target a tiny active-battle timeout runtime wakeup or add narrowly scoped job-key attribution for seq72 before attempting another cut.

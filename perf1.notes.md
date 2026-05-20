@@ -5731,3 +5731,29 @@ Decision:
 
 - Keep the cuts. They are bounded, preserve endpoint coverage, and remove measured durable-row churn.
 - Per the round-robin rule, rotate to the next heavy cluster from the new ranking instead of immediately polishing these same endpoints.
+
+## Round-Robin Pivot: World Generation And Events Cluster
+
+New cluster:
+
+- Rotated to worldgen/events from endpoint-surface `20260520-endpoint-rotations-76036c8`.
+- Current costs: `sync_world_generation` `8.8428B`, `sync_world_events` `7.7969B`.
+- Measured durable metadata churn:
+  - `sync_world_generation`: `worldgen.update_skirmish_settings` `0.4776B` and `worldgen.update_procedural_map` `0.4771B`.
+  - `sync_world_events`: `scenario.update_world_event_state` `0.4767B`.
+
+Cut:
+
+- `sync_world_generation` no longer rewrites existing `SkirmishSettingsState` just to stamp `last_command_id`.
+- `sync_world_generation` no longer rewrites an unchanged `ProceduralMapState` just to stamp `last_command_id`; it still updates the procedural map if actual generated state changes.
+- `sync_world_events` no longer rewrites an existing `WorldEventState` just to stamp `last_command_id`; it still creates/mutates the row on missing-row materialization.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check --target wasm32-unknown-unknown -p domm-degens-canister --features benchmark`
+
+Expected measurement:
+
+- Next endpoint-surface/focused run should save roughly `0.95B` from `sync_world_generation` and `0.48B` from `sync_world_events`, before addressing their larger shared command/effect/event/session floor.

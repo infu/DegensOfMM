@@ -141,14 +141,10 @@ pub(crate) fn ensure_seeded_worldgen_state(
     command_id: Option<Id<GameCommand>>,
 ) -> Result<ProceduralMapState, ApiError> {
     let settings_record = first_playable_skirmish_settings(session.seed);
-    let mut settings = match worldgen::find_skirmish_settings(session.id())? {
+    let settings = match worldgen::find_skirmish_settings(session.id())? {
         Some(row) => row,
         None => worldgen::create_skirmish_settings(session.id(), &settings_record)?,
     };
-    if command_id.is_some() && settings.last_command_id != command_id.map(|id| id.key()) {
-        settings.last_command_id = command_id.map(|id| id.key());
-        settings = worldgen::update_skirmish_settings(settings)?;
-    }
 
     let preview = deterministic_procedural_map(
         settings.map_seed,
@@ -167,7 +163,6 @@ pub(crate) fn ensure_seeded_worldgen_state(
     if map.status != preview.status
         || map.scenario_hash != preview.scenario_hash
         || map.generated_turn != preview.generated_turn
-        || command_id.is_some() && map.last_command_id != command_id.map(|id| id.key())
     {
         apply_procedural_preview(&mut map, &preview);
         map.last_command_id = command_id.map(|id| id.key());

@@ -643,7 +643,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 ### 14. Batched Round-Robin Measurement
 
 - [x] Run one focused endpoint-surface benchmark after the scenario-progress, champion-magic, and economy-expansion rotations. Artifact `target/benchmarks/20260520-endpoint-rotations-76036c8` passed, covered `59/59` required endpoints, and moved scenario instructions `199.6434B -> 185.4812B` (`-14.1622B`, `-7.1%`) versus `20260520-200503-48ee723/endpoint-surface`. Row growth moved `153 -> 150`; final stable pages moved `83969 -> 81281`.
-- [ ] Rotate to the next heavy endpoint cluster from the new post-measurement ranking instead of continuing to polish scenario/champion/economy immediately.
+- [x] Rotate to the next heavy endpoint cluster from the new post-measurement ranking instead of continuing to polish scenario/champion/economy immediately. Picked world generation/events because `sync_world_generation` remains `8.8428B` and `sync_world_events` remains `7.7969B`.
+
+### 15. Round-Robin Endpoint Cluster: World Generation And Events
+
+- [x] Rotate to the world generation/events cluster from endpoint-surface: `sync_world_generation` (`8.8428B`), `sync_world_events` (`7.7969B`), and related worldgen queries.
+- [x] Stop durable `last_command_id`-only writes in `sync_world_generation` for existing `SkirmishSettingsState` and unchanged `ProceduralMapState` rows. The generated world state is already materialized; manual sync does not need to rewrite rows only for diagnostic command metadata.
+- [x] Stop durable `last_command_id`-only writes in `sync_world_events` when the current deterministic `WorldEventState` row already exists.
+- [ ] Measure the worldgen/events cut with the next batched endpoint-surface/focused benchmark and verify `worldgen.update_skirmish_settings`, unchanged `worldgen.update_procedural_map`, and existing-row `scenario.update_world_event_state` drop on the fresh sync path.
+- [ ] Rotate again after a bounded measurement or another small independent cut.
 
 ## Expected Outcome
 

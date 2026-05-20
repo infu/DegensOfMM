@@ -866,13 +866,7 @@ fn ensure_current_world_event(
 ) -> Result<WorldEventState, ApiError> {
     let event = domm_game::deterministic_world_event(session.seed, session.current_turn);
     match scenario_progress::find_world_event_by_key(session.id(), &event.event_key)? {
-        Some(mut row) => {
-            if let Some(command_id) = command_id {
-                row.last_command_id = Some(command_id.key());
-                row = scenario_progress::update_world_event_state(row)?;
-            }
-            Ok(row)
-        }
+        Some(row) => Ok(row),
         None => {
             let mut row = scenario_progress::create_world_event_state(
                 session.id(),

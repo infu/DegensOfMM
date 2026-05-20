@@ -3,10 +3,7 @@
 //! This is the first Gate 6 step: keep a real-row-backed town aggregate in
 //! heap so command/query paths can stop reloading the same child rows.
 
-use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet},
-};
+use std::{cell::RefCell, collections::BTreeMap};
 
 use domm_degens_schema::schema::{
     BuildingDefinition, GameCommand, GameSession, Town, TownBuilding, TownGarrisonStack,
@@ -167,12 +164,12 @@ pub(crate) fn recruit_pool(
         .find(|pool| pool.unit_id == unit_id.key()))
 }
 
-pub(crate) fn built_building_ids(town: &Town) -> Result<BTreeSet<icydb::types::Ulid>, ApiError> {
+pub(crate) fn building_slugs(town: &Town) -> Result<Vec<String>, ApiError> {
     let projection = projection_for_town(town)?;
     Ok(projection
         .buildings
         .into_iter()
-        .map(|building| building.building_def_id)
+        .map(|building| building.building_slug)
         .collect())
 }
 

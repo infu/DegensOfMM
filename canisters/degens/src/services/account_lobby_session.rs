@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     FactionDefinition, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
@@ -26,6 +28,25 @@ use super::{first_playable_setup, session_turn_runtime, system_jobs as system_jo
 
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
+
+thread_local! {
+    static SESSION_VIEW_CACHE: RefCell<Option<SessionView>> = const { RefCell::new(None) };
+}
+
+fn cached_session_view(session_id: &str) -> Option<SessionView> {
+    SESSION_VIEW_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|view| view.session_id == session_id)
+            .cloned()
+    })
+}
+
+fn remember_session_view(view: &SessionView) {
+    SESSION_VIEW_CACHE.with(|cache| *cache.borrow_mut() = Some(view.clone()));
+}
+
 const SETUP_EFFECTS: &[SetupEffectSpec] = &[
     SetupEffectSpec {
         key: "seed_ruleset_content",
@@ -591,10 +612,17 @@ pub(crate) fn get_session(session_id: String) -> Result<SessionView, ApiError> {
     if let Some((session, mut participants)) =
         session_turn_runtime::latest_session_rows(&session_id)
     {
-        return session_view_from_participants(&session, &mut participants);
+        let view = session_view_from_participants(&session, &mut participants)?;
+        remember_session_view(&view);
+        return Ok(view);
+    }
+    if let Some(view) = cached_session_view(&session_id) {
+        return Ok(view);
     }
     let session = load_session_from_text(&session_id)?;
-    session_view(&session)
+    let view = session_view(&session)?;
+    remember_session_view(&view);
+    Ok(view)
 }
 
 pub(crate) fn get_setup_progress(session_id: String) -> Result<SetupProgressView, ApiError> {
@@ -807,6 +835,9 @@ fn apply_lobby_command(
     command.applied_at = Some(Timestamp::now());
     command.failed_at = None;
     let command = commands_events_effects::update_lobby_command(command)?;
+    if let LobbyCommandResult::Session(view) = &result {
+        remember_session_view(view);
+    }
     Ok(LobbyCommandResponse {
         command_id: command.id().to_string(),
         command_type: command.command_type,
@@ -973,7 +1004,9 @@ fn replay_lobby_result(command: &LobbyCommand) -> Result<LobbyCommandResult, Api
                 return Ok(LobbyCommandResult::None);
             };
             let session = load_session_from_text(&session_id)?;
-            Ok(LobbyCommandResult::Session(session_view(&session)?))
+            let view = session_view(&session)?;
+            remember_session_view(&view);
+            Ok(LobbyCommandResult::Session(view))
         }
         _ => Ok(LobbyCommandResult::None),
     }

@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, Town};
 use domm_game::{
@@ -90,12 +88,14 @@ pub(crate) fn preview_build_town_structure(
         building.ember_cost,
         building.aether_cost,
     );
-    let built_building_ids = town_runtime::built_building_ids(&town)?;
-    let missing_prerequisite =
-        missing_required_building_slug(ruleset_id, &built_building_ids, &building)?;
+    let built_building_slugs = town_runtime::building_slugs(&town)?;
+    let missing_prerequisite = missing_required_building_slug(&built_building_slugs, &building);
     let disabled_reason = if town.owner_participant_id != Some(context.participant.id().key()) {
         Some("not_owner".to_string())
-    } else if built_building_ids.contains(&building.id) {
+    } else if built_building_slugs
+        .iter()
+        .any(|slug| slug == &building_slug)
+    {
         Some("already_built".to_string())
     } else {
         missing_prerequisite.or_else(|| {
@@ -250,9 +250,8 @@ pub(crate) fn submit_build_town_structure(
         building.ember_cost,
         building.aether_cost,
     );
-    let built_building_ids = town_runtime::built_building_ids(&town)?;
-    let missing_prerequisite =
-        missing_required_building_slug(ruleset_id, &built_building_ids, &building)?;
+    let built_building_slugs = town_runtime::building_slugs(&town)?;
+    let missing_prerequisite = missing_required_building_slug(&built_building_slugs, &building);
     if town.owner_participant_id != Some(context.participant.id().key()) {
         return Ok(fail_runtime_town_command(
             caller,
@@ -262,7 +261,10 @@ pub(crate) fn submit_build_town_structure(
             ApiError::new("not_owner", "caller does not own this town", false),
         ));
     }
-    if built_building_ids.contains(&building.id) {
+    if built_building_slugs
+        .iter()
+        .any(|slug| slug == &building_slug)
+    {
         return Ok(fail_runtime_town_command(
             caller,
             &context,
@@ -520,24 +522,15 @@ fn resolve_town_by_session_id(
 }
 
 fn missing_required_building_slug(
-    ruleset_id: Id<domm_degens_schema::schema::RulesetDefinition>,
-    built_building_ids: &BTreeSet<icydb::types::Ulid>,
+    built_building_slugs: &[String],
     building: &domm_degens_schema::schema::BuildingDefinition,
-) -> Result<Option<String>, ApiError> {
+) -> Option<String> {
     for required in &building.requires_building_slugs {
-        let required_building = content::find_building_by_ruleset_slug(ruleset_id, required)?
-            .ok_or_else(|| {
-                ApiError::new(
-                    "building_not_found",
-                    format!("required building definition was not found: {required}"),
-                    true,
-                )
-            })?;
-        if !built_building_ids.contains(&required_building.id) {
-            return Ok(Some(format!("missing_prerequisite:{required}")));
+        if !built_building_slugs.iter().any(|slug| slug == required) {
+            return Some(format!("missing_prerequisite:{required}"));
         }
     }
-    Ok(None)
+    None
 }
 
 fn begin_runtime_town_command(

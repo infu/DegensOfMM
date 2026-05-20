@@ -3325,3 +3325,39 @@ Decision:
 - Keep this checkpoint. It moves town commands from the same row-normalized live mutation shape that made battles slow to the runtime/projection shape that benchmarks well.
 - Do not claim the durable boundary is complete. Runtime town command/event/resource/building/pool/garrison data still needs bounded flush/upgrade snapshot coverage for recovery/history.
 - `submit_build_town_structure` is now below `1B` but still slightly above the preferred `0.3B-0.6B` target, so the next town work should identify the remaining floor instead of adding more broad surface area.
+
+## Checkpoint: Batched Session View And Town Prerequisite Micro-Cuts
+
+Implemented and measured two low-risk cuts:
+
+- Added a single-slot heap `SessionView` cache for `get_session`. Active runtime rows still win first, then the cache, then durable fallback. Lobby command results and active runtime `get_session` reads refresh the cache.
+- Query-only caching did not work because query heap mutations do not persist across calls. The cache has to be seeded from update paths.
+- Changed town building prerequisite checks to use building slugs already present in the heap `TownProjection`, instead of looking up each required building definition just to compare ids.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Focused Gate J `20260520-session-cache-town-slugs-single-gate-j` passed in `188.77s`.
+
+Measured delta versus `20260520-runtime-town-seeded-alias-slim2-gate-j`:
+
+| metric | previous | new | change |
+| --- | ---: | ---: | ---: |
+| Gate J scenario instructions | 95.5145B | 74.3158B | -22.2% |
+| `get_session` avg | 1.2555B | ~0B | ~-100.0% |
+| `submit_build_town_structure` avg | 0.7069B | 1.4111B | +99.6% |
+| `submit_recruit_units` avg | 0.0003B | 0.7062B | regression from safe guard |
+
+Code-size notes:
+
+- A BTreeMap session-view cache failed install at `12,587,143` bytes, `4,231` over the IC Wasm code-section limit.
+- A two-slot session-view cache failed install at `12,584,384` bytes, `1,472` over.
+- A town fast guard combined with the session-view cache also failed install, even after slimming, so the current checkpoint keeps the safe durable guard and leaves the town guard floor as remaining work.
+
+Decision:
+
+- Keep the single-slot cache. It is the larger scenario win and makes repeated setup/lobby polling near-free.
+- Keep the slug prerequisite check because it removes an unnecessary content lookup path, even though the measured town command floor is currently dominated by the safe turn-closure guard.
+- Do not keep the unsafe/fatter town fast guard until code-size headroom exists for a safe version. The remaining town target is now explicitly the `system_jobs.by_session_status_due` guard cost.

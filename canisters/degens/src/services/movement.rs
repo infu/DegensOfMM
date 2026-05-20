@@ -37,6 +37,8 @@ const PARTIAL_TURN_RETRY_DELAY_MS: i64 = 60_000;
 thread_local! {
     static FIRST_PLAYABLE_MAP_CACHE: RefCell<Option<domm_game::FirstPlayableMapState>> =
         const { RefCell::new(None) };
+    static NEUTRAL_BATTLE_START_BY_ATTACKER: RefCell<BTreeMap<String, Battle>> =
+        const { RefCell::new(BTreeMap::new()) };
 }
 
 pub(crate) fn preview_move_path(
@@ -3648,6 +3650,15 @@ fn start_neutral_battle(
     neutral_id: Id<NeutralArmy>,
     coord: MoveCoord,
 ) -> Result<Option<Battle>, ApiError> {
+    if let Some(existing) = cached_neutral_starting_battle(pending_move.champion.id(), neutral_id) {
+        return continue_neutral_battle_start(
+            session,
+            command_id,
+            existing,
+            pending_move,
+            neutral_id,
+        );
+    }
     if let Some(existing) = battles::find_battle_by_attacker(pending_move.champion.id())? {
         if existing.defender_neutral_army_id == Some(neutral_id.key())
             && (existing.state == "active" || existing.state.starts_with("starting"))
@@ -3691,7 +3702,8 @@ fn start_neutral_battle(
     let stacks = create_neutral_battle_attacker_stacks(command_id, &battle, pending_move)?;
     battle_start::remember_startup_stacks(battle.id(), stacks);
     battle.state = "starting_attacker".to_string();
-    battles::update_battle(battle)?;
+    battle = battles::update_battle(battle)?;
+    remember_neutral_starting_battle(&battle);
     Ok(None)
 }
 
@@ -3718,7 +3730,8 @@ fn continue_neutral_battle_start(
                 battle_start::remember_startup_stacks(battle.id(), attacker_stacks.items);
             }
             battle.state = "starting_attacker".to_string();
-            battles::update_battle(battle)?;
+            battle = battles::update_battle(battle)?;
+            remember_neutral_starting_battle(&battle);
             return Ok(None);
         }
         "starting_attacker" => {
@@ -3736,13 +3749,15 @@ fn continue_neutral_battle_start(
                 battle_start::remember_startup_stacks(battle.id(), defender_stacks.items);
             }
             battle.state = "starting_defender".to_string();
-            battles::update_battle(battle)?;
+            battle = battles::update_battle(battle)?;
+            remember_neutral_starting_battle(&battle);
             return Ok(None);
         }
         "starting_defender" => {
             create_initial_battle_obstacles(command_id, &battle)?;
             battle.state = "starting_obstacles".to_string();
-            battles::update_battle(battle)?;
+            battle = battles::update_battle(battle)?;
+            remember_neutral_starting_battle(&battle);
             Ok(None)
         }
         "starting_obstacles" => {
@@ -3761,6 +3776,7 @@ fn continue_neutral_battle_start(
             battle.state = "active".to_string();
             battle.action_deadline_at = Some(battle_start::fresh_action_deadline_at());
             battle = battles::update_battle(battle)?;
+            discard_neutral_starting_battle(pending_move.champion.id());
             battle_service::schedule_new_battle_timeout_job(session.id(), &battle)?;
 
             let mut neutral = neutrals::load_neutral_army(neutral_id)?.ok_or_else(|| {
@@ -3789,6 +3805,39 @@ fn continue_neutral_battle_start(
         }
         _ => Ok(None),
     }
+}
+
+fn cached_neutral_starting_battle(
+    attacker_champion_id: Id<Champion>,
+    neutral_id: Id<NeutralArmy>,
+) -> Option<Battle> {
+    let attacker_key = attacker_champion_id.to_string();
+    NEUTRAL_BATTLE_START_BY_ATTACKER.with_borrow(|cache| {
+        cache.get(&attacker_key).and_then(|battle| {
+            (battle.attacker_champion_id == Some(attacker_champion_id.key())
+                && battle.defender_neutral_army_id == Some(neutral_id.key())
+                && battle.state.starts_with("starting"))
+            .then(|| battle.clone())
+        })
+    })
+}
+
+fn remember_neutral_starting_battle(battle: &Battle) {
+    if !battle.state.starts_with("starting") {
+        return;
+    }
+    let Some(attacker_id) = battle.attacker_champion_id.map(Id::<Champion>::from_key) else {
+        return;
+    };
+    NEUTRAL_BATTLE_START_BY_ATTACKER.with_borrow_mut(|cache| {
+        cache.insert(attacker_id.to_string(), battle.clone());
+    });
+}
+
+fn discard_neutral_starting_battle(attacker_champion_id: Id<Champion>) {
+    NEUTRAL_BATTLE_START_BY_ATTACKER.with_borrow_mut(|cache| {
+        cache.remove(&attacker_champion_id.to_string());
+    });
 }
 
 fn create_neutral_battle_attacker_stacks(

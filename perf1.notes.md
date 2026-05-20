@@ -3087,3 +3087,26 @@ Benchmark status:
 Decision:
 
 - Keep this cut. It is the same semantic direction as Gate 5E, but fenced by active runtime proof and backed by the stale-turn regression before commit and the focused Gate J benchmark after commit.
+
+## Checkpoint: Direct New-Job Timer Refresh And Neutral Startup Battle Cache
+
+Implemented two low-risk cuts before the next slow Gate J run:
+
+- `schedule_new_job` now refreshes the Wasm heap timer directly for brand-new jobs. Upsert/reschedule still use the existing nearest-job scan, so recovery/idempotent paths keep the conservative behavior.
+- Staged neutral battle startup now caches the durable `Battle` row by attacker while the row is in a `starting_*` state. Later startup sync calls use the cache and fall back to `battles.by_attacker` if the cache is absent, such as after upgrade.
+- The neutral startup cache is remembered only after durable battle updates succeed and is discarded immediately when the battle becomes active.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Benchmark status:
+
+- Deferred to the next focused Gate J batch.
+- Expected removals: `system_jobs.by_status_due`/`system_jobs.by_status_lease` from startup timeout job timer refresh, and up to three `battles.by_attacker` reads from staged neutral battle startup.
+
+Decision:
+
+- Keep pending focused measurement. Both cuts preserve durable fallback and target measured repo ops from `20260520-startup-cache-open-turn-gate-j`.

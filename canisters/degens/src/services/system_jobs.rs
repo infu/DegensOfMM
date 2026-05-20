@@ -46,7 +46,7 @@ pub(crate) fn schedule_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError>
 pub(crate) fn schedule_new_job(draft: SystemJobDraft) -> Result<SystemJob, ApiError> {
     let job = system_jobs::create_system_job(draft)?;
     #[cfg(target_arch = "wasm32")]
-    schedule_wakeup_for_upserted_job(&job)?;
+    schedule_wakeup_for_new_job(&job);
     Ok(job)
 }
 
@@ -239,6 +239,21 @@ fn schedule_wakeup_for_upserted_job(job: &SystemJob) -> Result<(), ApiError> {
         replace_timer(job.job_key.clone(), job.due_at);
     }
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn schedule_wakeup_for_new_job(job: &SystemJob) {
+    let due_at_ms = job.due_at.as_millis();
+    if due_at_ms <= Timestamp::now().as_millis() {
+        request_due_scan();
+    }
+    let should_replace = NEAREST_TIMER.with_borrow(|slot| {
+        slot.as_ref()
+            .is_none_or(|wakeup| due_at_ms <= wakeup.due_at_ms)
+    });
+    if should_replace {
+        replace_timer(job.job_key.clone(), job.due_at);
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

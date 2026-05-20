@@ -94,7 +94,8 @@ pub(crate) fn sync_world_generation(
     session_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let context = session_context::require_active_session_caller(caller, &session_id)?;
+    let context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let command = match command_response::begin_participant_command(
         caller,
         &context,

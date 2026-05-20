@@ -6380,3 +6380,28 @@ Expected measurement:
 
 - These three economy updates should lose the active-caller durable lookup floor when active turn runtime context exists.
 - Remaining high cost should then mostly be command/idempotency writes, resource ledger rows, recruit/hire/trade durable rows, town/dwelling/tavern projections, and champion/town child-row writes.
+
+## Random Pivot: Worldgen Runtime-First Update
+
+New cluster:
+
+- Rotated away from economy before deeper economy-only work.
+- `sync_world_generation` is still a separate heavy endpoint at `7.1939B` in the last benchmark and still used the durable active-caller path.
+
+Cut:
+
+- `sync_world_generation` now uses `require_active_session_caller_runtime_first`.
+- Seeded worldgen state, durable command/effect rows, and command response behavior are unchanged.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `git diff --check`
+
+Expected measurement:
+
+- `sync_world_generation` should lose the active-caller durable lookup floor when active turn runtime context exists.
+- Remaining cost should mostly be command/idempotency writes plus existing worldgen state reads.

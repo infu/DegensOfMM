@@ -818,7 +818,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve durable fallback behavior through `require_active_session_caller_runtime_first` when no active runtime caller context exists.
 - [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
 - [ ] Measure in the next batched run and verify the three economy update endpoints drop the active-caller durable lookup floor after the earlier participant-row mirroring cut.
-- [ ] Rotate again before deeper economy-only changes unless the next benchmark shows economy remains the clear route blocker.
+- [x] Rotate again before deeper economy-only changes unless the next benchmark shows economy remains the clear route blocker. Picked `sync_world_generation` update auth because it remains a separate `7B` endpoint and still used the old durable active-caller path.
+
+### 35. Random Endpoint Cluster: Worldgen Runtime-First Update
+
+- [x] Rotate to `sync_world_generation` after the economy update auth cut.
+- [x] Switch `sync_world_generation` to `require_active_session_caller_runtime_first`.
+- [x] Keep seeded worldgen state, durable command/effect rows, and command response behavior unchanged.
+- [x] Preserve durable fallback behavior when no active runtime caller context exists.
+- [x] Verify with `cargo fmt`, `cargo fmt --check`, `cargo check -p domm-degens-canister`, `cargo check -p domm-degens-canister --features benchmark`, and `git diff --check`.
+- [ ] Measure in the next batched run and verify `sync_world_generation` drops the active-caller durable lookup floor.
+- [ ] Rotate again before deeper worldgen-only changes unless the next benchmark says this endpoint is still a top blocker.
 
 ## Expected Outcome
 

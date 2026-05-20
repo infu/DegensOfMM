@@ -4605,15 +4605,33 @@ fn apply_resource_delta_for_mode(
         );
     }
 
-    apply_resource_balance_delta(participant, resource_key, delta)?;
+    #[cfg(feature = "benchmark")]
+    {
+        apply_resource_balance_delta(participant, resource_key, delta)?;
+        session_turn_runtime::record_resource_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            resource_key,
+            delta,
+        );
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        let balance_after = apply_resource_balance_delta(participant, resource_key, delta)?;
+        session_turn_runtime::record_resource_ledger_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            &command_id.to_string(),
+            ledger_key,
+            resource_key,
+            delta,
+            balance_after,
+            reason,
+        );
+    }
     participant.last_resource_command_id = Some(command_id.key());
-    session_turn_runtime::record_resource_delta(
-        &session_id.to_string(),
-        turn_number,
-        &participant.id().to_string(),
-        resource_key,
-        delta,
-    );
     session_turn_runtime::mirror_participant_update(participant);
     Ok(())
 }

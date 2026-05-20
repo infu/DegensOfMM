@@ -4891,3 +4891,23 @@ Decision:
 
 - Keep it. This closes town build/recruit ledger history for the `Upgrade` flush path without reintroducing stable ledger writes into the active town command route.
 - Movement/sync runtime resource deltas remain aggregate-only, and movement/sync command receipts still lack enough payload to materialize durable command history on upgrade. Keep that as Gate 5H.5 instead of slowing the hot route now.
+
+## Checkpoint: Runtime Movement Resource Ledger Upgrade Flush
+
+Gate 5H non-town ledger slice:
+
+- Runtime movement resource deltas now use the same non-benchmark ledger metadata path as town deltas.
+- Income and pickup deltas already had command id, ledger key, resource key, signed delta, and reason at the call site; the runtime-only branch now also captures balance-after and records all of it in `SessionTurnRuntime`.
+- The existing upgrade resource flush writes those entries idempotently by `(command_id, ledger_key)` across all retained session-turn runtimes.
+- Benchmark builds still use the aggregate-only resource delta path, preserving the measured hot-route Wasm shape.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep it. This closes runtime resource ledger history for upgrade flush across town and movement income/pickup paths.
+- The remaining Gate 5H receipt gap is now specifically non-town command payload/history, not resource ledger rows.

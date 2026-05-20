@@ -114,30 +114,31 @@ pub(crate) fn create_game_command(
     payload_hash: String,
     payload_json: String,
 ) -> RepoResult<GameCommand> {
-    let input: Create<GameCommand> = Create::<GameCommand> {
-        session_id: Some(session_id.key()),
-        actor_kind: Some(actor_kind),
-        actor_id_text: Some(actor_id_text),
-        actor_player_id: Some(actor_player_id.map(|id| id.key())),
-        actor_participant_id: Some(actor_participant_id.map(|id| id.key())),
-        champion_id: Some(champion_id.map(|id| id.key())),
-        turn_number: Some(turn_number),
-        client_nonce: Some(client_nonce),
-        command_type: Some(command_type),
-        status: Some("pending".to_string()),
-        phase: Some("created".to_string()),
-        payload_hash: Some(payload_hash),
-        payload_json: Some(payload_json),
-        result_json: Some(None),
-        error_code: Some(None),
-        error_message: Some(None),
-        error_details_json: Some(None),
-        retryable: Some(false),
-        applied_at: Some(None),
-        failed_at: Some(None),
+    let command = GameCommand {
+        session_id: session_id.key(),
+        actor_kind,
+        actor_id_text,
+        actor_player_id: actor_player_id.map(|id| id.key()),
+        actor_participant_id: actor_participant_id.map(|id| id.key()),
+        champion_id: champion_id.map(|id| id.key()),
+        turn_number,
+        client_nonce,
+        command_type,
+        status: "pending".to_string(),
+        phase: "created".to_string(),
+        payload_hash,
+        payload_json,
+        result_json: None,
+        error_code: None,
+        error_message: None,
+        error_details_json: None,
+        retryable: false,
+        applied_at: None,
+        failed_at: None,
+        ..Default::default()
     };
 
-    foundation::create("commands.create_game_command", input)
+    foundation::insert("commands.create_game_command", command)
 }
 
 pub(crate) fn update_game_command(command: GameCommand) -> RepoResult<GameCommand> {

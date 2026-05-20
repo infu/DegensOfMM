@@ -5222,3 +5222,22 @@ Verification:
 Decision:
 
 - Keep it. This is another small create-path cleanup; the big remaining Gate 7 decision is still whether to make setup/battle timeout wakeups heap-first and durably projected at barriers.
+
+## Checkpoint: Generic Direct GameCommand Creates
+
+Gate 7 setup/job floor slice:
+
+- The previous setup-command checkpoint proved the setup command could use a direct `GameCommand` insert safely, but it duplicated the command-row construction locally.
+- Changed `commands_events_effects::create_game_command` itself to build a typed `GameCommand` row and call `foundation::insert`.
+- Routed `create_setup_command` back through that generic helper, so the measured setup path and other durable fallback/recovery command creates share the same direct insert path.
+- This does not change command idempotency lookup or status semantics; it only removes generated `Create<GameCommand>` materialization from the helper.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep it. This broadens the low-risk direct-insert cleanup before larger heap-first setup/job work.

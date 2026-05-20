@@ -5013,3 +5013,4 @@ Decision:
 
 - Keep it. There is no separate alias table or `Town` alias field in the schema, so name-derived aliases are the only concrete non-start alias source available without adding a new data model.
 - This completes the concrete Gate 6 TownProjection broadening items currently listed in `perf1.todo.md`.
+- Gate 5G parent is also now marked complete because its listed query/status overlays are covered by Gate 5G.1-5G.28, and the remaining town projection broadening dependency has been closed by Gate 6.10-6.13.

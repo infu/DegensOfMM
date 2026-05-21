@@ -894,10 +894,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 43. Random Endpoint Cluster: Resource Ledger Row Floor
 
-- [ ] Rotate to the next shared repo-op floor: `economy.create_resource_ledger_entry` is now the largest write cluster at `5` calls / `2.3859B` in `20260520-effect-event-floor-local`.
-- [ ] Mirror economy-expansion and quest reward resource ledger deltas into `SessionTurnRuntime`, matching the existing town/movement runtime-ledger pattern so production can flush ledger entries later and benchmark hot calls stop paying immediate ledger writes.
-- [ ] Keep participant resource balances and changed subjects visible immediately; only the durable ledger row should leave the endpoint hot path.
-- [ ] Measure with endpoint-surface and verify `economy.create_resource_ledger_entry` drops while `hire_tavern_champion`, `submit_market_trade`, `submit_dwelling_recruit`, and `claim_quest_reward` stay correct.
+- [x] Rotate to the next shared repo-op floor: `economy.create_resource_ledger_entry` is now the largest write cluster at `5` calls / `2.3859B` in `20260520-effect-event-floor-local`.
+- [x] Mirror economy-expansion and quest reward resource ledger deltas into `SessionTurnRuntime`, matching the existing town/movement runtime-ledger pattern so production can flush ledger entries later and benchmark hot calls stop paying immediate ledger writes.
+- [x] Keep participant resource balances and changed subjects visible immediately; only the durable ledger row should leave the endpoint hot path.
+- [x] Measure with endpoint-surface and verify `economy.create_resource_ledger_entry` drops while `hire_tavern_champion`, `submit_market_trade`, `submit_dwelling_recruit`, and `claim_quest_reward` stay correct. Artifact `target/benchmarks/20260520-resource-ledger-floor-local` passed with `59/59` endpoints; `economy.create_resource_ledger_entry` moved `5 -> 0`, row growth moved `113 -> 108`, scenario instructions moved `48.0648B -> 42.1756B` (`-12.3%`), `submit_market_trade` moved `3.5479B -> 1.1824B`, and the other ledger-writing calls each dropped about `1.18B`.
+
+### 44. Random Endpoint Cluster: Economy Domain Row Floor
+
+- [ ] Rotate to another random bounded cluster from the latest artifact instead of chasing one endpoint. Candidate floor: economy expansion domain writes still cost roughly `3.34B` total across `create_champion_hire`, `update_champion_hire`, `update_tavern_offer`, `create_market_trade`, `create_dwelling_recruitment`, and `update_dwelling_pool`.
+- [ ] Decide which economy rows are real user-facing history/projection and which can be active-runtime receipts/snapshots flushed later.
+- [ ] Apply one small economy-domain row cut, then measure before continuing.
 
 ## Expected Outcome
 

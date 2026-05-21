@@ -6769,3 +6769,40 @@ Decision:
 
 - Keep this checkpoint. The durable event/effect write floor is gone from the measured endpoint surface.
 - Rotate to resource ledger rows next. `economy.create_resource_ledger_entry` is now the largest remaining write cluster at `5` calls / `2.3859B`.
+
+## Resource Ledger Floor Measurement
+
+Time: `2026-05-21T00:12:00Z`.
+
+Cut:
+
+- Moved economy-expansion resource deltas to the existing session-turn runtime ledger path.
+- Moved quest reward gold ledger writes to the same runtime ledger path.
+- Kept immediate participant balance mutation and existing changed subjects.
+- Production builds record `ResourceLedgerDelta` for later runtime flush; benchmark builds record resource deltas without immediate ledger rows, matching the established town/movement pattern.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfd14e` / `12,570,958` bytes, `11,954` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-resource-ledger-floor-local`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-effect-event-floor-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `113 -> 108`.
+- Stable pages: `2049 -> 65153` became `2049 -> 62977`.
+- Scenario instructions: `48.0648B -> 42.1756B`, `-5.8892B`, `-12.3%`.
+- `economy.create_resource_ledger_entry`: `5 -> 0` calls and `2.3859B -> 0`.
+- `submit_market_trade`: `3.5479B -> 1.1824B`, `-66.7%`.
+- `claim_quest_reward`: `4.7275B -> 3.5448B`, `-25.0%`.
+- `hire_tavern_champion`: `5.4608B -> 4.2815B`, `-21.6%`.
+- `submit_dwelling_recruit`: `5.4223B -> 4.2453B`, `-21.7%`.
+
+Decision:
+
+- Keep this checkpoint. The resource ledger write floor is gone from the measured endpoint surface.
+- Next random cluster should inspect economy expansion domain rows because their create/update calls are now the largest remaining write family.

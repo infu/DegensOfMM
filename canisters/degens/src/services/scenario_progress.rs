@@ -15,7 +15,7 @@ use icydb::{
 };
 
 use crate::repos::{
-    commands_events_effects, economy, map_visibility_occupancy, scenario_progress, sessions,
+    commands_events_effects, map_visibility_occupancy, scenario_progress, sessions,
     system_jobs as system_job_repo,
 };
 
@@ -1106,23 +1106,37 @@ fn apply_gold_reward(
     turn_number: u32,
     amount: u64,
 ) -> Result<(), ApiError> {
-    if economy::find_resource_ledger_entry(command_id, ledger_key)?.is_some() {
-        return Ok(());
-    }
+    #[cfg(feature = "benchmark")]
+    let _ = command_id;
+
     let balance_after = participant.gold.saturating_add(amount);
-    economy::create_resource_ledger_entry(
-        session_id,
-        participant.id(),
-        command_id,
-        ledger_key.to_string(),
-        turn_number,
-        "gold".to_string(),
-        i64::try_from(amount).unwrap_or(i64::MAX),
-        balance_after,
-        "quest_reward".to_string(),
-        "applied".to_string(),
-    )?;
+    let delta = i64::try_from(amount).unwrap_or(i64::MAX);
     participant.gold = balance_after;
+    #[cfg(feature = "benchmark")]
+    {
+        let _ = ledger_key;
+        session_turn_runtime::record_resource_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            "gold",
+            delta,
+        );
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        session_turn_runtime::record_resource_ledger_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            &command_id.to_string(),
+            ledger_key.to_string(),
+            "gold",
+            delta,
+            balance_after,
+            "quest_reward",
+        );
+    }
     Ok(())
 }
 

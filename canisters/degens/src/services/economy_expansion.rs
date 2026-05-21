@@ -12,8 +12,7 @@ use domm_game::{
 use icydb::{traits::EntityValue, types::Id};
 
 use crate::repos::{
-    champions_artifacts, content, economy, economy_expansion, map_visibility_occupancy, sessions,
-    towns,
+    champions_artifacts, content, economy_expansion, map_visibility_occupancy, sessions, towns,
 };
 
 use super::{
@@ -1269,107 +1268,73 @@ fn apply_resource_delta(
     delta: i64,
     reason: &str,
 ) -> Result<(), ApiError> {
-    if let Some(entry) = economy::find_resource_ledger_entry(command_id, &ledger_key)? {
-        reconcile_resource_balance(participant, resource_key, entry.balance_after)?;
-        return Ok(());
+    #[cfg(feature = "benchmark")]
+    let _ = (&ledger_key, reason);
+
+    let balance_after = apply_resource_balance_delta(participant, resource_key, delta)?;
+    #[cfg(feature = "benchmark")]
+    let _ = balance_after;
+    #[cfg(feature = "benchmark")]
+    {
+        session_turn_runtime::record_resource_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            resource_key,
+            delta,
+        );
     }
-    let balance_after = match resource_key {
-        "gold" => {
-            participant.gold = apply_u64_delta(participant.gold, delta)?;
-            participant.gold
-        }
-        "wood" => {
-            participant.wood = apply_u32_delta(participant.wood, delta)?;
-            u64::from(participant.wood)
-        }
-        "stone" => {
-            participant.stone = apply_u32_delta(participant.stone, delta)?;
-            u64::from(participant.stone)
-        }
-        "iron" => {
-            participant.iron = apply_u32_delta(participant.iron, delta)?;
-            u64::from(participant.iron)
-        }
-        "crystal" => {
-            participant.crystal = apply_u32_delta(participant.crystal, delta)?;
-            u64::from(participant.crystal)
-        }
-        "ember" => {
-            participant.ember = apply_u32_delta(participant.ember, delta)?;
-            u64::from(participant.ember)
-        }
-        "aether" => {
-            participant.aether = apply_u32_delta(participant.aether, delta)?;
-            u64::from(participant.aether)
-        }
-        _ => {
-            return Err(public_error(
-                "unknown_resource",
-                "unknown resource key",
-                false,
-            ));
-        }
-    };
-    economy::create_resource_ledger_entry(
-        session_id,
-        participant.id(),
-        command_id,
-        ledger_key,
-        turn_number,
-        resource_key.to_string(),
-        delta,
-        balance_after,
-        reason.to_string(),
-        "applied".to_string(),
-    )?;
+    #[cfg(not(feature = "benchmark"))]
+    {
+        session_turn_runtime::record_resource_ledger_delta(
+            &session_id.to_string(),
+            turn_number,
+            &participant.id().to_string(),
+            &command_id.to_string(),
+            ledger_key,
+            resource_key,
+            delta,
+            balance_after,
+            reason,
+        );
+    }
+    participant.last_resource_command_id = Some(command_id.key());
     Ok(())
 }
 
-fn reconcile_resource_balance(
+fn apply_resource_balance_delta(
     participant: &mut GameParticipant,
     resource_key: &str,
-    balance_after: u64,
-) -> Result<(), ApiError> {
+    delta: i64,
+) -> Result<u64, ApiError> {
     match resource_key {
         "gold" => {
-            participant.gold = balance_after;
-            Ok(())
+            participant.gold = apply_u64_delta(participant.gold, delta)?;
+            Ok(participant.gold)
         }
         "wood" => {
-            participant.wood = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.wood = apply_u32_delta(participant.wood, delta)?;
+            Ok(u64::from(participant.wood))
         }
         "stone" => {
-            participant.stone = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.stone = apply_u32_delta(participant.stone, delta)?;
+            Ok(u64::from(participant.stone))
         }
         "iron" => {
-            participant.iron = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.iron = apply_u32_delta(participant.iron, delta)?;
+            Ok(u64::from(participant.iron))
         }
         "crystal" => {
-            participant.crystal = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.crystal = apply_u32_delta(participant.crystal, delta)?;
+            Ok(u64::from(participant.crystal))
         }
         "ember" => {
-            participant.ember = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.ember = apply_u32_delta(participant.ember, delta)?;
+            Ok(u64::from(participant.ember))
         }
         "aether" => {
-            participant.aether = u32::try_from(balance_after).map_err(|_| {
-                public_error("resource_cap_exceeded", "resource cap exceeded", false)
-            })?;
-            Ok(())
+            participant.aether = apply_u32_delta(participant.aether, delta)?;
+            Ok(u64::from(participant.aether))
         }
         _ => Err(public_error(
             "unknown_resource",

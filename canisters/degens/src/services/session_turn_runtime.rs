@@ -15,6 +15,8 @@ use domm_degens_schema::schema::{
     Champion, GameCommand, GameParticipant, GameSession, MovementIntent, QuestState,
     ScenarioRuleState, WorldObject,
 };
+#[cfg(not(feature = "benchmark"))]
+use domm_degens_schema::schema::{MapObjectDefinition, MapOccupancy, NeutralArmy};
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 #[cfg(not(feature = "benchmark"))]
 use icydb::{traits::EntityKey, types::Timestamp};
@@ -27,7 +29,7 @@ use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
 };
 #[cfg(not(feature = "benchmark"))]
-use crate::repos::{commands_events_effects, economy, scenario_progress};
+use crate::repos::{cleanup, commands_events_effects, economy, movement, scenario_progress};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 
@@ -597,6 +599,37 @@ pub(crate) enum ProjectionEntity {
 pub(crate) enum ProjectionDirtyOp {
     Upsert,
     Tombstone,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProjectionFlushLimits {
+    pub max_rows: usize,
+    pub max_instructions: u64,
+    pub max_stable_pages_delta: u64,
+}
+
+#[cfg(not(feature = "benchmark"))]
+impl ProjectionFlushLimits {
+    pub(crate) fn unbounded() -> Self {
+        Self {
+            max_rows: usize::MAX,
+            max_instructions: u64::MAX,
+            max_stable_pages_delta: u64::MAX,
+        }
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ProjectionFlushOutcome {
+    pub entries_processed: usize,
+    pub rows_flushed: usize,
+    pub queue_len_before: usize,
+    pub queue_len_after: usize,
+    pub truncated: bool,
+    pub instruction_delta: u64,
+    pub stable_pages_delta: u64,
 }
 
 #[derive(Clone)]
@@ -1311,6 +1344,98 @@ pub(crate) fn projection_dirty_queue_snapshot() -> Vec<ProjectionDirtyEntry> {
     })
 }
 
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_projection_queue(
+    limits: ProjectionFlushLimits,
+) -> Result<ProjectionFlushOutcome, ApiError> {
+    let mut entries = projection_dirty_queue_snapshot();
+    let queue_len_before = entries.len();
+    entries.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then(left.first_dirty_at_ms.cmp(&right.first_dirty_at_ms))
+            .then(left.kernel_id.cmp(&right.kernel_id))
+            .then(left.key.cmp(&right.key))
+    });
+
+    let instruction_start = canic_cdk::api::instruction_counter();
+    let stable_pages_start = canic_cdk::api::stable_size();
+    let mut outcome = ProjectionFlushOutcome {
+        queue_len_before,
+        ..ProjectionFlushOutcome::default()
+    };
+
+    for entry in entries {
+        if projection_flush_limit_reached(&limits, &outcome, instruction_start, stable_pages_start)
+        {
+            outcome.truncated = true;
+            break;
+        }
+
+        let runtime = runtime_snapshot_by_kernel_id(&entry.kernel_id);
+        let rows_flushed = if let Some(runtime) = runtime {
+            flush_projection_dirty_entry(&runtime, &entry)?
+        } else {
+            0
+        };
+        complete_projection_dirty_entry(&entry);
+        outcome.entries_processed = outcome.entries_processed.saturating_add(1);
+        outcome.rows_flushed = outcome.rows_flushed.saturating_add(rows_flushed);
+    }
+
+    outcome.instruction_delta =
+        canic_cdk::api::instruction_counter().saturating_sub(instruction_start);
+    outcome.stable_pages_delta = canic_cdk::api::stable_size().saturating_sub(stable_pages_start);
+    outcome.queue_len_after = projection_dirty_queue_snapshot().len();
+    if outcome.queue_len_after != 0
+        && projection_flush_limit_reached(&limits, &outcome, instruction_start, stable_pages_start)
+    {
+        outcome.truncated = true;
+    }
+    Ok(outcome)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn projection_flush_limit_reached(
+    limits: &ProjectionFlushLimits,
+    outcome: &ProjectionFlushOutcome,
+    instruction_start: u64,
+    stable_pages_start: u64,
+) -> bool {
+    outcome.entries_processed >= limits.max_rows
+        || canic_cdk::api::instruction_counter().saturating_sub(instruction_start)
+            >= limits.max_instructions
+        || canic_cdk::api::stable_size().saturating_sub(stable_pages_start)
+            >= limits.max_stable_pages_delta
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn runtime_snapshot_by_kernel_id(kernel_id: &str) -> Option<SessionTurnRuntime> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().get(kernel_id).cloned())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn complete_projection_dirty_entry(entry: &ProjectionDirtyEntry) {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut runtimes = runtimes.borrow_mut();
+        let Some(runtime) = runtimes.get_mut(&entry.kernel_id) else {
+            return;
+        };
+        if entry.entity == ProjectionEntity::Event {
+            for runtime_event in &mut runtime.active_events {
+                if runtime_event.event.event_key == entry.key {
+                    runtime_event.flushed = true;
+                }
+            }
+        }
+        runtime.projection_dirty_queue.retain(|candidate| {
+            !(candidate.kernel_id == entry.kernel_id
+                && candidate.entity == entry.entity
+                && candidate.key == entry.key)
+        });
+    });
+}
+
 pub(crate) fn with_runtime<R>(
     session_id: &str,
     turn_number: u32,
@@ -1794,6 +1919,443 @@ pub(crate) fn runtime_champion_spell_slugs_if_complete(
 }
 
 #[cfg(not(feature = "benchmark"))]
+fn flush_projection_dirty_entry(
+    runtime: &SessionTurnRuntime,
+    entry: &ProjectionDirtyEntry,
+) -> Result<usize, ApiError> {
+    if entry.op == ProjectionDirtyOp::Tombstone {
+        return flush_projection_tombstone(runtime, entry);
+    }
+
+    match entry.entity {
+        ProjectionEntity::Session => flush_runtime_session(runtime),
+        ProjectionEntity::Participant => flush_runtime_participant(runtime, &entry.key),
+        ProjectionEntity::Ready => Ok(usize::from(flush_runtime_ready_participant(
+            runtime, &entry.key,
+        )?)),
+        ProjectionEntity::Champion => flush_runtime_champion(runtime, &entry.key),
+        ProjectionEntity::ChampionSpell => flush_runtime_champion_spell(runtime, &entry.key),
+        ProjectionEntity::WorldObject => flush_runtime_world_object(runtime, &entry.key),
+        ProjectionEntity::Occupancy => flush_runtime_occupancy(runtime, &entry.key),
+        ProjectionEntity::MovementIntent => flush_runtime_movement_intent(runtime, &entry.key),
+        ProjectionEntity::CommandReceipt => {
+            flush_runtime_command_receipt_by_key(runtime, &entry.key)
+        }
+        ProjectionEntity::Event => flush_runtime_event_by_key(runtime, &entry.key),
+        ProjectionEntity::ResourceDelta => flush_runtime_resource_delta_by_key(runtime, &entry.key),
+        ProjectionEntity::Quest => flush_runtime_quest(runtime, &entry.key),
+        ProjectionEntity::ScenarioRule => flush_runtime_scenario_rule(runtime, &entry.key),
+        ProjectionEntity::Contact | ProjectionEntity::ObjectDelta => Ok(0),
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_projection_tombstone(
+    runtime: &SessionTurnRuntime,
+    entry: &ProjectionDirtyEntry,
+) -> Result<usize, ApiError> {
+    if entry.entity != ProjectionEntity::Occupancy {
+        return Ok(0);
+    }
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let mut parts = entry.key.splitn(3, ':');
+    let Some(layer) = parts.next() else {
+        return Ok(0);
+    };
+    let Some(occupant_kind) = parts.next() else {
+        return Ok(0);
+    };
+    let Some(occupant_id_text) = parts.next() else {
+        return Ok(0);
+    };
+    let Some(row) = map_visibility_occupancy::find_occupancy_by_occupant(
+        session_id,
+        occupant_kind,
+        occupant_id_text,
+        0,
+    )?
+    .filter(|row| row.layer == layer) else {
+        return Ok(0);
+    };
+    cleanup::delete_row_by_id::<MapOccupancy>("map.delete_runtime_occupancy", row.id())?;
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_session(runtime: &SessionTurnRuntime) -> Result<usize, ApiError> {
+    let Some(session) = runtime.session.clone() else {
+        return Ok(0);
+    };
+    sessions::update_session(session)?;
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_participant(
+    runtime: &SessionTurnRuntime,
+    participant_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(participant) = runtime
+        .participants
+        .iter()
+        .find(|participant| participant.participant_id == participant_id)
+        .and_then(|participant| participant.participant.clone())
+    else {
+        return Ok(0);
+    };
+    sessions::update_participant(participant)?;
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_champion(
+    runtime: &SessionTurnRuntime,
+    champion_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(champion) = runtime
+        .champion_snapshots
+        .iter()
+        .find(|champion| champion.id().to_string() == champion_id)
+    else {
+        return Ok(0);
+    };
+    if champions_artifacts::load_champion(champion.id())?.is_some() {
+        champions_artifacts::update_champion(champion.clone())?;
+    } else {
+        champions_artifacts::insert_champion_row(champion.clone())?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_champion_spell(
+    runtime: &SessionTurnRuntime,
+    spell_key: &str,
+) -> Result<usize, ApiError> {
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let Some(spell) = runtime
+        .champion_spell_snapshots
+        .iter()
+        .find(|spell| format!("{}:{}", spell.champion_id, spell.spell_id) == spell_key)
+        .or_else(|| {
+            runtime
+                .champion_spell_snapshots
+                .iter()
+                .find(|spell| Id::<Champion>::from_key(spell.champion_id).to_string() == spell_key)
+        })
+    else {
+        return Ok(0);
+    };
+    if !spell.needs_flush {
+        return Ok(0);
+    }
+    if champions_artifacts::find_champion_spell(
+        Id::<Champion>::from_key(spell.champion_id),
+        Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
+    )?
+    .is_some()
+    {
+        return Ok(0);
+    }
+    let Some(command_id) = spell.last_command_id else {
+        return Ok(0);
+    };
+    champions_artifacts::create_champion_spell(
+        session_id,
+        Id::<Champion>::from_key(spell.champion_id),
+        Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
+        spell.spell_slug.as_deref().unwrap_or(""),
+        spell.learned_turn,
+        Id::<GameCommand>::from_key(command_id),
+    )?;
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_world_object(
+    runtime: &SessionTurnRuntime,
+    object_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(object) = runtime
+        .world_object_snapshots
+        .iter()
+        .find(|object| object.id().to_string() == object_id)
+    else {
+        return Ok(0);
+    };
+    if map_visibility_occupancy::load_world_object(object.id())?.is_some() {
+        map_visibility_occupancy::update_world_object(object.clone())?;
+    } else {
+        map_visibility_occupancy::create_world_object(
+            parse_ulid_id::<GameSession>(&runtime.session_id)?,
+            Id::<MapObjectDefinition>::from_key(object.object_def_id),
+            object
+                .owner_participant_id
+                .map(Id::<GameParticipant>::from_key),
+            object
+                .guarded_neutral_army_id
+                .map(Id::<NeutralArmy>::from_key),
+            object.x,
+            object.y,
+            object.chunk_x,
+            object.chunk_y,
+            object.state.clone(),
+            object.scoring_kind.clone(),
+            object.last_visited_turn,
+            object.captured_turn,
+            object.income_started_turn,
+            object.instance_json.clone(),
+        )?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_occupancy(
+    runtime: &SessionTurnRuntime,
+    occupancy_key: &str,
+) -> Result<usize, ApiError> {
+    let Some(cell) = runtime
+        .occupancy_index
+        .iter()
+        .find(|cell| occupancy_projection_key(cell) == occupancy_key)
+    else {
+        return Ok(0);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let mut occupancy =
+        map_visibility_occupancy::find_occupancy_cell(session_id, cell.x, cell.y, &cell.layer)?
+            .filter(|row| {
+                row.occupant_kind == cell.occupant_kind
+                    && row.occupant_id_text == cell.occupant_id_text
+            });
+    if occupancy.is_none() {
+        occupancy = map_visibility_occupancy::find_occupancy_by_occupant(
+            session_id,
+            &cell.occupant_kind,
+            &cell.occupant_id_text,
+            0,
+        )?;
+    }
+    if let Some(mut row) = occupancy {
+        row.x = cell.x;
+        row.y = cell.y;
+        row.chunk_x = runtime_chunk_coord(runtime, cell.x);
+        row.chunk_y = runtime_chunk_coord(runtime, cell.y);
+        row.layer = cell.layer.clone();
+        row.occupant_kind = cell.occupant_kind.clone();
+        row.occupant_id_text = cell.occupant_id_text.clone();
+        row.occupant_cell_index = 0;
+        row.blocking = cell.blocking;
+        map_visibility_occupancy::update_occupancy_cell(row)?;
+    } else {
+        map_visibility_occupancy::create_occupancy_cell(
+            session_id,
+            cell.x,
+            cell.y,
+            runtime_chunk_coord(runtime, cell.x),
+            runtime_chunk_coord(runtime, cell.y),
+            cell.layer.clone(),
+            cell.occupant_kind.clone(),
+            cell.occupant_id_text.clone(),
+            0,
+            cell.blocking,
+        )?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn runtime_chunk_coord(runtime: &SessionTurnRuntime, value: u16) -> u16 {
+    let chunk_size = runtime
+        .session
+        .as_ref()
+        .map(|session| u16::from(session.chunk_size).max(1))
+        .unwrap_or(16);
+    value / chunk_size
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_movement_intent(
+    runtime: &SessionTurnRuntime,
+    intent_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(runtime_intent) = runtime
+        .intents
+        .iter()
+        .find(|intent| intent.intent_id == intent_id)
+    else {
+        return Ok(0);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let Ok(champion_id) = try_parse_ulid_id::<Champion>(&runtime_intent.champion_id) else {
+        return Ok(0);
+    };
+    let Ok(actor_participant_id) =
+        try_parse_ulid_id::<GameParticipant>(&runtime_intent.actor_participant_id)
+    else {
+        return Ok(0);
+    };
+    let Ok(command_id) = try_parse_ulid_id::<GameCommand>(&runtime_intent.command_id) else {
+        return Ok(0);
+    };
+    if let Some(mut existing) =
+        movement::find_movement_intent(session_id, champion_id, runtime.turn_number)?
+    {
+        existing.command_id = command_id.key();
+        existing.actor_participant_id = actor_participant_id.key();
+        existing.status = runtime_intent.status.clone();
+        existing.path_json = runtime_intent.path_json.clone();
+        existing.path_hash = runtime_intent.path_hash.clone();
+        if existing.status == "resolved" {
+            existing.resolved_at = Some(Timestamp::now());
+        }
+        movement::update_movement_intent(existing)?;
+    } else {
+        movement::create_movement_intent(
+            session_id,
+            runtime.turn_number,
+            actor_participant_id,
+            champion_id,
+            command_id,
+            runtime_intent.status.clone(),
+            runtime_intent.path_json.clone(),
+            runtime_intent.path_hash.clone(),
+        )?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_command_receipt_by_key(
+    runtime: &SessionTurnRuntime,
+    command_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(receipt) = runtime
+        .command_receipts
+        .iter()
+        .find(|receipt| receipt.command_id == command_id)
+    else {
+        return Ok(0);
+    };
+    Ok(usize::from(flush_runtime_command_receipt(
+        runtime, receipt,
+    )?))
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_event_by_key(
+    runtime: &SessionTurnRuntime,
+    event_key: &str,
+) -> Result<usize, ApiError> {
+    let Some(runtime_event) = runtime
+        .active_events
+        .iter()
+        .find(|runtime_event| runtime_event.event.event_key == event_key)
+    else {
+        return Ok(0);
+    };
+    Ok(usize::from(flush_runtime_event(runtime_event)?))
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_resource_delta_by_key(
+    runtime: &SessionTurnRuntime,
+    resource_key: &str,
+) -> Result<usize, ApiError> {
+    let Some(resource_delta) = runtime
+        .resource_deltas
+        .iter()
+        .find(|delta| resource_delta_projection_key(delta) == resource_key)
+    else {
+        return Ok(0);
+    };
+    Ok(usize::from(flush_runtime_resource_delta(
+        runtime,
+        resource_delta,
+    )?))
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn resource_delta_projection_key(delta: &ResourceTurnDelta) -> String {
+    delta
+        .ledger
+        .as_ref()
+        .map(|ledger| ledger.ledger_key.clone())
+        .unwrap_or_else(|| delta.participant_id.clone())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_quest(runtime: &SessionTurnRuntime, quest_id: &str) -> Result<usize, ApiError> {
+    let Some(quest) = runtime
+        .quest_snapshots
+        .iter()
+        .find(|quest| quest.id().to_string() == quest_id)
+    else {
+        return Ok(0);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let participant_id = Id::<GameParticipant>::from_key(quest.participant_id);
+    if scenario_progress::find_quest_by_participant_key(
+        session_id,
+        participant_id,
+        &quest.quest_key,
+    )?
+    .is_some()
+    {
+        scenario_progress::update_quest_state(quest.clone())?;
+    } else {
+        scenario_progress::create_quest_state(
+            session_id,
+            participant_id,
+            quest.quest_key.clone(),
+            quest.title.clone(),
+            quest.objective_key.clone(),
+            quest.status.clone(),
+            quest.progress_value,
+            quest.required_value,
+            quest.reward_gold,
+        )?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_scenario_rule(
+    runtime: &SessionTurnRuntime,
+    rule_id: &str,
+) -> Result<usize, ApiError> {
+    let Some(rule) = runtime
+        .scenario_rule_snapshots
+        .iter()
+        .find(|rule| rule.id().to_string() == rule_id)
+    else {
+        return Ok(0);
+    };
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    if scenario_progress::find_scenario_rule_by_key(session_id, &rule.rule_key)?.is_some() {
+        scenario_progress::update_scenario_rule_state(rule.clone())?;
+    } else {
+        scenario_progress::create_scenario_rule_state(
+            session_id,
+            rule.rule_key.clone(),
+            rule.rule_type.clone(),
+            rule.status.clone(),
+            rule.victory_state.clone(),
+            rule.required_value,
+            rule.current_value,
+            rule.owner_participant_id
+                .map(Id::<GameParticipant>::from_key),
+            rule.winner_participant_id
+                .map(Id::<GameParticipant>::from_key),
+            rule.disabled_reason.clone(),
+            rule.last_checked_turn,
+        )?;
+    }
+    Ok(1)
+}
+
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError> {
     let runtimes = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
         runtimes
@@ -1900,8 +2462,9 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             .iter()
             .filter(|runtime_event| !runtime_event.flushed)
         {
-            flush_runtime_event(runtime_event)?;
-            flushed = flushed.saturating_add(1);
+            if flush_runtime_event(runtime_event)? {
+                flushed = flushed.saturating_add(1);
+            }
         }
     }
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
@@ -2030,12 +2593,12 @@ fn flush_runtime_resource_delta(
 }
 
 #[cfg(not(feature = "benchmark"))]
-fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<(), ApiError> {
+fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<bool, ApiError> {
     let session_id = parse_ulid_id::<GameSession>(&runtime_event.event.session_id)?;
     if commands_events_effects::find_event_by_key(session_id, &runtime_event.event.event_key)?
         .is_some()
     {
-        return Ok(());
+        return Ok(false);
     }
     let command_id = durable_command_id(runtime_event.command_id.as_deref())?;
     commands_events_effects::create_game_event(
@@ -2055,7 +2618,7 @@ fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<(), ApiError>
             .clone()
             .unwrap_or_else(|| "{}".to_string()),
     )?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(not(feature = "benchmark"))]
@@ -2243,6 +2806,21 @@ mod tests {
         assert_eq!(dirty.key, "intent:1");
         assert_eq!(dirty.op, ProjectionDirtyOp::Upsert);
         assert!(dirty.last_dirty_at_ms >= dirty.first_dirty_at_ms);
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    #[test]
+    fn completing_event_projection_entry_removes_queue_and_hides_runtime_event() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.push_event(event(10, "public"));
+        let dirty = runtime.projection_dirty_queue[0].clone();
+        insert_runtime(runtime);
+
+        complete_projection_dirty_entry(&dirty);
+
+        assert!(projection_dirty_queue_snapshot().is_empty());
+        assert!(active_events_after("session:1", "public", 9).is_empty());
     }
 
     #[test]

@@ -8128,3 +8128,41 @@ Code-size note:
 Decision:
 
 - Keep this checkpoint. It gives worldmap runtime state a real typed projection backlog without changing active benchmark hot paths. The next work should add bounded flushing over this queue and projection generation cursors.
+
+## Bounded Worldmap Projection Flush
+
+Time: `2026-05-21T21:07:32Z`.
+
+Cut:
+
+- Added production `flush_runtime_projection_queue(limits)` over the `SessionTurnRuntime` dirty queue.
+- Limits cover max processed rows/entries, max instruction delta, and max stable-page delta. The flusher records processed entries, durable rows flushed, before/after queue length, truncation, instruction delta, and stable-page delta.
+- Flush chunks are sorted by priority, first dirty timestamp, kernel id, and key. Completed entries are removed from the queue; unprocessed entries remain retryable after truncation or error.
+- Durable writes are idempotent by existing natural keys where available:
+  - session row by session id
+  - participant row by participant id
+  - ready row by `(session, participant, turn)`
+  - champion row by id
+  - champion spell by `(champion, spell)`
+  - world object by id
+  - map occupancy by cell or occupant
+  - movement intent by `(session, champion, turn)`
+  - command receipt by idempotency
+  - event by event key
+  - resource ledger by `(command, ledger_key)`
+  - quest by `(session, participant, quest_key)`
+  - scenario rule by `(session, rule_key)`
+- Occupancy tombstones delete durable map occupancy rows by occupant key. `Contact` and `ObjectDelta` entries currently complete as derived/no-op entries because their durable owners are the occupancy/object/visibility rows.
+- Event entry completion also marks the runtime event flushed so active event feeds stop serving it after durable projection.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister projection -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Bounded worldmap projection flushing now exists, but `flush_barrier` still calls the older full flush path and generation cursors are not recorded yet. Those are the next Section 72B cuts.

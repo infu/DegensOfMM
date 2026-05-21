@@ -8313,3 +8313,28 @@ Verification:
 Decision:
 
 - Keep this checkpoint. The production battle paths now have one orchestrator for timeout/readiness/round progression, which gives the remaining 72C runtime-receipt and battle-child-row cleanup work a smaller surface to move across.
+
+## Active Battle Sync Runtime Receipts
+
+Time: `2026-05-21T23:19:20Z`.
+
+Cut:
+
+- Added a production-only active `BattleRuntime` fast path for `sync_battle` before durable battle row loading and durable `GameCommand` creation.
+- Runtime `sync_battle` now hashes the same payload/idempotency input, replays matching `BattleRuntimeCommandReceipt` rows by nonce, drives runtime timeout catchup through `BattleKernelDriver`, stores timeout public events in `BattleRuntime.active_events`, and stores a `sync_battle` runtime command receipt.
+- Active runtime sync no longer runs the durable applying-command recovery scan or creates/updates a durable `GameCommand`; row-backed legacy/adoption battles still use the existing durable fallback.
+- Command status by nonce now checks battle runtime receipts for `sync_battle` in production builds.
+- Benchmark builds keep the previous direct durable path because the benchmark Wasm has only single-digit-byte headroom.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_timer_auto_defends_without_sync_battle_and_replays_noop --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffff9` / `12,582,905` bytes, `7` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Active battle sync now has the same receipt/replay shape as active battle action submission, leaving `end_battle_turn` as the next durable command/event write to remove from the active battle path.

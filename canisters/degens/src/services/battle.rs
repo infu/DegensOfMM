@@ -92,6 +92,21 @@ impl<'a> BattleKernelDriver<'a> {
         max_timeout_actions: u32,
         command_id: Id<GameCommand>,
     ) -> Result<BattleKernelDriverOutcome, ApiError> {
+        if let Some(outcome) =
+            self.drive_runtime_sync_timeouts(battle_id, now_ms, max_timeout_actions, command_id)?
+        {
+            return Ok(outcome);
+        }
+        self.drive_durable_timeouts(battle_id, now_ms, max_timeout_actions)
+    }
+
+    fn drive_runtime_sync_timeouts(
+        &mut self,
+        battle_id: Id<Battle>,
+        now_ms: u64,
+        max_timeout_actions: u32,
+        command_id: Id<GameCommand>,
+    ) -> Result<Option<BattleKernelDriverOutcome>, ApiError> {
         match apply_due_runtime_timeouts_for_sync(
             self.session,
             battle_id,
@@ -102,13 +117,13 @@ impl<'a> BattleKernelDriver<'a> {
             self.events,
             self.changed_subjects,
         ) {
-            Ok(Some((incomplete, applied))) => Ok(BattleKernelDriverOutcome {
+            Ok(Some((incomplete, applied))) => Ok(Some(BattleKernelDriverOutcome {
                 used_runtime: true,
                 timeout_actions_applied: applied,
                 incomplete,
                 ..BattleKernelDriverOutcome::default()
-            }),
-            Ok(None) => self.drive_durable_timeouts(battle_id, now_ms, max_timeout_actions),
+            })),
+            Ok(None) => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -1964,6 +1979,78 @@ fn begin_runtime_battle_command(
     ))
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn begin_runtime_sync_battle_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    battle_id: &str,
+    client_nonce_text: &str,
+) -> Result<RuntimeBattleCommandAction, ApiError> {
+    let command_type = "sync_battle";
+    let payload_json = format!(
+        r#"{{"battle_id":"{}"}}"#,
+        command_response::escape_json(battle_id)
+    );
+    let client_nonce = command_response::nonce_u64(command_type, client_nonce_text);
+    let payload_hash = command_response::payload_hash(
+        command_type,
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        let response = runtime_sync_battle_failed_response(
+            caller,
+            context,
+            Ulid::generate().to_string(),
+            client_nonce_text,
+            payload_hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        );
+        return Ok(RuntimeBattleCommandAction::Return(response));
+    }
+
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    if let Some(existing) = battle_runtime::command_receipt_by_nonce(
+        &canonical_session_id,
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != payload_hash {
+            let response = runtime_sync_battle_failed_response(
+                caller,
+                context,
+                Ulid::generate().to_string(),
+                client_nonce_text,
+                payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            );
+            return Ok(RuntimeBattleCommandAction::Return(response));
+        }
+        return Ok(RuntimeBattleCommandAction::Return(existing.response));
+    }
+
+    Ok(RuntimeBattleCommandAction::Apply(
+        RuntimeBattleCommandContext {
+            command_id: Ulid::generate().to_string(),
+            client_nonce_text: client_nonce_text.to_string(),
+            client_nonce,
+            payload_hash,
+            payload_json,
+            created_at_ms: Timestamp::now().as_millis().try_into().unwrap_or(0),
+        },
+    ))
+}
+
 fn runtime_battle_failed_response(
     caller: CandidPrincipal,
     context: &session_context::SessionCallerContext,
@@ -1990,6 +2077,33 @@ fn runtime_battle_failed_response(
     )
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn runtime_sync_battle_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce_text: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
+        caller,
+        context,
+        command_id,
+        "sync_battle".to_string(),
+        client_nonce_text,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    )
+}
+
 fn insert_runtime_battle_command_receipt(
     battle_id: &str,
     actor_participant_id: &str,
@@ -2004,6 +2118,28 @@ fn insert_runtime_battle_command_receipt(
         client_nonce: command.client_nonce,
         payload_hash: command.payload_hash,
         #[cfg(not(feature = "benchmark"))]
+        payload_json: Some(command.payload_json),
+        response,
+    };
+    battle_runtime::with_runtime_mut(battle_id, |runtime| {
+        runtime.insert_command_receipt(receipt);
+    });
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn insert_runtime_battle_sync_command_receipt(
+    battle_id: &str,
+    actor_participant_id: &str,
+    command: RuntimeBattleCommandContext,
+    response: CommandResponse,
+) {
+    let receipt = BattleRuntimeCommandReceipt {
+        command_id: command.command_id,
+        command_type: "sync_battle".to_string(),
+        actor_participant_id: actor_participant_id.to_string(),
+        client_nonce_text: command.client_nonce_text,
+        client_nonce: command.client_nonce,
+        payload_hash: command.payload_hash,
         payload_json: Some(command.payload_json),
         response,
     };
@@ -2131,6 +2267,88 @@ fn enforce_runtime_eviction_barrier() {
 #[cfg(feature = "benchmark")]
 fn enforce_runtime_eviction_barrier() {}
 
+#[cfg(not(feature = "benchmark"))]
+fn try_sync_runtime_battle(
+    caller: CandidPrincipal,
+    context: &mut session_context::SessionCallerContext,
+    battle_id_text: &str,
+    now_ms: u64,
+    client_nonce: &str,
+) -> Result<Option<CommandResponse>, ApiError> {
+    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
+    let Some(runtime) = battle_runtime::with_runtime(battle_id_text, Clone::clone) else {
+        return Ok(None);
+    };
+    if runtime.session_id != context.session.id().to_string() {
+        return Ok(None);
+    }
+    let battle = runtime
+        .state
+        .battle(battle_id_text)
+        .map_err(map_battle_error)?;
+    if battle.state != "active" {
+        return Ok(None);
+    }
+
+    let command =
+        match begin_runtime_sync_battle_command(caller, context, battle_id_text, client_nonce)? {
+            RuntimeBattleCommandAction::Apply(command) => command,
+            RuntimeBattleCommandAction::Return(response) => return Ok(Some(response)),
+        };
+    let command_id = session_context::parse_id::<GameCommand>(&command.command_id, "command_id")?;
+
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    let response_participant_id = context.participant.id().to_string();
+    let kernel_outcome = match BattleKernelDriver::new(
+        &mut context.session,
+        Some(&response_participant_id),
+        &mut events,
+        &mut changed_subjects,
+    )
+    .drive_runtime_sync_timeouts(
+        battle_id,
+        now_ms,
+        CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+        command_id,
+    )? {
+        Some(outcome) => outcome,
+        None => return Ok(None),
+    };
+
+    let active_stack_id = response_active_stack_id(context.session.id(), battle_id)?;
+    let outcome = BattleSyncOutcome {
+        battle_id: battle_id_text.to_string(),
+        timeout_actions_applied: count_battle_events(&events, "battle_timeout_auto_defend")
+            .max(kernel_outcome.timeout_actions_applied),
+        recovered_commands: 0,
+        battle_sync_incomplete: kernel_outcome.incomplete,
+        active_stack_id,
+    };
+    let response = command_response::runtime_command_response(
+        caller,
+        context,
+        command.command_id.clone(),
+        "sync_battle".to_string(),
+        &command.client_nonce_text,
+        command.payload_hash.clone(),
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        events,
+        changed_subjects,
+        CommandResult::BattleSync(outcome),
+        None,
+    );
+    insert_runtime_battle_sync_command_receipt(
+        battle_id_text,
+        &response_participant_id,
+        command,
+        response.clone(),
+    );
+    Ok(Some(response))
+}
+
 pub(crate) fn sync_battle(
     caller: CandidPrincipal,
     session_id: String,
@@ -2140,6 +2358,12 @@ pub(crate) fn sync_battle(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
+    #[cfg(not(feature = "benchmark"))]
+    if let Some(response) =
+        try_sync_runtime_battle(caller, &mut context, &battle_id, now_ms, &client_nonce)?
+    {
+        return Ok(response);
+    }
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     let payload_json = format!(
         r#"{{"battle_id":"{}"}}"#,
@@ -4002,7 +4226,13 @@ fn apply_due_runtime_timeouts_for_sync(
         });
         domm_game::apply_battle_command_by_id(&mut runtime.state, &timeout_command_id, deadline)
             .map_err(map_battle_error)?;
-        append_runtime_timeout_public_event(session, command_id, &battle_id_text, events)?;
+        append_runtime_timeout_public_event(
+            session,
+            command_id,
+            &mut runtime,
+            &battle_id_text,
+            events,
+        )?;
         refresh_runtime_metadata_from_state(&mut runtime, session, &battle_id_text)?;
         trim_runtime_transient_battle_history(&mut runtime);
         applied = applied.saturating_add(1);
@@ -4028,9 +4258,40 @@ fn apply_due_runtime_timeouts_for_sync(
     Ok(Some((false, applied)))
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn append_runtime_timeout_public_event(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
+    runtime: &mut BattleRuntime,
+    battle_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+) -> Result<(), ApiError> {
+    let public_event = runtime_battle_event_view(
+        session,
+        format!("battle:{battle_id}:runtime_timeout:{command_id}:public"),
+        "public".to_string(),
+        "battle_timeout_auto_defend".to_string(),
+        Some("battle".to_string()),
+        Some(battle_id.to_string()),
+        format!(
+            r#"{{"battle_id":"{}","event_type":"battle_timeout_auto_defend","redacted":true}}"#,
+            command_response::escape_json(battle_id)
+        ),
+    )?;
+    runtime.push_event(BattleRuntimeEvent {
+        command_id: Some(command_id.to_string()),
+        event: public_event.clone(),
+        flushed: false,
+    });
+    events.push(public_event);
+    Ok(())
+}
+
+#[cfg(feature = "benchmark")]
+fn append_runtime_timeout_public_event(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    _runtime: &mut BattleRuntime,
     battle_id: &str,
     events: &mut Vec<domm_game::ApiEventView>,
 ) -> Result<(), ApiError> {

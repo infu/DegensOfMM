@@ -916,8 +916,13 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 - [x] Pick the next different bounded endpoint cluster from the latest artifact. Prefer a real shared floor over a single-endpoint polish: dwelling recruit live rows, scenario quest/rule reads, or worldgen CPU/no-repo cost.
 - [x] Apply the smallest safe cut that removes at least one measured stable row/read family or names why the remaining cost is not storage. Picked `claim_quest_reward`: after a successful quest claim transition, increment `rule:quest-victory.current_value` directly instead of rescanning all opening quest rows in that hot path. Full scenario sync still recomputes the count from rows for reconciliation. Verified with `cargo fmt --check`, `git diff --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
-- [ ] Measure the scenario quest-rule increment cut in the next endpoint-surface run and confirm `scenario.quests_by_session_key` drops from `claim_quest_reward`.
-- [ ] Rotate again after measurement; likely next target is dwelling recruit live state or tavern hire receipt/occupancy rows.
+- [x] Measure the scenario quest-rule increment cut in the next endpoint-surface run and confirm `scenario.quests_by_session_key` drops from `claim_quest_reward`. Artifact `target/benchmarks/20260520-quest-rule-increment-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62977`, and moved scenario instructions `39.3078B -> 38.5844B` (`-0.7234B`, `-1.8%`) versus `20260520-champion-projection-local`. `claim_quest_reward` moved `3.0656B -> 2.3620B`, and global `scenario.quests_by_session_key` moved `4 -> 2` calls.
+- [x] Rotate again after measurement; likely next target is dwelling recruit live state or tavern hire receipt/occupancy rows.
+
+### 47. Random Endpoint Cluster: Dwelling Or Tavern Live Rows
+
+- [ ] Pick the next different bounded endpoint cluster from `20260520-quest-rule-increment-local`. Current heavy updates are `submit_dwelling_recruit` (`4.2429B`), `hire_tavern_champion` (`3.3255B`), `sync_world_generation` (`2.9304B`), `sync_advanced_victory` (`2.8205B`), `learn_champion_spell` (`2.5849B`), and `claim_quest_reward` (`2.3620B`).
+- [ ] Prefer a cut that changes one live-state row family into a runtime projection with upgrade flush, or explicitly document why the next measured floor needs a larger aggregate.
 
 ## Expected Outcome
 

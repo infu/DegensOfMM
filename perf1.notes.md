@@ -6913,3 +6913,19 @@ Decision:
 
 - Keep this as a compile-verified checkpoint and batch measurement with the next endpoint-surface run.
 - Expected endpoint-surface change: `claim_quest_reward` should lose the two-operation `scenario.quests_by_session_key` page cost, roughly `0.70B` in `20260520-champion-projection-local`.
+
+Measurement:
+
+- Direct benchmark Wasm size after the quest-rule cut: `0x00bfd904` / `12,572,932` bytes, `9,980` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260520-quest-rule-increment-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`; stable pages stayed `2049 -> 62977`.
+- Scenario instructions: `39.3078B -> 38.5844B`, `-0.7234B`, `-1.8%` versus `20260520-champion-projection-local`.
+- `claim_quest_reward`: `3.0656B -> 2.3620B`.
+- Global `scenario.quests_by_session_key`: `4 -> 2` calls and `1.4093B -> 0.7057B`.
+
+Decision:
+
+- Keep this checkpoint. It removed the direct claim-command quest scan and preserved endpoint coverage, row growth, stable page growth, and route shape.
+- Rotate again. The remaining top costs are dwelling recruit live rows, tavern hire receipt/occupancy rows, worldgen cost without visible repo ops, and sync victory rule scans.

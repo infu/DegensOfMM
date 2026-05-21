@@ -957,9 +957,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 52. Random Endpoint Cluster: Next Non-Dwelling Heavy Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-cast-runtime-learned-spell-local`; prefer `hire_tavern_champion`, `sync_advanced_victory`, `claim_quest_reward`, or `learn_champion_spell`.
-- [ ] Keep `cast_adventure_spell` parked unless we decide to add a content/spell-definition runtime cache; the remaining `0.7047B` is mostly the spell definition/content lookup plus command response overhead.
-- [ ] Keep dwelling parked until the larger runtime dwelling pool plus runtime champion army projection can remove the remaining durable pool/army writes.
+- [x] Pick a different bounded endpoint cluster from `20260521-cast-runtime-learned-spell-local`; prefer `hire_tavern_champion`, `sync_advanced_victory`, `claim_quest_reward`, or `learn_champion_spell`. Picked `hire_tavern_champion`.
+- [x] Keep `cast_adventure_spell` parked unless we decide to add a content/spell-definition runtime cache; the remaining `0.7047B` is mostly the spell definition/content lookup plus command response overhead.
+- [x] Keep dwelling parked until the larger runtime dwelling pool plus runtime champion army projection can remove the remaining durable pool/army writes.
+- [x] Apply and measure the runtime fresh-hire cut. Active runtime hires now skip the durable `ChampionHire` command lookup, and fresh reserved champions skip the durable occupancy existence lookup before creating the same occupancy row. Durable fallback/recovery paths still perform the old lookups.
+- [x] Measure the hire runtime fresh cut. Artifact `target/benchmarks/20260521-hire-runtime-fresh-cut-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `32.5792B -> 31.1752B` (`-1.4040B`, `-4.3%`) versus `20260521-cast-runtime-learned-spell-local`. `hire_tavern_champion` moved `2.8438B -> 1.4401B`.
+- [x] Rotate again after this tavern hire proof. Current next candidates are `submit_dwelling_recruit` (`3.5398B`, defer until larger dwelling/army aggregate), `sync_advanced_victory` (`2.8225B`), `claim_quest_reward` (`2.3660B`), `learn_champion_spell` (`1.8825B`), and `sync_objectives` (`1.4088B`).
+
+### 53. Random Endpoint Cluster: Next Scenario Or Learning Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-hire-runtime-fresh-cut-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `learn_champion_spell`, or `sync_objectives`.
+- [ ] Keep tavern hire parked until we are ready for a bigger champion/occupancy aggregate; remaining hire cost is durable `ChampionHire`, durable `Champion`, durable `MapOccupancy`, plus command response overhead.
+- [ ] Avoid micro-polishing cast/hire again before rotating through scenario or learning.
 
 ## Expected Outcome
 

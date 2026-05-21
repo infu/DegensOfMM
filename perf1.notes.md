@@ -7122,3 +7122,38 @@ Decision:
 - Keep this checkpoint. It removes one active stable learned-spell lookup without shifting work to another endpoint.
 - Park cast for now; the remaining floor is the spell definition/content lookup plus command response overhead. A further cut needs a small content/spell-definition projection or cache, but code-section headroom is only about 2 KB.
 - Rotate to another non-dwelling heavy endpoint next: tavern hire, advanced victory, quest reward, or learning.
+
+## Tavern Hire Runtime Fresh Cut
+
+Time: `2026-05-21T02:18:00Z`.
+
+Cut:
+
+- Rotated to `hire_tavern_champion`.
+- Active runtime hires now skip `find_champion_hire_by_command` before creating the durable `ChampionHire` row. Runtime command receipts already answer fresh active nonce replay.
+- Fresh runtime hires also skip the durable occupancy existence lookup before creating the champion occupancy row. The champion id is newly reserved for this command, so the row cannot already exist on the fresh runtime path.
+- Durable fallback and recovery paths still do the old lookups.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bff82e` / `12,580,910` bytes, `2,002` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-hire-runtime-fresh-cut-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-cast-runtime-learned-spell-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `32.5792B -> 31.1752B`, `-1.4040B`, `-4.3%`.
+- `hire_tavern_champion`: `2.8438B -> 1.4401B`, `-49.4%`.
+
+Decision:
+
+- Keep this checkpoint. It removes two active stable lookups without moving work to another endpoint or changing durable row creation.
+- Park hire for now. The remaining cost is durable `ChampionHire`, durable `Champion`, durable `MapOccupancy`, plus command response overhead. Getting it near `0.3B-0.6B` needs a real champion/occupancy aggregate and upgrade flush, not more tiny lookup cuts.
+- Rotate to scenario or learning next.

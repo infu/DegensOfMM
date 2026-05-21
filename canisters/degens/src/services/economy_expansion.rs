@@ -421,26 +421,30 @@ fn apply_hire_command(
     context.participant =
         persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
 
-    let (mut hire, fresh_hire) =
-        match economy_expansion::find_champion_hire_by_command(command.id())? {
-            Some(row) => (row, false),
-            None => {
-                let reserved_champion_id = Id::<Champion>::from_key(Ulid::generate());
-                (
-                    economy_expansion::create_champion_hire(
-                        context.session.id(),
-                        context.participant.id(),
-                        town.id(),
-                        offer.id(),
-                        command.id(),
-                        Some(reserved_champion_id),
-                        offer.cost_gold,
-                        context.session.current_turn,
-                    )?,
-                    true,
-                )
-            }
-        };
+    let existing_hire = if runtime_receipt {
+        None
+    } else {
+        economy_expansion::find_champion_hire_by_command(command.id())?
+    };
+    let (mut hire, fresh_hire) = match existing_hire {
+        Some(row) => (row, false),
+        None => {
+            let reserved_champion_id = Id::<Champion>::from_key(Ulid::generate());
+            (
+                economy_expansion::create_champion_hire(
+                    context.session.id(),
+                    context.participant.id(),
+                    town.id(),
+                    offer.id(),
+                    command.id(),
+                    Some(reserved_champion_id),
+                    offer.cost_gold,
+                    context.session.current_turn,
+                )?,
+                true,
+            )
+        }
+    };
     let champion = match hire.champion_id {
         Some(id) if fresh_hire => {
             insert_reserved_hired_champion(context, &town, &offer, Id::<Champion>::from_key(id))?
@@ -496,7 +500,12 @@ fn apply_hire_command(
     offer.hired_champion_id = Some(champion.id().key());
     offer.hired_command_id = Some(command.id().key());
     persist_or_mirror_active_tavern_offer(&context.session, offer)?;
-    ensure_champion_occupancy(context.session.id(), command.id(), &champion)?;
+    ensure_champion_occupancy(
+        context.session.id(),
+        command.id(),
+        &champion,
+        runtime_receipt && fresh_hire,
+    )?;
 
     let receipt = receipt(
         command.id().to_string(),
@@ -1252,15 +1261,17 @@ fn ensure_champion_occupancy(
     session_id: Id<GameSession>,
     _command_id: Id<GameCommand>,
     champion: &Champion,
+    skip_existing_lookup: bool,
 ) -> Result<(), ApiError> {
     let occupant_id = champion.id().to_string();
-    if map_visibility_occupancy::find_occupancy_by_occupant(
-        session_id,
-        "champion",
-        &occupant_id,
-        0,
-    )?
-    .is_some()
+    if !skip_existing_lookup
+        && map_visibility_occupancy::find_occupancy_by_occupant(
+            session_id,
+            "champion",
+            &occupant_id,
+            0,
+        )?
+        .is_some()
     {
         return Ok(());
     }

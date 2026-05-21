@@ -8338,3 +8338,30 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Active battle sync now has the same receipt/replay shape as active battle action submission, leaving `end_battle_turn` as the next durable command/event write to remove from the active battle path.
+
+## Active Battle End Turn Runtime Receipts
+
+Time: `2026-05-21T23:36:46Z`.
+
+Cut:
+
+- Added a production-only active `BattleRuntime` fast path for `end_battle_turn` before durable battle row loading and durable `GameCommand` creation.
+- Runtime `end_battle_turn` now hashes the same payload/idempotency input, replays matching `BattleRuntimeCommandReceipt` rows by nonce, marks `BattleRuntime.ready_participants`, drives readiness through `BattleKernelDriver`, stores the public ready event in `BattleRuntime.active_events`, and stores an `end_battle_turn` runtime command receipt.
+- Active runtime end-turn status by nonce now reads the battle runtime receipt. Status by id already used the generic battle runtime receipt lookup.
+- Benchmark builds keep the previous durable path because the benchmark Wasm has only single-digit-byte headroom. Row-backed legacy/adoption battles also keep the durable fallback.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffff9` / `12,582,905` bytes, `7` bytes under the IC limit.
+- Attempted direct production PocketIC run: `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_readiness_advances_and_replays -- --nocapture`; it failed during canister install because the default production Wasm code section is `13,693,086` bytes, above the IC limit `12,582,912`.
+
+Decision:
+
+- Keep this checkpoint. Active battle sync and end-turn now both answer from runtime receipts/events; the next active battle cleanup should move round advancement authority away from durable `SystemJob` rows.

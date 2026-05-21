@@ -292,7 +292,7 @@ fn runtime_game_command_status_by_nonce(
             return Some(receipt.status_view());
         }
         #[cfg(not(feature = "benchmark"))]
-        if *command_type == "sync_battle"
+        if matches!(*command_type, "sync_battle" | "end_battle_turn")
             && let Some(receipt) = battle_runtime::command_receipt_by_nonce(
                 &canonical_session_id,
                 &actor_participant_id,

@@ -2051,6 +2051,78 @@ fn begin_runtime_sync_battle_command(
     ))
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn begin_runtime_end_battle_turn_command(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    battle_id: &str,
+    client_nonce_text: &str,
+) -> Result<RuntimeBattleCommandAction, ApiError> {
+    let command_type = "end_battle_turn";
+    let payload_json = format!(
+        r#"{{"battle_id":"{}"}}"#,
+        command_response::escape_json(battle_id)
+    );
+    let client_nonce = command_response::nonce_u64(command_type, client_nonce_text);
+    let payload_hash = command_response::payload_hash(
+        command_type,
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        &payload_json,
+    );
+    if payload_json.len() > domm_game::MAX_COMMAND_PAYLOAD_JSON_BYTES {
+        let response = runtime_end_battle_turn_failed_response(
+            caller,
+            context,
+            Ulid::generate().to_string(),
+            client_nonce_text,
+            payload_hash,
+            public_error(
+                "payload_too_large",
+                "game command payload is too large",
+                false,
+            ),
+        );
+        return Ok(RuntimeBattleCommandAction::Return(response));
+    }
+
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    if let Some(existing) = battle_runtime::command_receipt_by_nonce(
+        &canonical_session_id,
+        &actor_participant_id,
+        client_nonce,
+    ) {
+        if existing.payload_hash != payload_hash {
+            let response = runtime_end_battle_turn_failed_response(
+                caller,
+                context,
+                Ulid::generate().to_string(),
+                client_nonce_text,
+                payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            );
+            return Ok(RuntimeBattleCommandAction::Return(response));
+        }
+        return Ok(RuntimeBattleCommandAction::Return(existing.response));
+    }
+
+    Ok(RuntimeBattleCommandAction::Apply(
+        RuntimeBattleCommandContext {
+            command_id: Ulid::generate().to_string(),
+            client_nonce_text: client_nonce_text.to_string(),
+            client_nonce,
+            payload_hash,
+            payload_json,
+            created_at_ms: Timestamp::now().as_millis().try_into().unwrap_or(0),
+        },
+    ))
+}
+
 fn runtime_battle_failed_response(
     caller: CandidPrincipal,
     context: &session_context::SessionCallerContext,
@@ -2104,6 +2176,33 @@ fn runtime_sync_battle_failed_response(
     )
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn runtime_end_battle_turn_failed_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    command_id: String,
+    client_nonce_text: &str,
+    payload_hash: String,
+    error: ApiError,
+) -> CommandResponse {
+    let retryable = error.retryable;
+    command_response::runtime_command_response(
+        caller,
+        context,
+        command_id,
+        "end_battle_turn".to_string(),
+        client_nonce_text,
+        payload_hash,
+        CommandStatus::Failed,
+        CommandPhase::Failed,
+        retryable,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        Some(error),
+    )
+}
+
 fn insert_runtime_battle_command_receipt(
     battle_id: &str,
     actor_participant_id: &str,
@@ -2136,6 +2235,28 @@ fn insert_runtime_battle_sync_command_receipt(
     let receipt = BattleRuntimeCommandReceipt {
         command_id: command.command_id,
         command_type: "sync_battle".to_string(),
+        actor_participant_id: actor_participant_id.to_string(),
+        client_nonce_text: command.client_nonce_text,
+        client_nonce: command.client_nonce,
+        payload_hash: command.payload_hash,
+        payload_json: Some(command.payload_json),
+        response,
+    };
+    battle_runtime::with_runtime_mut(battle_id, |runtime| {
+        runtime.insert_command_receipt(receipt);
+    });
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn insert_runtime_battle_end_turn_command_receipt(
+    battle_id: &str,
+    actor_participant_id: &str,
+    command: RuntimeBattleCommandContext,
+    response: CommandResponse,
+) {
+    let receipt = BattleRuntimeCommandReceipt {
+        command_id: command.command_id,
+        command_type: "end_battle_turn".to_string(),
         actor_participant_id: actor_participant_id.to_string(),
         client_nonce_text: command.client_nonce_text,
         client_nonce: command.client_nonce,
@@ -2541,6 +2662,131 @@ pub(crate) fn sync_battle(
     )
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn try_end_runtime_battle_turn(
+    caller: CandidPrincipal,
+    context: &mut session_context::SessionCallerContext,
+    battle_id_text: &str,
+    client_nonce: &str,
+) -> Result<Option<CommandResponse>, ApiError> {
+    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
+    let Some(runtime) = battle_runtime::with_runtime(battle_id_text, Clone::clone) else {
+        return Ok(None);
+    };
+    if runtime.session_id != context.session.id().to_string() {
+        return Ok(None);
+    }
+    let battle = runtime
+        .state
+        .battle(battle_id_text)
+        .map_err(map_battle_error)?;
+    if battle.state != "active" {
+        return Ok(None);
+    }
+
+    let command =
+        match begin_runtime_end_battle_turn_command(caller, context, battle_id_text, client_nonce)?
+        {
+            RuntimeBattleCommandAction::Apply(command) => command,
+            RuntimeBattleCommandAction::Return(response) => return Ok(Some(response)),
+        };
+
+    let caller_participant_text = context.participant.id().to_string();
+    let caller_has_stack = runtime.state.stacks.iter().any(|stack| {
+        stack.battle_id == battle_id_text
+            && stack.owner_participant_id.as_deref() == Some(caller_participant_text.as_str())
+    });
+    if !caller_has_stack {
+        let response = runtime_end_battle_turn_failed_response(
+            caller,
+            context,
+            command.command_id.clone(),
+            &command.client_nonce_text,
+            command.payload_hash.clone(),
+            public_error(
+                "battle_not_visible",
+                "caller does not control stacks in this battle",
+                false,
+            ),
+        );
+        insert_runtime_battle_end_turn_command_receipt(
+            battle_id_text,
+            &caller_participant_text,
+            command,
+            response.clone(),
+        );
+        return Ok(Some(response));
+    }
+
+    let round_number = battle.current_round;
+    let mut changed_subjects = Vec::new();
+    battle_runtime::with_runtime_mut(battle_id_text, |runtime| {
+        if runtime.session_id == context.session.id().to_string() {
+            runtime.mark_ready(caller_participant_text.clone(), round_number);
+        }
+    });
+    changed_subjects.push(command_response::changed(
+        "battle_participant_round_ready",
+        &format!(
+            "runtime:{}:{}:{}",
+            battle_id_text, caller_participant_text, round_number
+        ),
+        "upsert",
+    ));
+
+    let mut events = Vec::new();
+    let readiness = BattleKernelDriver::new(
+        &mut context.session,
+        Some(&caller_participant_text),
+        &mut events,
+        &mut changed_subjects,
+    )
+    .drive_readiness_and_schedule(battle_id, None, None, true, false)?;
+    let ready_count = readiness.ready_count;
+    let participant_count = readiness.participant_count;
+    let all_ready = readiness.all_ready;
+    let event = append_runtime_end_battle_turn_public_event(
+        &mut context.session,
+        &command.command_id,
+        battle_id_text,
+        round_number,
+        &caller_participant_text,
+        ready_count,
+        participant_count,
+        all_ready,
+    )?;
+    events.push(event);
+
+    let response = command_response::runtime_command_response(
+        caller,
+        context,
+        command.command_id.clone(),
+        "end_battle_turn".to_string(),
+        &command.client_nonce_text,
+        command.payload_hash.clone(),
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        events,
+        changed_subjects,
+        CommandResult::StrategicReceipt(domm_game::StrategicCommandReceipt {
+            command_kind: "end_battle_turn".to_string(),
+            command_id: command.command_id.clone(),
+            current_turn: context.session.current_turn,
+            command_count: 1,
+            event_count: 1,
+        }),
+        None,
+    );
+    insert_runtime_battle_end_turn_command_receipt(
+        battle_id_text,
+        &caller_participant_text,
+        command,
+        response.clone(),
+    );
+    Ok(Some(response))
+}
+
 pub(crate) fn end_battle_turn(
     caller: CandidPrincipal,
     session_id: String,
@@ -2549,6 +2795,12 @@ pub(crate) fn end_battle_turn(
 ) -> Result<CommandResponse, ApiError> {
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
+    #[cfg(not(feature = "benchmark"))]
+    if let Some(response) =
+        try_end_runtime_battle_turn(caller, &mut context, &battle_id, &client_nonce)?
+    {
+        return Ok(response);
+    }
     let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
     if battle.state == "active" {
         battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
@@ -4256,6 +4508,62 @@ fn apply_due_runtime_timeouts_for_sync(
         ));
     }
     Ok(Some((false, applied)))
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[allow(clippy::too_many_arguments)]
+fn append_runtime_end_battle_turn_public_event(
+    session: &mut GameSession,
+    command_id: &str,
+    battle_id: &str,
+    round_number: u16,
+    participant_id: &str,
+    ready_count: usize,
+    participant_count: usize,
+    all_ready: bool,
+) -> Result<domm_game::ApiEventView, ApiError> {
+    let event_key = format!("end_battle_turn:{battle_id}:{round_number}:{participant_id}");
+    if let Some(existing) = battle_runtime::with_runtime(battle_id, |runtime| {
+        if runtime.session_id != session.id().to_string() {
+            return None;
+        }
+        runtime
+            .active_events
+            .iter()
+            .find(|event| event.event.event_key == event_key)
+            .map(|event| event.event.clone())
+    })
+    .flatten()
+    {
+        return Ok(existing);
+    }
+
+    let event = runtime_battle_event_view(
+        session,
+        event_key,
+        "public".to_string(),
+        "battle_participant_round_ready".to_string(),
+        Some("battle".to_string()),
+        Some(battle_id.to_string()),
+        format!(
+            r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
+            command_response::escape_json(battle_id),
+            round_number,
+            ready_count,
+            participant_count,
+            all_ready
+        ),
+    )?;
+    battle_runtime::with_runtime_mut(battle_id, |runtime| {
+        if runtime.session_id == session.id().to_string() {
+            runtime.push_event(BattleRuntimeEvent {
+                command_id: Some(command_id.to_string()),
+                event: event.clone(),
+                flushed: false,
+            });
+        }
+    });
+    Ok(event)
 }
 
 #[cfg(not(feature = "benchmark"))]

@@ -11,7 +11,7 @@ use crate::repos::{
 };
 
 use super::{
-    account_lobby_session, command_response, render_projection, scenario_progress,
+    account_lobby_session, command_response, history, render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -618,6 +618,8 @@ fn write_match_summaries(
     participants: &[GameParticipant],
 ) -> Result<(), ApiError> {
     for participant in participants {
+        let player_id = Id::<PlayerAccount>::from_key(participant.player_id);
+        history::clear_match_history_cache(player_id);
         let result = if participant.id() == winner_id {
             "win"
         } else {
@@ -631,10 +633,9 @@ fn write_match_summaries(
                 session.finish_reason.as_deref().unwrap_or("elimination")
             )
         ));
-        if let Some(mut summary) = aftermath_history::find_match_summary_for_player_session(
-            Id::<PlayerAccount>::from_key(participant.player_id),
-            session.id(),
-        )? {
+        if let Some(mut summary) =
+            aftermath_history::find_match_summary_for_player_session(player_id, session.id())?
+        {
             summary.result = result.to_string();
             summary.opponent_name = opponent_name;
             summary.turns_played = session.current_turn;
@@ -642,7 +643,7 @@ fn write_match_summaries(
             aftermath_history::update_match_summary(summary)?;
         } else {
             aftermath_history::create_match_summary_shell(
-                Id::<PlayerAccount>::from_key(participant.player_id),
+                player_id,
                 session.id(),
                 result.to_string(),
                 opponent_name,

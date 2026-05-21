@@ -29,7 +29,9 @@ use crate::repos::{
     system_jobs as system_job_repo,
 };
 
-use super::{first_playable_setup, session_turn_runtime, system_jobs as system_job_service};
+use super::{
+    first_playable_setup, history, session_turn_runtime, system_jobs as system_job_service,
+};
 
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
@@ -912,6 +914,7 @@ fn try_create_player_for_registration(
     )?;
     remember_player_account(&player);
     remember_player_has_no_live_session(player.id());
+    history::remember_empty_match_history(player.id());
     Ok(player)
 }
 

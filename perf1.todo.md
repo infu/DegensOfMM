@@ -1095,8 +1095,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 68. Random Endpoint Cluster: Quest, Spell, Match History, Or Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-content-manifest-static-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, match history, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
-- [ ] Keep content manifest parked unless a regression blocks manifest reads; the static manifest path is now near zero and no longer pages the ruleset row.
+- [x] Pick a different bounded endpoint/cluster from `20260521-content-manifest-static-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, match history, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story. Picked match history because freshly registered players have no finished history, but the endpoint still paged pending match shells and filtered them out.
+- [x] Keep content manifest parked unless a regression blocks manifest reads; the static manifest path is now near zero and no longer pages the ruleset row.
+- [x] Free or preserve benchmark Wasm code-section headroom before adding another row cache. Used a tiny new-player empty-history marker instead of a full history row cache, and the endpoint benchmark installed cleanly.
+- [x] Measure the fresh-player match-history cache cut. Artifact `target/benchmarks/20260521-match-history-new-player-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `6.2039B -> 5.4999B` (`-0.7040B`, `-11.3%`) versus `20260521-content-manifest-static-local`. `get_match_history` moved `0.7035B -> 0.000004B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 69. Random Endpoint Cluster: Quest, Spell, Dwelling, Or Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-match-history-new-player-cache-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
+- [ ] Keep match history parked unless a regression blocks finished history reads; fresh-player empty history is now cache-backed and finished aftermath clears the marker before durable reads.
 - [ ] Free or preserve benchmark Wasm code-section headroom before adding another row cache.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 

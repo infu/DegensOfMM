@@ -7743,3 +7743,40 @@ Decision:
 - Keep this checkpoint. It removes a durable manifest read with a small code-size-positive change.
 - Park content manifest for the next rotation.
 - Quest preview/accept still look valuable, but need benchmark Wasm headroom before a row cache can be installed.
+
+## Fresh Player Match History Cache
+
+Time: `2026-05-21T07:18:28Z`.
+
+Cut:
+
+- Rotated away from content manifest.
+- Picked match history because freshly registered players cannot have finished match history, but `get_match_history` still paged durable pending match shells and filtered them out.
+- Added a tiny fresh-player empty-history marker in `history.rs`.
+- `register_player` marks newly created players as having empty finished history.
+- `get_match_history` still rejects anonymous callers, requires a player, and validates the list limit before using the marker. If marked, it returns an empty page without paging `PlayerMatchSummary`.
+- Battle aftermath clears the marker for each participant before updating or creating finished match summaries, so finished history reads fall back to durable rows.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-match-history-new-player-cache-local/endpoint-surface`, passed in `190s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-content-manifest-static-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `6.2039B -> 5.4999B`, `-0.7040B`, `-11.3%`.
+- `get_match_history`: `0.7035B -> 0.000004B`.
+- Remaining top endpoints are `preview_quest` (`0.7087B`), `accept_quest` (`0.7070B`), `cast_adventure_spell` (`0.7069B`), `submit_dwelling_recruit` (`0.7063B`), `learn_champion_spell` (`0.7053B`), `start_session` (`0.4871B`), `create_session` (`0.4798B`), and `register_player` (`0.4748B`).
+
+Decision:
+
+- Keep this checkpoint. It removes another durable read floor without a full row cache and still preserves durable finished-history behavior.
+- Park match history for the next rotation.
+- Quest preview/accept remains attractive, but a previous quest-row cache exceeded the benchmark Wasm install limit; free headroom before trying it again.

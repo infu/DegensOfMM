@@ -1,5 +1,7 @@
+use std::cell::RefCell;
+
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::GameSession;
+use domm_degens_schema::schema::{GameSession, PlayerAccount};
 use domm_game::{ApiError, MatchHistoryEntry, MatchHistoryPage, PageInfo};
 use icydb::{
     traits::EntityValue,
@@ -9,6 +11,24 @@ use icydb::{
 use crate::repos::aftermath_history;
 
 use super::account_lobby_session;
+
+thread_local! {
+    static EMPTY_MATCH_HISTORY_PLAYERS: RefCell<Vec<Id<PlayerAccount>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn remember_empty_match_history(player_id: Id<PlayerAccount>) {
+    EMPTY_MATCH_HISTORY_PLAYERS.with_borrow_mut(|players| {
+        if !players.contains(&player_id) {
+            players.push(player_id);
+        }
+    });
+}
+
+pub(crate) fn clear_match_history_cache(player_id: Id<PlayerAccount>) {
+    EMPTY_MATCH_HISTORY_PLAYERS.with_borrow_mut(|players| {
+        players.retain(|cached| cached != &player_id);
+    });
+}
 
 pub(crate) fn get_match_history(
     caller: CandidPrincipal,
@@ -31,6 +51,16 @@ pub(crate) fn get_match_history(
             )
         })?;
     let limit = crate::repos::foundation::validate_list_limit(limit)?;
+    if EMPTY_MATCH_HISTORY_PLAYERS.with_borrow(|players| players.contains(&player.id())) {
+        return Ok(MatchHistoryPage {
+            entries: Vec::new(),
+            page_info: PageInfo {
+                next_cursor: None,
+                has_more: false,
+                limit,
+            },
+        });
+    }
     let fetch_limit = cursor.saturating_add(limit).min(domm_game::MAX_LIST_LIMIT);
     let page = aftermath_history::page_match_history(player.id(), fetch_limit, None)?;
     let entries = page

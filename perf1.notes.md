@@ -8074,3 +8074,29 @@ Measurement versus `target/benchmarks/20260521-runtime-turn-timer-local/timer-su
 Decision:
 
 - Keep this checkpoint. It folds scenario maintenance onto the active runtime session driver and removes synthetic durable command bookkeeping for active production jobs. Runtime-owned scenario projection queues are intentionally left for Section 72B because the direct snapshot attempt did not fit the current code-size budget.
+
+## Synchronous Kernel Response Authority
+
+Time: `2026-05-21T21:05:00Z`.
+
+Cut:
+
+- `get_setup_progress` now reads the latest active `SessionTurnRuntime` session row before falling back to the durable `GameSession` row.
+- This matches the existing runtime-first `get_session` path, so setup/session synchronous responses no longer synthesize stale durable session state while an active worldmap kernel exists.
+- Broader projection flush queues remain Section 72B; this checkpoint only closes the remaining direct setup-progress query gap.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+- `cargo test -p domm-degens-canister start_session_replay_while_starting_reuses_original_nonce_and_cursor -- --nocapture`
+
+Test note:
+
+- `cargo test -p domm-degens-canister lobby_session_setup_recovers_from_starting_state_and_replays_nonce -- --nocapture` was also tried and failed later in battle handoff flushing with `events.create_game_event` at `movement.rs:1184`, after the setup-progress recovery assertions. Treat that as a separate movement/flush-barrier issue, not a passing verification for this checkpoint.
+
+Decision:
+
+- Keep this checkpoint. The active session kernel is now the first source for the setup progress response, while durable rows remain the fallback when no active runtime exists.

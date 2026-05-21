@@ -1412,7 +1412,12 @@ pub(crate) fn get_session(session_id: String) -> Result<SessionView, ApiError> {
 }
 
 pub(crate) fn get_setup_progress(session_id: String) -> Result<SetupProgressView, ApiError> {
-    let session = load_session_from_text(&session_id)?;
+    let session = if let Some((session, _)) = session_turn_runtime::latest_session_rows(&session_id)
+    {
+        session
+    } else {
+        load_session_from_text(&session_id)?
+    };
     setup_progress_view(&session)
 }
 

@@ -9,7 +9,10 @@ use domm_game::{
     DwellingRecruitPreview, ExpandedEconomyReceipt, MarketTradePreview, ResourceBalances,
     TavernOfferView, TavernOffersView,
 };
-use icydb::{traits::EntityValue, types::Id};
+use icydb::{
+    traits::EntityValue,
+    types::{Id, Ulid},
+};
 
 use crate::repos::{
     champions_artifacts, content, economy_expansion, map_visibility_occupancy, sessions, towns,
@@ -421,23 +424,34 @@ fn apply_hire_command(
     let (mut hire, fresh_hire) =
         match economy_expansion::find_champion_hire_by_command(command.id())? {
             Some(row) => (row, false),
-            None => (
-                economy_expansion::create_champion_hire(
-                    context.session.id(),
-                    context.participant.id(),
-                    town.id(),
-                    offer.id(),
-                    command.id(),
-                    None,
-                    offer.cost_gold,
-                    context.session.current_turn,
-                )?,
-                true,
-            ),
+            None => {
+                let reserved_champion_id = Id::<Champion>::from_key(Ulid::generate());
+                (
+                    economy_expansion::create_champion_hire(
+                        context.session.id(),
+                        context.participant.id(),
+                        town.id(),
+                        offer.id(),
+                        command.id(),
+                        Some(reserved_champion_id),
+                        offer.cost_gold,
+                        context.session.current_turn,
+                    )?,
+                    true,
+                )
+            }
         };
     let champion = match hire.champion_id {
-        Some(id) => champions_artifacts::load_champion(Id::<Champion>::from_key(id))?
-            .ok_or_else(|| public_error("champion_not_found", "hired champion missing", true))?,
+        Some(id) if fresh_hire => {
+            insert_reserved_hired_champion(context, &town, &offer, Id::<Champion>::from_key(id))?
+        }
+        Some(id) => {
+            let champion_id = Id::<Champion>::from_key(id);
+            match champions_artifacts::load_champion(champion_id)? {
+                Some(champion) => champion,
+                None => insert_reserved_hired_champion(context, &town, &offer, champion_id)?,
+            }
+        }
         None => {
             let champion = champions_artifacts::create_champion(
                 context.session.id(),
@@ -468,6 +482,8 @@ fn apply_hire_command(
                 0,
             )?;
             session_turn_runtime::mirror_champion_update(&champion);
+            hire.champion_id = Some(champion.id().key());
+            economy_expansion::update_champion_hire(hire)?;
             champion
         }
     };
@@ -476,8 +492,6 @@ fn apply_hire_command(
         context.participant.clone(),
         champion.id(),
     )?;
-    hire.champion_id = Some(champion.id().key());
-    economy_expansion::update_champion_hire(hire)?;
     offer.status = "hired".to_string();
     offer.hired_champion_id = Some(champion.id().key());
     offer.hired_command_id = Some(command.id().key());
@@ -554,6 +568,45 @@ fn apply_hire_command(
     )
 }
 
+fn insert_reserved_hired_champion(
+    context: &session_context::SessionCallerContext,
+    town: &Town,
+    offer: &domm_degens_schema::schema::TavernOffer,
+    champion_id: Id<Champion>,
+) -> Result<Champion, ApiError> {
+    let champion = champions_artifacts::insert_champion_with_id(
+        champion_id,
+        context.session.id(),
+        context.participant.id(),
+        Id::from_key(offer.champion_class_id),
+        offer.candidate_name.clone(),
+        offer.champion_class_slug.clone(),
+        "active".to_string(),
+        town.x,
+        town.y,
+        town.chunk_x,
+        town.chunk_y,
+        1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        10,
+        10,
+        context.session.current_turn,
+        0,
+        Vec::new(),
+        240,
+        240,
+        context.session.current_turn,
+        5,
+        0,
+    )?;
+    session_turn_runtime::mirror_champion_update(&champion);
+    Ok(champion)
+}
+
 fn apply_market_trade_command(
     caller: CandidPrincipal,
     context: &mut session_context::SessionCallerContext,
@@ -600,7 +653,9 @@ fn apply_market_trade_command(
     context.participant.last_action_turn = context.session.current_turn;
     context.participant =
         persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
-    let fresh_trade = if economy_expansion::find_market_trade_by_command(command.id())?.is_none() {
+    let fresh_trade = if runtime_receipt {
+        true
+    } else if economy_expansion::find_market_trade_by_command(command.id())?.is_none() {
         economy_expansion::create_market_trade(
             context.session.id(),
             context.participant.id(),

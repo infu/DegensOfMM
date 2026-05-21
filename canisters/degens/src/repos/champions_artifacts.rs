@@ -5,7 +5,11 @@ use domm_degens_schema::schema::{
     ChampionClassDefinition, ChampionSpell, GameCommand, GameParticipant, GameSession,
     SpellDefinition, UnitDefinition,
 };
-use icydb::{Create, db::query::FieldRef, types::Id};
+use icydb::{
+    Create,
+    db::query::FieldRef,
+    types::{Id, Timestamp},
+};
 
 use super::foundation::{self, IndexedQueryPlan, RepoResult, RepositoryPage};
 
@@ -119,6 +123,73 @@ pub(crate) fn create_champion(
     };
 
     foundation::create("champions.create_champion", input)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_champion_with_id(
+    champion_id: Id<Champion>,
+    session_id: Id<GameSession>,
+    participant_id: Id<GameParticipant>,
+    class_def_id: Id<ChampionClassDefinition>,
+    name: String,
+    class_key: String,
+    status: String,
+    x: u16,
+    y: u16,
+    chunk_x: u16,
+    chunk_y: u16,
+    level: u16,
+    experience: u64,
+    might: i16,
+    guard: i16,
+    wisdom: i16,
+    command: i16,
+    mana: u16,
+    mana_max: u16,
+    mana_turn: u32,
+    skill_points: u16,
+    skill_keys: Vec<String>,
+    movement_max: u16,
+    movement_remaining: u16,
+    movement_turn: u32,
+    vision_radius: u8,
+    defeated_turn: u32,
+) -> RepoResult<Champion> {
+    let now = Timestamp::now();
+    let champion = Champion {
+        id: champion_id.key(),
+        session_id: session_id.key(),
+        participant_id: participant_id.key(),
+        class_def_id: class_def_id.key(),
+        name,
+        class_key,
+        status,
+        in_battle_id: None,
+        x,
+        y,
+        chunk_x,
+        chunk_y,
+        level,
+        experience,
+        might,
+        guard,
+        wisdom,
+        command,
+        mana,
+        mana_max,
+        mana_turn,
+        skill_points,
+        skill_keys,
+        movement_max,
+        movement_remaining,
+        movement_turn,
+        vision_radius,
+        defeated_turn,
+        last_command_id: None,
+        created_at: now,
+        updated_at: now,
+    };
+    foundation::insert("champions.insert_champion", champion)
 }
 
 pub(crate) fn load_champion(id: Id<Champion>) -> RepoResult<Option<Champion>> {

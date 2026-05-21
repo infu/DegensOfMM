@@ -921,8 +921,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 47. Random Endpoint Cluster: Dwelling Or Tavern Live Rows
 
-- [ ] Pick the next different bounded endpoint cluster from `20260520-quest-rule-increment-local`. Current heavy updates are `submit_dwelling_recruit` (`4.2429B`), `hire_tavern_champion` (`3.3255B`), `sync_world_generation` (`2.9304B`), `sync_advanced_victory` (`2.8205B`), `learn_champion_spell` (`2.5849B`), and `claim_quest_reward` (`2.3620B`).
-- [ ] Prefer a cut that changes one live-state row family into a runtime projection with upgrade flush, or explicitly document why the next measured floor needs a larger aggregate.
+- [x] Pick the next different bounded endpoint cluster from `20260520-quest-rule-increment-local`. Current heavy updates were `submit_dwelling_recruit` (`4.2429B`), `hire_tavern_champion` (`3.3255B`), `sync_world_generation` (`2.9304B`), `sync_advanced_victory` (`2.8205B`), `learn_champion_spell` (`2.5849B`), and `claim_quest_reward` (`2.3620B`). Picked the tavern/market economy receipt floor instead of continuing quest/champion polishing.
+- [x] Prefer a cut that changes one live-state row family into a runtime projection with upgrade flush, or explicitly document why the next measured floor needs a larger aggregate. Decision: `ChampionHire` remains a durable receipt, but fresh hires now reserve `champion_id` before champion insertion and avoid the extra receipt update; `MarketTrade` is history-only for active runtime commands and can be skipped on the hot path while durable fallback/recovery remains unchanged.
+- [x] Measure the corrected economy receipt row cut. Artifact `target/benchmarks/20260520-economy-receipt-row-floor-v2-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, moved stable pages `2049 -> 62977` to `2049 -> 62465`, and moved scenario instructions `38.5844B -> 36.9183B` (`-1.6661B`, `-4.3%`) versus `20260520-quest-rule-increment-local`. `hire_tavern_champion` moved `3.3255B -> 2.8484B`; `submit_market_trade` moved `1.1821B -> 0.0002B`; repo ops removed from the active surface were `economy_expansion.update_champion_hire` and `economy_expansion.create_market_trade`.
+- [x] Rotate again after the economy receipt row cut. Current next candidates are `submit_dwelling_recruit` (`4.2403B`), `sync_world_generation` (`2.9294B`), `hire_tavern_champion` (`2.8484B`), `sync_advanced_victory` (`2.8178B`), `learn_champion_spell` (`2.5849B`), and `claim_quest_reward` (`2.3664B`).
+
+### 48. Random Endpoint Cluster: Next Non-Economy Floor
+
+- [ ] Rotate away from market/tavern receipt rows. Pick one different bounded endpoint cluster from `20260520-economy-receipt-row-floor-v2-local`; prefer `submit_dwelling_recruit`, `sync_world_generation`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`.
+- [ ] Apply one low-risk cut before the next endpoint-surface measurement. If the picked endpoint still needs a larger aggregate to reach `0.3B-0.6B`, document the exact durable row/index family or CPU loop that blocks the smaller cut.
 
 ## Expected Outcome
 

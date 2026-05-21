@@ -6929,3 +6929,46 @@ Decision:
 
 - Keep this checkpoint. It removed the direct claim-command quest scan and preserved endpoint coverage, row growth, stable page growth, and route shape.
 - Rotate again. The remaining top costs are dwelling recruit live rows, tavern hire receipt/occupancy rows, worldgen cost without visible repo ops, and sync victory rule scans.
+
+## Economy Receipt Row Cut
+
+Time: `2026-05-21T01:14:00Z`.
+
+Cut:
+
+- Rotated to the tavern/market economy receipt floor instead of continuing quest or champion polishing.
+- Fresh `hire_tavern_champion` now reserves a champion id in the durable `ChampionHire` receipt before inserting the champion with that id, so the active path no longer creates the receipt and then updates it only to fill `champion_id`.
+- Existing/recovery `ChampionHire` rows still load the champion by id; legacy rows with no `champion_id` still use the old create-then-update fallback.
+- Active-runtime `submit_market_trade` now skips the durable `MarketTrade` history row. Runtime command receipts and runtime events already answer active replay/status/feed; durable fallback still creates the row when runtime receipts are unavailable.
+
+Correction:
+
+- First measurement artifact `target/benchmarks/20260520-economy-receipt-row-floor-local/endpoint-surface` caught a bad fresh-hire shape: the reserved id path loaded the just-reserved champion before inserting it. That removed `update_champion_hire` but added `champions.load_champion`, so `hire_tavern_champion` regressed to `3.5556B`.
+- Fixed by inserting directly for fresh reserved ids and keeping the load only for existing/recovery rows.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size after the corrected cut: `0x00bfebf7` / `12,577,783` bytes, `5,129` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260520-economy-receipt-row-floor-v2-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-quest-rule-increment-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages moved `2049 -> 62977` to `2049 -> 62465`.
+- Scenario instructions: `38.5844B -> 36.9183B`, `-1.6661B`, `-4.3%`.
+- Removed repo ops: `economy_expansion.update_champion_hire` and `economy_expansion.create_market_trade`.
+- Replaced `champions.create_champion` with `champions.insert_champion` at the same row count and roughly the same cost.
+- `hire_tavern_champion`: `3.3255B -> 2.8484B`, `-14.3%`.
+- `submit_market_trade`: `1.1821B -> 0.0002B`, effectively removing the active runtime cost.
+- `submit_dwelling_recruit`: `4.2429B -> 4.2403B`, flat/noise.
+
+Decision:
+
+- Keep this checkpoint. It removes two active durable row writes and validates that the benchmark catches regressions when a row cut accidentally adds a read.
+- Rotate again. The next highest floor is `submit_dwelling_recruit`, but the random-endpoint rule says it is also valid to pick worldgen/victory/champion magic if a bounded low-risk cut is clearer.

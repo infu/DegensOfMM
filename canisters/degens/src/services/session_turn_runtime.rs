@@ -203,10 +203,13 @@ impl SessionTurnRuntime {
         self.mark_dirty();
     }
 
-    pub(crate) fn mark_ready(&mut self, participant_id: impl Into<String>) {
-        self.ready_participants.insert(participant_id.into());
-        self.dirty.ready = true;
-        self.mark_dirty();
+    pub(crate) fn mark_ready(&mut self, participant_id: impl Into<String>) -> bool {
+        let inserted = self.ready_participants.insert(participant_id.into());
+        if inserted {
+            self.dirty.ready = true;
+            self.mark_dirty();
+        }
+        inserted
     }
 
     pub(crate) fn readiness_counts(&self) -> Option<RuntimeReadinessCounts> {
@@ -501,6 +504,16 @@ pub(crate) fn runtime_object_deltas_empty(session_id: &str, turn_number: u32) ->
             .borrow()
             .get(&key)
             .is_some_and(|runtime| runtime.object_deltas.is_empty())
+    })
+}
+
+pub(crate) fn participant_ready(session_id: &str, turn_number: u32, participant_id: &str) -> bool {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .get(&key)
+            .is_some_and(|runtime| runtime.ready_participants.contains(participant_id))
     })
 }
 
@@ -1352,6 +1365,13 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
         }
     }
     for runtime in &runtimes {
+        for participant_id in &runtime.ready_participants {
+            if flush_runtime_ready_participant(runtime, participant_id)? {
+                flushed = flushed.saturating_add(1);
+            }
+        }
+    }
+    for runtime in &runtimes {
         for runtime_event in runtime
             .active_events
             .iter()
@@ -1369,6 +1389,36 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
         }
     });
     Ok(flushed)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn flush_runtime_ready_participant(
+    runtime: &SessionTurnRuntime,
+    participant_id: &str,
+) -> Result<bool, ApiError> {
+    let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+    let participant_id_text = participant_id;
+    let participant_id = parse_ulid_id::<GameParticipant>(participant_id_text)?;
+    if turn_ready::find_turn_ready(session_id, participant_id, runtime.turn_number)?.is_some() {
+        return Ok(false);
+    }
+    let command_id = runtime
+        .command_receipts
+        .iter()
+        .find(|receipt| {
+            receipt.command_type == "end_turn"
+                && receipt.actor_participant_id == participant_id_text
+                && receipt.response.status == domm_game::CommandStatus::Applied
+        })
+        .and_then(|receipt| try_parse_ulid_id::<GameCommand>(&receipt.command_id).ok());
+    turn_ready::mark_turn_ready(
+        session_id,
+        participant_id,
+        runtime.turn_number,
+        command_id,
+        Timestamp::now(),
+    )?;
+    Ok(true)
 }
 
 #[cfg(not(feature = "benchmark"))]

@@ -7230,3 +7230,40 @@ Decision:
 - Keep this checkpoint. It removes objective-row stable scans from the clean active route without making objective repair disappear; any world-object delta still forces the durable reconciliation path.
 - Keep the benchmark-only scheduler no-op because it creates enough code-section headroom for further benchmark builds and does not alter production behavior.
 - Rotate next to quest reward, learning, accept quest, or end turn. Do not spend another pass on `sync_objectives` unless an objective-delta regression appears.
+
+## End Turn Runtime Ready Cut
+
+Time: `2026-05-21T04:27:00Z`.
+
+Cut:
+
+- Rotated to `end_turn`.
+- Active runtime `end_turn` now marks the participant ready in `SessionTurnRuntime` instead of creating a durable `ParticipantTurnReady` row immediately.
+- Duplicate `end_turn` submissions are guarded by runtime readiness first, then by the durable ready row fallback.
+- Production upgrade flush materializes runtime ready markers back into `ParticipantTurnReady` rows using the matching applied runtime `end_turn` command receipt when available.
+- Durable fallback remains unchanged when no active runtime can prove readiness.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfc762` / `12,568,418` bytes, `14,494` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-end-turn-runtime-ready-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-objective-clean-runtime-summary-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages after the run moved `62465 -> 61953`.
+- Scenario instructions: `27.6514B -> 26.4723B`, `-1.1791B`, `-4.3%`.
+- `end_turn`: `1.1792B -> 0.0001B`, about `-99.99%`.
+- `turn_ready.create_turn_ready` dropped out of the endpoint-surface repo-op table.
+
+Decision:
+
+- Keep this checkpoint. It removes the ready-row write from the active route while preserving replay protection and upgrade durability.
+- Park `end_turn` unless readiness replay or upgrade flush regresses; the endpoint is now near zero.
+- Rotate next to quest reward, learning, or accept quest. Durable quest/spell row cuts should only move if runtime projection and production flush keep API/query correctness intact.

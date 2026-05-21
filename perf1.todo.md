@@ -984,9 +984,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 55. Random Endpoint Cluster: Next Quest, Learning, Or Turn Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-objective-clean-runtime-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `accept_quest`, or `end_turn`.
-- [ ] Avoid returning to `sync_objectives` unless an objective-delta regression appears; the clean no-delta path is now near zero at `0.0016B`.
-- [ ] Keep using the random/round-robin endpoint strategy: take one bounded cut, measure once at the checkpoint, then rotate.
+- [x] Pick a different bounded endpoint cluster from `20260521-objective-clean-runtime-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `accept_quest`, or `end_turn`. Picked `end_turn`.
+- [x] Avoid returning to `sync_objectives` unless an objective-delta regression appears; the clean no-delta path is now near zero at `0.0016B`.
+- [x] Keep using the random/round-robin endpoint strategy: take one bounded cut, measure once at the checkpoint, then rotate.
+- [x] Apply and measure the runtime-ready end-turn cut. Active runtime `end_turn` now stores participant readiness in `SessionTurnRuntime` instead of creating a durable `ParticipantTurnReady` row immediately; duplicate end-turn submissions are guarded by runtime readiness, and production upgrade flush materializes runtime ready markers.
+- [x] Measure the end-turn runtime-ready cut. Artifact `target/benchmarks/20260521-end-turn-runtime-ready-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, moved stable pages `62465 -> 61953` after install, and moved scenario instructions `27.6514B -> 26.4723B` (`-1.1791B`, `-4.3%`) versus `20260521-objective-clean-runtime-summary-local`. `end_turn` moved `1.1792B -> 0.0001B`, and `turn_ready.create_turn_ready` dropped out of repo ops.
+- [x] Rotate again after this turn-ready cut. Current next candidates are `submit_dwelling_recruit` (`3.5398B`, defer until larger dwelling/army aggregate), `claim_quest_reward` (`2.3660B`), `learn_champion_spell` (`1.8825B`), `hire_tavern_champion` (`1.4401B`, parked), and `accept_quest` (`1.1854B`).
+
+### 56. Random Endpoint Cluster: Next Quest Or Learning Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-end-turn-runtime-ready-local`; prefer `claim_quest_reward`, `learn_champion_spell`, or `accept_quest`.
+- [ ] Keep `end_turn` parked unless readiness replay/flush regression appears; the runtime-ready path is now near zero at `0.0001B`.
+- [ ] Favor cuts that remove durable quest/spell rows from the active route only if the runtime projection and production flush path preserve API/query correctness.
 
 ## Expected Outcome
 

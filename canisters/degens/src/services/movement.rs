@@ -425,32 +425,35 @@ pub(crate) fn end_turn(
         command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
 
-    let ready_mark = turn_ready::mark_turn_ready(
-        context.session.id(),
-        context.participant.id(),
-        context.session.current_turn,
-        Some(command.id()),
-        Timestamp::now(),
-    )?;
-    let ready = ready_mark.ready;
     let runtime_session_id = context.session.id().to_string();
-    let runtime_readiness = session_turn_runtime::with_runtime_mut(
-        &runtime_session_id,
-        context.session.current_turn,
-        |runtime| {
-            runtime.mark_ready(context.participant.id().to_string());
-            runtime.readiness_counts()
-        },
-    )
-    .flatten();
-    let readiness = match runtime_readiness {
-        Some(readiness) => readiness,
-        None => durable_turn_readiness_counts(&context.session)?,
+    let participant_id_text = context.participant.id().to_string();
+    let runtime_readiness = if runtime_receipt {
+        session_turn_runtime::with_runtime_mut(
+            &runtime_session_id,
+            context.session.current_turn,
+            |runtime| {
+                let created = runtime.mark_ready(participant_id_text.clone());
+                runtime
+                    .readiness_counts()
+                    .map(|readiness| (created, participant_id_text.clone(), readiness))
+            },
+        )
+        .flatten()
+    } else {
+        None
+    };
+    let (ready_created, ready_subject_id, readiness) = if runtime_receipt {
+        match runtime_readiness {
+            Some((created, subject_id, readiness)) => (created, subject_id, readiness),
+            None => durable_ready_mark(&context, command.id())?,
+        }
+    } else {
+        durable_ready_mark(&context, command.id())?
     };
     let all_ready = readiness.all_ready;
     let mut changed_subjects = vec![command_response::changed(
         "participant_turn_ready",
-        &ready.id().to_string(),
+        &ready_subject_id,
         "upsert",
     )];
 
@@ -478,14 +481,13 @@ pub(crate) fn end_turn(
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
-    let participant_id_text = context.participant.id().to_string();
     let ready_count = readiness.ready_count;
     let participant_count = readiness.participant_count;
     let event_key = format!("end_turn:{session_id_text}:{current_turn}:{participant_id_text}");
     let event_payload = format!(
         r#"{{"turn_number":{current_turn},"ready_count":{ready_count},"participant_count":{participant_count},"all_ready":{all_ready}}}"#
     );
-    let event = if ready_mark.created {
+    let event = if runtime_receipt || ready_created {
         command_response::append_runtime_or_fresh_public_event(
             &context,
             command.id(),
@@ -529,6 +531,22 @@ pub(crate) fn end_turn(
             event_count: 1,
         }),
     )
+}
+
+fn durable_ready_mark(
+    context: &session_context::SessionCallerContext,
+    command_id: Id<GameCommand>,
+) -> Result<(bool, String, session_turn_runtime::RuntimeReadinessCounts), ApiError> {
+    let ready_mark = turn_ready::mark_turn_ready(
+        context.session.id(),
+        context.participant.id(),
+        context.session.current_turn,
+        Some(command_id),
+        Timestamp::now(),
+    )?;
+    let ready = ready_mark.ready;
+    let readiness = durable_turn_readiness_counts(&context.session)?;
+    Ok((ready_mark.created, ready.id().to_string(), readiness))
 }
 
 fn durable_turn_readiness_counts(

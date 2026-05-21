@@ -357,12 +357,16 @@ pub(crate) fn ensure_map_turn_accepts_new_command(
         }
     }
     if command_type == "end_turn"
-        && turn_ready::find_turn_ready(
+        && (session_turn_runtime::participant_ready(
+            &context.session.id().to_string(),
+            context.session.current_turn,
+            &context.participant.id().to_string(),
+        ) || turn_ready::find_turn_ready(
             context.session.id(),
             context.participant.id(),
             context.session.current_turn,
         )?
-        .is_some()
+        .is_some())
     {
         return Err(public_error(
             "turn_already_ended",

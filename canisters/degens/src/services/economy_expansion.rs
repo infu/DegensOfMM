@@ -811,24 +811,25 @@ fn apply_dwelling_recruit_command(
         quantity,
         command.id(),
     )?;
-    let fresh_recruitment =
-        if economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none() {
-            economy_expansion::create_dwelling_recruitment(
-                context.session.id(),
-                context.participant.id(),
-                object.id(),
-                pool.id(),
-                champion.id(),
-                unit.id(),
-                unit_slug.clone(),
-                command.id(),
-                quantity,
-                context.session.current_turn,
-            )?;
-            true
-        } else {
-            false
-        };
+    let fresh_recruitment = if runtime_receipt
+        || economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none()
+    {
+        economy_expansion::create_dwelling_recruitment(
+            context.session.id(),
+            context.participant.id(),
+            object.id(),
+            pool.id(),
+            champion.id(),
+            unit.id(),
+            unit_slug.clone(),
+            command.id(),
+            quantity,
+            context.session.current_turn,
+        )?;
+        true
+    } else {
+        false
+    };
     let receipt = receipt(
         command.id().to_string(),
         "submit_dwelling_recruit",

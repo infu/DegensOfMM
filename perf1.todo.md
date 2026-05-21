@@ -942,8 +942,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 50. Random Endpoint Cluster: Next Aggregate Or Scenario Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260520-spellbook-single-read-local`; prefer `submit_dwelling_recruit`, `sync_advanced_victory`, or `claim_quest_reward`.
-- [ ] Favor a cut that moves live state into an aggregate/projection or skips a repeated sync/read floor. If the next cut cannot get the endpoint close to `0.3B-0.6B`, identify the larger aggregate needed.
+- [x] Pick a different bounded endpoint cluster from `20260520-spellbook-single-read-local`; prefer `submit_dwelling_recruit`, `sync_advanced_victory`, or `claim_quest_reward`. Picked `submit_dwelling_recruit`.
+- [x] Favor a cut that moves live state into an aggregate/projection or skips a repeated sync/read floor. Active runtime receipts already own replay/idempotency for fresh active commands, so `submit_dwelling_recruit` now skips the durable `DwellingRecruitment` command lookup on the runtime path while still creating the durable receipt row. Remaining high cost is the live-state aggregate problem: `DwellingPool` update plus champion army stack update are still durable row writes.
+- [x] Measure the dwelling runtime-receipt lookup cut. Artifact `target/benchmarks/20260521-dwelling-runtime-receipt-lookup-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `33.9835B -> 33.2871B` (`-0.6964B`, `-2.0%`) versus `20260520-spellbook-single-read-local`. `submit_dwelling_recruit` moved `4.2408B -> 3.5402B`.
+- [x] Rotate again after this dwelling lookup cut. Current next candidates are `hire_tavern_champion` (`2.8461B`), `sync_advanced_victory` (`2.8177B`), `claim_quest_reward` (`2.3718B`), `learn_champion_spell` (`1.8825B`), and `cast_adventure_spell` (`1.4055B`).
+
+### 51. Random Endpoint Cluster: Next Scenario Or Champion Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-dwelling-runtime-receipt-lookup-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `hire_tavern_champion`, or `cast_adventure_spell`.
+- [ ] Avoid spending more time on dwelling until we are ready for the larger aggregate: a runtime dwelling pool plus runtime champion army projection with upgrade flush.
 
 ## Expected Outcome
 

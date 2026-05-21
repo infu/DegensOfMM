@@ -7048,3 +7048,42 @@ Decision:
 
 - Keep this checkpoint. It buys about one stable read worth of instructions for minimal behavior risk.
 - Rotate again. The largest remaining endpoint is `submit_dwelling_recruit`, but scenario/victory row scans are also still substantial.
+
+## Dwelling Runtime Receipt Lookup Cut
+
+Time: `2026-05-21T02:16:00Z`.
+
+Rejected experiment:
+
+- Tried a `sync_advanced_victory` fast path that would skip duplicate objective synchronization when an applied `sync_objectives` runtime receipt and runtime central-objective snapshots were present.
+- Artifact `target/benchmarks/20260521-victory-skip-synced-objectives-local/endpoint-surface` showed no change: `sync_advanced_victory` stayed `2.8207B` and scenario instructions stayed `33.9835B`.
+- Reverted the experiment. The proof did not fire in the benchmark scenario, and the added code spent about 1.2 KB of scarce code-section headroom for no gain.
+
+Cut:
+
+- Rotated to `submit_dwelling_recruit`.
+- Active runtime commands now skip `find_dwelling_recruitment_by_command` before creating the durable `DwellingRecruitment` row. Runtime command receipts already answer fresh active nonce replay; durable fallback still performs the lookup for command recovery.
+- The durable `DwellingRecruitment` row is still created, preserving recovery diagnostics and row-growth expectations.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Direct benchmark Wasm size: `0x00bff323` / `12,579,619` bytes, `3,293` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-dwelling-runtime-receipt-lookup-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-spellbook-single-read-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `33.9835B -> 33.2871B`, `-0.6964B`, `-2.0%`.
+- `submit_dwelling_recruit`: `4.2408B -> 3.5402B`, `-16.5%`.
+- Durable writes remain: `economy_expansion.update_dwelling_pool`, `economy_expansion.create_dwelling_recruitment`, and `champions.update_army_stack`.
+
+Decision:
+
+- Keep this checkpoint. It preserves durable recruitment history while removing one active-command lookup.
+- Do not keep polishing dwelling with micro-cuts. The remaining path needs a real aggregate: runtime dwelling pool availability plus runtime champion army stack projection with upgrade flush.

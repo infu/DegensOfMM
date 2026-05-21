@@ -7780,3 +7780,42 @@ Decision:
 - Keep this checkpoint. It removes another durable read floor without a full row cache and still preserves durable finished-history behavior.
 - Park match history for the next rotation.
 - Quest preview/accept remains attractive, but a previous quest-row cache exceeded the benchmark Wasm install limit; free headroom before trying it again.
+
+## Spell Definition Last-Slug Cache
+
+Time: `2026-05-21T07:43:19Z`.
+
+Cut:
+
+- Rotated away from match history.
+- Picked the adventure spell lookup because `cast_adventure_spell` repeats the same `spite-march` spell-definition lookup immediately after `learn_champion_spell` has already loaded that definition.
+- Tried a broad spell-definition cache first, but the benchmark Wasm failed PocketIC install with code section `0x00c005cd`, over the `0x00c00000` IC limit.
+- Trimmed to a two-slot cache, but it still measured `0x00c00525`, over the limit.
+- Kept the narrow installable cut: `content::find_spell_by_ruleset_slug` now caches only the last successful spell slug lookup and falls back to the durable row lookup on misses. It does not cache `load_spell`, pages, or bulk seed rows.
+- This means `learn_champion_spell` still pays the durable definition read, but the repeated adventure cast lookup can hit heap state without spending broad cache headroom.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- `wasm-objdump` code-section check: `0x00bffef7`, `265` bytes under the IC limit.
+- Failed broad-cache artifact kept for diagnosis: `target/benchmarks/20260521-spell-definition-cache-local/endpoint-surface`.
+- Passing endpoint-surface artifact: `target/benchmarks/20260521-spell-slug-last-cache-local/endpoint-surface`, passed in `188s`.
+- Cleaned leftover PocketIC processes after the failed install run.
+
+Measurement versus `20260521-match-history-new-player-cache-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `5.4999B -> 4.7914B`, `-0.7085B`, `-12.9%`.
+- `cast_adventure_spell`: `0.7069B -> 0.0002B`.
+- `learn_champion_spell`: `0.7053B -> 0.7055B`; not improved by this narrow cache because the learn call still loads the definition before it can seed the last-slug cache.
+- Remaining top endpoints are `accept_quest` (`0.7070B`), `preview_quest` (`0.7066B`), `submit_dwelling_recruit` (`0.7063B`), `learn_champion_spell` (`0.7055B`), `start_session` (`0.4871B`), `create_session` (`0.4798B`), and `register_player` (`0.4748B`).
+
+Decision:
+
+- Keep this checkpoint. It removes one repeated content lookup and moves adventure casting into the near-zero band without changing durable spell rows.
+- Park `cast_adventure_spell` for the next rotation.
+- Current benchmark Wasm headroom is very tight at about `265` bytes, so the next cache-like cut should first free code size or be even narrower than this one.

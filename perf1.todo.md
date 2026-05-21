@@ -1103,9 +1103,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 69. Random Endpoint Cluster: Quest, Spell, Dwelling, Or Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-match-history-new-player-cache-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
-- [ ] Keep match history parked unless a regression blocks finished history reads; fresh-player empty history is now cache-backed and finished aftermath clears the marker before durable reads.
-- [ ] Free or preserve benchmark Wasm code-section headroom before adding another row cache.
+- [x] Pick a different bounded endpoint/cluster from `20260521-match-history-new-player-cache-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story. Picked the adventure spell lookup because `cast_adventure_spell` repeated the same `spite-march` content lookup after learning it.
+- [x] Keep match history parked unless a regression blocks finished history reads; fresh-player empty history is now cache-backed and finished aftermath clears the marker before durable reads.
+- [x] Free or preserve benchmark Wasm code-section headroom before adding another row cache. A broad spell-definition cache failed install at code section `0x00c005cd`, then a two-slot cache still failed at `0x00c00525`; kept the installable last-slug cache at `0x00bffef7`, `265` bytes under the IC limit.
+- [x] Measure the spell last-slug cache cut. Artifact `target/benchmarks/20260521-spell-slug-last-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `5.4999B -> 4.7914B` (`-0.7085B`, `-12.9%`) versus `20260521-match-history-new-player-cache-local`. `cast_adventure_spell` moved `0.7069B -> 0.0002B`; `learn_champion_spell` stayed around `0.7055B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 70. Random Endpoint Cluster: Quest, Learning, Dwelling, Or Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-spell-slug-last-cache-local`; prefer quest preview/accept, `learn_champion_spell`, `submit_dwelling_recruit`, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
+- [ ] Keep `cast_adventure_spell` parked unless a regression blocks adventure casting; repeated spell definition reads are now last-slug cached and the measured cast route is in the near-zero band.
+- [ ] Do not spend code-section headroom on broad caches unless the Wasm size is checked first; current benchmark Wasm headroom is only about `265` bytes.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

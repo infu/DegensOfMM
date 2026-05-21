@@ -83,6 +83,7 @@ thread_local! {
     static UNIT_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
     static UNIT_SLUG_CACHE: RefCell<BTreeMap<String, UnitDefinition>> = const { RefCell::new(BTreeMap::new()) };
     static BUILDING_SLUG_CACHE: RefCell<BTreeMap<String, BuildingDefinition>> = const { RefCell::new(BTreeMap::new()) };
+    static SPELL_SLUG_CACHE: RefCell<Option<SpellDefinition>> = const { RefCell::new(None) };
 }
 
 fn content_slug_key(ruleset_id: Id<RulesetDefinition>, slug: &str) -> String {
@@ -187,6 +188,23 @@ fn cached_building_by_slug(
         cache
             .borrow()
             .get(&content_slug_key(ruleset_id, slug))
+            .cloned()
+    })
+}
+
+fn cache_spell(row: &SpellDefinition) {
+    SPELL_SLUG_CACHE.with(|cache| {
+        *cache.borrow_mut() = Some(row.clone());
+    })
+}
+
+fn cached_spell_by_slug(ruleset_id: Id<RulesetDefinition>, slug: &str) -> Option<SpellDefinition> {
+    let ruleset_key = ruleset_id.key();
+    SPELL_SLUG_CACHE.with(|cache| {
+        cache
+            .borrow()
+            .as_ref()
+            .filter(|row| row.ruleset_id == ruleset_key && row.slug == slug)
             .cloned()
     })
 }
@@ -581,14 +599,19 @@ pub(crate) fn create_spell_definition(
         duration_rounds: Some(spell.duration_rounds),
     };
 
-    foundation::create("content.create_spell_definition", input)
+    let row = foundation::create("content.create_spell_definition", input)?;
+    cache_spell(&row);
+    Ok(row)
 }
 
 pub(crate) fn find_spell_by_ruleset_slug(
     ruleset_id: Id<RulesetDefinition>,
     slug: &str,
 ) -> RepoResult<Option<SpellDefinition>> {
-    foundation::storage_result(
+    if let Some(row) = cached_spell_by_slug(ruleset_id, slug) {
+        return Ok(Some(row));
+    }
+    let row = foundation::storage_result(
         SPELL_SLUG_LOOKUP.name,
         crate::db()
             .load::<SpellDefinition>()
@@ -597,7 +620,11 @@ pub(crate) fn find_spell_by_ruleset_slug(
             .order_asc("id")
             .limit(1)
             .try_entity(),
-    )
+    )?;
+    if let Some(row) = &row {
+        cache_spell(row);
+    }
+    Ok(row)
 }
 
 pub(crate) fn load_spell(id: Id<SpellDefinition>) -> RepoResult<Option<SpellDefinition>> {

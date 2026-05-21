@@ -1071,9 +1071,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 65. Random Endpoint Cluster: Adventure, World Info, Or Remaining Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-setup-progress-active-cache-local`; prefer a shared common-floor candidate such as adventure spell/content lookup, world-info/config queries, quest preview/accept, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
-- [ ] Keep setup-progress parked unless a regression blocks active setup progress; the active query is now near zero and the remaining setup/session repo ops are durable identity/session boundaries.
-- [ ] Avoid polishing one `0.7B` endpoint unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints.
+- [x] Pick a different bounded endpoint/cluster from `20260521-setup-progress-active-cache-local`; prefer a shared common-floor candidate such as adventure spell/content lookup, world-info/config queries, quest preview/accept, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story. Picked the worldgen row cluster because five endpoints all read seeded immutable first-playable worldgen rows from IcyDB.
+- [x] Keep setup-progress parked unless a regression blocks active setup progress; the active query is now near zero and the remaining setup/session repo ops are durable identity/session boundaries.
+- [x] Avoid polishing one `0.7B` endpoint unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints. This cut removed the durable worldgen row read/page floor from `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, `get_siege_rules`, and `sync_world_generation`.
+- [x] Measure the worldgen runtime-cache cut. Artifact `target/benchmarks/20260521-worldgen-runtime-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `11.8381B -> 8.3163B` (`-3.5218B`, `-29.8%`) versus `20260521-setup-progress-active-cache-local`. `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, and `get_siege_rules` all moved from about `0.704B-0.705B` to about `0.00004B`; `sync_world_generation` moved `0.7053B -> 0.00015B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 66. Random Endpoint Cluster: Quest, Content, Events, Or Remaining Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-worldgen-runtime-cache-local`; prefer quest preview/accept, world events, content manifest, adventure spell/content lookup, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
+- [ ] Keep worldgen parked unless a regression blocks seeded worldgen views; the first-playable active route is now cache-backed and near zero.
+- [ ] Avoid single-endpoint polish unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

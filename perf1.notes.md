@@ -7621,3 +7621,44 @@ Decision:
 - Keep this checkpoint. It removes one completed-setup durable job read without weakening setup durability or replay.
 - Park setup-progress for the next rotation.
 - Next useful targets are common `0.7B` floors such as adventure spell/content lookup, world-info/config queries, quest preview/accept, or a real runtime authority pass for the remaining setup/session repo ops.
+
+## Worldgen Runtime Row Cache
+
+Time: `2026-05-21T06:34:11Z`.
+
+Cut:
+
+- Rotated away from setup-progress.
+- Picked the worldgen/info cluster because five endpoints all paid the same durable seeded-row floor after first-playable setup.
+- Added a heap `WORLDGEN_ROW_CACHE` for seeded worldgen projection rows: skirmish settings, procedural map, naval route, and siege rule.
+- `ensure_seeded_worldgen_state` still creates or updates the durable rows exactly as before, then mirrors the seeded rows into the cache.
+- `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, `get_siege_rules`, and `sync_world_generation` read the cache first and fall back to the repository on cache miss.
+- This is not new authority and does not need an upgrade flush; it is a cache of durable rows. After upgrade or cache miss, durable rows remain the source of truth.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-worldgen-runtime-cache-local/endpoint-surface`, passed in `192s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-setup-progress-active-cache-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `11.8381B -> 8.3163B`, `-3.5218B`, `-29.8%`.
+- `get_skirmish_settings`: `0.7050B -> 0.00003B`.
+- `get_procedural_map_state`: `0.7048B -> 0.00004B`.
+- `get_naval_routes`: `0.7041B -> 0.00004B`.
+- `get_siege_rules`: `0.7040B -> 0.00004B`.
+- `sync_world_generation`: `0.7053B -> 0.00015B`.
+- Remaining top endpoints are `submit_dwelling_recruit` (`0.7092B`), `accept_quest` (`0.7070B`), `preview_quest` (`0.7067B`), `get_content_manifest` (`0.7058B`), `get_world_events` (`0.7052B`), `learn_champion_spell` (`0.7051B`), `cast_adventure_spell` (`0.7050B`), `sync_world_events` (`0.7047B`), and `get_match_history` (`0.7037B`).
+
+Decision:
+
+- Keep this checkpoint. It removes five durable worldgen read/page floors with one small projection cache and no row-growth change.
+- Park worldgen for the next rotation.
+- Next useful targets are quest preview/accept, world events, content manifest, adventure spell/content lookup, or a real runtime authority pass for the remaining setup/session repo ops.

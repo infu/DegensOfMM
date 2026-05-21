@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     GameCommand, GameSession, NavalRouteState, ProceduralMapState, SiegeRuleState,
@@ -19,18 +21,42 @@ use super::{
     session_context::{self, public_error},
 };
 
+thread_local! {
+    static WORLDGEN_ROW_CACHE: RefCell<Vec<CachedWorldgenRows>> = const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone)]
+struct CachedWorldgenRows {
+    session_id: String,
+    settings: Option<SkirmishSettingsState>,
+    procedural_maps_complete: bool,
+    procedural_maps: Vec<ProceduralMapState>,
+    naval_routes_complete: bool,
+    naval_routes: Vec<NavalRouteState>,
+    siege_rules_complete: bool,
+    siege_rules: Vec<SiegeRuleState>,
+}
+
 pub(crate) fn get_skirmish_settings(
     caller: CandidPrincipal,
     session_id: String,
 ) -> Result<SkirmishSettingsView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let settings = worldgen::find_skirmish_settings(context.session.id())?.ok_or_else(|| {
-        public_error(
-            "skirmish_settings_missing",
-            "skirmish settings missing",
-            true,
-        )
-    })?;
+    let settings = match cached_skirmish_settings(context.session.id()) {
+        Some(settings) => settings,
+        None => {
+            let settings =
+                worldgen::find_skirmish_settings(context.session.id())?.ok_or_else(|| {
+                    public_error(
+                        "skirmish_settings_missing",
+                        "skirmish settings missing",
+                        true,
+                    )
+                })?;
+            remember_skirmish_settings(context.session.id(), settings.clone());
+            settings
+        }
+    };
     Ok(SkirmishSettingsView {
         session_id: context.session.id().to_string(),
         current_turn: context.session.current_turn,
@@ -43,11 +69,13 @@ pub(crate) fn get_procedural_map_state(
     session_id: String,
 ) -> Result<ProceduralMapView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let maps = worldgen::page_procedural_maps_by_status(context.session.id(), "validated")?
-        .items
-        .into_iter()
-        .map(procedural_map_record)
-        .collect();
+    let maps = match cached_procedural_maps_by_status(context.session.id(), "validated") {
+        Some(rows) => rows,
+        None => worldgen::page_procedural_maps_by_status(context.session.id(), "validated")?.items,
+    }
+    .into_iter()
+    .map(procedural_map_record)
+    .collect();
     Ok(ProceduralMapView {
         session_id: context.session.id().to_string(),
         current_turn: context.session.current_turn,
@@ -60,11 +88,13 @@ pub(crate) fn get_naval_routes(
     session_id: String,
 ) -> Result<NavalRoutesView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let routes = worldgen::page_naval_routes_by_status(context.session.id(), "disabled")?
-        .items
-        .into_iter()
-        .map(naval_route_record)
-        .collect();
+    let routes = match cached_naval_routes_by_status(context.session.id(), "disabled") {
+        Some(rows) => rows,
+        None => worldgen::page_naval_routes_by_status(context.session.id(), "disabled")?.items,
+    }
+    .into_iter()
+    .map(naval_route_record)
+    .collect();
     Ok(NavalRoutesView {
         session_id: context.session.id().to_string(),
         current_turn: context.session.current_turn,
@@ -77,11 +107,13 @@ pub(crate) fn get_siege_rules(
     session_id: String,
 ) -> Result<SiegeRulesView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let rules = worldgen::page_siege_rules_by_status(context.session.id(), "disabled")?
-        .items
-        .into_iter()
-        .map(siege_rule_record)
-        .collect();
+    let rules = match cached_siege_rules_by_status(context.session.id(), "disabled") {
+        Some(rows) => rows,
+        None => worldgen::page_siege_rules_by_status(context.session.id(), "disabled")?.items,
+    }
+    .into_iter()
+    .map(siege_rule_record)
+    .collect();
     Ok(SiegeRulesView {
         session_id: context.session.id().to_string(),
         current_turn: context.session.current_turn,
@@ -137,11 +169,18 @@ pub(crate) fn sync_world_generation(
 fn seeded_worldgen_fast_path(
     session: &GameSession,
 ) -> Result<Option<ProceduralMapState>, ApiError> {
+    if let Some(map) = cached_procedural_map_by_key(session.id(), PROCEDURAL_GENERATION_KEY)
+        && map.status == "validated"
+        && map.generated_turn == session.current_turn
+    {
+        return Ok(Some(map));
+    }
     let Some(map) = worldgen::find_procedural_map_by_key(session.id(), PROCEDURAL_GENERATION_KEY)?
     else {
         return Ok(None);
     };
     if map.status == "validated" && map.generated_turn == session.current_turn {
+        remember_procedural_maps(session.id(), vec![map.clone()]);
         return Ok(Some(map));
     }
     Ok(None)
@@ -180,13 +219,143 @@ pub(crate) fn ensure_seeded_worldgen_state(
         map = worldgen::update_procedural_map(map)?;
     }
 
-    if worldgen::find_naval_route_by_key(session.id(), NAVAL_ROUTE_KEY)?.is_none() {
-        worldgen::create_naval_route(session.id(), &first_playable_naval_route())?;
-    }
-    if worldgen::find_siege_rule_by_key(session.id(), SIEGE_RULE_KEY)?.is_none() {
-        worldgen::create_siege_rule(session.id(), &first_playable_siege_rule())?;
-    }
+    let naval_route = match worldgen::find_naval_route_by_key(session.id(), NAVAL_ROUTE_KEY)? {
+        Some(row) => row,
+        None => worldgen::create_naval_route(session.id(), &first_playable_naval_route())?,
+    };
+    let siege_rule = match worldgen::find_siege_rule_by_key(session.id(), SIEGE_RULE_KEY)? {
+        Some(row) => row,
+        None => worldgen::create_siege_rule(session.id(), &first_playable_siege_rule())?,
+    };
+    remember_seeded_worldgen_rows(
+        session.id(),
+        settings.clone(),
+        map.clone(),
+        naval_route,
+        siege_rule,
+    );
     Ok(map)
+}
+
+fn cached_entry(session_id: Id<GameSession>) -> Option<CachedWorldgenRows> {
+    let key = session_id.to_string();
+    WORLDGEN_ROW_CACHE
+        .with_borrow(|cache| cache.iter().find(|entry| entry.session_id == key).cloned())
+}
+
+fn cached_entry_mut<'a>(
+    cache: &'a mut Vec<CachedWorldgenRows>,
+    session_id: Id<GameSession>,
+) -> &'a mut CachedWorldgenRows {
+    let key = session_id.to_string();
+    if let Some(index) = cache.iter().position(|entry| entry.session_id == key) {
+        return &mut cache[index];
+    }
+    cache.push(CachedWorldgenRows {
+        session_id: key,
+        settings: None,
+        procedural_maps_complete: false,
+        procedural_maps: Vec::new(),
+        naval_routes_complete: false,
+        naval_routes: Vec::new(),
+        siege_rules_complete: false,
+        siege_rules: Vec::new(),
+    });
+    cache.last_mut().expect("worldgen cache entry inserted")
+}
+
+fn cached_skirmish_settings(session_id: Id<GameSession>) -> Option<SkirmishSettingsState> {
+    cached_entry(session_id).and_then(|entry| entry.settings)
+}
+
+fn cached_procedural_map_by_key(
+    session_id: Id<GameSession>,
+    generation_key: &str,
+) -> Option<ProceduralMapState> {
+    cached_entry(session_id).and_then(|entry| {
+        entry
+            .procedural_maps
+            .into_iter()
+            .find(|map| map.generation_key == generation_key)
+    })
+}
+
+fn cached_procedural_maps_by_status(
+    session_id: Id<GameSession>,
+    status: &str,
+) -> Option<Vec<ProceduralMapState>> {
+    cached_entry(session_id).and_then(|entry| {
+        entry.procedural_maps_complete.then(|| {
+            entry
+                .procedural_maps
+                .into_iter()
+                .filter(|row| row.status == status)
+                .collect()
+        })
+    })
+}
+
+fn cached_naval_routes_by_status(
+    session_id: Id<GameSession>,
+    status: &str,
+) -> Option<Vec<NavalRouteState>> {
+    cached_entry(session_id).and_then(|entry| {
+        entry.naval_routes_complete.then(|| {
+            entry
+                .naval_routes
+                .into_iter()
+                .filter(|row| row.status == status)
+                .collect()
+        })
+    })
+}
+
+fn cached_siege_rules_by_status(
+    session_id: Id<GameSession>,
+    status: &str,
+) -> Option<Vec<SiegeRuleState>> {
+    cached_entry(session_id).and_then(|entry| {
+        entry.siege_rules_complete.then(|| {
+            entry
+                .siege_rules
+                .into_iter()
+                .filter(|row| row.status == status)
+                .collect()
+        })
+    })
+}
+
+fn remember_skirmish_settings(session_id: Id<GameSession>, settings: SkirmishSettingsState) {
+    WORLDGEN_ROW_CACHE.with_borrow_mut(|cache| {
+        cached_entry_mut(cache, session_id).settings = Some(settings);
+    });
+}
+
+fn remember_procedural_maps(session_id: Id<GameSession>, maps: Vec<ProceduralMapState>) {
+    WORLDGEN_ROW_CACHE.with_borrow_mut(|cache| {
+        let entry = cached_entry_mut(cache, session_id);
+        entry.procedural_maps = maps;
+        entry.procedural_maps_complete = true;
+    });
+}
+
+fn remember_seeded_worldgen_rows(
+    session_id: Id<GameSession>,
+    settings: SkirmishSettingsState,
+    map: ProceduralMapState,
+    naval_route: NavalRouteState,
+    siege_rule: SiegeRuleState,
+) {
+    WORLDGEN_ROW_CACHE.with_borrow_mut(|cache| {
+        let entry = cached_entry_mut(cache, session_id);
+        entry.settings = Some(settings);
+        entry.procedural_maps = vec![map];
+        entry.procedural_maps_complete = true;
+        entry.naval_routes = vec![naval_route];
+        entry.naval_routes_complete = true;
+        entry.siege_rules = vec![siege_rule];
+        entry.siege_rules_complete = true;
+    });
 }
 
 fn apply_procedural_preview(row: &mut ProceduralMapState, record: &ProceduralMapRecord) {

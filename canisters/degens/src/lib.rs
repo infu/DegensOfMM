@@ -30,6 +30,10 @@ pub use contract::{
     DiagnosticStorageSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind,
     EndpointSpec, REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions, required_endpoint_views,
 };
+#[cfg(not(feature = "benchmark"))]
+pub use contract::{
+    DiagnosticProjectionFlushView, DiagnosticProjectionKernelView, DiagnosticProjectionSnapshot,
+};
 
 icydb::start!();
 

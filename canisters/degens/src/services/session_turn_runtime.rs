@@ -745,6 +745,44 @@ pub(crate) struct ProjectionFlushOutcome {
     pub stable_pages_delta: u64,
 }
 
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectionKernelDiagnostic {
+    pub kernel_id: String,
+    pub session_id: String,
+    pub turn_number: u32,
+    pub dirty_queue_len: usize,
+    pub oldest_dirty_age_ms: Option<u64>,
+    pub kernel_generation: u64,
+    pub flushed_generation: u64,
+    pub lag_generations: u64,
+    pub lag_ms: u64,
+    pub flushed_at_ms: u64,
+    pub pending_entries: usize,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectionFlushDiagnostic {
+    pub flushed_at_ms: u64,
+    pub entries_processed: usize,
+    pub rows_flushed: usize,
+    pub queue_len_before: usize,
+    pub queue_len_after: usize,
+    pub flush_truncated: bool,
+    pub stable_pages_delta: u64,
+    pub flush_instructions: u64,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ProjectionDiagnosticSnapshot {
+    pub kernels: Vec<ProjectionKernelDiagnostic>,
+    pub total_dirty_queue_len: usize,
+    pub oldest_dirty_age_ms: Option<u64>,
+    pub last_flush: Option<ProjectionFlushDiagnostic>,
+}
+
 #[derive(Clone)]
 #[cfg_attr(
     not(feature = "benchmark"),
@@ -1016,6 +1054,9 @@ pub(crate) struct SessionTurnRuntimeSnapshot {
 thread_local! {
     static ACTIVE_SESSION_TURN_RUNTIMES: RefCell<BTreeMap<String, SessionTurnRuntime>> =
         RefCell::new(BTreeMap::new());
+    #[cfg(not(feature = "benchmark"))]
+    static LAST_SESSION_PROJECTION_FLUSH: RefCell<Option<ProjectionFlushDiagnostic>> =
+        const { RefCell::new(None) };
 }
 
 pub(crate) fn runtime_key(session_id: &str, turn_number: u32) -> String {
@@ -1525,6 +1566,62 @@ pub(crate) fn projection_checkpoints_snapshot() -> Vec<ProjectionCheckpoint> {
 }
 
 #[cfg(not(feature = "benchmark"))]
+pub(crate) fn projection_diagnostic_snapshot() -> ProjectionDiagnosticSnapshot {
+    let now_ms = crate::services::clock::now_ms();
+    let mut kernels = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .map(|runtime| projection_kernel_diagnostic(runtime, now_ms))
+            .collect::<Vec<_>>()
+    });
+    kernels.sort_by(|left, right| left.kernel_id.cmp(&right.kernel_id));
+    let total_dirty_queue_len = kernels.iter().map(|kernel| kernel.dirty_queue_len).sum();
+    let oldest_dirty_age_ms = kernels
+        .iter()
+        .filter_map(|kernel| kernel.oldest_dirty_age_ms)
+        .max();
+    let last_flush = LAST_SESSION_PROJECTION_FLUSH.with(|last_flush| last_flush.borrow().clone());
+
+    ProjectionDiagnosticSnapshot {
+        kernels,
+        total_dirty_queue_len,
+        oldest_dirty_age_ms,
+        last_flush,
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn projection_kernel_diagnostic(
+    runtime: &SessionTurnRuntime,
+    now_ms: u64,
+) -> ProjectionKernelDiagnostic {
+    let oldest_dirty_at_ms = runtime
+        .projection_dirty_queue
+        .iter()
+        .map(|entry| entry.first_dirty_at_ms)
+        .min();
+    let oldest_dirty_age_ms = oldest_dirty_at_ms.map(|dirty_at| now_ms.saturating_sub(dirty_at));
+    let lag_generations = runtime
+        .generation
+        .saturating_sub(runtime.projection_checkpoint.flushed_generation);
+
+    ProjectionKernelDiagnostic {
+        kernel_id: runtime.key(),
+        session_id: runtime.session_id.clone(),
+        turn_number: runtime.turn_number,
+        dirty_queue_len: runtime.projection_dirty_queue.len(),
+        oldest_dirty_age_ms,
+        kernel_generation: runtime.generation,
+        flushed_generation: runtime.projection_checkpoint.flushed_generation,
+        lag_generations,
+        lag_ms: oldest_dirty_age_ms.unwrap_or(0),
+        flushed_at_ms: runtime.projection_checkpoint.flushed_at_ms,
+        pending_entries: runtime.projection_checkpoint.pending_entries,
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_runtime_projection_queue(
     limits: ProjectionFlushLimits,
 ) -> Result<ProjectionFlushOutcome, ApiError> {
@@ -1572,7 +1669,25 @@ pub(crate) fn flush_runtime_projection_queue(
     {
         outcome.truncated = true;
     }
+    record_projection_flush_diagnostic(&outcome);
     Ok(outcome)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn record_projection_flush_diagnostic(outcome: &ProjectionFlushOutcome) {
+    let diagnostic = ProjectionFlushDiagnostic {
+        flushed_at_ms: crate::services::clock::now_ms(),
+        entries_processed: outcome.entries_processed,
+        rows_flushed: outcome.rows_flushed,
+        queue_len_before: outcome.queue_len_before,
+        queue_len_after: outcome.queue_len_after,
+        flush_truncated: outcome.truncated,
+        stable_pages_delta: outcome.stable_pages_delta,
+        flush_instructions: outcome.instruction_delta,
+    };
+    LAST_SESSION_PROJECTION_FLUSH.with(|last_flush| {
+        *last_flush.borrow_mut() = Some(diagnostic);
+    });
 }
 
 #[cfg(not(feature = "benchmark"))]
@@ -2823,6 +2938,10 @@ fn decode_snapshot_for_upgrade(bytes: &[u8]) -> Result<SessionTurnRuntimeSnapsho
 #[cfg(test)]
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
+    #[cfg(not(feature = "benchmark"))]
+    LAST_SESSION_PROJECTION_FLUSH.with(|last_flush| {
+        *last_flush.borrow_mut() = None;
+    });
 }
 
 fn timestamp_to_u64(timestamp: icydb::types::Timestamp) -> u64 {
@@ -3001,6 +3120,44 @@ mod tests {
         let checkpoints = projection_checkpoints_snapshot();
         assert_eq!(checkpoints[0].flushed_generation, 2);
         assert_eq!(checkpoints[0].pending_entries, 0);
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    #[test]
+    fn projection_diagnostics_report_queue_lag_and_checkpoint_state() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:1".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:1".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+        runtime.push_event(event(10, "public"));
+        insert_runtime(runtime);
+
+        let snapshot = projection_diagnostic_snapshot();
+
+        assert_eq!(snapshot.total_dirty_queue_len, 2);
+        assert!(snapshot.oldest_dirty_age_ms.is_some());
+        assert!(snapshot.last_flush.is_none());
+        assert_eq!(snapshot.kernels.len(), 1);
+        let kernel = &snapshot.kernels[0];
+        assert_eq!(kernel.kernel_id, "session:1:2");
+        assert_eq!(kernel.session_id, "session:1");
+        assert_eq!(kernel.turn_number, 2);
+        assert_eq!(kernel.dirty_queue_len, 2);
+        assert_eq!(kernel.kernel_generation, 2);
+        assert_eq!(kernel.flushed_generation, 0);
+        assert_eq!(kernel.lag_generations, 2);
+        assert_eq!(kernel.pending_entries, 2);
+        assert!(kernel.oldest_dirty_age_ms.is_some());
     }
 
     #[test]

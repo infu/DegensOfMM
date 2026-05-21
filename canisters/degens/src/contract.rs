@@ -87,6 +87,44 @@ pub struct DiagnosticSystemJobPage {
     pub limit: u32,
 }
 
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticProjectionKernelView {
+    pub kernel_id: String,
+    pub session_id: String,
+    pub turn_number: u32,
+    pub dirty_queue_len: u64,
+    pub oldest_dirty_age_ms: Option<u64>,
+    pub kernel_generation: u64,
+    pub flushed_generation: u64,
+    pub lag_generations: u64,
+    pub lag_ms: u64,
+    pub flushed_at_ms: u64,
+    pub pending_entries: u64,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticProjectionFlushView {
+    pub flushed_at_ms: u64,
+    pub entries_processed: u64,
+    pub rows_flushed: u64,
+    pub queue_len_before: u64,
+    pub queue_len_after: u64,
+    pub flush_truncated: bool,
+    pub stable_pages_delta: u64,
+    pub flush_instructions: u64,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
+pub struct DiagnosticProjectionSnapshot {
+    pub kernels: Vec<DiagnosticProjectionKernelView>,
+    pub total_dirty_queue_len: u64,
+    pub oldest_dirty_age_ms: Option<u64>,
+    pub last_flush: Option<DiagnosticProjectionFlushView>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeferredEndpointDecision {
     pub name: &'static str,

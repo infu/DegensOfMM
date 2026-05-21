@@ -8241,3 +8241,30 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Worldmap kernels now have the same upgrade-safety class as battle runtimes, but with the full dirty queue/checkpoint snapshot needed for deferred projection recovery. Projection diagnostics and upgrade-recovery benchmark coverage remain open Section 72B items.
+
+## Worldmap Projection Diagnostics
+
+Time: `2026-05-21T22:02:00Z`.
+
+Cut:
+
+- Added production-only `get_diagnostic_projection_snapshot`, controller-gated like the other diagnostic endpoints.
+- The diagnostic response reports each active worldmap kernel's dirty queue length, oldest dirty age, kernel generation, flushed generation, lag generations, lag ms, checkpoint flush timestamp, and pending entry count.
+- The response also includes global dirty queue length, global oldest dirty age, and the last projection flush outcome.
+- `flush_runtime_projection_queue` now records the last flush's rows flushed, entries processed, queue before/after, truncation flag, stable pages delta, instruction delta, and flush timestamp.
+- The Candid export test now asserts the production diagnostic query is exported.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister projection -- --nocapture`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid_contains_every_required_game_endpoint -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid --features benchmark -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Section 72B now has a controller-visible projection lag surface for runtime recovery and flush debugging. The remaining Section 72B item is end-to-end projection-surface and upgrade-recovery benchmark coverage.

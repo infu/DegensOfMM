@@ -29,9 +29,12 @@ use crate::{
 use crate::contract::DiagnosticBenchmarkCallPage;
 #[cfg(not(feature = "benchmark"))]
 use crate::{
-    contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView},
+    contract::{
+        DiagnosticProjectionFlushView, DiagnosticProjectionKernelView,
+        DiagnosticProjectionSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView,
+    },
     repos::system_jobs,
-    services::{flush_barrier, system_jobs as system_job_service},
+    services::{flush_barrier, session_turn_runtime, system_jobs as system_job_service},
 };
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
@@ -97,6 +100,23 @@ pub(crate) fn get_diagnostic_system_jobs(
         jobs: page.items.iter().map(system_job_view).collect(),
         next_cursor: page.next_cursor,
         limit: page.limit,
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectionSnapshot, ApiError>
+{
+    crate::auth::require_controller("get_diagnostic_projection_snapshot")?;
+    let snapshot = session_turn_runtime::projection_diagnostic_snapshot();
+    Ok(DiagnosticProjectionSnapshot {
+        kernels: snapshot
+            .kernels
+            .iter()
+            .map(projection_kernel_view)
+            .collect(),
+        total_dirty_queue_len: snapshot.total_dirty_queue_len as u64,
+        oldest_dirty_age_ms: snapshot.oldest_dirty_age_ms,
+        last_flush: snapshot.last_flush.as_ref().map(projection_flush_view),
     })
 }
 
@@ -339,6 +359,41 @@ fn system_job_view(job: &SystemJob) -> DiagnosticSystemJobView {
         command_id: job.command_id.map(|id| id.to_string()),
         cursor_json: job.cursor_json.clone(),
         last_error: job.last_error.clone(),
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn projection_kernel_view(
+    kernel: &session_turn_runtime::ProjectionKernelDiagnostic,
+) -> DiagnosticProjectionKernelView {
+    DiagnosticProjectionKernelView {
+        kernel_id: kernel.kernel_id.clone(),
+        session_id: kernel.session_id.clone(),
+        turn_number: kernel.turn_number,
+        dirty_queue_len: kernel.dirty_queue_len as u64,
+        oldest_dirty_age_ms: kernel.oldest_dirty_age_ms,
+        kernel_generation: kernel.kernel_generation,
+        flushed_generation: kernel.flushed_generation,
+        lag_generations: kernel.lag_generations,
+        lag_ms: kernel.lag_ms,
+        flushed_at_ms: kernel.flushed_at_ms,
+        pending_entries: kernel.pending_entries as u64,
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn projection_flush_view(
+    flush: &session_turn_runtime::ProjectionFlushDiagnostic,
+) -> DiagnosticProjectionFlushView {
+    DiagnosticProjectionFlushView {
+        flushed_at_ms: flush.flushed_at_ms,
+        entries_processed: flush.entries_processed as u64,
+        rows_flushed: flush.rows_flushed as u64,
+        queue_len_before: flush.queue_len_before as u64,
+        queue_len_after: flush.queue_len_after as u64,
+        flush_truncated: flush.flush_truncated,
+        stable_pages_delta: flush.stable_pages_delta,
+        flush_instructions: flush.flush_instructions,
     }
 }
 

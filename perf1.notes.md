@@ -7157,3 +7157,40 @@ Decision:
 - Keep this checkpoint. It removes two active stable lookups without moving work to another endpoint or changing durable row creation.
 - Park hire for now. The remaining cost is durable `ChampionHire`, durable `Champion`, durable `MapOccupancy`, plus command response overhead. Getting it near `0.3B-0.6B` needs a real champion/occupancy aggregate and upgrade flush, not more tiny lookup cuts.
 - Rotate to scenario or learning next.
+
+## Victory Runtime Objective Summary Cut
+
+Time: `2026-05-21T02:34:00Z`.
+
+Cut:
+
+- Rotated to `sync_advanced_victory`.
+- `sync_objectives` now records the completed central-objective count in active session-turn runtime.
+- Runtime world-object deltas clear that cached count, so the fast path is only reused while no later object ownership/state delta has invalidated it.
+- `sync_advanced_victory` reuses the runtime completed-objective count and skips the second objective-row synchronization pass when available.
+- Active same-turn quest-victory rules reuse `rule.current_value` instead of recounting claimed quests when the rule row was already checked this turn.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bffddd` / `12,582,365` bytes, `547` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-victory-runtime-objective-summary-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-hire-runtime-fresh-cut-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `31.1752B -> 29.0644B`, `-2.1108B`, `-6.8%`.
+- `sync_advanced_victory`: `2.8225B -> 0.7052B`, `-75.0%`.
+- `scenario.quests_by_session_key` dropped out of the endpoint-surface repo-op table; `scenario.rules_by_status` remained at `2` calls.
+
+Decision:
+
+- Keep this checkpoint. It turns advanced victory into a runtime summary consumer after objective sync and removes duplicate objective/quest stable scans from the active route.
+- Do not keep polishing `sync_advanced_victory`; the remaining `0.7052B` is mostly command response/event overhead. Rotate to quest claim or learning next.
+- Code-size headroom is now very tight at about half a KB. Future cuts should either be extremely small or free benchmark-only code first.

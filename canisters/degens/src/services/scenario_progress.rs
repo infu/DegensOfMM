@@ -179,6 +179,14 @@ pub(crate) fn sync_objectives(
         command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
     let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
+    let session_id_text = context.session.id().to_string();
+    session_turn_runtime::with_runtime_mut(
+        &session_id_text,
+        context.session.current_turn,
+        |runtime| {
+            runtime.central_objectives_completed = Some(objective_summary.completed);
+        },
+    );
     let receipt = receipt(
         command.id().to_string(),
         "sync_objectives",
@@ -192,7 +200,6 @@ pub(crate) fn sync_objectives(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let session_id_text = context.session.id().to_string();
     let event = command_response::append_runtime_or_fresh_public_event(
         &context,
         command.id(),
@@ -306,11 +313,21 @@ pub(crate) fn sync_advanced_victory(
         } => (command, runtime_receipt),
         command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
-    let objective_summary = sync_objective_rows(&mut context, Some(command.id()))?;
+    let session_id_text = context.session.id().to_string();
+    let completed_objectives = session_turn_runtime::with_runtime(
+        &session_id_text,
+        context.session.current_turn,
+        |runtime| runtime.central_objectives_completed,
+    )
+    .flatten()
+    .map_or_else(
+        || sync_objective_rows(&mut context, Some(command.id())).map(|summary| summary.completed),
+        Ok,
+    )?;
     let updated = sync_scenario_rule_rows_for_session_with_completed_objectives(
         &context.session,
         Some(command.id()),
-        Some(objective_summary.completed),
+        Some(completed_objectives),
     )?;
     let receipt = receipt(
         command.id().to_string(),
@@ -325,7 +342,6 @@ pub(crate) fn sync_advanced_victory(
         None,
     );
     let result_json = receipt_json(&receipt);
-    let session_id_text = context.session.id().to_string();
     let event = command_response::append_runtime_or_fresh_public_event(
         &context,
         command.id(),
@@ -1012,7 +1028,15 @@ fn sync_scenario_rule_rows_for_session_with_completed_objectives(
                 };
             }
             "rule:quest-victory" => {
-                let claimed = claimed_quest_count(session.id())?;
+                let claimed = if session_turn_runtime::contains_runtime(
+                    &session.id().to_string(),
+                    session.current_turn,
+                ) && rule.last_checked_turn == session.current_turn
+                {
+                    rule.current_value
+                } else {
+                    claimed_quest_count(session.id())?
+                };
                 rule.current_value = claimed;
                 rule.victory_state = if claimed >= rule.required_value {
                     "complete".to_string()

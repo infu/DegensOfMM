@@ -52,6 +52,7 @@ pub(crate) struct SessionTurnRuntime {
     pub command_receipts: Vec<SessionTurnCommandReceipt>,
     pub active_events: Vec<SessionTurnEvent>,
     pub event_seq_block: Option<SessionTurnEventSeqBlock>,
+    pub central_objectives_completed: Option<u32>,
     pub object_deltas: Vec<ObjectTurnDelta>,
     pub resource_deltas: Vec<ResourceTurnDelta>,
     pub partial_cursor: Option<MovementCursor>,
@@ -87,6 +88,7 @@ impl SessionTurnRuntime {
             command_receipts: Vec::new(),
             active_events: Vec::new(),
             event_seq_block: None,
+            central_objectives_completed: None,
             object_deltas: Vec::new(),
             resource_deltas: Vec::new(),
             partial_cursor: None,
@@ -285,6 +287,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn push_object_delta(&mut self, delta: ObjectTurnDelta) {
+        self.central_objectives_completed = None;
         self.object_deltas.push(delta);
         self.dirty.object_deltas = true;
         self.mark_dirty();

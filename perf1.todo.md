@@ -966,9 +966,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 53. Random Endpoint Cluster: Next Scenario Or Learning Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-hire-runtime-fresh-cut-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `learn_champion_spell`, or `sync_objectives`.
-- [ ] Keep tavern hire parked until we are ready for a bigger champion/occupancy aggregate; remaining hire cost is durable `ChampionHire`, durable `Champion`, durable `MapOccupancy`, plus command response overhead.
-- [ ] Avoid micro-polishing cast/hire again before rotating through scenario or learning.
+- [x] Pick a different bounded endpoint cluster from `20260521-hire-runtime-fresh-cut-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `learn_champion_spell`, or `sync_objectives`. Picked `sync_advanced_victory`.
+- [x] Keep tavern hire parked until we are ready for a bigger champion/occupancy aggregate; remaining hire cost is durable `ChampionHire`, durable `Champion`, durable `MapOccupancy`, plus command response overhead.
+- [x] Avoid micro-polishing cast/hire again before rotating through scenario or learning.
+- [x] Apply and measure the scenario runtime objective-summary cut. `sync_objectives` now stores the completed central-objective count in active runtime; later object deltas invalidate it. `sync_advanced_victory` reuses that count instead of syncing objective rows again, and active same-turn quest-victory rules reuse their current value instead of recounting claimed quests.
+- [x] Measure the victory runtime objective-summary cut. Artifact `target/benchmarks/20260521-victory-runtime-objective-summary-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `31.1752B -> 29.0644B` (`-2.1108B`, `-6.8%`) versus `20260521-hire-runtime-fresh-cut-local`. `sync_advanced_victory` moved `2.8225B -> 0.7052B`.
+- [x] Rotate again after this scenario proof. Current next candidates are `submit_dwelling_recruit` (`3.5398B`, defer until larger dwelling/army aggregate), `claim_quest_reward` (`2.3660B`), `learn_champion_spell` (`1.8825B`), `sync_objectives` (`1.4088B`), and `accept_quest` (`1.1854B`).
+
+### 54. Random Endpoint Cluster: Next Quest Or Learning Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-victory-runtime-objective-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `sync_objectives`, or `accept_quest`.
+- [ ] Keep `sync_advanced_victory` parked unless we add a broader scenario aggregate; remaining `0.7052B` is around command response/event overhead.
+- [ ] Watch benchmark Wasm code-section headroom closely. The victory summary cut fit at only `547` bytes under the IC code-section limit.
 
 ## Expected Outcome
 

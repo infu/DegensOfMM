@@ -1133,6 +1133,27 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Replace `bench.x.md` with the all-gate aggregate from `20260521-160211-all-timers`.
 - [x] Use the timer-inclusive summaries to decide whether `sync_session_turn`, `sync_battle`, and their timer jobs should share a smaller runtime driver instead of duplicating row-backed sync work. Decision: yes. The top timer rows are still expensive (`runtime_timer:setup_session` `14.5155B`, `system_job:turn_deadline` `13.1504B`, `system_job:battle_round_advance` `3.9430B`, scenario timer jobs `1.8B-3.8B`), so the next design pass should treat public sync endpoints and timer jobs as two callers of the same runtime-owned driver, not separate row-backed workflows.
 
+### 72. Kernel Runtime Architecture: Worldmap And Battle
+
+- [x] Adopt the kernel architecture as the next perf1 direction. The game should run from live gameplay kernels first, with IcyDB as projection/history/index storage instead of the live mutation model for rule-heavy systems.
+- [x] Record the system split: worldmap/session-turn is the main long-lived kernel; each active battle is a small ephemeral battle kernel; simple account/profile/chat/content-style data may keep direct IcyDB writes because it is not rule-heavy simulation state.
+- [ ] Pause random endpoint micro-cuts unless they unblock code size or a benchmark gate. The next work should target shared kernel boundaries and timer/public driver duplication.
+- [ ] Define `WorldMapRuntime` / worldmap kernel ownership: active sessions, participants, champions, map occupancy, visible objects, towns, resources, quests, scenario state, deadlines, pending commands, runtime receipts/events, dirty projection queues, and projection cursors.
+- [ ] Make public worldmap commands and timer jobs call the same worldmap kernel driver. `sync_session_turn`, `end_turn`, turn deadline/resolution jobs, scenario maintenance jobs, setup progress, world-event maintenance, and victory checks should not each rehydrate row-backed state independently.
+- [ ] Keep synchronous API responses authoritative from the kernel. Clients send commands/queries to the kernel and get immediate responses from live state; timers may flush IcyDB projections later, but the public API must not lie or wait for projection rows to catch up.
+- [ ] Define the IcyDB projection contract for worldmap: command/event history, match history, indexes, diagnostics, durable fallback, post-game summaries, setup/session/account rows, and recovery/projection snapshots.
+- [ ] Define the timer flush contract: bounded dirty queues, idempotent upserts, retryable chunks, projection lag metrics, no unbounded single-message flush, and no projection write that can make durable state appear ahead of kernel state.
+- [ ] Preserve upgrade safety: `pre_upgrade` serializes live kernels and dirty queues; `post_upgrade` restores them before timers resume; if a trap happens, IC rollback must leave kernel and any same-call projection writes coherent.
+- [ ] Treat active battle kernels as ephemeral tactical engines. Battle moves, waits, attacks, readiness, deadlines, and temporary battle events stay in the battle kernel; only battle start shells, final outcome, aftermath, rewards/losses, and history projections update IcyDB.
+- [ ] Audit current `BattleRuntime` against the kernel rule. It should not regain per-move stable writes, and battle timers/public battle sync should share the same runtime driver where possible.
+- [ ] Keep direct IcyDB paths for non-simulation data: user assets, profile/account metadata, chat, static content/admin data, and other low-rule workflows where row persistence is the real product state.
+- [ ] Add benchmark gates around the kernel architecture, not only endpoint averages: command response cost, timer-driver cost, projection flush cost, projection lag, dirty queue size, stable memory delta, and scenario total instructions.
+- [ ] Use the current all-timer aggregate as the first kernel baseline. Main targets from `bench.x.md`: `runtime_timer:setup_session` `14.5155B`, `system_job:turn_deadline` `13.1504B`, `sync_battle` `8.6881B`, `system_job:battle_round_advance` `3.9430B`, world/scenario timer jobs `1.8B-3.8B`, and `sync_session_turn` `1.6226B`.
+- [ ] First implementation pass: design the shared worldmap kernel driver and migrate one high-cost public/timer pair through it, preferably turn deadline/resolution plus `sync_session_turn`, then measure focused and full-suite deltas.
+- [ ] Second implementation pass: make setup-session timer work a bounded worldmap/setup kernel projection instead of repeated row-backed setup work; target below `0.6B` average or document the remaining unavoidable durable boundary.
+- [ ] Third implementation pass: reduce battle timer/public sync duplication so `sync_battle`, `system_job:battle_round_advance`, and `system_job:battle_timeout` all operate on battle kernels and only flush outcome/projection data.
+- [ ] Keep the hard target rule: gameplay kernel commands should generally land in the `0.3B-0.6B` band unless the benchmark names a specific unavoidable durable boundary.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

@@ -7900,3 +7900,20 @@ Decision:
 
 - Keep this checkpoint. The benchmark is no longer missing known timer paths.
 - The numbers argue for a shared runtime-owned driver for public sync endpoints and timer jobs. Setup, turn deadline/resolution, battle round advance, battle timeout, and scenario maintenance are still paying multi-billion instruction paths, so the next architecture pass should remove row-backed duplicate work rather than tuning public and timer paths separately.
+
+## Kernel Runtime Architecture Direction
+
+Time: `2026-05-21T16:30:00Z`.
+
+Assessment:
+
+- The proposed model is the right next abstraction: gameplay should run in live kernels, while IcyDB should hold projections, history, indexes, and simple durable product data.
+- We are already close in pieces. `BattleRuntime` is an ephemeral battle kernel, and `SessionTurnRuntime` is the start of a worldmap/session-turn kernel.
+- The missing step is making the architecture explicit and shared: public endpoints and timer jobs must call the same kernel drivers instead of each path rehydrating row-backed state independently.
+- The caveat is correctness. Deferred IcyDB sync is fine only when the kernel remains the authoritative source for immediate API responses, command replay/status, event feeds, and upgrade serialization.
+
+Decision:
+
+- Updated `perf1.todo.md` with Section 72, `Kernel Runtime Architecture: Worldmap And Battle`.
+- Pause random endpoint micro-cuts unless they unblock code size or a benchmark gate.
+- Target the next implementation around shared worldmap and battle kernel drivers, starting with the public/timer pairs that still show multi-billion instruction costs in `bench.x.md`.

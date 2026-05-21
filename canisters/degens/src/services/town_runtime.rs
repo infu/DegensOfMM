@@ -482,6 +482,12 @@ pub(crate) fn flush_all_projections_to_durable() -> Result<usize, ApiError> {
             }
             flushed = flushed.saturating_add(1);
         }
+        for offer in projection.tavern_offers {
+            if economy_expansion_repo::find_tavern_offer_by_key(&offer.offer_key)?.is_some() {
+                economy_expansion_repo::update_tavern_offer(offer)?;
+                flushed = flushed.saturating_add(1);
+            }
+        }
     }
     Ok(flushed)
 }

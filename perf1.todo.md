@@ -901,9 +901,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 44. Random Endpoint Cluster: Economy Domain Row Floor
 
-- [ ] Rotate to another random bounded cluster from the latest artifact instead of chasing one endpoint. Candidate floor: economy expansion domain writes still cost roughly `3.34B` total across `create_champion_hire`, `update_champion_hire`, `update_tavern_offer`, `create_market_trade`, `create_dwelling_recruitment`, and `update_dwelling_pool`.
-- [ ] Decide which economy rows are real user-facing history/projection and which can be active-runtime receipts/snapshots flushed later.
-- [ ] Apply one small economy-domain row cut, then measure before continuing.
+- [x] Rotate to another random bounded cluster from the latest artifact instead of chasing one endpoint. Candidate floor: economy expansion domain writes still cost roughly `3.34B` total across `create_champion_hire`, `update_champion_hire`, `update_tavern_offer`, `create_market_trade`, `create_dwelling_recruitment`, and `update_dwelling_pool`.
+- [x] Decide which economy rows are real user-facing history/projection and which can be active-runtime receipts/snapshots flushed later. Decision: `MarketTrade`, `ChampionHire`, and `DwellingRecruitment` are durable history receipts for now; `TavernOffer` and participant champion/resource fields are active projections and can be mirrored into heap during the active turn with non-benchmark upgrade flush coverage.
+- [x] Apply one small economy-domain row cut, then measure before continuing. Active `hire_tavern_champion` now mirrors hired `TavernOffer` state into `TownProjection` instead of updating the row immediately, and the same checkpoint mirrors active participant changes for tavern hire and quest reward. Endpoint-surface artifact `target/benchmarks/20260520-economy-domain-projection-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62977`, and moved scenario instructions `42.1756B -> 40.7480B` (`-1.4276B`, `-3.4%`). Removed repo ops: `economy_expansion.update_tavern_offer`, `sessions.ensure_participant_champion_id`, and `sessions.update_participant`.
+
+### 45. Random Endpoint Cluster: Remaining Domain Receipts
+
+- [ ] Rotate again instead of polishing the tavern/participant cut. Current heavy update endpoints are `submit_dwelling_recruit` (`4.2527B`), `hire_tavern_champion` (`3.3224B`), `claim_quest_reward` (`3.0748B`), `learn_champion_spell` (`3.0631B`), `sync_world_generation` (`2.9312B`), and `sync_advanced_victory` (`2.8180B`).
+- [ ] Pick one different bounded endpoint/row family and cut the largest remaining stable read/write floor without changing route shape.
 
 ## Expected Outcome
 

@@ -6806,3 +6806,47 @@ Decision:
 
 - Keep this checkpoint. The resource ledger write floor is gone from the measured endpoint surface.
 - Next random cluster should inspect economy expansion domain rows because their create/update calls are now the largest remaining write family.
+
+## Economy Domain Projection Measurement
+
+Time: `2026-05-21T00:23:31Z`.
+
+Cut:
+
+- Rotated to the economy domain row floor after the resource-ledger checkpoint.
+- Treated `TavernOffer` hired status as an active town projection during the active turn: `hire_tavern_champion` mirrors the hired offer into `TownProjection` and skips the immediate durable `update_tavern_offer` when `SessionTurnRuntime` is active.
+- Added non-benchmark upgrade-flush coverage for projected tavern offers so active hired-offer state is persisted at the upgrade boundary.
+- Mirrored the remaining active participant updates in `hire_tavern_champion` and `claim_quest_reward` instead of writing `sessions.ensure_participant_champion_id` / `sessions.update_participant` on the hot path.
+
+Decision:
+
+- Keep `MarketTrade`, `ChampionHire`, and `DwellingRecruitment` as durable history receipt rows for now.
+- Keep `DwellingPool` durable until there is a dedicated dwelling/economy aggregate, because it is live availability state shared by preview and submit.
+- `TavernOffer` is already served through `TownProjection`, so it is safe to make heap projection authoritative during the active turn and flush later.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfd6e4` / `12,572,388` bytes, `10,524` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-economy-domain-projection-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-resource-ledger-floor-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108` because this cut removed updates, not inserts.
+- Stable pages stayed `2049 -> 62977`.
+- Scenario instructions: `42.1756B -> 40.7480B`, `-1.4276B`, `-3.4%`.
+- Removed repo ops: `economy_expansion.update_tavern_offer`, `sessions.ensure_participant_champion_id`, and `sessions.update_participant`.
+- `hire_tavern_champion`: `4.2815B -> 3.3224B`, `-22.4%`.
+- `claim_quest_reward`: `3.5448B -> 3.0748B`, `-13.3%`.
+- `submit_market_trade`: `1.1824B -> 1.1836B`, flat/noise.
+- `submit_dwelling_recruit`: `4.2453B -> 4.2527B`, flat/noise.
+
+Decision:
+
+- Keep this checkpoint. It removes three stable update floors while preserving endpoint coverage, route shape, row growth, and stable page growth.
+- Rotate again. Remaining heavy endpoints now need deeper domain receipt/projection cuts or shared champion/scenario/worldgen row cuts rather than another participant/tavern-only pass.

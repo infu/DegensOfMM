@@ -624,7 +624,8 @@ fn apply_claim_quest_reward(
     )?;
     context.participant.last_action_turn = context.session.current_turn;
     context.participant.last_resource_command_id = Some(command.id().key());
-    context.participant = sessions::update_participant(context.participant.clone())?;
+    context.participant =
+        persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
     quest.status = transition.next_status;
     quest.claimed_turn = context.session.current_turn;
     quest.claimed_command_id = Some(command.id().key());
@@ -1138,6 +1139,18 @@ fn apply_gold_reward(
         );
     }
     Ok(())
+}
+
+fn persist_or_mirror_active_participant(
+    session: &GameSession,
+    participant: GameParticipant,
+) -> Result<GameParticipant, ApiError> {
+    if session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn) {
+        session_turn_runtime::mirror_participant_update(&participant);
+        Ok(participant)
+    } else {
+        Ok(sessions::update_participant(participant)?)
+    }
 }
 
 fn quest_preview(

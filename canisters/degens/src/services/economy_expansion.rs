@@ -471,15 +471,17 @@ fn apply_hire_command(
             champion
         }
     };
-    context.participant =
-        sessions::ensure_participant_champion_id(context.participant.clone(), champion.id())?;
+    context.participant = ensure_or_mirror_active_participant_champion_id(
+        &context.session,
+        context.participant.clone(),
+        champion.id(),
+    )?;
     hire.champion_id = Some(champion.id().key());
     economy_expansion::update_champion_hire(hire)?;
     offer.status = "hired".to_string();
     offer.hired_champion_id = Some(champion.id().key());
     offer.hired_command_id = Some(command.id().key());
-    let offer = economy_expansion::update_tavern_offer(offer)?;
-    town_runtime::mirror_tavern_offer(&offer);
+    persist_or_mirror_active_tavern_offer(&context.session, offer)?;
     ensure_champion_occupancy(context.session.id(), command.id(), &champion)?;
 
     let receipt = receipt(
@@ -1354,6 +1356,35 @@ fn persist_or_mirror_active_participant(
     } else {
         Ok(sessions::update_participant(participant)?)
     }
+}
+
+fn ensure_or_mirror_active_participant_champion_id(
+    session: &GameSession,
+    mut participant: GameParticipant,
+    champion_id: Id<Champion>,
+) -> Result<GameParticipant, ApiError> {
+    if participant
+        .champion_ids
+        .iter()
+        .any(|existing| *existing == champion_id.key())
+    {
+        return Ok(participant);
+    }
+    participant.champion_ids.push(champion_id.key());
+    persist_or_mirror_active_participant(session, participant)
+}
+
+fn persist_or_mirror_active_tavern_offer(
+    session: &GameSession,
+    offer: domm_degens_schema::schema::TavernOffer,
+) -> Result<(), ApiError> {
+    if session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn) {
+        town_runtime::mirror_tavern_offer(&offer);
+    } else {
+        let offer = economy_expansion::update_tavern_offer(offer)?;
+        town_runtime::mirror_tavern_offer(&offer);
+    }
+    Ok(())
 }
 
 fn apply_u64_delta(value: u64, delta: i64) -> Result<u64, ApiError> {

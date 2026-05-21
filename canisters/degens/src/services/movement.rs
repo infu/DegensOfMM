@@ -4117,14 +4117,17 @@ fn battle_spell_status_keys(champion: &Champion) -> Result<Vec<String>, ApiError
     if !champion.skill_keys.iter().any(|key| key == "sour_sorcery") {
         return Ok(Vec::new());
     }
-    let mut status_keys =
-        champions_artifacts::page_champion_spells(champion.id(), domm_game::MAX_LIST_LIMIT, None)?
-            .items
-            .into_iter()
-            .filter_map(|known| known.spell_slug)
-            .filter(|slug| !slug.is_empty())
-            .map(|slug| format!("battle_spell:{slug}"))
-            .collect::<Vec<_>>();
+    let mut status_keys = champions_artifacts::page_champion_spells(
+        champion.id(),
+        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+        None,
+    )?
+    .items
+    .into_iter()
+    .filter_map(|known| known.spell_slug)
+    .filter(|slug| !slug.is_empty())
+    .map(|slug| format!("battle_spell:{slug}"))
+    .collect::<Vec<_>>();
     status_keys.sort();
     status_keys.dedup();
     Ok(status_keys)

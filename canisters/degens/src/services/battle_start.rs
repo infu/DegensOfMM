@@ -574,13 +574,16 @@ fn create_champion_side_stacks(
 fn battle_spell_status_keys_for_champion(
     champion_id: Id<Champion>,
 ) -> Result<Vec<String>, ApiError> {
-    let mut status_keys =
-        champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?
-            .items
-            .into_iter()
-            .filter_map(|spell| spell.spell_slug)
-            .map(|slug| format!("battle_spell:{slug}"))
-            .collect::<Vec<_>>();
+    let mut status_keys = champions_artifacts::page_champion_spells(
+        champion_id,
+        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+        None,
+    )?
+    .items
+    .into_iter()
+    .filter_map(|spell| spell.spell_slug)
+    .map(|slug| format!("battle_spell:{slug}"))
+    .collect::<Vec<_>>();
     status_keys.sort();
     status_keys.dedup();
     Ok(status_keys)

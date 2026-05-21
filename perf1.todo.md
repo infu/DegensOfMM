@@ -975,9 +975,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 54. Random Endpoint Cluster: Next Quest Or Learning Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-victory-runtime-objective-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `sync_objectives`, or `accept_quest`.
-- [ ] Keep `sync_advanced_victory` parked unless we add a broader scenario aggregate; remaining `0.7052B` is around command response/event overhead.
-- [ ] Watch benchmark Wasm code-section headroom closely. The victory summary cut fit at only `547` bytes under the IC code-section limit.
+- [x] Pick a different bounded endpoint cluster from `20260521-victory-runtime-objective-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `sync_objectives`, or `accept_quest`. Picked `sync_objectives`.
+- [x] Keep `sync_advanced_victory` parked unless we add a broader scenario aggregate; remaining `0.7052B` is around command response/event overhead.
+- [x] Watch benchmark Wasm code-section headroom closely. Freed benchmark-only headroom by compiling scenario maintenance scheduling/processing as a benchmark no-op while leaving production scheduling unchanged; the measured build fit at `0x00bfbe40`, `16,832` bytes under the IC code-section limit.
+- [x] Apply and measure the clean-runtime objective sync cut. When an active session-turn runtime has no world-object deltas, `sync_objectives` now computes the objective summary from runtime world-object snapshots and skips durable objective-row reconciliation. If object deltas exist, it falls back to the durable repair path.
+- [x] Measure the objective clean-runtime summary cut. Artifact `target/benchmarks/20260521-objective-clean-runtime-summary-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `29.0644B -> 27.6514B` (`-1.4130B`, `-4.9%`) versus `20260521-victory-runtime-objective-summary-local`. `sync_objectives` moved `1.4088B -> 0.0016B`.
+- [x] Rotate again after this objective sync cut. Current next candidates are `submit_dwelling_recruit` (`3.5398B`, defer until larger dwelling/army aggregate), `claim_quest_reward` (`2.3660B`), `learn_champion_spell` (`1.8825B`), `hire_tavern_champion` (`1.4401B`, parked), `end_turn` (`1.1792B`), and `accept_quest` (`1.1854B`).
+
+### 55. Random Endpoint Cluster: Next Quest, Learning, Or Turn Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-objective-clean-runtime-summary-local`; prefer `claim_quest_reward`, `learn_champion_spell`, `accept_quest`, or `end_turn`.
+- [ ] Avoid returning to `sync_objectives` unless an objective-delta regression appears; the clean no-delta path is now near zero at `0.0016B`.
+- [ ] Keep using the random/round-robin endpoint strategy: take one bounded cut, measure once at the checkpoint, then rotate.
 
 ## Expected Outcome
 

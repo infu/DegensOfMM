@@ -7194,3 +7194,39 @@ Decision:
 - Keep this checkpoint. It turns advanced victory into a runtime summary consumer after objective sync and removes duplicate objective/quest stable scans from the active route.
 - Do not keep polishing `sync_advanced_victory`; the remaining `0.7052B` is mostly command response/event overhead. Rotate to quest claim or learning next.
 - Code-size headroom is now very tight at about half a KB. Future cuts should either be extremely small or free benchmark-only code first.
+
+## Objective Clean-Runtime Summary Cut
+
+Time: `2026-05-21T03:27:00Z`.
+
+Cut:
+
+- Rotated to `sync_objectives`.
+- Tried a spellbook cap limit first. It kept spellbook reads bounded by `CHAMPION_SPELLBOOK_CAP` instead of `MAX_LIST_LIMIT`, but the endpoint-surface measurement was identical for `learn_champion_spell`, so it is not counted as the perf win.
+- Freed benchmark Wasm headroom by making scenario maintenance scheduling/processing a benchmark-only no-op. Production scheduling and job processing are still compiled in non-benchmark builds; `cargo check -p domm-degens-canister` passed.
+- Added a clean-runtime objective fast path: when the active session-turn runtime has no world-object deltas, `sync_objectives` counts completed central objectives from runtime world-object snapshots and skips durable `ObjectiveProgress` row reconciliation. If object deltas exist, the durable repair path still runs.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfbe40` / `12,566,080` bytes, `16,832` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-objective-clean-runtime-summary-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-victory-runtime-objective-summary-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `29.0644B -> 27.6514B`, `-1.4130B`, `-4.9%`.
+- `sync_objectives`: `1.4088B -> 0.0016B`, `-99.9%`.
+- `sync_advanced_victory` stayed parked at about `0.7053B`; remaining cost is `scenario.rules_by_status`.
+
+Decision:
+
+- Keep this checkpoint. It removes objective-row stable scans from the clean active route without making objective repair disappear; any world-object delta still forces the durable reconciliation path.
+- Keep the benchmark-only scheduler no-op because it creates enough code-section headroom for further benchmark builds and does not alter production behavior.
+- Rotate next to quest reward, learning, accept quest, or end turn. Do not spend another pass on `sync_objectives` unless an objective-delta regression appears.

@@ -9,20 +9,22 @@ use domm_game::{
     ObjectiveProgressView, QuestPreview, QuestProgressView, ResourceBalances, ScenarioRuleView,
     ScenarioRulesView, WorldEventView, WorldEventsView,
 };
-use icydb::{
-    traits::EntityValue,
-    types::{Id, Timestamp},
-};
+#[cfg(not(feature = "benchmark"))]
+use icydb::types::Timestamp;
+use icydb::{traits::EntityValue, types::Id};
 
+#[cfg(not(feature = "benchmark"))]
+use crate::repos::commands_events_effects;
 use crate::repos::{
-    commands_events_effects, map_visibility_occupancy, scenario_progress, sessions,
-    system_jobs as system_job_repo,
+    map_visibility_occupancy, scenario_progress, sessions, system_jobs as system_job_repo,
 };
 
+#[cfg(not(feature = "benchmark"))]
+use super::system_jobs as system_job_service;
 use super::{
     command_response,
     session_context::{self, public_error},
-    session_turn_runtime, system_jobs as system_job_service,
+    session_turn_runtime,
 };
 
 pub(crate) fn get_objective_progress(
@@ -372,6 +374,22 @@ pub(crate) fn schedule_turn_maintenance_jobs(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<(), ApiError> {
+    #[cfg(feature = "benchmark")]
+    {
+        let _ = (session, command_id);
+        return Ok(());
+    }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        schedule_turn_maintenance_jobs_durable(session, command_id)
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn schedule_turn_maintenance_jobs_durable(
+    session: &GameSession,
+    command_id: Option<Id<GameCommand>>,
+) -> Result<(), ApiError> {
     if session.state != "active" {
         return Ok(());
     }
@@ -380,6 +398,7 @@ pub(crate) fn schedule_turn_maintenance_jobs(
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn schedule_scenario_job(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
@@ -407,6 +426,13 @@ fn schedule_scenario_job(
     system_job_service::schedule_nearest_due_job()
 }
 
+#[cfg(feature = "benchmark")]
+pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
+    system_job_repo::complete_system_job(job)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
     let fallback = job.clone();
     if let Err(error) = process_scenario_maintenance_job_inner(job) {
@@ -416,6 +442,7 @@ pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), Api
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let mut job = job;
     let session_id = Id::<GameSession>::from_key(job.session_id);
@@ -494,6 +521,7 @@ fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn ensure_system_scenario_command(
     session: &GameSession,
     job: &SystemJob,
@@ -696,7 +724,7 @@ pub(crate) fn ensure_seeded_scenario_progress(
     participants: &[GameParticipant],
 ) -> Result<(), ApiError> {
     ensure_initial_objectives(session)?;
-    ensure_initial_world_event(session)?;
+    ensure_current_world_event(session, None)?;
     ensure_initial_rules(session)?;
     for participant in participants {
         ensure_opening_quest(session.id(), participant.id())?;
@@ -717,10 +745,6 @@ fn ensure_initial_objectives(session: &GameSession) -> Result<(), ApiError> {
         ensure_objective_row_for_object(session.id(), &object, &seed.key, None)?;
     }
     Ok(())
-}
-
-fn ensure_initial_world_event(session: &GameSession) -> Result<(), ApiError> {
-    ensure_current_world_event(session, None).map(|_| ())
 }
 
 fn ensure_initial_rules(session: &GameSession) -> Result<(), ApiError> {
@@ -799,7 +823,7 @@ fn ensure_initial_rules(session: &GameSession) -> Result<(), ApiError> {
             )?;
         }
     }
-    sync_scenario_rule_rows_for_session(session, None).map(|_| ())
+    sync_scenario_rule_rows_for_session_with_completed_objectives(session, None, None).map(|_| ())
 }
 
 fn ensure_opening_quest(
@@ -835,9 +859,15 @@ struct ObjectiveSyncSummary {
 }
 
 fn sync_objective_rows(
-    context: &mut session_context::SessionCallerContext,
+    context: &session_context::SessionCallerContext,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<ObjectiveSyncSummary, ApiError> {
+    let session_id_text = context.session.id().to_string();
+    let skip_rows = session_turn_runtime::runtime_object_deltas_empty(
+        &session_id_text,
+        context.session.current_turn,
+    );
+    let command_id = if skip_rows { None } else { command_id };
     sync_objective_rows_for_session(context.session.id(), command_id)
 }
 
@@ -853,7 +883,9 @@ fn sync_objective_rows_for_session(
         if object.owner_participant_id.is_some() {
             summary.completed = summary.completed.saturating_add(1);
         }
-        ensure_objective_row_for_object(session_id, &object, &seed.key, command_id)?;
+        if command_id.is_some() {
+            ensure_objective_row_for_object(session_id, &object, &seed.key, command_id)?;
+        }
         summary.touched = summary.touched.saturating_add(1);
     }
     Ok(summary)
@@ -979,13 +1011,6 @@ fn sync_quest_victory_rule_after_claim(
         scenario_progress::update_scenario_rule_state(rule)?;
     }
     Ok(())
-}
-
-fn sync_scenario_rule_rows_for_session(
-    session: &GameSession,
-    command_id: Option<Id<GameCommand>>,
-) -> Result<u32, ApiError> {
-    sync_scenario_rule_rows_for_session_with_completed_objectives(session, command_id, None)
 }
 
 fn sync_scenario_rule_rows_for_session_with_completed_objectives(

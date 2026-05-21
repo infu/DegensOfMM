@@ -718,8 +718,11 @@ fn learned_spell_slugs(champion: &Champion) -> Result<Vec<String>, ApiError> {
         return Ok(Vec::new());
     }
     let champion_id = champion.id();
-    let page =
-        champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?;
+    let page = champions_artifacts::page_champion_spells(
+        champion_id,
+        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+        None,
+    )?;
     let mut slugs = Vec::new();
     for known in page.items {
         if let Some(slug) = known.spell_slug.as_deref().filter(|slug| !slug.is_empty()) {

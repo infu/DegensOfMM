@@ -428,6 +428,7 @@ pub(crate) fn contains_runtime(battle_id: &str) -> bool {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow().contains_key(battle_id))
 }
 
+#[cfg(test)]
 pub(crate) fn active_runtime_count() -> usize {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow().len())
 }
@@ -877,6 +878,7 @@ pub(crate) fn restore_from_upgrade(snapshot: BattleRuntimeSnapshot) {
     });
 }
 
+#[cfg(test)]
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
     ACTIVE_SESSION_EVENT_SEQ_BLOCKS.with(|blocks| blocks.borrow_mut().clear());

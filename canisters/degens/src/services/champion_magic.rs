@@ -327,9 +327,12 @@ fn apply_spell_learning(
             false,
         ));
     }
-    let known_spells =
-        champions_artifacts::page_champion_spells(champion.id(), domm_game::MAX_LIST_LIMIT, None)?
-            .items;
+    let known_spells = champions_artifacts::page_champion_spells(
+        champion.id(),
+        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+        None,
+    )?
+    .items;
     if let Some(existing) = known_spell_for_definition(&known_spells, spell.id()) {
         if existing.last_command_id == Some(command.id().key()) {
             return Ok((
@@ -568,8 +571,11 @@ fn skill_choices(champion: &Champion) -> Vec<ChampionSkillChoiceView> {
 }
 
 fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiError> {
-    let page =
-        champions_artifacts::page_champion_spells(champion_id, domm_game::MAX_LIST_LIMIT, None)?;
+    let page = champions_artifacts::page_champion_spells(
+        champion_id,
+        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+        None,
+    )?;
     let mut slugs = Vec::new();
     for known in page.items {
         if let Some(slug) = known.spell_slug.as_deref().filter(|slug| !slug.is_empty()) {

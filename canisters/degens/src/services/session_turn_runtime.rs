@@ -494,6 +494,17 @@ pub(crate) fn contains_runtime(session_id: &str, turn_number: u32) -> bool {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().contains_key(&key))
 }
 
+pub(crate) fn runtime_object_deltas_empty(session_id: &str, turn_number: u32) -> bool {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .get(&key)
+            .is_some_and(|runtime| runtime.object_deltas.is_empty())
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn active_runtime_count() -> usize {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().len())
 }
@@ -1526,6 +1537,7 @@ pub(crate) fn restore_from_upgrade(snapshot: SessionTurnRuntimeSnapshot) {
     });
 }
 
+#[cfg(test)]
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
 }

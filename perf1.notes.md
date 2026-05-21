@@ -8041,3 +8041,36 @@ Measurement versus `target/benchmarks/20260521-160211-all-timers/timer-surface`:
 Decision:
 
 - Keep this checkpoint. It completes the active runtime timer persistence-mode cut while preserving durable job wakeups. The next Section 72A work is scenario maintenance kernel integration; broader projection queues remain Section 72B.
+
+## Scenario Maintenance Runtime Driver
+
+Time: `2026-05-21T20:25:00Z`.
+
+Cut:
+
+- Active scenario maintenance jobs now load the authoritative session row from `SessionTurnRuntime` when the job turn matches the active runtime, falling back to durable `GameSession` rows only when no matching runtime exists.
+- Production active-runtime scenario jobs now run the same scenario maintenance application without creating/updating a synthetic system `GameCommand`; durable `SystemJob` rows still claim/complete/schedule the `scenario_objectives -> world_events -> advanced_victory` wakeup chain.
+- Benchmark builds use the active runtime session path for scenario maintenance timers and keep the durable fallback out of the benchmark canister to stay below the IC Wasm code-section limit.
+- Tried a runtime `WorldEventState` snapshot path first, but it exceeded the benchmark Wasm limit by several KB. Full runtime scenario projection queues remain Section 72B work.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfff44` / `12,582,724` bytes, `188` bytes under the IC limit.
+- Focused `timer-surface`: `target/benchmarks/20260521-scenario-maint-runtime-local/timer-surface`, passed in `434.12s`.
+- Cleaned the leftover PocketIC process after the focused run.
+
+Measurement versus `target/benchmarks/20260521-runtime-turn-timer-local/timer-surface`:
+
+- Timer-surface scenario instructions: `1254.7012B -> 1227.2488B`, `-2.2%`.
+- `system_job:scenario_objectives`: `3.7688B -> 3.0654B`, `-18.7%`.
+- `system_job:world_events`: `3.7663B -> 3.0637B`, `-18.7%`.
+- `system_job:advanced_victory`: `1.8840B -> 1.1833B`, `-37.2%`.
+- `sessions.load_session`: `130 -> 91` calls.
+- Row growth stayed `445`; stable pages stayed `2049 -> 238209`.
+
+Decision:
+
+- Keep this checkpoint. It folds scenario maintenance onto the active runtime session driver and removes synthetic durable command bookkeeping for active production jobs. Runtime-owned scenario projection queues are intentionally left for Section 72B because the direct snapshot attempt did not fit the current code-size budget.

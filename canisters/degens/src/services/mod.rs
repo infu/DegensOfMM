@@ -29,3 +29,4 @@ mod tests;
 pub(crate) mod town;
 pub(crate) mod town_runtime;
 pub(crate) mod worldgen;
+pub(crate) mod worldmap_kernel;

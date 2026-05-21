@@ -28,7 +28,7 @@ use super::{
     command_response::{self, GameCommandStart},
     economy_expansion, render_projection, scenario_progress,
     session_context::{self, public_error},
-    session_turn_runtime, system_jobs as system_job_service, town_runtime,
+    session_turn_runtime, system_jobs as system_job_service, town_runtime, worldmap_kernel,
 };
 
 const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 1;
@@ -266,7 +266,7 @@ fn ensure_session_turn_runtime(
     context: &session_context::SessionCallerContext,
 ) -> Result<(), ApiError> {
     let mut session = context.session.clone();
-    session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
+    worldmap_kernel::ensure_active_turn(&mut session)?;
     let session_id = context.session.id().to_string();
     let turn_number = context.session.current_turn;
     let participant = session_turn_participant(context);
@@ -288,7 +288,7 @@ fn ensure_session_turn_runtime(
     runtime.session = Some(context.session.clone());
     hydrate_runtime_pending_movement_intents(&context.session, &mut runtime)?;
     runtime.upsert_participant(participant);
-    session_turn_runtime::insert_runtime(runtime);
+    worldmap_kernel::insert_active_turn(runtime);
     Ok(())
 }
 
@@ -299,14 +299,14 @@ fn require_runtime_current_active_session_caller(
     if let Some(context) = session_context::cached_active_session_caller_context(caller, session_id)
     {
         let context_session_id = context.session.id().to_string();
-        if session_turn_runtime::latest_turn_number_for_session(&context_session_id)
+        if worldmap_kernel::latest_turn_number_for_session(&context_session_id)
             == Some(context.session.current_turn)
         {
             return Ok(context);
         }
     }
     if let Some((session, participant)) =
-        session_turn_runtime::caller_context_rows(&caller.to_text(), session_id)
+        worldmap_kernel::caller_context_rows(&caller.to_text(), session_id)
     {
         let context = session_context::SessionCallerContext {
             session,
@@ -618,7 +618,7 @@ pub(crate) fn sync_session_turn(
         }
         return Ok(existing.response);
     }
-    let has_runtime = session_turn_runtime::contains_runtime(
+    let has_runtime = worldmap_kernel::contains_active_turn_id(
         &context.session.id().to_string(),
         context.session.current_turn,
     );
@@ -754,7 +754,7 @@ fn sync_session_turn_with_command(
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
         reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         if !command.is_runtime() {
-            session_turn_runtime::remove_runtime(
+            worldmap_kernel::remove_active_turn_id(
                 &context.session.id().to_string(),
                 context.session.current_turn,
             );
@@ -817,16 +817,13 @@ fn sync_session_turn_with_command(
         context.session.next_event_seq = next_event_seq.saturating_add(1);
     }
     let prepared_runtime = if command.is_runtime() {
-        session_turn_runtime::prepare_active_turn_runtime_from_previous(
-            &mut context.session,
-            income_turn,
-        )?
+        worldmap_kernel::prepare_next_turn_from_previous(&mut context.session, income_turn)?
     } else {
-        session_turn_runtime::prepare_active_turn_runtime(&mut context.session)?
+        worldmap_kernel::prepare_active_turn(&mut context.session)?
     };
     context.session = sessions::update_session(context.session)?;
     if let Some(runtime) = prepared_runtime {
-        session_turn_runtime::insert_runtime(runtime);
+        worldmap_kernel::insert_active_turn(runtime);
     }
     if command.is_runtime() {
         let session_id = context.session.id().to_string();
@@ -1163,10 +1160,10 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     if domm_game::week_for_turn(session.current_turn) != domm_game::week_for_turn(income_turn) {
         economy_expansion::materialize_weekly_economy(&session, command.id())?;
     }
-    let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
+    let prepared_runtime = worldmap_kernel::prepare_active_turn(&mut session)?;
     session = sessions::update_session(session)?;
     if let Some(runtime) = prepared_runtime {
-        session_turn_runtime::insert_runtime(runtime);
+        worldmap_kernel::insert_active_turn(runtime);
     }
 
     let session_id_text = session.id().to_string();
@@ -3469,8 +3466,7 @@ fn refresh_champion_visibility(
     let participant_id = pending_move.participant.id();
     let mut updated_rows = 0_u32;
     let mut durable_rows = 0_u32;
-    let use_projection_cache =
-        session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn);
+    let use_projection_cache = worldmap_kernel::contains_active_turn(session);
     for ((chunk_x, chunk_y), tiles) in by_chunk {
         let mut cache_hit = false;
         let Some(mut visibility) = (if use_projection_cache {

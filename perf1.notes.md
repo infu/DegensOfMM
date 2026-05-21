@@ -1808,6 +1808,7 @@ Verified before the focused benchmark:
 - `cargo fmt --check`
 - `cargo check -p domm-degens-canister --features benchmark`
 - `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffa71` / `12,581,489` bytes, `1,423` bytes under the IC limit.
 - `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-move-endpoints cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_canister_exposes_every_required_game_endpoint -- --nocapture` passed in `272.37s`.
 - `DOMM_CANISTER_FEATURES=benchmark CANIC_POCKET_IC_LOCK_NAMESPACE=domm-runtime-move-stale-turn cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions -- --nocapture` passed in `71.88s`.
@@ -7940,3 +7941,23 @@ Plan update:
 - Rewrote Section 72 in `perf1.todo.md` into five implementation tracks: worldmap kernel driver, projection flush/recovery, ephemeral battle cleanup, table/index taxonomy, and benchmark gates.
 - Paused random endpoint micro-cuts in the plan. The next work should be shared worldmap/battle kernel drivers and projection infrastructure.
 - Baseline targets remain `target/benchmarks/20260521-160211-all-timers` / `bench.x.md`: setup timer `14.5155B`, turn deadline `13.1504B`, turn resolution `18.4160B`, sync battle `8.6881B`, battle round advance `3.9430B`, battle timeout `2.5367B`, and sync session turn `1.6226B`.
+
+## Worldmap Kernel Facade Checkpoint
+
+Time: `2026-05-21T17:05:00Z`.
+
+Cut:
+
+- Added `canisters/degens/src/services/worldmap_kernel.rs` as the explicit facade around `SessionTurnRuntime`.
+- Kept `SessionTurnRuntime` as the only active worldmap store; the new module only centralizes active-turn contains/prepare/insert/remove and caller-context lookup helpers.
+- Routed the movement service's runtime setup/adoption/removal and projection-cache active-turn checks through the facade. Public/timer behavior is unchanged; this creates the boundary for the next shared turn driver extraction.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep this as a small no-behavior checkpoint. The next Section 72A cut should extract a shared turn driver from `movement.rs` so public sync and timer resolution can share runtime-owned advancement logic.

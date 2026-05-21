@@ -111,7 +111,10 @@ pub(crate) fn sync_world_generation(
         command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
 
-    let map = ensure_seeded_worldgen_state(&context.session, Some(command.id()))?;
+    let map = match seeded_worldgen_fast_path(&context.session)? {
+        Some(map) => map,
+        None => ensure_seeded_worldgen_state(&context.session, Some(command.id()))?,
+    };
     let receipt = receipt_from_map(command.id(), context.session.current_turn, &map);
     let result_json = receipt_json(&receipt);
     command_response::apply_runtime_command_with_result(
@@ -129,6 +132,19 @@ pub(crate) fn sync_world_generation(
         )],
         CommandResult::WorldGeneration(receipt),
     )
+}
+
+fn seeded_worldgen_fast_path(
+    session: &GameSession,
+) -> Result<Option<ProceduralMapState>, ApiError> {
+    let Some(map) = worldgen::find_procedural_map_by_key(session.id(), PROCEDURAL_GENERATION_KEY)?
+    else {
+        return Ok(None);
+    };
+    if map.status == "validated" && map.generated_turn == session.current_turn {
+        return Ok(Some(map));
+    }
+    Ok(None)
 }
 
 pub(crate) fn ensure_seeded_worldgen_state(

@@ -6972,3 +6972,41 @@ Decision:
 
 - Keep this checkpoint. It removes two active durable row writes and validates that the benchmark catches regressions when a row cut accidentally adds a read.
 - Rotate again. The next highest floor is `submit_dwelling_recruit`, but the random-endpoint rule says it is also valid to pick worldgen/victory/champion magic if a bounded low-risk cut is clearer.
+
+## Worldgen Sync Fast Path
+
+Time: `2026-05-21T01:34:00Z`.
+
+Cut:
+
+- Rotated away from tavern/market to `sync_world_generation`.
+- Added a validated procedural-map fast path for active sync. If the session already has the canonical validated `PROCEDURAL_GENERATION_KEY` row for the current turn, `sync_world_generation` returns from that row instead of running the full seeding/repair path.
+- Initial seeding and missing/outdated map repair still use `ensure_seeded_worldgen_state`, which can create skirmish settings, procedural map, naval route, and siege rule rows as before.
+
+Decision:
+
+- This is a deliberate read/CPU cut, not a new runtime aggregate. The benchmark showed the hot sync path was paying for repeated stable reads plus deterministic map recomputation after setup had already seeded the worldgen state.
+- Keep the fast path narrow: it only triggers on a validated current procedural map, so partial/missing setup still falls through to the existing repair path.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Direct benchmark Wasm size: `0x00bff2a3` / `12,579,491` bytes, `3,421` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260520-worldgen-fast-path-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-economy-receipt-row-floor-v2-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `36.9183B -> 34.6934B`, `-2.2249B`, `-6.0%`.
+- `sync_world_generation`: `2.9294B -> 0.7048B`, `-75.9%`.
+- Related worldgen query costs were unchanged: `get_skirmish_settings`, `get_procedural_map_state`, `get_naval_routes`, and `get_siege_rules` remain around one stable read each.
+
+Decision:
+
+- Keep this checkpoint. It gives a large endpoint win with no row-growth change and preserves the full repair path for initial/missing state.
+- Rotate again. The next top floors are `submit_dwelling_recruit`, `sync_advanced_victory`, champion magic spellbook reads, and claim quest scenario writes.

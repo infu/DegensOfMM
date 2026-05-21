@@ -928,8 +928,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 48. Random Endpoint Cluster: Next Non-Economy Floor
 
-- [ ] Rotate away from market/tavern receipt rows. Pick one different bounded endpoint cluster from `20260520-economy-receipt-row-floor-v2-local`; prefer `submit_dwelling_recruit`, `sync_world_generation`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`.
-- [ ] Apply one low-risk cut before the next endpoint-surface measurement. If the picked endpoint still needs a larger aggregate to reach `0.3B-0.6B`, document the exact durable row/index family or CPU loop that blocks the smaller cut.
+- [x] Rotate away from market/tavern receipt rows. Pick one different bounded endpoint cluster from `20260520-economy-receipt-row-floor-v2-local`; prefer `submit_dwelling_recruit`, `sync_world_generation`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`. Picked `sync_world_generation`.
+- [x] Apply one low-risk cut before the next endpoint-surface measurement. Added a validated procedural-map fast path for `sync_world_generation`; initial seeding still uses the full repair path, but repeat active sync no longer reloads skirmish settings, recomputes the deterministic map, and rechecks naval/siege rows when the validated map is already current.
+- [x] Measure the worldgen fast path. Artifact `target/benchmarks/20260520-worldgen-fast-path-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `36.9183B -> 34.6934B` (`-2.2249B`, `-6.0%`) versus `20260520-economy-receipt-row-floor-v2-local`. `sync_world_generation` moved `2.9294B -> 0.7048B`.
+- [x] Rotate again after this worldgen cut. Current next candidates are `submit_dwelling_recruit` (`4.2403B`), `hire_tavern_champion` (`2.8484B`), `sync_advanced_victory` (`2.8178B`), `learn_champion_spell` (`2.5849B`), and `claim_quest_reward` (`2.3664B`).
+
+### 49. Random Endpoint Cluster: Next Heavy Command Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260520-worldgen-fast-path-local`; do not return to `sync_world_generation` unless a regression appears. Prefer `submit_dwelling_recruit`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`.
+- [ ] Apply one low-risk storage or CPU cut and explain whether the remaining cost is a live aggregate problem, a query/read floor, or unavoidable rules CPU.
 
 ## Expected Outcome
 

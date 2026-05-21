@@ -4,22 +4,26 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use candid::{CandidType, Principal};
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_client_probe::{PlayableWebClient, ProbeError, WebClientBackend, WebClientState};
-use domm_degens_canister::DiagnosticStorageSnapshot;
+use domm_degens_canister::{
+    DiagnosticBenchmarkCallPage, DiagnosticStorageSnapshot, EndpointKind, REQUIRED_GAME_ENDPOINTS,
+};
 use domm_game::{
-    ApiError, ApiEventPage, ApiMetrics, ApiTownView, BattleActionInput, BattleSummary, BattleView,
-    BuildPreview, ChampionView, CommandResponse, CommandStatus, CommandStatusView,
-    ContentManifestResponse, FIRST_PLAYABLE_RULESET_ID, FixtureApiBackend, GameView,
+    ApiError, ApiEventPage, ApiMetrics, ApiTownView, BATTLE_GRID_HEIGHT, BATTLE_GRID_WIDTH,
+    BattleActionInput, BattleSummary, BattleView, BuildPreview, ChampionView, CommandResponse,
+    CommandStatus, CommandStatusView, ContentManifestResponse, FIRST_PLAYABLE_MAP_HEIGHT,
+    FIRST_PLAYABLE_MAP_WIDTH, FIRST_PLAYABLE_RULESET_ID, FixtureApiBackend, GameView,
     GameViewRequest, LegalBattleAction, LobbyCommandResponse, LobbyCommandResult, MAX_CHUNK_LIMIT,
     MapChunkPage, MatchHistoryPage, MoveCoord, ObjectViewPage, PageInfo, ParticipantSummary,
     ParticipantView, PlayableMatchView, RecruitPreview, RecruitTarget, RenderTimeMeta, SessionView,
     SetupProgressView, first_playable_content_manifest, first_playable_fixture,
     opening_viewport_for_slot,
 };
+use serde::{Deserialize, Serialize};
 
 const GATE_M_ENTITIES: &[&str] = &[
     "GameSession",
@@ -56,10 +60,13 @@ const GATE_M_ENTITIES: &[&str] = &[
 fn gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter() {
     let fixture = first_playable_fixture();
     let mut backend = CanisterWebClientBackend::new(install_degens_canister_fixture());
+    backend.reset_benchmark_canister();
+    backend.set_benchmark_scenario("diagnostics");
     let initial_storage = backend.diagnostic_snapshot(GATE_M_ENTITIES);
     assert_eq!(initial_storage.total_rows, 0);
     let fixture_opening = fixture_opening_game_view(&fixture);
 
+    backend.set_benchmark_scenario("gate_m_web_client_probe");
     let mut client =
         PlayableWebClient::new(backend, fixture.clone(), fixture.principals.player_one);
     client
@@ -85,6 +92,7 @@ fn gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter() {
         .expect("adapter should retain an opening canister DTO sample");
     assert_representative_dtos_match(&fixture_opening, canister_opening);
 
+    backend.set_benchmark_scenario("diagnostics");
     let final_storage = backend.diagnostic_snapshot(GATE_M_ENTITIES);
     assert_eq!(row_count(&final_storage, "GameSession"), 1);
     assert_eq!(row_count(&final_storage, "GameParticipant"), 2);
@@ -130,6 +138,7 @@ fn gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter() {
         probe_metrics.max_response_bytes,
         probe_metrics.max_response_method
     );
+    backend.write_benchmark_artifacts("gate_m_web_client_probe", &initial_storage, &final_storage);
 }
 
 struct CanisterWebClientBackend {
@@ -169,6 +178,31 @@ impl CanisterWebClientBackend {
 
     fn probe_metrics(&self) -> CanisterProbeMetrics {
         self.metrics.borrow().clone()
+    }
+
+    fn reset_benchmark_canister(&self) {
+        self.metrics
+            .borrow_mut()
+            .reset_benchmark_canister(&self.fixture);
+    }
+
+    fn set_benchmark_scenario(&self, scenario_id: &str) {
+        self.metrics
+            .borrow_mut()
+            .set_benchmark_scenario(scenario_id);
+    }
+
+    fn write_benchmark_artifacts(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) {
+        self.metrics.borrow().write_benchmark_artifacts(
+            benchmark_name,
+            initial_storage,
+            final_storage,
+        );
     }
 
     fn advance_time_without_timers_ms(&mut self, millis: u64) {
@@ -227,6 +261,8 @@ impl CanisterWebClientBackend {
         T: CandidType + for<'de> serde::Deserialize<'de>,
     {
         let callsite = std::panic::Location::caller();
+        let before = self.metrics.borrow().benchmark_sample(&self.fixture);
+        let started = Instant::now();
         let response = self
             .fixture
             .pic()
@@ -238,7 +274,21 @@ impl CanisterWebClientBackend {
                     false,
                 ))
             })?;
-        self.metrics.borrow_mut().record_query(method, &response);
+        let elapsed = started.elapsed();
+        let after = self.metrics.borrow().benchmark_sample(&self.fixture);
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.record_query(method, &response);
+        let query_instruction_delta = metrics.pull_query_instruction(&self.fixture, method);
+        metrics.record_benchmark_call(
+            method,
+            "query",
+            &response,
+            elapsed,
+            before,
+            after,
+            query_instruction_delta,
+            Vec::new(),
+        );
         response.map_err(ProbeError::from)
     }
 
@@ -251,6 +301,8 @@ impl CanisterWebClientBackend {
     where
         T: CandidType + for<'de> serde::Deserialize<'de>,
     {
+        let before = self.metrics.borrow().benchmark_sample(&self.fixture);
+        let started = Instant::now();
         let response = self
             .fixture
             .pic()
@@ -262,7 +314,25 @@ impl CanisterWebClientBackend {
                     false,
                 ))
             })?;
-        self.metrics.borrow_mut().record_update(method, &response);
+        let elapsed = started.elapsed();
+        let after = self.metrics.borrow().benchmark_sample(&self.fixture);
+        let mut metrics = self.metrics.borrow_mut();
+        metrics.record_update(method, &response);
+        let update_measurement = metrics.pull_update_measurement(&self.fixture, method);
+        metrics.record_benchmark_call(
+            method,
+            "update",
+            &response,
+            elapsed,
+            before,
+            after,
+            update_measurement
+                .as_ref()
+                .map(|measurement| measurement.instruction_delta),
+            update_measurement
+                .map(|measurement| measurement.repo_ops)
+                .unwrap_or_default(),
+        );
         response.map_err(ProbeError::from)
     }
 
@@ -1480,7 +1550,419 @@ fn town_views_for_objects(
     Ok(towns)
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
+struct BenchmarkStatusSample {
+    cycles: u128,
+    memory_size_bytes: u128,
+    wasm_memory_size_bytes: u128,
+    stable_memory_size_bytes: u128,
+    query_calls_total: u128,
+    query_instructions_total: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkCallRecord {
+    sequence: u64,
+    scenario_id: String,
+    method: String,
+    kind: String,
+    ok: bool,
+    error_code: Option<String>,
+    response_bytes: u64,
+    wall_time_micros: u64,
+    instruction_delta: Option<u64>,
+    cycle_cost: u128,
+    memory_delta_bytes: i128,
+    wasm_memory_delta_bytes: i128,
+    stable_memory_delta_bytes: i128,
+    memory_size_before_bytes: u128,
+    memory_size_after_bytes: u128,
+    repo_ops: Vec<BenchmarkRepoOpRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkRepoOpRecord {
+    operation: String,
+    calls: u64,
+    instruction_delta: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkScenarioSummary {
+    id: String,
+    label: String,
+    description: String,
+    players: u32,
+    call_count: u64,
+    query_count: u64,
+    update_count: u64,
+    response_bytes_total: u64,
+    instruction_total: u128,
+    instruction_change_pct: Option<f64>,
+    cycle_cost_total: u128,
+    memory_delta_bytes: i128,
+    memory_change_pct: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkMethodSummary {
+    method: String,
+    kind: String,
+    call_count: u64,
+    error_count: u64,
+    avg_instruction_delta: Option<f64>,
+    p95_instruction_delta: Option<u64>,
+    instruction_change_pct: Option<f64>,
+    avg_memory_delta_bytes: f64,
+    memory_change_pct: Option<f64>,
+    avg_cycle_cost: f64,
+    avg_response_bytes: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkPhaseSummary {
+    method: String,
+    phase: String,
+    call_count: u64,
+    avg_instruction_delta: f64,
+    total_instruction_delta: u128,
+    avg_stable_page_delta: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkRepoOpSummary {
+    operation: String,
+    call_count: u64,
+    avg_instruction_delta: f64,
+    total_instruction_delta: u128,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct BenchmarkSummaryArtifact {
+    run_id: String,
+    git_sha: String,
+    generated_at_ms: u64,
+    benchmark_name: String,
+    scenario_count: usize,
+    call_count: usize,
+    required_game_endpoint_count: usize,
+    covered_required_endpoint_count: usize,
+    missing_required_endpoints: Vec<String>,
+    total_row_growth: u32,
+    stable_memory_pages_start: u64,
+    stable_memory_pages_final: u64,
+    scenarios: Vec<BenchmarkScenarioSummary>,
+    methods: Vec<BenchmarkMethodSummary>,
+    phases: Vec<BenchmarkPhaseSummary>,
+    repo_ops: Vec<BenchmarkRepoOpSummary>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct BenchmarkRunArtifact {
+    summary: BenchmarkSummaryArtifact,
+    calls: Vec<BenchmarkCallRecord>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkQueryLog {
+    method: String,
+    instruction_delta: u64,
+}
+
+#[derive(Clone, Debug)]
+struct BenchmarkCanisterCallMeasurement {
+    instruction_delta: u64,
+    repo_ops: Vec<BenchmarkRepoOpRecord>,
+}
+
+#[derive(Clone, Debug)]
+struct BenchmarkRecorder {
+    output_dir: PathBuf,
+    calls: Vec<BenchmarkCallRecord>,
+    next_sequence: u64,
+    canister_call_cursor: u64,
+    canister_log_cursor: u64,
+    query_log_path: Option<PathBuf>,
+    query_log_entry_cursor: usize,
+}
+
+impl BenchmarkRecorder {
+    fn from_env() -> Option<Self> {
+        let output_dir = env::var_os("DOMM_BENCH_OUTPUT_DIR").map(PathBuf::from)?;
+        let query_log_path = env::var_os("DOMM_BENCH_QUERY_LOG_PATH").map(PathBuf::from);
+        Some(Self {
+            output_dir,
+            calls: Vec::new(),
+            next_sequence: 1,
+            canister_call_cursor: 0,
+            canister_log_cursor: 0,
+            query_log_path,
+            query_log_entry_cursor: 0,
+        })
+    }
+
+    fn capture_status(fixture: &StandaloneCanisterFixture) -> BenchmarkStatusSample {
+        let status = fixture
+            .pic()
+            .canister_status(fixture.canister_id(), None)
+            .expect("benchmark canister_status should load");
+        BenchmarkStatusSample {
+            cycles: nat_to_u128(&status.cycles),
+            memory_size_bytes: nat_to_u128(&status.memory_size),
+            wasm_memory_size_bytes: nat_to_u128(&status.memory_metrics.wasm_memory_size),
+            stable_memory_size_bytes: nat_to_u128(&status.memory_metrics.stable_memory_size),
+            query_calls_total: nat_to_u128(&status.query_stats.num_calls_total),
+            query_instructions_total: nat_to_u128(&status.query_stats.num_instructions_total),
+        }
+    }
+
+    fn reset_canister_metrics(&mut self, fixture: &StandaloneCanisterFixture) {
+        let response: Result<(), ApiError> = fixture
+            .pic()
+            .update_call_as(
+                fixture.canister_id(),
+                Principal::anonymous(),
+                "reset_diagnostic_benchmark_metrics",
+                (),
+            )
+            .expect("benchmark reset should decode");
+        response.expect("benchmark reset should succeed");
+        self.canister_call_cursor = 0;
+        self.canister_log_cursor = 0;
+        self.query_log_entry_cursor = 0;
+    }
+
+    fn pull_update_measurement(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<BenchmarkCanisterCallMeasurement> {
+        let page: Result<DiagnosticBenchmarkCallPage, ApiError> = fixture
+            .pic()
+            .query_call_as(
+                fixture.canister_id(),
+                Principal::anonymous(),
+                "get_diagnostic_benchmark_metrics",
+                (Some(self.canister_call_cursor), 1024_u32),
+            )
+            .ok()?;
+        let page = page.ok()?;
+        if let Some(last) = page.calls.last() {
+            self.canister_call_cursor = last.sequence;
+        }
+
+        page.calls
+            .iter()
+            .rev()
+            .find(|call| call.method == method)
+            .map(|call| BenchmarkCanisterCallMeasurement {
+                instruction_delta: call.instruction_delta,
+                repo_ops: call
+                    .repo_ops
+                    .iter()
+                    .map(|op| BenchmarkRepoOpRecord {
+                        operation: op.operation.clone(),
+                        calls: op.calls,
+                        instruction_delta: op.instruction_delta,
+                    })
+                    .collect(),
+            })
+    }
+
+    fn pull_query_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        if let Some(instruction_delta) = self.pull_query_instruction_from_log_file(method) {
+            return Some(instruction_delta);
+        }
+
+        let records = fixture
+            .pic()
+            .fetch_canister_logs(fixture.canister_id(), Principal::anonymous())
+            .ok()?;
+        let mut matched = None;
+        for record in &records {
+            if record.idx <= self.canister_log_cursor {
+                continue;
+            }
+            self.canister_log_cursor = self.canister_log_cursor.max(record.idx);
+            if let Some(log) = parse_benchmark_query_log(&record.content)
+                && log.method == method
+            {
+                matched = Some(log.instruction_delta);
+            }
+        }
+        matched
+    }
+
+    fn pull_query_instruction_from_log_file(&mut self, method: &str) -> Option<u64> {
+        let path = self.query_log_path.as_ref()?;
+        let started = Instant::now();
+
+        loop {
+            if let Ok(text) = fs::read_to_string(path) {
+                let logs = text
+                    .lines()
+                    .filter_map(|line| parse_benchmark_query_log(line.as_bytes()))
+                    .collect::<Vec<_>>();
+                while self.query_log_entry_cursor < logs.len() {
+                    let log = &logs[self.query_log_entry_cursor];
+                    self.query_log_entry_cursor = self.query_log_entry_cursor.saturating_add(1);
+                    if log.method == method {
+                        return Some(log.instruction_delta);
+                    }
+                }
+            }
+
+            if started.elapsed() >= Duration::from_secs(2) {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn record_call<T: CandidType>(
+        &mut self,
+        scenario_id: &str,
+        method: &str,
+        kind: &str,
+        response: &Result<T, ApiError>,
+        elapsed: Duration,
+        before: &BenchmarkStatusSample,
+        after: &BenchmarkStatusSample,
+        measured_instruction_delta: Option<u64>,
+        repo_ops: Vec<BenchmarkRepoOpRecord>,
+    ) {
+        let instruction_delta = if measured_instruction_delta.is_some() {
+            measured_instruction_delta
+        } else if kind == "query" {
+            let query_count_delta = after
+                .query_calls_total
+                .saturating_sub(before.query_calls_total);
+            let query_instruction_delta = after
+                .query_instructions_total
+                .saturating_sub(before.query_instructions_total);
+            if query_count_delta == 1 && query_instruction_delta > 0 {
+                Some(u128_to_u64_saturating(query_instruction_delta))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let cycle_cost = before.cycles.saturating_sub(after.cycles);
+        let response_bytes = candid::encode_one(response)
+            .unwrap_or_else(|error| panic!("{method} response should Candid encode: {error}"))
+            .len();
+
+        self.calls.push(BenchmarkCallRecord {
+            sequence: self.next_sequence,
+            scenario_id: scenario_id.to_string(),
+            method: method.to_string(),
+            kind: kind.to_string(),
+            ok: response.is_ok(),
+            error_code: response.as_ref().err().map(|error| error.code.clone()),
+            response_bytes: u64::try_from(response_bytes).unwrap_or(u64::MAX),
+            wall_time_micros: u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX),
+            instruction_delta,
+            cycle_cost,
+            memory_delta_bytes: unsigned_delta(after.memory_size_bytes, before.memory_size_bytes),
+            wasm_memory_delta_bytes: unsigned_delta(
+                after.wasm_memory_size_bytes,
+                before.wasm_memory_size_bytes,
+            ),
+            stable_memory_delta_bytes: unsigned_delta(
+                after.stable_memory_size_bytes,
+                before.stable_memory_size_bytes,
+            ),
+            memory_size_before_bytes: before.memory_size_bytes,
+            memory_size_after_bytes: after.memory_size_bytes,
+            repo_ops,
+        });
+        self.next_sequence = self.next_sequence.saturating_add(1);
+    }
+
+    fn write_artifacts(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) {
+        if self.calls.is_empty() {
+            return;
+        }
+
+        fs::create_dir_all(&self.output_dir).unwrap_or_else(|error| {
+            panic!(
+                "failed to create benchmark output dir {}: {error}",
+                self.output_dir.display()
+            )
+        });
+
+        let summary = self.build_summary(benchmark_name, initial_storage, final_storage);
+        let run = BenchmarkRunArtifact {
+            summary: summary.clone(),
+            calls: self.calls.clone(),
+        };
+
+        write_json_file(&self.output_dir.join("run.json"), &run);
+        write_json_file(&self.output_dir.join("summary.json"), &summary);
+        fs::write(
+            self.output_dir.join("summary.md"),
+            render_summary_markdown(&summary),
+        )
+        .unwrap_or_else(|error| panic!("failed to write benchmark summary.md: {error}"));
+    }
+
+    fn build_summary(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) -> BenchmarkSummaryArtifact {
+        let scenarios = scenario_summaries(&self.calls);
+        let methods = method_summaries(&self.calls);
+        let phases = Vec::new();
+        let repo_ops = repo_op_summaries(&self.calls);
+
+        let covered_required = covered_required_endpoints(&self.calls);
+        let missing_required_endpoints = REQUIRED_GAME_ENDPOINTS
+            .iter()
+            .filter(|endpoint| !covered_required.contains(endpoint.name))
+            .map(|endpoint| endpoint.name.to_string())
+            .collect::<Vec<_>>();
+
+        BenchmarkSummaryArtifact {
+            run_id: self
+                .output_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("benchmark-run")
+                .to_string(),
+            git_sha: git_sha(),
+            generated_at_ms: now_millis(),
+            benchmark_name: benchmark_name.to_string(),
+            scenario_count: scenarios.len(),
+            call_count: self.calls.len(),
+            required_game_endpoint_count: REQUIRED_GAME_ENDPOINTS.len(),
+            covered_required_endpoint_count: covered_required.len(),
+            missing_required_endpoints,
+            total_row_growth: final_storage
+                .total_rows
+                .saturating_sub(initial_storage.total_rows),
+            stable_memory_pages_start: initial_storage.stable_memory_pages,
+            stable_memory_pages_final: final_storage.stable_memory_pages,
+            scenarios,
+            methods,
+            phases,
+            repo_ops,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct CanisterProbeMetrics {
     update_calls: u32,
     query_calls: u32,
@@ -1490,9 +1972,109 @@ struct CanisterProbeMetrics {
     total_response_bytes: usize,
     max_response_bytes: usize,
     max_response_method: String,
+    benchmark: Option<BenchmarkRecorder>,
+    benchmark_scenario_id: String,
+}
+
+impl Default for CanisterProbeMetrics {
+    fn default() -> Self {
+        Self {
+            update_calls: 0,
+            query_calls: 0,
+            lobby_response_count: 0,
+            command_response_count: 0,
+            observed_event_count: 0,
+            total_response_bytes: 0,
+            max_response_bytes: 0,
+            max_response_method: String::new(),
+            benchmark: BenchmarkRecorder::from_env(),
+            benchmark_scenario_id: "diagnostics".to_string(),
+        }
+    }
 }
 
 impl CanisterProbeMetrics {
+    fn set_benchmark_scenario(&mut self, scenario_id: &str) {
+        self.benchmark_scenario_id = scenario_id.to_string();
+    }
+
+    fn reset_benchmark_canister(&mut self, fixture: &StandaloneCanisterFixture) {
+        if let Some(benchmark) = &mut self.benchmark {
+            benchmark.reset_canister_metrics(fixture);
+        }
+    }
+
+    fn benchmark_sample(
+        &self,
+        fixture: &StandaloneCanisterFixture,
+    ) -> Option<BenchmarkStatusSample> {
+        self.benchmark
+            .as_ref()
+            .map(|_| BenchmarkRecorder::capture_status(fixture))
+    }
+
+    fn pull_update_measurement(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<BenchmarkCanisterCallMeasurement> {
+        self.benchmark
+            .as_mut()
+            .and_then(|benchmark| benchmark.pull_update_measurement(fixture, method))
+    }
+
+    fn pull_query_instruction(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        method: &str,
+    ) -> Option<u64> {
+        self.benchmark
+            .as_mut()
+            .and_then(|benchmark| benchmark.pull_query_instruction(fixture, method))
+    }
+
+    fn record_benchmark_call<T: CandidType>(
+        &mut self,
+        method: &str,
+        kind: &str,
+        response: &Result<T, ApiError>,
+        elapsed: Duration,
+        before: Option<BenchmarkStatusSample>,
+        after: Option<BenchmarkStatusSample>,
+        measured_instruction_delta: Option<u64>,
+        repo_ops: Vec<BenchmarkRepoOpRecord>,
+    ) {
+        let Some(benchmark) = &mut self.benchmark else {
+            return;
+        };
+        let (Some(before), Some(after)) = (before, after) else {
+            return;
+        };
+        let scenario_id = self.benchmark_scenario_id.clone();
+        benchmark.record_call(
+            &scenario_id,
+            method,
+            kind,
+            response,
+            elapsed,
+            &before,
+            &after,
+            measured_instruction_delta,
+            repo_ops,
+        );
+    }
+
+    fn write_benchmark_artifacts(
+        &self,
+        benchmark_name: &str,
+        initial_storage: &DiagnosticStorageSnapshot,
+        final_storage: &DiagnosticStorageSnapshot,
+    ) {
+        if let Some(benchmark) = &self.benchmark {
+            benchmark.write_artifacts(benchmark_name, initial_storage, final_storage);
+        }
+    }
+
     fn record_query<T: CandidType>(&mut self, method: &str, response: &Result<T, ApiError>) {
         self.query_calls = self.query_calls.saturating_add(1);
         self.record_response(method, response);
@@ -1531,6 +2113,469 @@ impl CanisterProbeMetrics {
     fn observe_event_count(&mut self, count: u32) {
         self.observed_event_count = self.observed_event_count.saturating_add(count);
     }
+}
+
+fn nat_to_u128(value: &candid::Nat) -> u128 {
+    value.0.to_string().parse::<u128>().unwrap_or(u128::MAX)
+}
+
+fn u128_to_u64_saturating(value: u128) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn unsigned_delta(after: u128, before: u128) -> i128 {
+    if after >= before {
+        i128::try_from(after - before).unwrap_or(i128::MAX)
+    } else {
+        -i128::try_from(before - after).unwrap_or(i128::MAX)
+    }
+}
+
+fn parse_benchmark_query_log(content: &[u8]) -> Option<BenchmarkQueryLog> {
+    let text = String::from_utf8_lossy(content);
+    if !text.contains("DOMM_BENCH_QUERY") {
+        return None;
+    }
+
+    let fields = text
+        .split_whitespace()
+        .filter_map(|token| token.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+
+    Some(BenchmarkQueryLog {
+        method: fields.get("method")?.to_string(),
+        instruction_delta: fields.get("instruction_delta")?.parse().ok()?,
+    })
+}
+
+fn scenario_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkScenarioSummary> {
+    let mut grouped: BTreeMap<String, Vec<&BenchmarkCallRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        grouped
+            .entry(call.scenario_id.clone())
+            .or_default()
+            .push(call);
+    }
+
+    grouped
+        .into_iter()
+        .filter(|(id, _)| id != "diagnostics")
+        .map(|(id, calls)| {
+            let first = calls.first().expect("scenario group should not be empty");
+            let last = calls.last().expect("scenario group should not be empty");
+            BenchmarkScenarioSummary {
+                label: scenario_label(&id).to_string(),
+                description: scenario_description(&id, &calls),
+                players: 2,
+                call_count: u64::try_from(calls.len()).unwrap_or(u64::MAX),
+                query_count: count_kind(&calls, "query"),
+                update_count: count_kind(&calls, "update"),
+                response_bytes_total: calls.iter().map(|call| call.response_bytes).sum(),
+                instruction_total: calls
+                    .iter()
+                    .filter_map(|call| call.instruction_delta)
+                    .map(u128::from)
+                    .sum(),
+                instruction_change_pct: None,
+                cycle_cost_total: calls.iter().map(|call| call.cycle_cost).sum(),
+                memory_delta_bytes: unsigned_delta(
+                    last.memory_size_after_bytes,
+                    first.memory_size_before_bytes,
+                ),
+                memory_change_pct: None,
+                id,
+            }
+        })
+        .collect()
+}
+
+fn method_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkMethodSummary> {
+    let mut grouped: BTreeMap<(String, String), Vec<&BenchmarkCallRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        grouped
+            .entry((call.method.clone(), call.kind.clone()))
+            .or_default()
+            .push(call);
+    }
+
+    grouped
+        .into_iter()
+        .map(|((method, kind), calls)| {
+            let instruction_values = calls
+                .iter()
+                .filter_map(|call| call.instruction_delta)
+                .collect::<Vec<_>>();
+            BenchmarkMethodSummary {
+                method,
+                kind,
+                call_count: u64::try_from(calls.len()).unwrap_or(u64::MAX),
+                error_count: u64::try_from(calls.iter().filter(|call| !call.ok).count())
+                    .unwrap_or(u64::MAX),
+                avg_instruction_delta: average_u64(&instruction_values),
+                p95_instruction_delta: percentile_u64(instruction_values, 95),
+                instruction_change_pct: None,
+                avg_memory_delta_bytes: average_i128(
+                    &calls
+                        .iter()
+                        .map(|call| call.memory_delta_bytes)
+                        .collect::<Vec<_>>(),
+                ),
+                memory_change_pct: None,
+                avg_cycle_cost: average_u128(
+                    &calls.iter().map(|call| call.cycle_cost).collect::<Vec<_>>(),
+                ),
+                avg_response_bytes: average_u64(
+                    &calls
+                        .iter()
+                        .map(|call| call.response_bytes)
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap_or(0.0),
+            }
+        })
+        .collect()
+}
+
+fn repo_op_summaries(calls: &[BenchmarkCallRecord]) -> Vec<BenchmarkRepoOpSummary> {
+    let mut grouped: BTreeMap<String, Vec<&BenchmarkRepoOpRecord>> = BTreeMap::new();
+    for call in calls
+        .iter()
+        .filter(|call| !is_internal_benchmark_method(&call.method))
+    {
+        for op in &call.repo_ops {
+            grouped.entry(op.operation.clone()).or_default().push(op);
+        }
+    }
+
+    grouped
+        .into_iter()
+        .map(|(operation, ops)| {
+            let call_count = ops.iter().map(|op| op.calls).sum::<u64>();
+            let total_instruction_delta = ops
+                .iter()
+                .map(|op| u128::from(op.instruction_delta))
+                .sum::<u128>();
+            BenchmarkRepoOpSummary {
+                operation,
+                call_count,
+                avg_instruction_delta: if call_count == 0 {
+                    0.0
+                } else {
+                    total_instruction_delta as f64 / call_count as f64
+                },
+                total_instruction_delta,
+            }
+        })
+        .collect()
+}
+
+fn covered_required_endpoints(calls: &[BenchmarkCallRecord]) -> BTreeSet<&'static str> {
+    REQUIRED_GAME_ENDPOINTS
+        .iter()
+        .filter(|endpoint| {
+            calls.iter().any(|call| {
+                call.method == endpoint.name
+                    && matches!(
+                        (&call.kind[..], endpoint.kind),
+                        ("query", EndpointKind::Query) | ("update", EndpointKind::Update)
+                    )
+            })
+        })
+        .map(|endpoint| endpoint.name)
+        .collect()
+}
+
+fn is_internal_benchmark_method(method: &str) -> bool {
+    method.starts_with("get_diagnostic_")
+        || method.starts_with("reset_diagnostic_")
+        || method.starts_with("icydb_")
+}
+
+fn count_kind(calls: &[&BenchmarkCallRecord], kind: &str) -> u64 {
+    u64::try_from(calls.iter().filter(|call| call.kind == kind).count()).unwrap_or(u64::MAX)
+}
+
+fn count_method(calls: &[&BenchmarkCallRecord], method: &str) -> u64 {
+    u64::try_from(calls.iter().filter(|call| call.method == method).count()).unwrap_or(u64::MAX)
+}
+
+fn average_u64(values: &[u64]) -> Option<f64> {
+    if values.is_empty() {
+        return None;
+    }
+    Some(values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64)
+}
+
+fn average_u128(values: &[u128]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64
+}
+
+fn average_i128(values: &[i128]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    values.iter().map(|value| *value as f64).sum::<f64>() / values.len() as f64
+}
+
+fn percentile_u64(mut values: Vec<u64>, percentile: u32) -> Option<u64> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let index = (values.len().saturating_sub(1) * usize::try_from(percentile).unwrap_or(100)) / 100;
+    values.get(index).copied()
+}
+
+fn write_json_file<T: Serialize>(path: &Path, value: &T) {
+    let json = serde_json::to_vec_pretty(value).expect("benchmark artifact should serialize");
+    fs::write(path, json).unwrap_or_else(|error| {
+        panic!(
+            "failed to write benchmark artifact {}: {error}",
+            path.display()
+        )
+    });
+}
+
+fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# DoMM Benchmark {}\n\n", summary.run_id));
+    out.push_str(&format!(
+        "- Git: `{}`\n- Benchmark: `{}`\n- Calls: {}\n- Required endpoints covered: {}/{}\n- Row growth: {}\n- Stable memory pages: {} -> {}\n\n",
+        summary.git_sha,
+        summary.benchmark_name,
+        summary.call_count,
+        summary.covered_required_endpoint_count,
+        summary.required_game_endpoint_count,
+        summary.total_row_growth,
+        summary.stable_memory_pages_start,
+        summary.stable_memory_pages_final
+    ));
+    out.push_str("## Scenarios\n\n");
+    out.push_str("| Scenario | Calls | Memory MB | Memory change | Instructions B | Instruction change | Cycles T |\n");
+    out.push_str("| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for scenario in &summary.scenarios {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            scenario_summary_label(scenario),
+            scenario.call_count,
+            format_mb_from_bytes_i128(scenario.memory_delta_bytes),
+            format_pct(scenario.memory_change_pct),
+            format_billions_u128(scenario.instruction_total),
+            format_pct(scenario.instruction_change_pct),
+            format_trillions_u128(scenario.cycle_cost_total)
+        ));
+    }
+    out.push_str("\n## Public Methods\n\n");
+    out.push_str("| Method | Kind | Calls | Avg inst B | Inst change | Avg mem MB | Mem change | Avg cycles T | Avg bytes | Errors |\n");
+    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for method in &summary.methods {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |\n",
+            method.method,
+            method.kind,
+            method.call_count,
+            format_billions_option(method.avg_instruction_delta),
+            format_pct(method.instruction_change_pct),
+            format_mb_from_bytes_f64(method.avg_memory_delta_bytes),
+            format_pct(method.memory_change_pct),
+            format_trillions_f64(method.avg_cycle_cost),
+            method.avg_response_bytes,
+            method.error_count
+        ));
+    }
+    if !summary.phases.is_empty() {
+        out.push_str("\n## Endpoint Phases\n\n");
+        out.push_str("| Method | Phase | Calls | Avg inst B | Total inst B | Avg stable pages |\n");
+        out.push_str("| --- | --- | ---: | ---: | ---: | ---: |\n");
+        for phase in &summary.phases {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} | {:.2} |\n",
+                phase.method,
+                phase.phase,
+                phase.call_count,
+                format_billions_f64(phase.avg_instruction_delta),
+                format_billions_u128(phase.total_instruction_delta),
+                phase.avg_stable_page_delta
+            ));
+        }
+    }
+    if !summary.repo_ops.is_empty() {
+        out.push_str("\n## Repo Operations\n\n");
+        out.push_str("| Operation | Calls | Avg inst B | Total inst B |\n");
+        out.push_str("| --- | ---: | ---: | ---: |\n");
+        for op in &summary.repo_ops {
+            out.push_str(&format!(
+                "| {} | {} | {} | {} |\n",
+                op.operation,
+                op.call_count,
+                format_billions_f64(op.avg_instruction_delta),
+                format_billions_u128(op.total_instruction_delta)
+            ));
+        }
+    }
+    if !summary.missing_required_endpoints.is_empty() {
+        out.push_str("\n## Missing Required Endpoints\n\n");
+        out.push_str(&summary.missing_required_endpoints.join(", "));
+        out.push('\n');
+    }
+    out
+}
+
+fn scenario_summary_label(scenario: &BenchmarkScenarioSummary) -> String {
+    if scenario.description.is_empty() {
+        scenario.label.clone()
+    } else {
+        format!("{}: {}", scenario.label, scenario.description)
+    }
+}
+
+fn scenario_label(id: &str) -> &str {
+    match id {
+        "gate_m_web_client_probe" => "Gate M web client probe",
+        _ => id,
+    }
+}
+
+fn scenario_description(id: &str, calls: &[&BenchmarkCallRecord]) -> String {
+    let movement_paths = count_method(calls, "submit_move_intent");
+    let battle_actions = count_method(calls, "submit_battle_action");
+    let battle_syncs = count_method(calls, "sync_battle");
+    let battle_reads = count_method(calls, "get_battle_state");
+    let history_reads = count_method(calls, "get_match_history");
+    let event_reads = count_method(calls, "get_events_after");
+    let town_reads = count_method(calls, "get_town_view");
+    let game_view_reads = count_method(calls, "get_game_view");
+    let battle_activity = battle_actions + battle_syncs + battle_reads;
+
+    let mut facts = vec![
+        "2 players".to_string(),
+        format!(
+            "map {}x{}",
+            FIRST_PLAYABLE_MAP_WIDTH, FIRST_PLAYABLE_MAP_HEIGHT
+        ),
+    ];
+    if battle_activity > 0 {
+        facts.push(format!(
+            "battle grid {}x{}",
+            BATTLE_GRID_WIDTH, BATTLE_GRID_HEIGHT
+        ));
+    }
+    facts.push(count_label(movement_paths, "movement path"));
+    facts.push(count_label(battle_actions, "battle action"));
+    if battle_syncs > 0 {
+        facts.push(count_label(battle_syncs, "battle sync"));
+    }
+    if battle_reads > 0 {
+        facts.push(count_label(battle_reads, "battle read"));
+    }
+    if game_view_reads > 0 {
+        facts.push(count_label(game_view_reads, "game view read"));
+    }
+    if town_reads > 0 {
+        facts.push(count_label(town_reads, "town read"));
+    }
+    if history_reads > 0 {
+        facts.push(count_label(history_reads, "history read"));
+    }
+    if event_reads > 0 {
+        facts.push(count_label(event_reads, "event read"));
+    }
+
+    let focus = match id {
+        "gate_m_web_client_probe" => {
+            "canister-backed browser client route through match finish and result screen"
+        }
+        _ => "benchmark route",
+    };
+
+    format!("{}; {}", facts.join("; "), focus)
+}
+
+fn count_label(count: u64, label: &str) -> String {
+    if count == 1 {
+        format!("1 {label}")
+    } else {
+        format!("{count} {label}s")
+    }
+}
+
+fn format_pct(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:+.1}%"))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_billions_u128(value: u128) -> String {
+    format_scaled(value as f64 / 1_000_000_000.0)
+}
+
+fn format_billions_option(value: Option<f64>) -> String {
+    value
+        .map(|value| format_scaled(value / 1_000_000_000.0))
+        .unwrap_or_else(|| "n/a".to_string())
+}
+
+fn format_billions_f64(value: f64) -> String {
+    format_scaled(value / 1_000_000_000.0)
+}
+
+fn format_trillions_u128(value: u128) -> String {
+    format_scaled(value as f64 / 1_000_000_000_000.0)
+}
+
+fn format_trillions_f64(value: f64) -> String {
+    format_scaled(value / 1_000_000_000_000.0)
+}
+
+fn format_mb_from_bytes_i128(value: i128) -> String {
+    format_scaled(value as f64 / 1_048_576.0)
+}
+
+fn format_mb_from_bytes_f64(value: f64) -> String {
+    format_scaled(value / 1_048_576.0)
+}
+
+fn format_scaled(value: f64) -> String {
+    let mut text = format!("{value:.4}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" { "0".to_string() } else { text }
+}
+
+fn git_sha() -> String {
+    let Ok(output) = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+    else {
+        return "unknown".to_string();
+    };
+    if !output.status.success() {
+        return "unknown".to_string();
+    }
+    String::from_utf8(output.stdout)
+        .unwrap_or_else(|_| "unknown".to_string())
+        .trim()
+        .to_string()
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 fn fixture_opening_game_view(fixture: &domm_game::ScenarioFixture) -> GameView {

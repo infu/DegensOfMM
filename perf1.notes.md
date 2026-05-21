@@ -7423,3 +7423,48 @@ Decision:
 - Keep this checkpoint. It removes the last measured durable live-state write from `submit_dwelling_recruit`.
 - Park `submit_dwelling_recruit` for the next rotation; it is now near the same `~1.4B` floor as hire, rules, objective, and spell learning.
 - Next target should be a different cluster: `hire_tavern_champion`, `get_scenario_rules` / `get_objective_progress`, or the remaining spellbook page in `learn_champion_spell`.
+
+## Tavern Runtime Hire Cut
+
+Time: `2026-05-21T05:35:42Z`.
+
+Rejected probe:
+
+- Tried a service-local spellbook cache for `learn_champion_spell` after `preview_champion_progression`.
+- Endpoint-surface `target/benchmarks/20260521-spellbook-runtime-cache-local/endpoint-surface` passed, but scenario instructions only moved `21.7385B -> 21.7265B`.
+- `champions.spells_by_champion` stayed at `2` calls because query-call heap writes do not seed later update-call state. The probe was reverted to preserve benchmark Wasm headroom.
+
+Cut:
+
+- Rotated to `hire_tavern_champion`.
+- Active runtime hires now generate the hired `Champion` row shape in heap and mirror it into `SessionTurnRuntime` instead of creating a durable `Champion` row immediately.
+- Runtime champion mirroring already creates the active champion occupancy projection, so active hire skips the durable `map.create_occupancy_cell` write.
+- Runtime command receipts already answer active replay/status, so active hire skips the durable `ChampionHire` row.
+- Tavern offer and participant changes continue through the existing runtime mirrors.
+- Production upgrade flush now inserts a runtime-only champion if its durable row does not exist yet; existing champion snapshots still update normally.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-tavern-runtime-hire-local/endpoint-surface`, passed in `276s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-army-runtime-stack-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth moved `108 -> 106`.
+- Stable pages moved `2049 -> 59905` instead of `2049 -> 61441`.
+- Scenario instructions: `21.7385B -> 20.2993B`, `-1.4392B`, `-6.6%`.
+- `hire_tavern_champion`: `1.4445B -> 0.0018B`, `-99.9%`.
+- `hire_tavern_champion` memory delta: `96 MB -> 0 MB`.
+- Removed repo ops from the benchmark active surface: `champions.insert_champion` (`1` call / `0.4827B`), `economy_expansion.create_champion_hire` (`1` call / `0.4813B`), and `map.create_occupancy_cell` (`1` call / `0.4787B`).
+- `get_my_champions` and `get_champion_view` stayed low, proving the runtime champion is visible through existing projections in this route.
+
+Decision:
+
+- Keep this checkpoint. It moves tavern hire well under the `0.3B-0.6B` target band and removes three durable live-state writes from the route.
+- Park `hire_tavern_champion` for the next rotation.
+- Next useful targets from the latest artifact are `get_scenario_rules` / `get_objective_progress`, `learn_champion_spell`, or a remaining setup/session floor.

@@ -1485,7 +1485,11 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             flushed = flushed.saturating_add(1);
         }
         for champion in &runtime.champion_snapshots {
-            champions_artifacts::update_champion(champion.clone())?;
+            if champions_artifacts::load_champion(champion.id())?.is_some() {
+                champions_artifacts::update_champion(champion.clone())?;
+            } else {
+                champions_artifacts::insert_champion_row(champion.clone())?;
+            }
             flushed = flushed.saturating_add(1);
         }
     }

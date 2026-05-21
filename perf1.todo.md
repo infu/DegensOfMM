@@ -1027,9 +1027,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 60. Random Endpoint Cluster: Tavern, Rules, Or Spellbook Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-army-runtime-stack-local`; prefer `hire_tavern_champion`, `get_scenario_rules` / `get_objective_progress`, or `learn_champion_spell`.
-- [ ] Keep `submit_dwelling_recruit` parked unless it blocks scenario flow; remaining `1.4107B` is now mostly command/event/content floor, not durable dwelling pool or army-stack writes.
-- [ ] Preserve the newly freed benchmark Wasm headroom. Current benchmark Wasm has about `30 KB` free; do not spend it all on a tiny endpoint cut.
+- [x] Pick a different bounded endpoint/cluster from `20260521-army-runtime-stack-local`; prefer `hire_tavern_champion`, `get_scenario_rules` / `get_objective_progress`, or `learn_champion_spell`. Picked `hire_tavern_champion`.
+- [x] Keep `submit_dwelling_recruit` parked unless it blocks scenario flow; remaining `1.4107B` is now mostly command/event/content floor, not durable dwelling pool or army-stack writes.
+- [x] Preserve the newly freed benchmark Wasm headroom. Rejected and reverted a spellbook cache attempt that spent headroom for only `0.012B` scenario gain; kept the measured tavern cut, and the full benchmark-feature endpoint run installed and passed.
+- [x] Move active tavern hire live state into the runtime route. Runtime hires now create the hired `Champion` in `SessionTurnRuntime`, rely on the runtime champion/occupancy projection, keep the tavern offer/participant runtime mirrors current, and leave durable `ChampionHire`, `Champion`, and champion occupancy rows for non-runtime or upgrade/recovery boundaries.
+- [x] Measure the tavern runtime-hire cut. Artifact `target/benchmarks/20260521-tavern-runtime-hire-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `21.7385B -> 20.2993B` (`-1.4392B`, `-6.6%`) versus `20260521-army-runtime-stack-local`. `hire_tavern_champion` moved `1.4445B -> 0.0018B`; `champions.insert_champion`, `economy_expansion.create_champion_hire`, and `map.create_occupancy_cell` dropped out of the benchmark repo-op table.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 61. Random Endpoint Cluster: Rules, Spellbook, Or Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-tavern-runtime-hire-local`; prefer `get_scenario_rules` / `get_objective_progress`, `learn_champion_spell`, or one remaining setup/session floor.
+- [ ] Keep `hire_tavern_champion` parked unless a regression blocks scenario flow; the active route is now in the target band at `0.0018B`.
+- [ ] Do not re-add the query-seeded spellbook cache shape; query calls cannot reliably seed update-call heap state, and the measured endpoint-surface gain was only `0.012B`.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

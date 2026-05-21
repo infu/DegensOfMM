@@ -189,6 +189,10 @@ pub(crate) fn insert_champion_with_id(
         created_at: now,
         updated_at: now,
     };
+    insert_champion_row(champion)
+}
+
+pub(crate) fn insert_champion_row(champion: Champion) -> RepoResult<Champion> {
     foundation::insert("champions.insert_champion", champion)
 }
 

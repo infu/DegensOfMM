@@ -7819,3 +7819,40 @@ Decision:
 - Keep this checkpoint. It removes one repeated content lookup and moves adventure casting into the near-zero band without changing durable spell rows.
 - Park `cast_adventure_spell` for the next rotation.
 - Current benchmark Wasm headroom is very tight at about `265` bytes, so the next cache-like cut should first free code size or be even narrower than this one.
+
+## Timer And System Job Benchmark Measurement
+
+Time: `2026-05-21T15:18:00Z`.
+
+Cut:
+
+- Added benchmark call metadata for `kind`, ok/error, and stable-memory pages.
+- Wrapped claimed system-job dispatch in benchmark builds with `benchmark_timer`, naming timer work as `system_job:<job_kind>`.
+- Changed both Pocket IC benchmark harnesses to queue unmatched diagnostic call records instead of dropping them when public update measurements are pulled.
+- Flushed queued timer records into `run.json`/`summary.json` and split `summary.md` into public endpoints versus `System Jobs / Timers`.
+
+Verification:
+
+- `cargo fmt`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test client_probe_canister --no-run`
+- Focused Gate J probe passed. Because the probe used a relative output path, its artifact landed at `testing/pocket-ic/target/benchmarks/20260521-150220-timer-probe/gate-j`; the normal suite script uses absolute paths.
+- Cleaned the leftover Pocket IC server from the direct probe.
+- Full suite `target/benchmarks/20260521-150957-timer-inclusive` passed all five gates with `DOMM_BENCH_JOBS=5`.
+
+Measurement:
+
+- Focused Gate J recorded four `system_job:turn_deadline` timer calls.
+- Average timer cost was `11.7678B` instructions.
+- Public method coverage remained separate from timer rows, so endpoint coverage is still computed only from query/update methods.
+- Full suite coverage stayed `59/59`.
+- Full suite timer rows:
+  - Gate J: `system_job:turn_deadline`, 4 calls, `11.7678B` avg.
+  - Gate K: `system_job:battle_round_advance`, 4 calls, `3.6651B` avg; `system_job:turn_deadline`, 2 calls, `3.4360B` avg.
+  - Gate L: `system_job:battle_round_advance`, 6 calls, `3.6665B` avg; `system_job:turn_deadline`, 2 calls, `4.9764B` avg.
+  - Gate M: `system_job:battle_round_advance`, 4 calls, `3.7006B` avg; `system_job:turn_deadline`, 13 calls, `12.1741B` avg.
+
+Decision:
+
+- Keep this checkpoint. It answers whether timer-triggered work is measured: yes, it is now visible in the same benchmark artifacts.
+- Use the new timer rows to judge `sync_session_turn` / `sync_battle` design work. If timer jobs duplicate the same row-backed sync cost, the next architectural cut should be a shared runtime driver rather than separate public/timer implementations.

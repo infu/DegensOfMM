@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -198,7 +198,8 @@ impl CanisterWebClientBackend {
         initial_storage: &DiagnosticStorageSnapshot,
         final_storage: &DiagnosticStorageSnapshot,
     ) {
-        self.metrics.borrow().write_benchmark_artifacts(
+        self.metrics.borrow_mut().write_benchmark_artifacts(
+            &self.fixture,
             benchmark_name,
             initial_storage,
             final_storage,
@@ -1671,7 +1672,13 @@ struct BenchmarkQueryLog {
 
 #[derive(Clone, Debug)]
 struct BenchmarkCanisterCallMeasurement {
+    method: String,
+    kind: String,
+    ok: bool,
+    error_code: Option<String>,
     instruction_delta: u64,
+    stable_memory_pages_before: u64,
+    stable_memory_pages_after: u64,
     repo_ops: Vec<BenchmarkRepoOpRecord>,
 }
 
@@ -1681,6 +1688,7 @@ struct BenchmarkRecorder {
     calls: Vec<BenchmarkCallRecord>,
     next_sequence: u64,
     canister_call_cursor: u64,
+    pending_canister_calls: VecDeque<BenchmarkCanisterCallMeasurement>,
     canister_log_cursor: u64,
     query_log_path: Option<PathBuf>,
     query_log_entry_cursor: usize,
@@ -1695,6 +1703,7 @@ impl BenchmarkRecorder {
             calls: Vec::new(),
             next_sequence: 1,
             canister_call_cursor: 0,
+            pending_canister_calls: VecDeque::new(),
             canister_log_cursor: 0,
             query_log_path,
             query_log_entry_cursor: 0,
@@ -1728,8 +1737,57 @@ impl BenchmarkRecorder {
             .expect("benchmark reset should decode");
         response.expect("benchmark reset should succeed");
         self.canister_call_cursor = 0;
+        self.pending_canister_calls.clear();
         self.canister_log_cursor = 0;
         self.query_log_entry_cursor = 0;
+    }
+
+    fn fetch_canister_measurements(&mut self, fixture: &StandaloneCanisterFixture) {
+        loop {
+            let page: Result<DiagnosticBenchmarkCallPage, ApiError> =
+                match fixture.pic().query_call_as(
+                    fixture.canister_id(),
+                    Principal::anonymous(),
+                    "get_diagnostic_benchmark_metrics",
+                    (Some(self.canister_call_cursor), 1024_u32),
+                ) {
+                    Ok(page) => page,
+                    Err(_) => return,
+                };
+            let Ok(page) = page else {
+                return;
+            };
+            let Some(last) = page.calls.last() else {
+                return;
+            };
+            self.canister_call_cursor = last.sequence;
+
+            for call in page.calls {
+                self.pending_canister_calls
+                    .push_back(BenchmarkCanisterCallMeasurement {
+                        method: call.method,
+                        kind: call.kind,
+                        ok: call.ok,
+                        error_code: call.error_code,
+                        instruction_delta: call.instruction_delta,
+                        stable_memory_pages_before: call.stable_memory_pages_before,
+                        stable_memory_pages_after: call.stable_memory_pages_after,
+                        repo_ops: call
+                            .repo_ops
+                            .into_iter()
+                            .map(|op| BenchmarkRepoOpRecord {
+                                operation: op.operation,
+                                calls: op.calls,
+                                instruction_delta: op.instruction_delta,
+                            })
+                            .collect(),
+                    });
+            }
+
+            if page.next_cursor.is_none() {
+                return;
+            }
+        }
     }
 
     fn pull_update_measurement(
@@ -1737,36 +1795,62 @@ impl BenchmarkRecorder {
         fixture: &StandaloneCanisterFixture,
         method: &str,
     ) -> Option<BenchmarkCanisterCallMeasurement> {
-        let page: Result<DiagnosticBenchmarkCallPage, ApiError> = fixture
-            .pic()
-            .query_call_as(
-                fixture.canister_id(),
-                Principal::anonymous(),
-                "get_diagnostic_benchmark_metrics",
-                (Some(self.canister_call_cursor), 1024_u32),
-            )
-            .ok()?;
-        let page = page.ok()?;
-        if let Some(last) = page.calls.last() {
-            self.canister_call_cursor = last.sequence;
-        }
-
-        page.calls
+        self.fetch_canister_measurements(fixture);
+        let position = self
+            .pending_canister_calls
             .iter()
-            .rev()
-            .find(|call| call.method == method)
-            .map(|call| BenchmarkCanisterCallMeasurement {
-                instruction_delta: call.instruction_delta,
-                repo_ops: call
-                    .repo_ops
-                    .iter()
-                    .map(|op| BenchmarkRepoOpRecord {
-                        operation: op.operation.clone(),
-                        calls: op.calls,
-                        instruction_delta: op.instruction_delta,
-                    })
-                    .collect(),
-            })
+            .rposition(|call| call.method == method && call.kind == "update")?;
+        self.pending_canister_calls.remove(position)
+    }
+
+    fn record_timer_measurements(
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
+        scenario_id: &str,
+    ) {
+        self.fetch_canister_measurements(fixture);
+        let mut index = 0;
+        while index < self.pending_canister_calls.len() {
+            if self.pending_canister_calls[index].kind != "timer" {
+                index += 1;
+                continue;
+            }
+            let measurement = self
+                .pending_canister_calls
+                .remove(index)
+                .expect("pending timer measurement should exist");
+            self.record_timer_measurement(scenario_id, measurement);
+        }
+    }
+
+    fn record_timer_measurement(
+        &mut self,
+        scenario_id: &str,
+        measurement: BenchmarkCanisterCallMeasurement,
+    ) {
+        let stable_before_bytes =
+            u128::from(measurement.stable_memory_pages_before).saturating_mul(65_536);
+        let stable_after_bytes =
+            u128::from(measurement.stable_memory_pages_after).saturating_mul(65_536);
+        self.calls.push(BenchmarkCallRecord {
+            sequence: self.next_sequence,
+            scenario_id: scenario_id.to_string(),
+            method: measurement.method,
+            kind: "timer".to_string(),
+            ok: measurement.ok,
+            error_code: measurement.error_code,
+            response_bytes: 0,
+            wall_time_micros: 0,
+            instruction_delta: Some(measurement.instruction_delta),
+            cycle_cost: 0,
+            memory_delta_bytes: unsigned_delta(stable_after_bytes, stable_before_bytes),
+            wasm_memory_delta_bytes: 0,
+            stable_memory_delta_bytes: unsigned_delta(stable_after_bytes, stable_before_bytes),
+            memory_size_before_bytes: stable_before_bytes,
+            memory_size_after_bytes: stable_after_bytes,
+            repo_ops: measurement.repo_ops,
+        });
+        self.next_sequence = self.next_sequence.saturating_add(1);
     }
 
     fn pull_query_instruction(
@@ -1974,6 +2058,7 @@ struct CanisterProbeMetrics {
     max_response_method: String,
     benchmark: Option<BenchmarkRecorder>,
     benchmark_scenario_id: String,
+    last_benchmark_scenario_id: String,
 }
 
 impl Default for CanisterProbeMetrics {
@@ -1989,6 +2074,7 @@ impl Default for CanisterProbeMetrics {
             max_response_method: String::new(),
             benchmark: BenchmarkRecorder::from_env(),
             benchmark_scenario_id: "diagnostics".to_string(),
+            last_benchmark_scenario_id: "diagnostics".to_string(),
         }
     }
 }
@@ -1996,6 +2082,9 @@ impl Default for CanisterProbeMetrics {
 impl CanisterProbeMetrics {
     fn set_benchmark_scenario(&mut self, scenario_id: &str) {
         self.benchmark_scenario_id = scenario_id.to_string();
+        if scenario_id != "diagnostics" {
+            self.last_benchmark_scenario_id = scenario_id.to_string();
+        }
     }
 
     fn reset_benchmark_canister(&mut self, fixture: &StandaloneCanisterFixture) {
@@ -2065,12 +2154,19 @@ impl CanisterProbeMetrics {
     }
 
     fn write_benchmark_artifacts(
-        &self,
+        &mut self,
+        fixture: &StandaloneCanisterFixture,
         benchmark_name: &str,
         initial_storage: &DiagnosticStorageSnapshot,
         final_storage: &DiagnosticStorageSnapshot,
     ) {
-        if let Some(benchmark) = &self.benchmark {
+        if let Some(benchmark) = &mut self.benchmark {
+            let scenario_id = if self.benchmark_scenario_id == "diagnostics" {
+                self.last_benchmark_scenario_id.as_str()
+            } else {
+                self.benchmark_scenario_id.as_str()
+            };
+            benchmark.record_timer_measurements(fixture, scenario_id);
             benchmark.write_artifacts(benchmark_name, initial_storage, final_storage);
         }
     }
@@ -2374,24 +2470,22 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
             format_trillions_u128(scenario.cycle_cost_total)
         ));
     }
-    out.push_str("\n## Public Methods\n\n");
-    out.push_str("| Method | Kind | Calls | Avg inst B | Inst change | Avg mem MB | Mem change | Avg cycles T | Avg bytes | Errors |\n");
-    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    for method in &summary.methods {
-        out.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |\n",
-            method.method,
-            method.kind,
-            method.call_count,
-            format_billions_option(method.avg_instruction_delta),
-            format_pct(method.instruction_change_pct),
-            format_mb_from_bytes_f64(method.avg_memory_delta_bytes),
-            format_pct(method.memory_change_pct),
-            format_trillions_f64(method.avg_cycle_cost),
-            method.avg_response_bytes,
-            method.error_count
-        ));
-    }
+    render_method_summary_table(
+        &mut out,
+        "Public Methods",
+        summary
+            .methods
+            .iter()
+            .filter(|method| method.kind != "timer"),
+    );
+    render_method_summary_table(
+        &mut out,
+        "System Jobs / Timers",
+        summary
+            .methods
+            .iter()
+            .filter(|method| method.kind == "timer"),
+    );
     if !summary.phases.is_empty() {
         out.push_str("\n## Endpoint Phases\n\n");
         out.push_str("| Method | Phase | Calls | Avg inst B | Total inst B | Avg stable pages |\n");
@@ -2428,6 +2522,35 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
         out.push('\n');
     }
     out
+}
+
+fn render_method_summary_table<'a>(
+    out: &mut String,
+    title: &str,
+    methods: impl Iterator<Item = &'a BenchmarkMethodSummary>,
+) {
+    let methods = methods.collect::<Vec<_>>();
+    if methods.is_empty() {
+        return;
+    }
+    out.push_str(&format!("\n## {title}\n\n"));
+    out.push_str("| Method | Kind | Calls | Avg inst B | Inst change | Avg mem MB | Mem change | Avg cycles T | Avg bytes | Errors |\n");
+    out.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for method in methods {
+        out.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {:.1} | {} |\n",
+            method.method,
+            method.kind,
+            method.call_count,
+            format_billions_option(method.avg_instruction_delta),
+            format_pct(method.instruction_change_pct),
+            format_mb_from_bytes_f64(method.avg_memory_delta_bytes),
+            format_pct(method.memory_change_pct),
+            format_trillions_f64(method.avg_cycle_cost),
+            method.avg_response_bytes,
+            method.error_count
+        ));
+    }
 }
 
 fn scenario_summary_label(scenario: &BenchmarkScenarioSummary) -> String {

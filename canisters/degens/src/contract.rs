@@ -47,7 +47,12 @@ pub struct DiagnosticBenchmarkRepoOpView {
 pub struct DiagnosticBenchmarkCallView {
     pub sequence: u64,
     pub method: String,
+    pub kind: String,
+    pub ok: bool,
+    pub error_code: Option<String>,
     pub instruction_delta: u64,
+    pub stable_memory_pages_before: u64,
+    pub stable_memory_pages_after: u64,
     pub repo_ops: Vec<DiagnosticBenchmarkRepoOpView>,
 }
 

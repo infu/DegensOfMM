@@ -31,15 +31,52 @@ pub(crate) fn benchmark_update<T>(
     body: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
     reset_current_call_details();
+    let stable_memory_pages_before = canic_cdk::api::stable_size();
     let instruction_before = canic_cdk::api::instruction_counter();
     let result = body();
     let instruction_after = canic_cdk::api::instruction_counter();
+    let stable_memory_pages_after = canic_cdk::api::stable_size();
     let repo_ops = take_current_repo_ops();
+    let error_code = result.as_ref().err().map(|error| error.code.clone());
 
     record_benchmark_call(DiagnosticBenchmarkCallView {
         sequence: next_sequence(),
         method: method.to_string(),
+        kind: "update".to_string(),
+        ok: result.is_ok(),
+        error_code,
         instruction_delta: instruction_after.saturating_sub(instruction_before),
+        stable_memory_pages_before,
+        stable_memory_pages_after,
+        repo_ops,
+    });
+
+    result
+}
+
+#[cfg(feature = "benchmark")]
+pub(crate) fn benchmark_timer<T>(
+    method: String,
+    body: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    reset_current_call_details();
+    let stable_memory_pages_before = canic_cdk::api::stable_size();
+    let instruction_before = canic_cdk::api::instruction_counter();
+    let result = body();
+    let instruction_after = canic_cdk::api::instruction_counter();
+    let stable_memory_pages_after = canic_cdk::api::stable_size();
+    let repo_ops = take_current_repo_ops();
+    let error_code = result.as_ref().err().map(|error| error.code.clone());
+
+    record_benchmark_call(DiagnosticBenchmarkCallView {
+        sequence: next_sequence(),
+        method,
+        kind: "timer".to_string(),
+        ok: result.is_ok(),
+        error_code,
+        instruction_delta: instruction_after.saturating_sub(instruction_before),
+        stable_memory_pages_before,
+        stable_memory_pages_after,
         repo_ops,
     });
 
@@ -111,6 +148,15 @@ pub(crate) fn benchmark_update<T>(
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn benchmark_query<T>(
     _method: &'static str,
+    body: impl FnOnce() -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    body()
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[allow(dead_code)]
+pub(crate) fn benchmark_timer<T>(
+    _method: String,
     body: impl FnOnce() -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
     body()

@@ -361,6 +361,17 @@ fn next_claimable_or_scheduled_job() -> Result<Option<SystemJob>, ApiError> {
 }
 
 fn dispatch_claimed_job(job: SystemJob) -> Result<(), ApiError> {
+    #[cfg(feature = "benchmark")]
+    {
+        let method = format!("system_job:{}", job.job_kind);
+        return crate::metrics::benchmark_timer(method, || dispatch_claimed_job_inner(job));
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    dispatch_claimed_job_inner(job)
+}
+
+fn dispatch_claimed_job_inner(job: SystemJob) -> Result<(), ApiError> {
     match job.job_kind.as_str() {
         #[cfg(not(feature = "benchmark"))]
         "setup_session" => {

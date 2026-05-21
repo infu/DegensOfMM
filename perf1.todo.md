@@ -1116,6 +1116,16 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [ ] Do not spend code-section headroom on broad caches unless the Wasm size is checked first; current benchmark Wasm headroom is only about `265` bytes.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
+### 71. Timer And System Job Benchmark Measurement
+
+- [x] Extend diagnostic benchmark call records with call kind, ok/error, and stable-memory pages so non-public work can be reported with the same units as endpoints.
+- [x] Wrap claimed system-job dispatch in benchmark builds so timer-triggered work records as `system_job:<kind>` instead of being hidden behind public sync endpoints.
+- [x] Preserve unmatched canister benchmark records in the Pocket IC harnesses; timer records are now queued instead of being lost when the next public update measurement advances the cursor.
+- [x] Flush queued timer measurements into benchmark artifacts and split markdown summaries into `Public Methods` and `System Jobs / Timers`.
+- [x] Verify the path with a focused Gate J probe. It recorded four `system_job:turn_deadline` timer samples averaging `11.7678B` instructions, proving timer work is now visible.
+- [x] Run the full benchmark suite and record the first all-gate timer-inclusive run ID. Suite `target/benchmarks/20260521-150957-timer-inclusive` passed all five gates with `59/59` endpoint coverage; timer rows now appear in Gate J/K/L/M summaries.
+- [ ] Use the timer-inclusive summaries to decide whether `sync_session_turn`, `sync_battle`, and their timer jobs should share a smaller runtime driver instead of duplicating row-backed sync work.
+
 ## Expected Outcome
 
 The first successful battle aggregate checkpoint already reduced `submit_battle_action` by removing repeated stable row/index work. The broader expected outcome is to apply the same command-side aggregate model across the route that tests and players actually traverse.

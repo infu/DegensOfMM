@@ -16,7 +16,7 @@ use icydb::{
     types::{Id, Timestamp},
 };
 
-use crate::repos::sessions;
+use crate::repos::{sessions, turn_ready};
 
 use super::{
     economy_expansion,
@@ -26,6 +26,12 @@ use super::{
 pub(crate) enum TurnAdvanceRuntimeMode {
     HydrateRows,
     CarryPrevious { previous_turn: u32 },
+}
+
+pub(crate) struct TurnReadyMark {
+    pub created: bool,
+    pub subject_id: String,
+    pub readiness: session_turn_runtime::RuntimeReadinessCounts,
 }
 
 pub(crate) fn contains_active_turn_id(session_id: &str, turn_number: u32) -> bool {
@@ -99,6 +105,94 @@ pub(crate) fn advance_turn(
         insert_active_turn(runtime);
     }
     Ok(())
+}
+
+pub(crate) fn mark_participant_ready(
+    session: &GameSession,
+    participant: &GameParticipant,
+    command_id: Id<GameCommand>,
+    prefer_runtime: bool,
+) -> Result<TurnReadyMark, ApiError> {
+    let session_id = session.id().to_string();
+    let participant_id = participant.id().to_string();
+    if prefer_runtime
+        && let Some(mark) =
+            session_turn_runtime::with_runtime_mut(&session_id, session.current_turn, |runtime| {
+                let created = runtime.mark_ready(participant_id.clone());
+                runtime.readiness_counts().map(|readiness| TurnReadyMark {
+                    created,
+                    subject_id: participant_id.clone(),
+                    readiness,
+                })
+            })
+            .flatten()
+    {
+        return Ok(mark);
+    }
+
+    let ready_mark = turn_ready::mark_turn_ready(
+        session.id(),
+        participant.id(),
+        session.current_turn,
+        Some(command_id),
+        Timestamp::now(),
+    )?;
+    Ok(TurnReadyMark {
+        created: ready_mark.created,
+        subject_id: ready_mark.ready.id().to_string(),
+        readiness: durable_turn_readiness_counts(session)?,
+    })
+}
+
+pub(crate) fn all_participants_ready(session: &GameSession) -> Result<bool, ApiError> {
+    let session_id = session.id().to_string();
+    if let Some(readiness) =
+        session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+            runtime.readiness_counts()
+        })
+        .flatten()
+    {
+        return Ok(readiness.all_ready);
+    }
+
+    Ok(durable_turn_readiness_counts(session)?.all_ready)
+}
+
+pub(crate) fn has_no_ready_participants(session: &GameSession) -> bool {
+    let session_id = session.id().to_string();
+    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
+        runtime.ready_participants.is_empty()
+    })
+    .unwrap_or(false)
+}
+
+fn durable_turn_readiness_counts(
+    session: &GameSession,
+) -> Result<session_turn_runtime::RuntimeReadinessCounts, ApiError> {
+    let participants = sessions::page_participants_by_session_status(
+        session.id(),
+        "active",
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    if participants.items.is_empty() {
+        return Ok(session_turn_runtime::RuntimeReadinessCounts {
+            ready_count: 0,
+            participant_count: 0,
+            all_ready: false,
+        });
+    }
+    let ready_rows = turn_ready::page_turn_ready_by_session_turn(
+        session.id(),
+        session.current_turn,
+        domm_game::MAX_LIST_LIMIT,
+        None,
+    )?;
+    Ok(session_turn_runtime::RuntimeReadinessCounts {
+        ready_count: ready_rows.items.len(),
+        participant_count: participants.items.len(),
+        all_ready: ready_rows.items.len() >= participants.items.len(),
+    })
 }
 
 fn turn_deadline() -> Timestamp {

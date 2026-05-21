@@ -7983,3 +7983,26 @@ Verification:
 Decision:
 
 - Keep this as the first shared worldmap driver extraction. It is intentionally behavior-neutral: timer resolution still uses durable movement persistence, and moving timers onto runtime-only state remains the next Section 72A cut.
+
+## Worldmap Readiness Authority Facade
+
+Time: `2026-05-21T18:05:00Z`.
+
+Cut:
+
+- Added kernel readiness helpers in `worldmap_kernel`: `mark_participant_ready`, `all_participants_ready`, and `has_no_ready_participants`.
+- `end_turn` now marks runtime readiness through the kernel facade first and falls back to durable `ParticipantTurnReady` rows when runtime readiness is incomplete or absent.
+- Pre-deadline `sync_session_turn` readiness checks now use the kernel facade, so runtime `ready_participants` can be authoritative before falling back to durable ready rows.
+- `sync_session_turn`, `end_turn`, `turn_deadline`, and `turn_resolution` now share the worldmap facade for the active-turn readiness/advance boundary. Timer turn processing still uses durable movement persistence; that remains the next cut.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffc15` / `12,581,909` bytes, `1,003` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. It completes the shared readiness/turn-advance facade without moving timer resolution off `MovementPersistenceMode::DurableBridge` yet.

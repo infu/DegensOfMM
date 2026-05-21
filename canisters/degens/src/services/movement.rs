@@ -20,7 +20,7 @@ use icydb::{
 
 use crate::repos::{
     battles, champions_artifacts, commands_events_effects, content, economy,
-    map_visibility_occupancy, movement, sessions, system_jobs as system_job_repo, turn_ready,
+    map_visibility_occupancy, movement, sessions, system_jobs as system_job_repo,
 };
 
 use super::{
@@ -425,31 +425,16 @@ pub(crate) fn end_turn(
         command_response::RuntimeGameCommandAction::Return(response) => return Ok(response),
     };
 
-    let runtime_session_id = context.session.id().to_string();
     let participant_id_text = context.participant.id().to_string();
-    let runtime_readiness = if runtime_receipt {
-        session_turn_runtime::with_runtime_mut(
-            &runtime_session_id,
-            context.session.current_turn,
-            |runtime| {
-                let created = runtime.mark_ready(participant_id_text.clone());
-                runtime
-                    .readiness_counts()
-                    .map(|readiness| (created, participant_id_text.clone(), readiness))
-            },
-        )
-        .flatten()
-    } else {
-        None
-    };
-    let (ready_created, ready_subject_id, readiness) = if runtime_receipt {
-        match runtime_readiness {
-            Some((created, subject_id, readiness)) => (created, subject_id, readiness),
-            None => durable_ready_mark(&context, command.id())?,
-        }
-    } else {
-        durable_ready_mark(&context, command.id())?
-    };
+    let ready_mark = worldmap_kernel::mark_participant_ready(
+        &context.session,
+        &context.participant,
+        command.id(),
+        runtime_receipt,
+    )?;
+    let ready_created = ready_mark.created;
+    let ready_subject_id = ready_mark.subject_id;
+    let readiness = ready_mark.readiness;
     let all_ready = readiness.all_ready;
     let mut changed_subjects = vec![command_response::changed(
         "participant_turn_ready",
@@ -531,51 +516,6 @@ pub(crate) fn end_turn(
             event_count: 1,
         }),
     )
-}
-
-fn durable_ready_mark(
-    context: &session_context::SessionCallerContext,
-    command_id: Id<GameCommand>,
-) -> Result<(bool, String, session_turn_runtime::RuntimeReadinessCounts), ApiError> {
-    let ready_mark = turn_ready::mark_turn_ready(
-        context.session.id(),
-        context.participant.id(),
-        context.session.current_turn,
-        Some(command_id),
-        Timestamp::now(),
-    )?;
-    let ready = ready_mark.ready;
-    let readiness = durable_turn_readiness_counts(&context.session)?;
-    Ok((ready_mark.created, ready.id().to_string(), readiness))
-}
-
-fn durable_turn_readiness_counts(
-    session: &GameSession,
-) -> Result<session_turn_runtime::RuntimeReadinessCounts, ApiError> {
-    let participants = sessions::page_participants_by_session_status(
-        session.id(),
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    if participants.items.is_empty() {
-        return Ok(session_turn_runtime::RuntimeReadinessCounts {
-            ready_count: 0,
-            participant_count: 0,
-            all_ready: false,
-        });
-    }
-    let ready_rows = turn_ready::page_turn_ready_by_session_turn(
-        session.id(),
-        session.current_turn,
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    Ok(session_turn_runtime::RuntimeReadinessCounts {
-        ready_count: ready_rows.items.len(),
-        participant_count: participants.items.len(),
-        all_ready: ready_rows.items.len() >= participants.items.len(),
-    })
 }
 
 pub(crate) fn sync_session_turn(
@@ -685,7 +625,7 @@ pub(crate) fn sync_session_turn(
     }
 
     if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-        && runtime_has_no_ready_participants(&context.session)
+        && worldmap_kernel::has_no_ready_participants(&context.session)
     {
         return Ok(sync_turn_not_due_response(
             caller,
@@ -695,7 +635,7 @@ pub(crate) fn sync_session_turn(
         ));
     }
     if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-        && !all_participants_ready_for_turn(&context.session)?
+        && !worldmap_kernel::all_participants_ready(&context.session)?
     {
         return Ok(sync_turn_not_due_response(
             caller,
@@ -1670,33 +1610,6 @@ fn resolve_pending_movement(
         }
     }
     Ok(true)
-}
-
-fn all_participants_ready_for_turn(session: &GameSession) -> Result<bool, ApiError> {
-    let participants = sessions::page_participants_by_session_status(
-        session.id(),
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    if participants.items.is_empty() {
-        return Ok(false);
-    }
-    let ready_rows = turn_ready::page_turn_ready_by_session_turn(
-        session.id(),
-        session.current_turn,
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?;
-    Ok(ready_rows.items.len() >= participants.items.len())
-}
-
-fn runtime_has_no_ready_participants(session: &GameSession) -> bool {
-    let session_id = session.id().to_string();
-    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
-        runtime.ready_participants.is_empty()
-    })
-    .unwrap_or(false)
 }
 
 fn resolve_single_long_movement_fast(

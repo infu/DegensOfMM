@@ -909,8 +909,13 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 - [x] Rotate again instead of polishing the tavern/participant cut. Current heavy update endpoints are `submit_dwelling_recruit` (`4.2527B`), `hire_tavern_champion` (`3.3224B`), `claim_quest_reward` (`3.0748B`), `learn_champion_spell` (`3.0631B`), `sync_world_generation` (`2.9312B`), and `sync_advanced_victory` (`2.8180B`).
 - [x] Pick one different bounded endpoint/row family and cut the largest remaining stable read/write floor without changing route shape. Picked champion magic: active `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` now mirror champion snapshots into `SessionTurnRuntime` instead of writing `champions.update_champion` immediately. Verified with `cargo fmt --check`, `git diff --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
-- [ ] Measure the champion-magic projection cut in the next batched endpoint-surface run and confirm `champions.update_champion` drops from the active magic traces.
-- [ ] Rotate again after measurement or one more small independent cut; do not keep polishing champion magic unless the benchmark shows it is still the largest shared floor.
+- [x] Measure the champion-magic projection cut in the next batched endpoint-surface run and confirm `champions.update_champion` drops from the active magic traces. Artifact `target/benchmarks/20260520-champion-projection-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62977`, and moved scenario instructions `40.7480B -> 39.3078B` (`-1.4402B`, `-3.5%`) versus `20260520-economy-domain-projection-local`. `champions.update_champion` moved `3 -> 0`; `select_champion_level_up` moved `0.4820B -> 0.0002B`, `learn_champion_spell` moved `3.0631B -> 2.5849B`, and `cast_adventure_spell` moved `1.8910B -> 1.4110B`.
+- [x] Rotate again after measurement or one more small independent cut; do not keep polishing champion magic unless the benchmark shows it is still the largest shared floor. Current next candidates are `submit_dwelling_recruit` (`4.2429B`), `hire_tavern_champion` (`3.3255B`), `claim_quest_reward` (`3.0656B`), `sync_world_generation` (`2.9308B`), and `sync_advanced_victory` (`2.8356B`).
+
+### 46. Random Endpoint Cluster: Next Heavy Floor
+
+- [ ] Pick the next different bounded endpoint cluster from the latest artifact. Prefer a real shared floor over a single-endpoint polish: dwelling recruit live rows, scenario quest/rule reads, or worldgen CPU/no-repo cost.
+- [ ] Apply the smallest safe cut that removes at least one measured stable row/read family or names why the remaining cost is not storage.
 
 ## Expected Outcome
 

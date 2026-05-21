@@ -6873,3 +6873,21 @@ Decision:
 
 - Keep this as a compile-verified checkpoint and batch its PocketIC measurement with the next small independent cut.
 - Expected endpoint-surface repo-op change: remove `champions.update_champion` from `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell`, roughly `1.44B` total in the latest artifact.
+
+Measurement:
+
+- Direct benchmark Wasm size after the champion cut: `0x00bfda0f` / `12,573,199` bytes, `9,713` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260520-champion-projection-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`; stable pages stayed `2049 -> 62977`.
+- Scenario instructions: `40.7480B -> 39.3078B`, `-1.4402B`, `-3.5%` versus `20260520-economy-domain-projection-local`.
+- `champions.update_champion`: `3 -> 0` calls and `1.4437B -> 0`.
+- `select_champion_level_up`: `0.4820B -> 0.0002B`.
+- `learn_champion_spell`: `3.0631B -> 2.5849B`.
+- `cast_adventure_spell`: `1.8910B -> 1.4110B`.
+
+Decision:
+
+- Keep this checkpoint. It removed the predicted three stable champion update rows without changing row growth, stable page growth, endpoint coverage, or route shape.
+- Rotate again. The remaining heavy list is now dominated by dwelling recruit live rows, tavern hire receipt/occupancy rows, claim quest scenario rows, and worldgen/sync victory costs.

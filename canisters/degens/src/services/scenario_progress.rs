@@ -47,7 +47,7 @@ pub(crate) fn get_scenario_rules(
     session_id: String,
 ) -> Result<ScenarioRulesView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let rules = scenario_rule_rows_for_session(context.session.id())?
+    let rules = scenario_rule_rows_for_session(&context.session)?
         .into_iter()
         .map(rule_view)
         .collect();
@@ -587,7 +587,7 @@ fn apply_accept_quest(
     quest.accepted_turn = context.session.current_turn;
     quest.accepted_command_id = Some(command.id().key());
     quest.last_command_id = Some(command.id().key());
-    let quest = scenario_progress::update_quest_state(quest)?;
+    let quest = persist_or_mirror_active_quest(context, quest)?;
     let receipt = receipt(
         command.id().to_string(),
         "accept_quest",
@@ -674,7 +674,7 @@ fn apply_claim_quest_reward(
     quest.claimed_turn = context.session.current_turn;
     quest.claimed_command_id = Some(command.id().key());
     quest.last_command_id = Some(command.id().key());
-    let quest = scenario_progress::update_quest_state(quest)?;
+    let quest = persist_or_mirror_active_quest(context, quest)?;
     sync_quest_victory_rule_after_claim(&context.session, command.id())?;
     let resources_after = balances_from_participant(&context.participant);
     let receipt = receipt(
@@ -988,9 +988,7 @@ fn sync_quest_victory_rule_after_claim(
     session: &GameSession,
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
-    let Some(mut rule) =
-        scenario_progress::find_scenario_rule_by_key(session.id(), "rule:quest-victory")?
-    else {
+    let Some(mut rule) = load_scenario_rule(session, "rule:quest-victory")? else {
         return Ok(());
     };
     if rule.status != "active" {
@@ -1008,7 +1006,7 @@ fn sync_quest_victory_rule_after_claim(
     rule.last_command_id = Some(command_id.key());
     if rule.current_value != previous_current_value || rule.victory_state != previous_victory_state
     {
-        scenario_progress::update_scenario_rule_state(rule)?;
+        persist_or_mirror_active_scenario_rule(session, rule)?;
     }
     Ok(())
 }
@@ -1031,6 +1029,13 @@ fn sync_scenario_rule_rows_for_session_with_completed_objectives(
     let mut touched = 0_u32;
     for mut rule in scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items
     {
+        if let Some(runtime_rule) = session_turn_runtime::scenario_rule_snapshot(
+            &session.id().to_string(),
+            session.current_turn,
+            &rule.rule_key,
+        ) {
+            rule = runtime_rule;
+        }
         let previous_current_value = rule.current_value;
         let previous_victory_state = rule.victory_state.clone();
         let previous_winner_participant_id = rule.winner_participant_id;
@@ -1085,7 +1090,7 @@ fn sync_scenario_rule_rows_for_session_with_completed_objectives(
             || rule.victory_state != previous_victory_state
             || rule.winner_participant_id != previous_winner_participant_id
         {
-            scenario_progress::update_scenario_rule_state(rule)?;
+            persist_or_mirror_active_scenario_rule(session, rule)?;
         }
         touched = touched.saturating_add(1);
         if touched >= domm_game::MAX_ADVANCED_VICTORY_CHECKS_PER_UPDATE {
@@ -1105,12 +1110,39 @@ fn objective_rows_for_session(
 }
 
 fn scenario_rule_rows_for_session(
-    session_id: Id<GameSession>,
+    session: &GameSession,
 ) -> Result<Vec<ScenarioRuleState>, ApiError> {
-    let mut rows = scenario_progress::page_scenario_rules_by_status(session_id, "active")?.items;
-    rows.extend(scenario_progress::page_scenario_rules_by_status(session_id, "disabled")?.items);
+    let mut rows = scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items;
+    rows.extend(scenario_progress::page_scenario_rules_by_status(session.id(), "disabled")?.items);
+    for snapshot in session_turn_runtime::scenario_rule_snapshots(
+        &session.id().to_string(),
+        session.current_turn,
+    ) {
+        if let Some(existing) = rows
+            .iter_mut()
+            .find(|existing| existing.rule_key == snapshot.rule_key)
+        {
+            *existing = snapshot;
+        } else {
+            rows.push(snapshot);
+        }
+    }
     rows.sort_by(|left, right| left.rule_key.cmp(&right.rule_key));
     Ok(rows)
+}
+
+fn load_scenario_rule(
+    session: &GameSession,
+    rule_key: &str,
+) -> Result<Option<ScenarioRuleState>, ApiError> {
+    if let Some(rule) = session_turn_runtime::scenario_rule_snapshot(
+        &session.id().to_string(),
+        session.current_turn,
+        rule_key,
+    ) {
+        return Ok(Some(rule));
+    }
+    scenario_progress::find_scenario_rule_by_key(session.id(), rule_key)
 }
 
 fn claimed_quest_count(session_id: Id<GameSession>) -> Result<u32, ApiError> {
@@ -1128,12 +1160,50 @@ fn load_quest(
     quest_key: &str,
 ) -> Result<QuestState, ApiError> {
     ensure_known_quest(quest_key)?;
+    if let Some(quest) = session_turn_runtime::quest_snapshot(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+        &context.participant.id().to_string(),
+        quest_key,
+    ) {
+        return Ok(quest);
+    }
     scenario_progress::find_quest_by_participant_key(
         context.session.id(),
         context.participant.id(),
         quest_key,
     )?
     .ok_or_else(|| public_error("quest_not_found", "quest was not found", false))
+}
+
+fn persist_or_mirror_active_quest(
+    context: &session_context::SessionCallerContext,
+    quest: QuestState,
+) -> Result<QuestState, ApiError> {
+    if session_turn_runtime::mirror_quest_snapshot(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+        quest.clone(),
+    ) {
+        Ok(quest)
+    } else {
+        scenario_progress::update_quest_state(quest)
+    }
+}
+
+fn persist_or_mirror_active_scenario_rule(
+    session: &GameSession,
+    rule: ScenarioRuleState,
+) -> Result<ScenarioRuleState, ApiError> {
+    if session_turn_runtime::mirror_scenario_rule_snapshot(
+        &session.id().to_string(),
+        session.current_turn,
+        rule.clone(),
+    ) {
+        Ok(rule)
+    } else {
+        scenario_progress::update_scenario_rule_state(rule)
+    }
 }
 
 fn ensure_known_quest(quest_key: &str) -> Result<(), ApiError> {

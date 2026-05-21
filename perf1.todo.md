@@ -993,9 +993,19 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 56. Random Endpoint Cluster: Next Quest Or Learning Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-end-turn-runtime-ready-local`; prefer `claim_quest_reward`, `learn_champion_spell`, or `accept_quest`.
-- [ ] Keep `end_turn` parked unless readiness replay/flush regression appears; the runtime-ready path is now near zero at `0.0001B`.
-- [ ] Favor cuts that remove durable quest/spell rows from the active route only if the runtime projection and production flush path preserve API/query correctness.
+- [x] Pick a different bounded endpoint cluster from `20260521-end-turn-runtime-ready-local`; prefer `claim_quest_reward`, `learn_champion_spell`, or `accept_quest`. Picked the quest accept/claim cluster.
+- [x] Keep `end_turn` parked unless readiness replay/flush regression appears; the runtime-ready path is now near zero at `0.0001B`.
+- [x] Favor cuts that remove durable quest/spell rows from the active route only if the runtime projection and production flush path preserve API/query correctness.
+- [x] Apply the quest runtime snapshot cut. Active `accept_quest` and `claim_quest_reward` now mirror changed `QuestState` rows into `SessionTurnRuntime` instead of immediately updating durable quest rows; quest reads prefer the runtime snapshot, and production upgrade flush materializes quest snapshots.
+- [x] Apply the matching quest-victory rule snapshot cut. `claim_quest_reward` now mirrors the changed `ScenarioRuleState` into runtime, `get_scenario_rules` overlays runtime rule snapshots, and production upgrade flush materializes rule snapshots.
+- [x] Measure the quest runtime snapshot cut. Artifact `target/benchmarks/20260521-quest-runtime-snapshot-v2-local/endpoint-surface` passed with `59/59` endpoints, row growth `108`, stable pages `2049 -> 61953`, and scenario instructions `26.4723B -> 24.3289B` (`-2.1434B`, `-8.1%`) versus `20260521-end-turn-runtime-ready-local`. `accept_quest` moved `1.1854B -> 0.7066B`; `claim_quest_reward` moved `2.3660B -> 0.7049B`; `scenario.update_quest_state` and `scenario.update_scenario_rule_state` dropped out of repo ops.
+
+### 57. Random Endpoint Cluster: Next Learning Or Dwelling Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-quest-runtime-snapshot-v2-local`; prefer `learn_champion_spell` or `submit_dwelling_recruit`.
+- [ ] Keep quest accept/claim parked unless runtime snapshot flush or query overlay regresses; both active quest commands are now around the `0.7B` command/event floor.
+- [ ] If picking `learn_champion_spell`, favor removing the durable `ChampionSpell` create/page floor only if runtime learned-spell snapshots still keep `cast_adventure_spell`, progression views, and production upgrade flush correct.
+- [ ] If picking `submit_dwelling_recruit`, do not micro-polish receipt lookup again; the remaining floor is the larger dwelling pool plus champion army aggregate.
 
 ## Expected Outcome
 

@@ -12,7 +12,8 @@ use std::{
 };
 
 use domm_degens_schema::schema::{
-    Champion, GameCommand, GameParticipant, GameSession, MovementIntent, WorldObject,
+    Champion, GameCommand, GameParticipant, GameSession, MovementIntent, QuestState,
+    ScenarioRuleState, WorldObject,
 };
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 #[cfg(not(feature = "benchmark"))]
@@ -26,7 +27,7 @@ use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
 };
 #[cfg(not(feature = "benchmark"))]
-use crate::repos::{commands_events_effects, economy};
+use crate::repos::{commands_events_effects, economy, scenario_progress};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
 
@@ -48,6 +49,8 @@ pub(crate) struct SessionTurnRuntime {
     pub world_object_snapshots: Vec<WorldObject>,
     pub occupancy_index: Vec<RuntimeOccupancyCell>,
     pub contact_index: Vec<RuntimeContactCell>,
+    pub quest_snapshots: Vec<QuestState>,
+    pub scenario_rule_snapshots: Vec<ScenarioRuleState>,
     pub intents: Vec<RuntimeMovementIntent>,
     pub command_receipts: Vec<SessionTurnCommandReceipt>,
     pub active_events: Vec<SessionTurnEvent>,
@@ -84,6 +87,8 @@ impl SessionTurnRuntime {
             world_object_snapshots: Vec::new(),
             occupancy_index: Vec::new(),
             contact_index: Vec::new(),
+            quest_snapshots: Vec::new(),
+            scenario_rule_snapshots: Vec::new(),
             intents: Vec::new(),
             command_receipts: Vec::new(),
             active_events: Vec::new(),
@@ -200,6 +205,34 @@ impl SessionTurnRuntime {
             self.contact_index.push(cell);
         }
         self.dirty.contact_index = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_quest_snapshot(&mut self, quest: QuestState) {
+        if let Some(existing) = self
+            .quest_snapshots
+            .iter_mut()
+            .find(|existing| existing.id() == quest.id())
+        {
+            *existing = quest;
+        } else {
+            self.quest_snapshots.push(quest);
+        }
+        self.dirty.quest_snapshots = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_scenario_rule_snapshot(&mut self, rule: ScenarioRuleState) {
+        if let Some(existing) = self
+            .scenario_rule_snapshots
+            .iter_mut()
+            .find(|existing| existing.id() == rule.id())
+        {
+            *existing = rule;
+        } else {
+            self.scenario_rule_snapshots.push(rule);
+        }
+        self.dirty.scenario_rule_snapshots = true;
         self.mark_dirty();
     }
 
@@ -475,6 +508,8 @@ pub(crate) struct SessionTurnDirtySets {
     pub events: bool,
     pub object_deltas: bool,
     pub resource_deltas: bool,
+    pub quest_snapshots: bool,
+    pub scenario_rule_snapshots: bool,
     pub cursor: bool,
 }
 
@@ -515,6 +550,79 @@ pub(crate) fn participant_ready(session_id: &str, turn_number: u32, participant_
             .get(&key)
             .is_some_and(|runtime| runtime.ready_participants.contains(participant_id))
     })
+}
+
+pub(crate) fn quest_snapshot(
+    session_id: &str,
+    turn_number: u32,
+    participant_id: &str,
+    quest_key: &str,
+) -> Option<QuestState> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes.borrow().get(&key).and_then(|runtime| {
+            runtime
+                .quest_snapshots
+                .iter()
+                .find(|quest| {
+                    Id::<GameParticipant>::from_key(quest.participant_id).to_string()
+                        == participant_id
+                        && quest.quest_key == quest_key
+                })
+                .cloned()
+        })
+    })
+}
+
+pub(crate) fn mirror_quest_snapshot(session_id: &str, turn_number: u32, quest: QuestState) -> bool {
+    with_runtime_mut(session_id, turn_number, |runtime| {
+        runtime.upsert_quest_snapshot(quest);
+        true
+    })
+    .unwrap_or(false)
+}
+
+pub(crate) fn scenario_rule_snapshot(
+    session_id: &str,
+    turn_number: u32,
+    rule_key: &str,
+) -> Option<ScenarioRuleState> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes.borrow().get(&key).and_then(|runtime| {
+            runtime
+                .scenario_rule_snapshots
+                .iter()
+                .find(|rule| rule.rule_key == rule_key)
+                .cloned()
+        })
+    })
+}
+
+pub(crate) fn scenario_rule_snapshots(
+    session_id: &str,
+    turn_number: u32,
+) -> Vec<ScenarioRuleState> {
+    let key = runtime_key(session_id, turn_number);
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .get(&key)
+            .map(|runtime| runtime.scenario_rule_snapshots.clone())
+            .unwrap_or_default()
+    })
+}
+
+pub(crate) fn mirror_scenario_rule_snapshot(
+    session_id: &str,
+    turn_number: u32,
+    rule: ScenarioRuleState,
+) -> bool {
+    with_runtime_mut(session_id, turn_number, |runtime| {
+        runtime.upsert_scenario_rule_snapshot(rule);
+        true
+    })
+    .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -1369,6 +1477,18 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             if flush_runtime_ready_participant(runtime, participant_id)? {
                 flushed = flushed.saturating_add(1);
             }
+        }
+    }
+    for runtime in &runtimes {
+        for quest in &runtime.quest_snapshots {
+            scenario_progress::update_quest_state(quest.clone())?;
+            flushed = flushed.saturating_add(1);
+        }
+    }
+    for runtime in &runtimes {
+        for rule in &runtime.scenario_rule_snapshots {
+            scenario_progress::update_scenario_rule_state(rule.clone())?;
+            flushed = flushed.saturating_add(1);
         }
     }
     for runtime in &runtimes {

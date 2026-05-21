@@ -7267,3 +7267,40 @@ Decision:
 - Keep this checkpoint. It removes the ready-row write from the active route while preserving replay protection and upgrade durability.
 - Park `end_turn` unless readiness replay or upgrade flush regresses; the endpoint is now near zero.
 - Rotate next to quest reward, learning, or accept quest. Durable quest/spell row cuts should only move if runtime projection and production flush keep API/query correctness intact.
+
+## Quest Runtime Snapshot Cut
+
+Time: `2026-05-21T05:42:00Z`.
+
+Cut:
+
+- Rotated to the quest accept/claim cluster.
+- Active `accept_quest` and `claim_quest_reward` now mirror changed `QuestState` rows into `SessionTurnRuntime` instead of immediately updating durable quest rows.
+- Quest reads prefer the active runtime quest snapshot, so claim-after-accept and preview-after-claim still see the current quest state.
+- `claim_quest_reward` also mirrors the changed quest-victory `ScenarioRuleState` into runtime instead of updating the durable rule row.
+- `get_scenario_rules` overlays runtime rule snapshots on top of durable rows, and production upgrade flush materializes quest/rule snapshots back into IcyDB.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bff266` / `12,579,430` bytes, `3,482` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-quest-runtime-snapshot-v2-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-end-turn-runtime-ready-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 61953`.
+- Scenario instructions: `26.4723B -> 24.3289B`, `-2.1434B`, `-8.1%`.
+- `accept_quest`: `1.1854B -> 0.7066B`, `-40.4%`.
+- `claim_quest_reward`: `2.3660B -> 0.7049B`, `-70.2%`.
+- Removed repo ops from the active surface: `scenario.update_quest_state` (`2` calls / `0.9584B`) and `scenario.update_scenario_rule_state` (`1` call / `0.4758B`).
+
+Decision:
+
+- Keep this checkpoint. It moves quest live state onto the active runtime and preserves production durability through upgrade flush.
+- Park quest accept/claim unless the runtime overlay or flush path regresses; both endpoints are now at the same `~0.7B` command/event floor as other already-cut routes.
+- Rotate next to `learn_champion_spell` or the larger `submit_dwelling_recruit` aggregate.

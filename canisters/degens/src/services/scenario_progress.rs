@@ -32,6 +32,7 @@ use super::{
 thread_local! {
     static OBJECTIVE_ROW_CACHE: RefCell<Vec<CachedObjectiveRows>> = const { RefCell::new(Vec::new()) };
     static SCENARIO_RULE_ROW_CACHE: RefCell<Vec<CachedScenarioRuleRows>> = const { RefCell::new(Vec::new()) };
+    static WORLD_EVENT_ROW_CACHE: RefCell<Vec<WorldEventState>> = const { RefCell::new(Vec::new()) };
 }
 
 #[derive(Clone)]
@@ -84,8 +85,7 @@ pub(crate) fn get_world_events(
     session_id: String,
 ) -> Result<WorldEventsView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
-    let events = scenario_progress::page_world_events_by_status(context.session.id(), "active")?
-        .items
+    let events = world_event_rows_by_status(context.session.id(), "active")?
         .into_iter()
         .map(world_event_view)
         .collect();
@@ -992,8 +992,14 @@ fn ensure_current_world_event(
     command_id: Option<Id<GameCommand>>,
 ) -> Result<WorldEventState, ApiError> {
     let event = domm_game::deterministic_world_event(session.seed, session.current_turn);
+    if let Some(row) = cached_world_event_by_key(session.id(), &event.event_key) {
+        return Ok(row);
+    }
     match scenario_progress::find_world_event_by_key(session.id(), &event.event_key)? {
-        Some(row) => Ok(row),
+        Some(row) => {
+            remember_world_event_row(session.id(), row.clone());
+            Ok(row)
+        }
         None => {
             let mut row = scenario_progress::create_world_event_state(
                 session.id(),
@@ -1009,6 +1015,7 @@ fn ensure_current_world_event(
                 row.last_command_id = Some(command_id.key());
                 row = scenario_progress::update_world_event_state(row)?;
             }
+            remember_world_event_row(session.id(), row.clone());
             Ok(row)
         }
     }
@@ -1287,6 +1294,56 @@ fn cached_scenario_rule_rows(session_id: Id<GameSession>) -> Option<Vec<Scenario
             .find(|entry| entry.session_id == key && entry.complete)
             .map(|entry| entry.rows.clone())
     })
+}
+
+fn world_event_rows_by_status(
+    session_id: Id<GameSession>,
+    status: &str,
+) -> Result<Vec<WorldEventState>, ApiError> {
+    if let Some(rows) = cached_world_event_rows_by_status(session_id, status) {
+        return Ok(rows);
+    }
+    let rows = scenario_progress::page_world_events_by_status(session_id, status)?.items;
+    for row in &rows {
+        remember_world_event_row(session_id, row.clone());
+    }
+    Ok(rows)
+}
+
+fn cached_world_event_rows_by_status(
+    session_id: Id<GameSession>,
+    status: &str,
+) -> Option<Vec<WorldEventState>> {
+    let key = session_id.key();
+    WORLD_EVENT_ROW_CACHE.with_borrow(|cache| {
+        let rows: Vec<_> = cache
+            .iter()
+            .filter(|row| row.session_id == key && row.status == status)
+            .cloned()
+            .collect();
+        (!rows.is_empty()).then_some(rows)
+    })
+}
+
+fn cached_world_event_by_key(
+    session_id: Id<GameSession>,
+    event_key: &str,
+) -> Option<WorldEventState> {
+    let key = session_id.key();
+    WORLD_EVENT_ROW_CACHE.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|row| row.session_id == key && row.event_key == event_key)
+            .cloned()
+    })
+}
+
+fn remember_world_event_row(session_id: Id<GameSession>, row: WorldEventState) {
+    let key = session_id.key();
+    WORLD_EVENT_ROW_CACHE.with_borrow_mut(|cache| {
+        cache.retain(|cached| cached.session_id != key || cached.id() != row.id());
+        cache.push(row);
+    });
 }
 
 fn remember_scenario_rule_row(session_id: Id<GameSession>, row: ScenarioRuleState) {

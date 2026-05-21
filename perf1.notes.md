@@ -7662,3 +7662,47 @@ Decision:
 - Keep this checkpoint. It removes five durable worldgen read/page floors with one small projection cache and no row-growth change.
 - Park worldgen for the next rotation.
 - Next useful targets are quest preview/accept, world events, content manifest, adventure spell/content lookup, or a real runtime authority pass for the remaining setup/session repo ops.
+
+## World Events Runtime Row Cache
+
+Time: `2026-05-21T06:51:17Z`.
+
+Cut:
+
+- Rotated away from worldgen.
+- Picked the world-events cluster because `get_world_events` and `sync_world_events` both paid the same durable `WorldEventState` active-event lookup/page floor.
+- Added a small heap cache of `WorldEventState` rows. `ensure_current_world_event` still creates or reads the durable row exactly as before, then mirrors the row into the cache.
+- `get_world_events` reads cached active rows first and falls back to durable paging on cache miss.
+- `sync_world_events` uses the cached deterministic current event first and falls back to durable lookup/create on cache miss.
+- This is a projection cache, not new authority. After upgrade or cache miss, durable `WorldEventState` rows remain the source of truth.
+
+Code-size note:
+
+- The first implementation tracked a separate complete-row cache entry and failed PocketIC install: benchmark Wasm code section was `12,583,363` bytes, `451` bytes over the `12,582,912` limit.
+- Trimmed the cache to direct `WorldEventState` rows and reran the benchmark under the `v2` artifact.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Failed install artifact, kept for diagnosis: `target/benchmarks/20260521-world-events-runtime-cache-local/endpoint-surface`.
+- Passing endpoint-surface artifact: `target/benchmarks/20260521-world-events-runtime-cache-v2-local/endpoint-surface`, passed in `191s`.
+- Cleaned leftover PocketIC processes after both runs.
+
+Measurement versus `20260521-worldgen-runtime-cache-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `8.3163B -> 6.9071B`, `-1.4092B`, `-16.9%`.
+- `get_world_events`: `0.7052B -> 0.00003B`.
+- `sync_world_events`: `0.7047B -> 0.00020B`.
+- Remaining top endpoints are `submit_dwelling_recruit` (`0.7085B`), `preview_quest` (`0.7073B`), `accept_quest` (`0.7071B`), `cast_adventure_spell` (`0.7058B`), `get_content_manifest` (`0.7055B`), `learn_champion_spell` (`0.7053B`), and `get_match_history` (`0.7035B`).
+
+Decision:
+
+- Keep this checkpoint. It removes two durable world-event read floors and preserves durable event rows as recovery source.
+- Park world events for the next rotation.
+- Next useful targets are quest preview/accept, content manifest, adventure spell/content lookup, match history, or a real runtime authority pass for the remaining setup/session repo ops.

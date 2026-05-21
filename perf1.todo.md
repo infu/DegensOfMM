@@ -1079,9 +1079,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 66. Random Endpoint Cluster: Quest, Content, Events, Or Remaining Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-worldgen-runtime-cache-local`; prefer quest preview/accept, world events, content manifest, adventure spell/content lookup, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
-- [ ] Keep worldgen parked unless a regression blocks seeded worldgen views; the first-playable active route is now cache-backed and near zero.
-- [ ] Avoid single-endpoint polish unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints.
+- [x] Pick a different bounded endpoint/cluster from `20260521-worldgen-runtime-cache-local`; prefer quest preview/accept, world events, content manifest, adventure spell/content lookup, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story. Picked world events because `get_world_events` and `sync_world_events` both paid the same durable active-event row floor.
+- [x] Keep worldgen parked unless a regression blocks seeded worldgen views; the first-playable active route is now cache-backed and near zero.
+- [x] Avoid single-endpoint polish unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints. This cut caches durable `WorldEventState` projection rows after creation/page fallback and lets both event endpoints read the cache.
+- [x] Measure the world-events runtime-cache cut. The first artifact exceeded the benchmark Wasm code-section limit by `451` bytes, so the cache was trimmed to direct `WorldEventState` rows. Final artifact `target/benchmarks/20260521-world-events-runtime-cache-v2-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `8.3163B -> 6.9071B` (`-1.4092B`, `-16.9%`) versus `20260521-worldgen-runtime-cache-local`. `get_world_events` moved `0.7052B -> 0.00003B`; `sync_world_events` moved `0.7047B -> 0.00020B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 67. Random Endpoint Cluster: Quest, Content, Spell, Or Remaining Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-world-events-runtime-cache-v2-local`; prefer quest preview/accept, content manifest, adventure spell/content lookup, match history, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
+- [ ] Keep world events parked unless a regression blocks active event views; both event endpoints are now cache-backed and near zero.
+- [ ] Watch benchmark Wasm code-section headroom before adding another cache. If a first attempt exceeds install size, shrink or pick a smaller cut before measuring.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

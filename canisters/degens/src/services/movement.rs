@@ -1034,27 +1034,41 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         system_job_repo::reschedule_system_job(job, session.turn_deadline_at, None)?;
         return Ok(());
     }
-    let command = ensure_system_turn_command(&session, &job)?;
+    let command = if worldmap_kernel::contains_active_turn(&session) {
+        let id = Id::<GameCommand>::from_key(Ulid::generate());
+        SyncTurnCommand::Runtime {
+            id,
+            id_text: String::new(),
+            payload_hash: String::new(),
+            client_nonce: 0,
+        }
+    } else {
+        SyncTurnCommand::Durable(ensure_system_turn_command(&session, &job)?)
+    };
+    let command_id = command.id();
+    let persistence_mode = command.persistence_mode();
+    let command_is_runtime = command.is_runtime();
     let mut changed_subjects = Vec::new();
     let mut events = Vec::new();
     let movement_complete = resolve_pending_movement(
         &mut session,
-        command.id(),
-        MovementPersistenceMode::DurableBridge,
+        command_id,
+        persistence_mode,
         &mut events,
         &mut changed_subjects,
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
-        let mut command = command;
-        command.status = "applying".to_string();
-        command.phase = "movement_partial".to_string();
-        command.retryable = true;
-        command.result_json = Some(format!(
-            r#"{{"command_kind":"turn_resolution","current_turn":{},"partial":true}}"#,
-            session.current_turn
-        ));
-        commands_events_effects::update_game_command(command)?;
+        if let SyncTurnCommand::Durable(mut command) = command {
+            command.status = "applying".to_string();
+            command.phase = "movement_partial".to_string();
+            command.retryable = true;
+            command.result_json = Some(format!(
+                r#"{{"command_kind":"turn_resolution","current_turn":{},"partial":true}}"#,
+                session.current_turn
+            ));
+            commands_events_effects::update_game_command(command)?;
+        }
         system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
         if enforce_battle_handoff {
             enforce_battle_handoff_barrier();
@@ -1072,29 +1086,32 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     for mut participant in participants.items {
         let income_events = materialize_income(
             &mut session,
-            command.id(),
+            command_id,
             &mut participant,
             income_turn,
             None,
-            MovementPersistenceMode::DurableBridge,
+            persistence_mode,
         )?;
         events.extend(income_events);
         participant.last_action_turn = income_turn;
-        sessions::update_participant(participant)?;
+        update_movement_participant(persistence_mode, participant)?;
     }
 
-    worldmap_kernel::advance_turn(
-        &mut session,
-        command.id(),
-        income_turn,
-        worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows,
-    )?;
+    let runtime_mode = if command_is_runtime {
+        worldmap_kernel::TurnAdvanceRuntimeMode::CarryPrevious {
+            previous_turn: income_turn,
+        }
+    } else {
+        worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows
+    };
+    worldmap_kernel::advance_turn(&mut session, command_id, income_turn, runtime_mode)?;
 
     let session_id_text = session.id().to_string();
     let current_turn = session.current_turn;
-    let turn_event = command_response::append_public_event(
+    let turn_event = append_movement_public_event(
         &mut session,
-        command.id(),
+        command_id,
+        persistence_mode,
         format!("turn_resolution:{session_id_text}:{current_turn}"),
         "session_turn_advanced".to_string(),
         Some("session".to_string()),
@@ -1103,20 +1120,26 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     )?;
     events.push(turn_event);
 
-    let mut command = command;
-    command.status = "applied".to_string();
-    command.phase = "complete".to_string();
-    command.result_json = Some(format!(
-        r#"{{"command_kind":"turn_resolution","current_turn":{},"command_count":1,"event_count":{}}}"#,
-        session.current_turn,
-        events.len()
-    ));
-    command.retryable = false;
-    command.applied_at = Some(Timestamp::now());
-    command.failed_at = None;
-    commands_events_effects::update_game_command(command.clone())?;
+    if let SyncTurnCommand::Durable(mut command) = command {
+        command.status = "applied".to_string();
+        command.phase = "complete".to_string();
+        command.result_json = Some(format!(
+            r#"{{"command_kind":"turn_resolution","current_turn":{},"command_count":1,"event_count":{}}}"#,
+            session.current_turn,
+            events.len()
+        ));
+        command.retryable = false;
+        command.applied_at = Some(Timestamp::now());
+        command.failed_at = None;
+        commands_events_effects::update_game_command(command)?;
+    }
 
     system_job_repo::complete_system_job(job)?;
+    let durable_command_id = if command_is_runtime {
+        None
+    } else {
+        Some(command_id)
+    };
     system_job_service::schedule_job(system_job_repo::SystemJobDraft {
         job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
         job_kind: "turn_deadline".to_string(),
@@ -1124,10 +1147,10 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         battle_id: None,
         turn_number: Some(session.current_turn),
         due_at: session.turn_deadline_at,
-        command_id: Some(command.id()),
+        command_id: durable_command_id,
         cursor_json: None,
     })?;
-    scenario_progress::schedule_turn_maintenance_jobs(&session, Some(command.id()))?;
+    scenario_progress::schedule_turn_maintenance_jobs(&session, durable_command_id)?;
     enforce_turn_advance_barrier();
     Ok(())
 }

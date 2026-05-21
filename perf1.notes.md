@@ -8006,3 +8006,38 @@ Verification:
 Decision:
 
 - Keep this checkpoint. It completes the shared readiness/turn-advance facade without moving timer resolution off `MovementPersistenceMode::DurableBridge` yet.
+
+## Runtime Turn Timer Path
+
+Time: `2026-05-21T19:05:00Z`.
+
+Cut:
+
+- Active `turn_deadline` / `turn_resolution` timer jobs now create an in-memory `SyncTurnCommand::Runtime` when `SessionTurnRuntime` exists instead of creating/loading a durable system `GameCommand`.
+- The active timer path calls `resolve_pending_movement` with `MovementPersistenceMode::RuntimeOnly`, so runtime intents do not materialize as durable `MovementIntent` rows and runtime movement snapshots are not written.
+- Timer movement, income, champion, participant, object, and event writes now use the same runtime-only branches as active public sync. Durable `SystemJob` rows still claim/complete/schedule wakeups; scheduled follow-up jobs do not store a runtime-only command id.
+- To stay under the IC benchmark Wasm limit, the timer path still pages durable active participants for income; moving participant enumeration fully into the kernel needs more code-size headroom or another deletion.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffee2` / `12,582,626` bytes, `286` bytes under the IC limit.
+- Focused `timer-surface`: `target/benchmarks/20260521-runtime-turn-timer-local/timer-surface`, passed in `429.36s`.
+- Cleaned the leftover PocketIC process after the focused run.
+
+Measurement versus `target/benchmarks/20260521-160211-all-timers/timer-surface`:
+
+- Timer-surface scenario instructions: `1426.3003B -> 1254.7012B`, `-12.0%`.
+- `system_job:turn_deadline`: `15.7940B -> 5.0118B`, `-68.3%`.
+- `system_job:turn_resolution`: `18.4160B -> 6.1302B`, `-66.7%`.
+- `commands.create_game_command`: `20 -> 7` calls.
+- `commands.update_game_command`: `94 -> 80` calls.
+- `commands.game_command_idempotency`: `89 -> 75` calls.
+- Row growth: `473 -> 445`.
+- Stable pages final: `252673 -> 238209`.
+
+Decision:
+
+- Keep this checkpoint. It completes the active runtime timer persistence-mode cut while preserving durable job wakeups. The next Section 72A work is scenario maintenance kernel integration; broader projection queues remain Section 72B.

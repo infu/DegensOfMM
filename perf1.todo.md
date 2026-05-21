@@ -1036,9 +1036,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 61. Random Endpoint Cluster: Rules, Spellbook, Or Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-tavern-runtime-hire-local`; prefer `get_scenario_rules` / `get_objective_progress`, `learn_champion_spell`, or one remaining setup/session floor.
-- [ ] Keep `hire_tavern_champion` parked unless a regression blocks scenario flow; the active route is now in the target band at `0.0018B`.
-- [ ] Do not re-add the query-seeded spellbook cache shape; query calls cannot reliably seed update-call heap state, and the measured endpoint-surface gain was only `0.012B`.
+- [x] Pick a different bounded endpoint/cluster from `20260521-tavern-runtime-hire-local`; prefer `get_scenario_rules` / `get_objective_progress`, `learn_champion_spell`, or one remaining setup/session floor. Picked scenario progress rules/objective cache.
+- [x] Keep `hire_tavern_champion` parked unless a regression blocks scenario flow; the active route is now in the target band at `0.0018B`.
+- [x] Do not re-add the query-seeded spellbook cache shape; query calls cannot reliably seed update-call heap state, and the measured endpoint-surface gain was only `0.012B`.
+- [x] Cache seeded `ObjectiveProgress` and `ScenarioRuleState` projection rows after first-playable setup, keep the cache current on objective/rule updates, and let rules/objective query and sync paths read the cache before durable pages.
+- [x] Measure the scenario-progress cache cut. Artifact `target/benchmarks/20260521-scenario-progress-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `20.2993B -> 16.0625B` (`-4.2368B`, `-20.9%`) versus `20260521-tavern-runtime-hire-local`. `get_scenario_rules` moved `1.4105B -> 0.0001B`, `get_objective_progress` moved `1.4100B -> 0.00003B`, `claim_quest_reward` moved `0.7054B -> 0.0003B`, `sync_advanced_victory` moved `0.7049B -> 0.0002B`, and `scenario.rules_by_status` dropped out of the benchmark repo-op table.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 62. Random Endpoint Cluster: Spellbook, Dwelling, Or Remaining Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-scenario-progress-cache-local`; prefer `learn_champion_spell`, a non-scenario setup/session floor, or `submit_dwelling_recruit` only if it exposes a shared command/content floor.
+- [ ] Keep scenario-progress queries parked unless a regression blocks scenario flow; `get_scenario_rules` and `get_objective_progress` are now in the near-zero cache-backed band.
+- [ ] Avoid broad caches that only move one `0.7B` query unless they also remove repo ops or unlock several endpoints; preserve benchmark Wasm headroom.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

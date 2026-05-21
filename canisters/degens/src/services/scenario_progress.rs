@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
     GameCommand, GameParticipant, GameSession, ObjectiveProgress, QuestState, ScenarioRuleState,
@@ -26,6 +28,25 @@ use super::{
     session_context::{self, public_error},
     session_turn_runtime,
 };
+
+thread_local! {
+    static OBJECTIVE_ROW_CACHE: RefCell<Vec<CachedObjectiveRows>> = const { RefCell::new(Vec::new()) };
+    static SCENARIO_RULE_ROW_CACHE: RefCell<Vec<CachedScenarioRuleRows>> = const { RefCell::new(Vec::new()) };
+}
+
+#[derive(Clone)]
+struct CachedObjectiveRows {
+    session_id: String,
+    complete: bool,
+    rows: Vec<ObjectiveProgress>,
+}
+
+#[derive(Clone)]
+struct CachedScenarioRuleRows {
+    session_id: String,
+    complete: bool,
+    rows: Vec<ScenarioRuleState>,
+}
 
 pub(crate) fn get_objective_progress(
     caller: CandidPrincipal,
@@ -744,6 +765,7 @@ fn ensure_initial_objectives(session: &GameSession) -> Result<(), ApiError> {
         };
         ensure_objective_row_for_object(session.id(), &object, &seed.key, None)?;
     }
+    mark_objective_rows_complete(session.id());
     Ok(())
 }
 
@@ -807,7 +829,11 @@ fn ensure_initial_rules(session: &GameSession) -> Result<(), ApiError> {
             Some("checkpoint_24_schema_only"),
         ),
     ] {
-        if scenario_progress::find_scenario_rule_by_key(session.id(), rule_key)?.is_none() {
+        let row = if let Some(row) =
+            scenario_progress::find_scenario_rule_by_key(session.id(), rule_key)?
+        {
+            row
+        } else {
             scenario_progress::create_scenario_rule_state(
                 session.id(),
                 rule_key.to_string(),
@@ -820,9 +846,11 @@ fn ensure_initial_rules(session: &GameSession) -> Result<(), ApiError> {
                 None,
                 disabled.map(str::to_string),
                 session.current_turn,
-            )?;
-        }
+            )?
+        };
+        remember_scenario_rule_row(session.id(), row);
     }
+    mark_scenario_rule_rows_complete(session.id());
     sync_scenario_rule_rows_for_session_with_completed_objectives(session, None, None).map(|_| ())
 }
 
@@ -916,7 +944,7 @@ fn ensure_objective_row_for_object(
         .map(Id::<GameParticipant>::from_key);
     let progress_value = u32::from(owner.is_some());
     let status = domm_game::objective_status(progress_value, 1).to_string();
-    match scenario_progress::find_objective_by_key(session_id, objective_key)? {
+    let row = match scenario_progress::find_objective_by_key(session_id, objective_key)? {
         Some(mut row) => {
             let previous_participant_id = row.participant_id;
             let previous_object_id = row.object_id;
@@ -954,7 +982,9 @@ fn ensure_objective_row_for_object(
             "public".to_string(),
             object.captured_turn,
         ),
-    }
+    }?;
+    remember_objective_row(session_id, row.clone());
+    Ok(row)
 }
 
 fn ensure_current_world_event(
@@ -1026,16 +1056,14 @@ fn sync_scenario_rule_rows_for_session_with_completed_objectives(
                 .count() as u32
         }
     };
+    let mut rules = if let Some(rows) = cached_scenario_rule_rows(session.id()) {
+        rows
+    } else {
+        scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items
+    };
+    merge_runtime_scenario_rules(&mut rules, session);
     let mut touched = 0_u32;
-    for mut rule in scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items
-    {
-        if let Some(runtime_rule) = session_turn_runtime::scenario_rule_snapshot(
-            &session.id().to_string(),
-            session.current_turn,
-            &rule.rule_key,
-        ) {
-            rule = runtime_rule;
-        }
+    for mut rule in rules.into_iter().filter(|rule| rule.status == "active") {
         let previous_current_value = rule.current_value;
         let previous_victory_state = rule.victory_state.clone();
         let previous_winner_participant_id = rule.winner_participant_id;
@@ -1103,8 +1131,13 @@ fn sync_scenario_rule_rows_for_session_with_completed_objectives(
 fn objective_rows_for_session(
     session_id: Id<GameSession>,
 ) -> Result<Vec<ObjectiveProgress>, ApiError> {
-    let mut rows = scenario_progress::page_objectives_by_status(session_id, "active")?.items;
-    rows.extend(scenario_progress::page_objectives_by_status(session_id, "complete")?.items);
+    let mut rows = if let Some(rows) = cached_objective_rows(session_id) {
+        rows
+    } else {
+        let mut rows = scenario_progress::page_objectives_by_status(session_id, "active")?.items;
+        rows.extend(scenario_progress::page_objectives_by_status(session_id, "complete")?.items);
+        rows
+    };
     rows.sort_by(|left, right| left.objective_key.cmp(&right.objective_key));
     Ok(rows)
 }
@@ -1112,23 +1145,28 @@ fn objective_rows_for_session(
 fn scenario_rule_rows_for_session(
     session: &GameSession,
 ) -> Result<Vec<ScenarioRuleState>, ApiError> {
-    let mut rows = scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items;
-    rows.extend(scenario_progress::page_scenario_rules_by_status(session.id(), "disabled")?.items);
+    let mut rows = if let Some(rows) = cached_scenario_rule_rows(session.id()) {
+        rows
+    } else {
+        let mut rows =
+            scenario_progress::page_scenario_rules_by_status(session.id(), "active")?.items;
+        rows.extend(
+            scenario_progress::page_scenario_rules_by_status(session.id(), "disabled")?.items,
+        );
+        rows
+    };
+    merge_runtime_scenario_rules(&mut rows, session);
+    rows.sort_by(|left, right| left.rule_key.cmp(&right.rule_key));
+    Ok(rows)
+}
+
+fn merge_runtime_scenario_rules(rows: &mut Vec<ScenarioRuleState>, session: &GameSession) {
     for snapshot in session_turn_runtime::scenario_rule_snapshots(
         &session.id().to_string(),
         session.current_turn,
     ) {
-        if let Some(existing) = rows
-            .iter_mut()
-            .find(|existing| existing.rule_key == snapshot.rule_key)
-        {
-            *existing = snapshot;
-        } else {
-            rows.push(snapshot);
-        }
+        upsert_scenario_rule_row(rows, snapshot);
     }
-    rows.sort_by(|left, right| left.rule_key.cmp(&right.rule_key));
-    Ok(rows)
 }
 
 fn load_scenario_rule(
@@ -1140,6 +1178,11 @@ fn load_scenario_rule(
         session.current_turn,
         rule_key,
     ) {
+        return Ok(Some(rule));
+    }
+    if let Some(rule) = cached_scenario_rule_rows(session.id())
+        .and_then(|rows| rows.into_iter().find(|row| row.rule_key == rule_key))
+    {
         return Ok(Some(rule));
     }
     scenario_progress::find_scenario_rule_by_key(session.id(), rule_key)
@@ -1200,9 +1243,112 @@ fn persist_or_mirror_active_scenario_rule(
         session.current_turn,
         rule.clone(),
     ) {
+        remember_scenario_rule_row(session.id(), rule.clone());
         Ok(rule)
     } else {
-        scenario_progress::update_scenario_rule_state(rule)
+        let rule = scenario_progress::update_scenario_rule_state(rule)?;
+        remember_scenario_rule_row(session.id(), rule.clone());
+        Ok(rule)
+    }
+}
+
+fn cached_objective_rows(session_id: Id<GameSession>) -> Option<Vec<ObjectiveProgress>> {
+    let key = session_id.to_string();
+    OBJECTIVE_ROW_CACHE.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|entry| entry.session_id == key && entry.complete)
+            .map(|entry| entry.rows.clone())
+    })
+}
+
+fn remember_objective_row(session_id: Id<GameSession>, row: ObjectiveProgress) {
+    let key = session_id.to_string();
+    OBJECTIVE_ROW_CACHE.with_borrow_mut(|cache| {
+        let entry = objective_cache_entry_mut(cache, &key);
+        upsert_objective_row(&mut entry.rows, row);
+    });
+}
+
+fn mark_objective_rows_complete(session_id: Id<GameSession>) {
+    let key = session_id.to_string();
+    OBJECTIVE_ROW_CACHE.with_borrow_mut(|cache| {
+        if let Some(entry) = cache.iter_mut().find(|entry| entry.session_id == key) {
+            entry.complete = true;
+        }
+    });
+}
+
+fn cached_scenario_rule_rows(session_id: Id<GameSession>) -> Option<Vec<ScenarioRuleState>> {
+    let key = session_id.to_string();
+    SCENARIO_RULE_ROW_CACHE.with_borrow(|cache| {
+        cache
+            .iter()
+            .find(|entry| entry.session_id == key && entry.complete)
+            .map(|entry| entry.rows.clone())
+    })
+}
+
+fn remember_scenario_rule_row(session_id: Id<GameSession>, row: ScenarioRuleState) {
+    let key = session_id.to_string();
+    SCENARIO_RULE_ROW_CACHE.with_borrow_mut(|cache| {
+        let entry = scenario_rule_cache_entry_mut(cache, &key);
+        upsert_scenario_rule_row(&mut entry.rows, row);
+    });
+}
+
+fn mark_scenario_rule_rows_complete(session_id: Id<GameSession>) {
+    let key = session_id.to_string();
+    SCENARIO_RULE_ROW_CACHE.with_borrow_mut(|cache| {
+        if let Some(entry) = cache.iter_mut().find(|entry| entry.session_id == key) {
+            entry.complete = true;
+        }
+    });
+}
+
+fn objective_cache_entry_mut<'a>(
+    cache: &'a mut Vec<CachedObjectiveRows>,
+    key: &str,
+) -> &'a mut CachedObjectiveRows {
+    if let Some(index) = cache.iter().position(|entry| entry.session_id == key) {
+        return &mut cache[index];
+    }
+    cache.push(CachedObjectiveRows {
+        session_id: key.to_string(),
+        complete: false,
+        rows: Vec::new(),
+    });
+    cache.last_mut().expect("cache entry was just pushed")
+}
+
+fn scenario_rule_cache_entry_mut<'a>(
+    cache: &'a mut Vec<CachedScenarioRuleRows>,
+    key: &str,
+) -> &'a mut CachedScenarioRuleRows {
+    if let Some(index) = cache.iter().position(|entry| entry.session_id == key) {
+        return &mut cache[index];
+    }
+    cache.push(CachedScenarioRuleRows {
+        session_id: key.to_string(),
+        complete: false,
+        rows: Vec::new(),
+    });
+    cache.last_mut().expect("cache entry was just pushed")
+}
+
+fn upsert_objective_row(rows: &mut Vec<ObjectiveProgress>, row: ObjectiveProgress) {
+    if let Some(existing) = rows.iter_mut().find(|existing| existing.id() == row.id()) {
+        *existing = row;
+    } else {
+        rows.push(row);
+    }
+}
+
+fn upsert_scenario_rule_row(rows: &mut Vec<ScenarioRuleState>, row: ScenarioRuleState) {
+    if let Some(existing) = rows.iter_mut().find(|existing| existing.id() == row.id()) {
+        *existing = row;
+    } else {
+        rows.push(row);
     }
 }
 

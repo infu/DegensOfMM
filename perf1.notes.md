@@ -7468,3 +7468,43 @@ Decision:
 - Keep this checkpoint. It moves tavern hire well under the `0.3B-0.6B` target band and removes three durable live-state writes from the route.
 - Park `hire_tavern_champion` for the next rotation.
 - Next useful targets from the latest artifact are `get_scenario_rules` / `get_objective_progress`, `learn_champion_spell`, or a remaining setup/session floor.
+
+## Scenario Progress Projection Cache
+
+Time: `2026-05-21T05:47:23Z`.
+
+Cut:
+
+- Rotated to the scenario-progress query/sync cluster.
+- First-playable setup now remembers seeded `ObjectiveProgress` and `ScenarioRuleState` rows in a small service-local projection cache.
+- Objective/rule update paths keep the cache current, including active runtime-mirrored rule updates.
+- `get_objective_progress`, `get_scenario_rules`, `sync_scenario_rule_rows_for_session_with_completed_objectives`, and `load_scenario_rule` now read cache first and only page durable rows when the session cache is not complete.
+- Durable rows are still created/updated as before; this checkpoint removes repeated read-side paging, not projection durability.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-scenario-progress-cache-local/endpoint-surface`, passed in `209s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-tavern-runtime-hire-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `20.2993B -> 16.0625B`, `-4.2368B`, `-20.9%`.
+- `get_scenario_rules`: `1.4105B -> 0.0001B`.
+- `get_objective_progress`: `1.4100B -> 0.00003B`.
+- `claim_quest_reward`: `0.7054B -> 0.0003B`.
+- `sync_advanced_victory`: `0.7049B -> 0.0002B`.
+- `scenario.rules_by_status` dropped out of the benchmark repo-op table.
+- Remaining repo ops are now `players.create_player_account` (`2` calls / `0.9491B`), `champions.spells_by_champion` (`2` calls / `0.7001B`), `sessions.insert_participants_atomic` (`1` call / `0.4868B`), and `sessions.create_game_session` (`1` call / `0.4778B`).
+
+Decision:
+
+- Keep this checkpoint. It removes a shared scenario-progress read floor and improves four measured endpoints, not just one query.
+- Park scenario progress for the next rotation.
+- Next useful targets are `learn_champion_spell`, a non-scenario setup/session floor, or a shared floor exposed through `submit_dwelling_recruit`.

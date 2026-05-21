@@ -1087,9 +1087,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 67. Random Endpoint Cluster: Quest, Content, Spell, Or Remaining Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-world-events-runtime-cache-v2-local`; prefer quest preview/accept, content manifest, adventure spell/content lookup, match history, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
-- [ ] Keep world events parked unless a regression blocks active event views; both event endpoints are now cache-backed and near zero.
-- [ ] Watch benchmark Wasm code-section headroom before adding another cache. If a first attempt exceeds install size, shrink or pick a smaller cut before measuring.
+- [x] Pick a different bounded endpoint/cluster from `20260521-world-events-runtime-cache-v2-local`; prefer quest preview/accept, content manifest, adventure spell/content lookup, match history, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story. Tried quest preview/accept first, but a quest-row cache exceeded the benchmark Wasm code-section limit by `1,990` bytes. Picked the smaller content-manifest cut instead.
+- [x] Keep world events parked unless a regression blocks active event views; both event endpoints are now cache-backed and near zero.
+- [x] Watch benchmark Wasm code-section headroom before adding another cache. The failed quest-cache artifact `target/benchmarks/20260521-quest-runtime-cache-local/endpoint-surface` confirmed we need smaller cuts unless we free headroom.
+- [x] Measure the content-manifest static cut. Artifact `target/benchmarks/20260521-content-manifest-static-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `6.9071B -> 6.2039B` (`-0.7032B`, `-10.2%`) versus `20260521-world-events-runtime-cache-v2-local`. `get_content_manifest` moved `0.7055B -> 0.0024B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 68. Random Endpoint Cluster: Quest, Spell, Match History, Or Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-content-manifest-static-local`; prefer quest preview/accept only if we first free benchmark Wasm headroom, adventure spell/learn spell, match history, dwelling common floor, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
+- [ ] Keep content manifest parked unless a regression blocks manifest reads; the static manifest path is now near zero and no longer pages the ruleset row.
+- [ ] Free or preserve benchmark Wasm code-section headroom before adding another row cache.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

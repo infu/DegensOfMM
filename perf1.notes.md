@@ -7706,3 +7706,40 @@ Decision:
 - Keep this checkpoint. It removes two durable world-event read floors and preserves durable event rows as recovery source.
 - Park world events for the next rotation.
 - Next useful targets are quest preview/accept, content manifest, adventure spell/content lookup, match history, or a real runtime authority pass for the remaining setup/session repo ops.
+
+## Static Content Manifest Read
+
+Time: `2026-05-21T07:07:57Z`.
+
+Cut:
+
+- Rotated away from world events.
+- Tried the quest preview/accept cluster first because both endpoints pay the durable opening quest row floor. A direct `QuestState` row cache compiled, but PocketIC install failed because the benchmark Wasm code section was `12,584,902` bytes, `1,990` bytes over the `12,582,912` limit.
+- Removed the quest-cache attempt and picked the smaller content-manifest cut.
+- `get_content_manifest` now returns the deterministic first-playable manifest after validating the requested ruleset id/version, without paging the durable `RulesetDefinition` row to re-check the same manifest hash on every read.
+- This keeps content manifest reads independent of stable storage. Durable content rows are still seeded for other content/repo paths; the public manifest response itself is static code-defined content.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Failed quest-cache artifact, kept for diagnosis: `target/benchmarks/20260521-quest-runtime-cache-local/endpoint-surface`.
+- Passing endpoint-surface artifact: `target/benchmarks/20260521-content-manifest-static-local/endpoint-surface`, passed in `187s`.
+- Cleaned leftover PocketIC processes after both runs.
+
+Measurement versus `20260521-world-events-runtime-cache-v2-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `6.9071B -> 6.2039B`, `-0.7032B`, `-10.2%`.
+- `get_content_manifest`: `0.7055B -> 0.0024B`.
+- Remaining top endpoints are `submit_dwelling_recruit` (`0.7085B`), `preview_quest` (`0.7073B`), `accept_quest` (`0.7071B`), `cast_adventure_spell` (`0.7058B`), `learn_champion_spell` (`0.7053B`), `get_match_history` (`0.7035B`), `start_session` (`0.4885B`), `create_session` (`0.4794B`), and `register_player` (`0.4746B`).
+
+Decision:
+
+- Keep this checkpoint. It removes a durable manifest read with a small code-size-positive change.
+- Park content manifest for the next rotation.
+- Quest preview/accept still look valuable, but need benchmark Wasm headroom before a row cache can be installed.

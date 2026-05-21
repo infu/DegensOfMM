@@ -19,6 +19,7 @@ use crate::repos::{
 };
 
 use super::{
+    economy_expansion,
     session_context::{SessionCallerContext, public_error},
     session_turn_runtime, town_runtime,
 };
@@ -635,6 +636,7 @@ fn champion_stacks(champion: &Champion) -> Result<Vec<ChampionArmyStackRecord>, 
                 champion_id,
                 u32::from(domm_game::MAX_ARMY_SLOTS),
             )?;
+            let rows = economy_expansion::overlay_runtime_champion_army_stacks(champion_id, rows);
             remember_champion_stack_rows(champion_id, rows.clone());
             rows
         }

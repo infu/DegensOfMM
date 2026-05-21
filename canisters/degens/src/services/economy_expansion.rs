@@ -2,8 +2,8 @@ use std::{cell::RefCell, collections::BTreeMap};
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
-    Champion, DwellingPool, GameCommand, GameParticipant, GameSession, Town, UnitDefinition,
-    WorldObject,
+    Champion, ChampionArmyStack, DwellingPool, GameCommand, GameParticipant, GameSession, Town,
+    UnitDefinition, WorldObject,
 };
 use domm_game::{
     ApiError, ChampionHirePreview, CommandResponse, CommandResult, DwellingPoolView,
@@ -27,6 +27,8 @@ use super::{
 
 thread_local! {
     static RUNTIME_DWELLING_POOLS: RefCell<Vec<DwellingPool>> = const { RefCell::new(Vec::new()) };
+    static RUNTIME_CHAMPION_ARMY_STACKS: RefCell<Vec<ChampionArmyStack>> =
+        const { RefCell::new(Vec::new()) };
 }
 
 pub(crate) fn get_tavern_offers(
@@ -812,7 +814,7 @@ fn apply_dwelling_recruit_command(
     pool.last_command_id = Some(command.id().key());
     pool = persist_or_mirror_active_dwelling_pool(&context.session, pool)?;
     recruit_to_champion(
-        context.session.id(),
+        &context.session,
         champion.id(),
         unit.id(),
         unit.max_hp,
@@ -1143,6 +1145,68 @@ pub(crate) fn flush_runtime_dwelling_pools_for_upgrade() -> Result<usize, ApiErr
     Ok(pools.len())
 }
 
+pub(crate) fn overlay_runtime_champion_army_stacks(
+    champion_id: Id<Champion>,
+    mut rows: Vec<ChampionArmyStack>,
+) -> Vec<ChampionArmyStack> {
+    for stack in runtime_champion_army_stacks(champion_id) {
+        if let Some(existing) = rows
+            .iter_mut()
+            .find(|existing| existing.slot_index == stack.slot_index)
+        {
+            *existing = stack;
+        } else {
+            rows.push(stack);
+        }
+    }
+    rows
+}
+
+fn runtime_champion_army_stack(
+    champion_id: Id<Champion>,
+    slot_index: u8,
+) -> Option<ChampionArmyStack> {
+    let champion_key = champion_id.key();
+    RUNTIME_CHAMPION_ARMY_STACKS.with_borrow(|stacks| {
+        stacks
+            .iter()
+            .find(|stack| stack.champion_id == champion_key && stack.slot_index == slot_index)
+            .cloned()
+    })
+}
+
+fn runtime_champion_army_stacks(champion_id: Id<Champion>) -> Vec<ChampionArmyStack> {
+    let champion_key = champion_id.key();
+    RUNTIME_CHAMPION_ARMY_STACKS.with_borrow(|stacks| {
+        stacks
+            .iter()
+            .filter(|stack| stack.champion_id == champion_key)
+            .cloned()
+            .collect()
+    })
+}
+
+fn mirror_runtime_champion_army_stack(stack: &ChampionArmyStack) {
+    RUNTIME_CHAMPION_ARMY_STACKS.with_borrow_mut(|stacks| {
+        if let Some(existing) = stacks.iter_mut().find(|existing| {
+            existing.champion_id == stack.champion_id && existing.slot_index == stack.slot_index
+        }) {
+            *existing = stack.clone();
+        } else {
+            stacks.push(stack.clone());
+        }
+    });
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_champion_army_stacks_for_upgrade() -> Result<usize, ApiError> {
+    let stacks = RUNTIME_CHAMPION_ARMY_STACKS.with_borrow(Clone::clone);
+    for stack in &stacks {
+        champions_artifacts::update_champion_army_stack(stack.clone())?;
+    }
+    Ok(stacks.len())
+}
+
 fn tavern_offer_view(offer: domm_degens_schema::schema::TavernOffer) -> TavernOfferView {
     TavernOfferView {
         offer_key: offer.offer_key,
@@ -1263,7 +1327,7 @@ fn dwelling_recruit_check(
 }
 
 fn recruit_to_champion(
-    session_id: Id<GameSession>,
+    session: &GameSession,
     champion_id: Id<Champion>,
     unit_id: Id<UnitDefinition>,
     front_hp: u16,
@@ -1271,18 +1335,21 @@ fn recruit_to_champion(
     command_id: Id<GameCommand>,
 ) -> Result<(), ApiError> {
     for slot in 0..domm_game::MAX_ARMY_SLOTS {
-        if let Some(mut stack) = champions_artifacts::find_champion_army_stack(champion_id, slot)? {
+        let stack = match runtime_champion_army_stack(champion_id, slot) {
+            Some(stack) => Some(stack),
+            None => champions_artifacts::find_champion_army_stack(champion_id, slot)?,
+        };
+        if let Some(mut stack) = stack {
             if stack.unit_id == unit_id.key() {
                 stack.quantity = stack.quantity.saturating_add(quantity);
                 stack.last_command_id = Some(command_id.key());
-                champions_artifacts::update_champion_army_stack(stack)?;
-                render_projection::invalidate_champion_detail(champion_id);
+                persist_or_mirror_active_champion_army_stack(session, stack)?;
                 return Ok(());
             }
             continue;
         }
         let mut stack = champions_artifacts::create_champion_army_stack(
-            session_id,
+            session.id(),
             champion_id,
             unit_id,
             slot,
@@ -1291,8 +1358,7 @@ fn recruit_to_champion(
             "active".to_string(),
         )?;
         stack.last_command_id = Some(command_id.key());
-        champions_artifacts::update_champion_army_stack(stack)?;
-        render_projection::invalidate_champion_detail(champion_id);
+        persist_or_mirror_active_champion_army_stack(session, stack)?;
         return Ok(());
     }
     Err(public_error(
@@ -1300,6 +1366,24 @@ fn recruit_to_champion(
         "champion army is full",
         false,
     ))
+}
+
+fn persist_or_mirror_active_champion_army_stack(
+    session: &GameSession,
+    stack: ChampionArmyStack,
+) -> Result<ChampionArmyStack, ApiError> {
+    let champion_id = Id::<Champion>::from_key(stack.champion_id);
+    let stack = if session_turn_runtime::contains_runtime(
+        &session.id().to_string(),
+        session.current_turn,
+    ) {
+        mirror_runtime_champion_army_stack(&stack);
+        stack
+    } else {
+        champions_artifacts::update_champion_army_stack(stack)?
+    };
+    render_projection::invalidate_champion_detail(champion_id);
+    Ok(stack)
 }
 
 fn ensure_champion_occupancy(

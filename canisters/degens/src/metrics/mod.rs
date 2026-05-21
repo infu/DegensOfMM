@@ -5,7 +5,7 @@ use crate::dto::public::ApiError;
 #[cfg(feature = "benchmark")]
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
 };
 
 #[cfg(feature = "benchmark")]
@@ -20,8 +20,8 @@ const MAX_BENCHMARK_CALLS: usize = 4096;
 thread_local! {
     static BENCHMARK_CALLS: RefCell<VecDeque<DiagnosticBenchmarkCallView>> =
         RefCell::new(VecDeque::new());
-    static CURRENT_BENCHMARK_REPO_OPS: RefCell<BTreeMap<&'static str, DiagnosticBenchmarkRepoOpView>> =
-        RefCell::new(BTreeMap::new());
+    static CURRENT_BENCHMARK_REPO_OPS: RefCell<Vec<DiagnosticBenchmarkRepoOpView>> =
+        const { RefCell::new(Vec::new()) };
     static NEXT_BENCHMARK_SEQUENCE: Cell<u64> = const { Cell::new(1) };
 }
 
@@ -85,15 +85,16 @@ pub(crate) fn benchmark_repo_operation<T>(operation: &'static str, body: impl Fn
 
     CURRENT_BENCHMARK_REPO_OPS.with(|ops| {
         let mut ops = ops.borrow_mut();
-        let op = ops
-            .entry(operation)
-            .or_insert_with(|| DiagnosticBenchmarkRepoOpView {
+        if let Some(op) = ops.iter_mut().find(|op| op.operation == operation) {
+            op.calls = op.calls.saturating_add(1);
+            op.instruction_delta = op.instruction_delta.saturating_add(instruction_delta);
+        } else {
+            ops.push(DiagnosticBenchmarkRepoOpView {
                 operation: operation.to_string(),
-                calls: 0,
-                instruction_delta: 0,
+                calls: 1,
+                instruction_delta,
             });
-        op.calls = op.calls.saturating_add(1);
-        op.instruction_delta = op.instruction_delta.saturating_add(instruction_delta);
+        }
     });
 
     result
@@ -173,11 +174,7 @@ fn reset_current_call_details() {
 
 #[cfg(feature = "benchmark")]
 fn take_current_repo_ops() -> Vec<DiagnosticBenchmarkRepoOpView> {
-    CURRENT_BENCHMARK_REPO_OPS.with(|ops| {
-        std::mem::take(&mut *ops.borrow_mut())
-            .into_values()
-            .collect()
-    })
+    CURRENT_BENCHMARK_REPO_OPS.with(|ops| std::mem::take(&mut *ops.borrow_mut()))
 }
 
 #[cfg(feature = "benchmark")]

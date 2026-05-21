@@ -13,8 +13,8 @@ use icydb::{
 use crate::repos::{battles, champions_artifacts, content, neutrals};
 
 use super::{
-    battle as battle_service, battle_runtime, command_response, session_context::public_error,
-    town_runtime,
+    battle as battle_service, battle_runtime, command_response, economy_expansion,
+    session_context::public_error, town_runtime,
 };
 
 #[derive(Clone, Default)]
@@ -75,13 +75,22 @@ pub(crate) fn source_champion_army_stacks(
     champion_id: Id<Champion>,
 ) -> Result<Vec<ChampionArmyStack>, ApiError> {
     match take_seeded_champion_army_stacks(champion_id) {
-        Some(stacks) => Ok(stacks),
-        None => Ok(champions_artifacts::page_champion_army_stacks(
+        Some(stacks) => Ok(economy_expansion::overlay_runtime_champion_army_stacks(
             champion_id,
-            domm_game::MAX_LIST_LIMIT,
-            None,
-        )?
-        .items),
+            stacks,
+        )),
+        None => {
+            let rows = champions_artifacts::page_champion_army_stacks(
+                champion_id,
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?
+            .items;
+            Ok(economy_expansion::overlay_runtime_champion_army_stacks(
+                champion_id,
+                rows,
+            ))
+        }
     }
 }
 

@@ -7386,3 +7386,40 @@ Decision:
 - Keep this checkpoint. It gives the first real dwelling aggregate cut and moves the endpoint from `3.54B` toward the target band.
 - Do not add more runtime state until code-section headroom is freed; the current benchmark canister is only `54` bytes under the install limit.
 - Next useful dwelling-specific cut is a runtime champion army projection that feeds `get_champion_view`, battle start, and production upgrade flush. If headroom is not available, rotate to another endpoint first.
+
+## Champion Army Runtime Stack Cut
+
+Time: `2026-05-21T05:06:00Z`.
+
+Cut:
+
+- First freed benchmark Wasm headroom by replacing benchmark repo-op aggregation's `BTreeMap` with a tiny Vec accumulator. The per-call repo-op list is small, and sorted map behavior is not needed for the benchmark artifacts.
+- Active dwelling recruit now mirrors updated `ChampionArmyStack` rows into a service-local heap cache instead of immediately calling `champions.update_army_stack`.
+- `get_champion_view` overlays cached runtime champion stacks on top of durable stack rows.
+- Battle start overlays runtime champion stacks on both seeded stack rows and durable stack loads, so recruit-before-first-battle sees the updated army.
+- Production upgrade flush writes cached champion army stacks back to durable rows.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bf8a35` / `12,552,757` bytes, `30,155` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-army-runtime-stack-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-dwelling-runtime-pool-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 61441`.
+- Scenario instructions: `22.2085B -> 21.7385B`, `-0.4699B`, `-2.1%`.
+- `submit_dwelling_recruit`: `1.8877B -> 1.4107B`, `-25.3%`.
+- `champions.update_army_stack` dropped out of the benchmark repo-op table.
+- `get_champion_view` stayed low: `0.0046B -> 0.0045B`.
+
+Decision:
+
+- Keep this checkpoint. It removes the last measured durable live-state write from `submit_dwelling_recruit`.
+- Park `submit_dwelling_recruit` for the next rotation; it is now near the same `~1.4B` floor as hire, rules, objective, and spell learning.
+- Next target should be a different cluster: `hire_tavern_champion`, `get_scenario_rules` / `get_objective_progress`, or the remaining spellbook page in `learn_champion_spell`.

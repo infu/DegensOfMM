@@ -1019,10 +1019,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 59. Random Endpoint Cluster: Champion Army Or Headroom Floor
 
-- [ ] Free benchmark Wasm code-section headroom before adding another runtime aggregate; current benchmark Wasm is only `54` bytes under the IC limit.
-- [ ] Pick a different bounded endpoint/cluster from `20260521-dwelling-runtime-pool-local`. Prefer a still-heavy non-dwelling endpoint if no code-size headroom is available; otherwise target the remaining `submit_dwelling_recruit` army-stack floor.
-- [ ] If returning to dwelling, cut the remaining durable `champions.update_army_stack` live-state write by introducing a runtime champion army projection that `get_champion_view`, battle start, and production upgrade flush can read.
-- [ ] Keep the random/round-robin rule: take one bounded cut, measure once at checkpoint, then rotate again unless a regression blocks scenario flow.
+- [x] Free benchmark Wasm code-section headroom before adding another runtime aggregate. Replaced benchmark repo-op aggregation's `BTreeMap` with a Vec accumulator; after the full checkpoint, benchmark Wasm fit at `0x00bf8a35`, `30,155` bytes under the IC limit.
+- [x] Pick a different bounded endpoint/cluster from `20260521-dwelling-runtime-pool-local`. Picked the remaining `submit_dwelling_recruit` champion-army write after freeing headroom.
+- [x] Cut the remaining durable `champions.update_army_stack` live-state write by adding a runtime champion army stack overlay that `get_champion_view`, battle start seeded stacks, battle start durable stack loads, and production upgrade flush can read.
+- [x] Measure the champion-army runtime stack cut. Artifact `target/benchmarks/20260521-army-runtime-stack-local/endpoint-surface` passed with `59/59` endpoints, row growth `108`, stable pages `2049 -> 61441`, and scenario instructions `22.2085B -> 21.7385B` (`-0.4699B`, `-2.1%`) versus `20260521-dwelling-runtime-pool-local`. `submit_dwelling_recruit` moved `1.8877B -> 1.4107B`; `champions.update_army_stack` dropped out of the benchmark repo-op table.
+- [x] Keep the random/round-robin rule: take one bounded cut, measure once at checkpoint, then rotate again unless a regression blocks scenario flow.
+
+### 60. Random Endpoint Cluster: Tavern, Rules, Or Spellbook Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-army-runtime-stack-local`; prefer `hire_tavern_champion`, `get_scenario_rules` / `get_objective_progress`, or `learn_champion_spell`.
+- [ ] Keep `submit_dwelling_recruit` parked unless it blocks scenario flow; remaining `1.4107B` is now mostly command/event/content floor, not durable dwelling pool or army-stack writes.
+- [ ] Preserve the newly freed benchmark Wasm headroom. Current benchmark Wasm has about `30 KB` free; do not spend it all on a tiny endpoint cut.
+- [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome
 

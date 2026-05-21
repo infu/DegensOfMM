@@ -26,7 +26,7 @@ use crate::repos::{
 use super::{
     battle as battle_service, battle_runtime, battle_start,
     command_response::{self, GameCommandStart},
-    economy_expansion, render_projection, scenario_progress,
+    render_projection, scenario_progress,
     session_context::{self, public_error},
     session_turn_runtime, system_jobs as system_job_service, town_runtime, worldmap_kernel,
 };
@@ -803,28 +803,18 @@ fn sync_session_turn_with_command(
     if !command.is_runtime() {
         complete_current_turn_jobs(context.session.id(), income_turn)?;
     }
-    context.session.current_turn = context.session.current_turn.saturating_add(1);
-    context.session.turn_started_at = Timestamp::now();
-    context.session.turn_deadline_at = turn_deadline();
-    context.session.last_command_id = Some(command_id.key());
-    if domm_game::week_for_turn(context.session.current_turn)
-        != domm_game::week_for_turn(income_turn)
-    {
-        economy_expansion::materialize_weekly_economy(&context.session, command_id)?;
-    }
     let final_event_seq = next_event_seq;
     if !command.is_runtime() {
         context.session.next_event_seq = next_event_seq.saturating_add(1);
     }
-    let prepared_runtime = if command.is_runtime() {
-        worldmap_kernel::prepare_next_turn_from_previous(&mut context.session, income_turn)?
+    let runtime_mode = if command.is_runtime() {
+        worldmap_kernel::TurnAdvanceRuntimeMode::CarryPrevious {
+            previous_turn: income_turn,
+        }
     } else {
-        worldmap_kernel::prepare_active_turn(&mut context.session)?
+        worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows
     };
-    context.session = sessions::update_session(context.session)?;
-    if let Some(runtime) = prepared_runtime {
-        worldmap_kernel::insert_active_turn(runtime);
-    }
+    worldmap_kernel::advance_turn(&mut context.session, command_id, income_turn, runtime_mode)?;
     if command.is_runtime() {
         let session_id = context.session.id().to_string();
         let participant = session_turn_participant(&context);
@@ -1153,18 +1143,12 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         sessions::update_participant(participant)?;
     }
 
-    session.current_turn = session.current_turn.saturating_add(1);
-    session.turn_started_at = Timestamp::now();
-    session.turn_deadline_at = turn_deadline();
-    session.last_command_id = Some(command.id);
-    if domm_game::week_for_turn(session.current_turn) != domm_game::week_for_turn(income_turn) {
-        economy_expansion::materialize_weekly_economy(&session, command.id())?;
-    }
-    let prepared_runtime = worldmap_kernel::prepare_active_turn(&mut session)?;
-    session = sessions::update_session(session)?;
-    if let Some(runtime) = prepared_runtime {
-        worldmap_kernel::insert_active_turn(runtime);
-    }
+    worldmap_kernel::advance_turn(
+        &mut session,
+        command.id(),
+        income_turn,
+        worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows,
+    )?;
 
     let session_id_text = session.id().to_string();
     let current_turn = session.current_turn;
@@ -5280,14 +5264,6 @@ fn apply_u32_delta(value: u32, delta: i64) -> Result<u32, ApiError> {
     let value = apply_u64_delta(u64::from(value), delta)?;
     u32::try_from(value)
         .map_err(|_| public_error("resource_cap_exceeded", "resource cap exceeded", false))
-}
-
-fn turn_deadline() -> Timestamp {
-    Timestamp::from_millis(
-        Timestamp::now()
-            .as_millis()
-            .saturating_add(i64::try_from(domm_game::TURN_DURATION_MS).unwrap_or(i64::MAX)),
-    )
 }
 
 fn partial_retry_at() -> Timestamp {

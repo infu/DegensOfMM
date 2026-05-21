@@ -7961,3 +7961,25 @@ Verification:
 Decision:
 
 - Keep this as a small no-behavior checkpoint. The next Section 72A cut should extract a shared turn driver from `movement.rs` so public sync and timer resolution can share runtime-owned advancement logic.
+
+## Worldmap Turn Advance Extraction
+
+Time: `2026-05-21T17:30:00Z`.
+
+Cut:
+
+- Added `worldmap_kernel::advance_turn` for the common session turn increment, deadline refresh, weekly economy boundary, next-runtime preparation, durable session update, and runtime insertion.
+- Public `sync_session_turn_with_command` now calls the shared helper with `TurnAdvanceRuntimeMode::CarryPrevious`.
+- Timer `process_turn_resolution_job_inner` now calls the same helper with `TurnAdvanceRuntimeMode::HydrateRows`.
+- Removed the duplicated local `turn_deadline` helper from `movement.rs`.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bff9dd` / `12,581,341` bytes, `1,571` bytes under the IC limit.
+
+Decision:
+
+- Keep this as the first shared worldmap driver extraction. It is intentionally behavior-neutral: timer resolution still uses durable movement persistence, and moving timers onto runtime-only state remains the next Section 72A cut.

@@ -1011,10 +1011,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 58. Random Endpoint Cluster: Dwelling Aggregate Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-learn-runtime-spell-create-local`; prefer `submit_dwelling_recruit`.
-- [ ] Keep `learn_champion_spell` parked unless we first free enough benchmark Wasm headroom for a real spellbook-cache cut; the current installable cut removed the durable create row but left the spellbook page.
-- [ ] Do not micro-polish the dwelling receipt path again. The remaining `submit_dwelling_recruit` floor is durable `DwellingPool` update plus champion army stack update, so the next useful cut should be a runtime dwelling pool plus runtime champion army projection with production upgrade flush.
-- [ ] Watch code-section headroom closely. The current benchmark Wasm code section is `0x00bffb2f`, only `1,233` bytes under the IC limit.
+- [x] Pick a different bounded endpoint cluster from `20260521-learn-runtime-spell-create-local`; prefer `submit_dwelling_recruit`. Picked `submit_dwelling_recruit`.
+- [x] Keep `learn_champion_spell` parked unless we first free enough benchmark Wasm headroom for a real spellbook-cache cut; the current installable cut removed the durable create row but left the spellbook page.
+- [x] Apply the installable dwelling pool cut. Active `submit_dwelling_recruit` now receives the prechecked `DwellingPool`, mirrors the changed pool into a session/object heap cache instead of updating the durable `DwellingPool` row on the active route, and production upgrade flush materializes cached dwelling pools.
+- [x] Avoid making the benchmark Wasm un-installable. The first `SessionTurnRuntime` pool-snapshot version exceeded the IC code-section limit; the final service-local heap cache fits at `0x00bfffca`, only `54` bytes under the limit.
+- [x] Measure the dwelling runtime-pool cut. Artifact `target/benchmarks/20260521-dwelling-runtime-pool-local/endpoint-surface` passed with `59/59` endpoints, row growth `108`, stable pages `2049 -> 61441`, and scenario instructions `23.8616B -> 22.2085B` (`-1.6531B`, `-6.9%`) versus `20260521-learn-runtime-spell-create-local`. `submit_dwelling_recruit` moved `3.5428B -> 1.8877B`; `economy_expansion.update_dwelling_pool` and `economy_expansion.create_dwelling_recruitment` dropped out of the benchmark repo-op table. `champions.update_army_stack` remains.
+
+### 59. Random Endpoint Cluster: Champion Army Or Headroom Floor
+
+- [ ] Free benchmark Wasm code-section headroom before adding another runtime aggregate; current benchmark Wasm is only `54` bytes under the IC limit.
+- [ ] Pick a different bounded endpoint/cluster from `20260521-dwelling-runtime-pool-local`. Prefer a still-heavy non-dwelling endpoint if no code-size headroom is available; otherwise target the remaining `submit_dwelling_recruit` army-stack floor.
+- [ ] If returning to dwelling, cut the remaining durable `champions.update_army_stack` live-state write by introducing a runtime champion army projection that `get_champion_view`, battle start, and production upgrade flush can read.
+- [ ] Keep the random/round-robin rule: take one bounded cut, measure once at checkpoint, then rotate again unless a regression blocks scenario flow.
 
 ## Expected Outcome
 

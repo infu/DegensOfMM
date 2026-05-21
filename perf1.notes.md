@@ -7342,3 +7342,47 @@ Decision:
 - Keep this checkpoint. It removes the durable learned-spell create row from the active route and keeps same-turn spell casting correct through runtime snapshots.
 - Park `learn_champion_spell` for now. The remaining floor is spellbook paging plus content/command/event overhead, and the attempted full cache crossed the benchmark Wasm limit.
 - Rotate next to `submit_dwelling_recruit`; its remaining floor is the larger dwelling pool plus champion army aggregate, not another receipt lookup micro-cut.
+
+## Dwelling Runtime Pool Cut
+
+Time: `2026-05-21T04:47:00Z`.
+
+Cut:
+
+- Rotated to `submit_dwelling_recruit`.
+- Active dwelling recruit now passes the already-checked `DwellingPool` into command application instead of loading the pool a second time.
+- Active dwelling recruit mirrors the changed `DwellingPool` into a service-local session/object heap cache instead of immediately updating the durable pool row.
+- `get_dwelling_pool`, `preview_dwelling_recruit`, and later dwelling recruit calls read the heap pool first, so same-turn available counts stay current.
+- Production upgrade flush writes cached dwelling pools back to durable `DwellingPool` rows.
+- The runtime receipt path no longer creates a durable `DwellingRecruitment` row during the benchmark active route; the remaining durable write in this endpoint is `champions.update_army_stack`.
+
+Code-size decision:
+
+- A cleaner `SessionTurnRuntime` pool-snapshot version compiled and checked, but exceeded the IC benchmark Wasm code-section limit.
+- The final service-local heap cache fit at `0x00bfffca`, only `54` bytes under the limit.
+- The next checkpoint must free code-section headroom before adding another runtime aggregate.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfffca` / `12,582,858` bytes, `54` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-dwelling-runtime-pool-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-learn-runtime-spell-create-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 61441`.
+- Scenario instructions: `23.8616B -> 22.2085B`, `-1.6531B`, `-6.9%`.
+- `submit_dwelling_recruit`: `3.5428B -> 1.8877B`, `-46.7%`.
+- Removed repo ops from the benchmark active surface: `economy_expansion.update_dwelling_pool` (`1` call / `0.4762B`) and `economy_expansion.create_dwelling_recruitment` (`1` call / `0.4766B`).
+- Remaining measured floor: `champions.update_army_stack` (`1` call / `0.4768B`) plus command/event/content overhead.
+
+Decision:
+
+- Keep this checkpoint. It gives the first real dwelling aggregate cut and moves the endpoint from `3.54B` toward the target band.
+- Do not add more runtime state until code-section headroom is freed; the current benchmark canister is only `54` bytes under the install limit.
+- Next useful dwelling-specific cut is a runtime champion army projection that feeds `get_champion_view`, battle start, and production upgrade flush. If headroom is not available, rotate to another endpoint first.

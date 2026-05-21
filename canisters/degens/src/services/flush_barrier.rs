@@ -34,6 +34,8 @@ pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
         .saturating_add(super::account_lobby_session::flush_runtime_lobby_state_for_upgrade()?);
     flushed = flushed
         .saturating_add(super::session_turn_runtime::flush_runtime_projections_for_upgrade()?);
+    flushed = flushed
+        .saturating_add(super::economy_expansion::flush_runtime_dwelling_pools_for_upgrade()?);
     flushed = flushed.saturating_add(super::town_runtime::flush_all_projections_to_durable()?);
     flushed = flushed.saturating_add(super::battle_runtime::flush_runtime_archives_for_barrier()?);
     if reason == FLUSH_BARRIER_UPGRADE {

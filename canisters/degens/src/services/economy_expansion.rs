@@ -1,8 +1,9 @@
-use std::collections::BTreeMap;
+use std::{cell::RefCell, collections::BTreeMap};
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
-    Champion, GameCommand, GameParticipant, GameSession, Town, UnitDefinition, WorldObject,
+    Champion, DwellingPool, GameCommand, GameParticipant, GameSession, Town, UnitDefinition,
+    WorldObject,
 };
 use domm_game::{
     ApiError, ChampionHirePreview, CommandResponse, CommandResult, DwellingPoolView,
@@ -23,6 +24,10 @@ use super::{
     session_context::{self, public_error},
     session_turn_runtime, town_runtime,
 };
+
+thread_local! {
+    static RUNTIME_DWELLING_POOLS: RefCell<Vec<DwellingPool>> = const { RefCell::new(Vec::new()) };
+}
 
 pub(crate) fn get_tavern_offers(
     caller: CandidPrincipal,
@@ -191,8 +196,7 @@ pub(crate) fn get_dwelling_pool(
 ) -> Result<DwellingPoolView, ApiError> {
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
-    let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
-        .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
+    let pool = load_dwelling_pool_for_object(&context.session, object.id())?;
     if pool.participant_id != Some(context.participant.id().key()) {
         return Err(public_error(
             "not_owner",
@@ -221,8 +225,7 @@ pub(crate) fn preview_dwelling_recruit(
     let context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
-    let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
-        .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
+    let pool = load_dwelling_pool_for_object(&context.session, object.id())?;
     let champion = resolve_champion(&context.session, &champion_id)?;
     let check = dwelling_recruit_check(
         context.session.id(),
@@ -259,8 +262,7 @@ pub(crate) fn submit_dwelling_recruit(
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let object = resolve_dwelling_object(&context.session, &object_id)?;
     let champion = resolve_champion(&context.session, &champion_id)?;
-    let pool = economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
-        .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))?;
+    let pool = load_dwelling_pool_for_object(&context.session, object.id())?;
     let check = dwelling_recruit_check(
         context.session.id(),
         Id::from_key(context.session.ruleset_id),
@@ -308,6 +310,7 @@ pub(crate) fn submit_dwelling_recruit(
         &mut context,
         object,
         champion,
+        pool,
         unit_slug,
         quantity,
         command,
@@ -751,17 +754,13 @@ fn apply_dwelling_recruit_command(
     context: &mut session_context::SessionCallerContext,
     object: WorldObject,
     champion: Champion,
+    mut pool: DwellingPool,
     unit_slug: String,
     quantity: u32,
     command: GameCommand,
     runtime_receipt: bool,
     client_nonce: &str,
 ) -> Result<CommandResponse, ApiError> {
-    let mut pool =
-        economy_expansion::find_dwelling_pool_by_object(context.session.id(), object.id())?
-            .ok_or_else(|| {
-                public_error("dwelling_pool_not_found", "dwelling pool not found", false)
-            })?;
     let unit =
         content::find_unit_by_ruleset_slug(Id::from_key(context.session.ruleset_id), &unit_slug)?
             .ok_or_else(|| public_error("unit_not_found", "unit definition was not found", false))?;
@@ -811,7 +810,7 @@ fn apply_dwelling_recruit_command(
         persist_or_mirror_active_participant(&context.session, context.participant.clone())?;
     pool.available = pool.available.saturating_sub(quantity);
     pool.last_command_id = Some(command.id().key());
-    pool = economy_expansion::update_dwelling_pool(pool)?;
+    pool = persist_or_mirror_active_dwelling_pool(&context.session, pool)?;
     recruit_to_champion(
         context.session.id(),
         champion.id(),
@@ -820,9 +819,9 @@ fn apply_dwelling_recruit_command(
         quantity,
         command.id(),
     )?;
-    let fresh_recruitment = if runtime_receipt
-        || economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none()
-    {
+    let fresh_recruitment = if runtime_receipt {
+        true
+    } else if economy_expansion::find_dwelling_recruitment_by_command(command.id())?.is_none() {
         economy_expansion::create_dwelling_recruitment(
             context.session.id(),
             context.participant.id(),
@@ -1096,6 +1095,52 @@ fn resolve_champion(session: &GameSession, champion_id: &str) -> Result<Champion
     )?
     .ok_or_else(|| public_error("champion_not_found", "champion not found", false))?;
     Ok(champion)
+}
+
+fn load_dwelling_pool_for_object(
+    session: &GameSession,
+    object_id: Id<WorldObject>,
+) -> Result<DwellingPool, ApiError> {
+    if let Some(pool) = runtime_dwelling_pool(session.id(), object_id) {
+        return Ok(pool);
+    }
+    economy_expansion::find_dwelling_pool_by_object(session.id(), object_id)?
+        .ok_or_else(|| public_error("dwelling_pool_not_found", "dwelling pool not found", false))
+}
+
+fn runtime_dwelling_pool(
+    session_id: Id<GameSession>,
+    object_id: Id<WorldObject>,
+) -> Option<DwellingPool> {
+    let session_key = session_id.key();
+    let object_key = object_id.key();
+    RUNTIME_DWELLING_POOLS.with_borrow(|pools| {
+        pools
+            .iter()
+            .find(|pool| pool.session_id == session_key && pool.object_id == object_key)
+            .cloned()
+    })
+}
+
+fn mirror_runtime_dwelling_pool(pool: &DwellingPool) {
+    RUNTIME_DWELLING_POOLS.with_borrow_mut(|pools| {
+        if let Some(existing) = pools.iter_mut().find(|existing| {
+            existing.session_id == pool.session_id && existing.object_id == pool.object_id
+        }) {
+            *existing = pool.clone();
+        } else {
+            pools.push(pool.clone());
+        }
+    });
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_runtime_dwelling_pools_for_upgrade() -> Result<usize, ApiError> {
+    let pools = RUNTIME_DWELLING_POOLS.with_borrow(Clone::clone);
+    for pool in &pools {
+        economy_expansion::update_dwelling_pool(pool.clone())?;
+    }
+    Ok(pools.len())
 }
 
 fn tavern_offer_view(offer: domm_degens_schema::schema::TavernOffer) -> TavernOfferView {
@@ -1422,6 +1467,18 @@ fn persist_or_mirror_active_participant(
         Ok(participant)
     } else {
         Ok(sessions::update_participant(participant)?)
+    }
+}
+
+fn persist_or_mirror_active_dwelling_pool(
+    session: &GameSession,
+    pool: DwellingPool,
+) -> Result<DwellingPool, ApiError> {
+    if session_turn_runtime::contains_runtime(&session.id().to_string(), session.current_turn) {
+        mirror_runtime_dwelling_pool(&pool);
+        Ok(pool)
+    } else {
+        Ok(economy_expansion::update_dwelling_pool(pool)?)
     }
 }
 

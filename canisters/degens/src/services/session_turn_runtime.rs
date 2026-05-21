@@ -47,6 +47,7 @@ pub(crate) struct SessionTurnRuntime {
     pub ready_participants: BTreeSet<String>,
     pub champion_snapshots: Vec<Champion>,
     pub champion_spell_snapshots: Vec<RuntimeChampionSpell>,
+    pub complete_champion_spellbooks: BTreeSet<String>,
     pub world_object_snapshots: Vec<WorldObject>,
     pub occupancy_index: Vec<RuntimeOccupancyCell>,
     pub contact_index: Vec<RuntimeContactCell>,
@@ -86,6 +87,7 @@ impl SessionTurnRuntime {
             ready_participants: BTreeSet::new(),
             champion_snapshots: Vec::new(),
             champion_spell_snapshots: Vec::new(),
+            complete_champion_spellbooks: BTreeSet::new(),
             world_object_snapshots: Vec::new(),
             occupancy_index: Vec::new(),
             contact_index: Vec::new(),
@@ -145,6 +147,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_champion_spell_snapshot(&mut self, spell: RuntimeChampionSpell) {
+        let champion_id = Id::<Champion>::from_key(spell.champion_id).to_string();
         if let Some(existing) = self.champion_spell_snapshots.iter_mut().find(|existing| {
             existing.champion_id == spell.champion_id && existing.spell_id == spell.spell_id
         }) {
@@ -152,8 +155,19 @@ impl SessionTurnRuntime {
         } else {
             self.champion_spell_snapshots.push(spell);
         }
+        self.complete_champion_spellbooks.insert(champion_id);
         self.dirty.champion_spell_snapshots = true;
         self.mark_dirty();
+    }
+
+    pub(crate) fn mark_champion_spellbook_complete(&mut self, champion_id: Id<Champion>) {
+        if self
+            .complete_champion_spellbooks
+            .insert(champion_id.to_string())
+        {
+            self.dirty.champion_spell_snapshots = true;
+            self.mark_dirty();
+        }
     }
 
     pub(crate) fn upsert_world_object_snapshot(&mut self, object: WorldObject) {
@@ -1127,6 +1141,12 @@ fn carry_forward_runtime_state(runtime: &mut SessionTurnRuntime, previous: Sessi
     for champion in previous.champion_snapshots {
         runtime.upsert_champion_snapshot(champion);
     }
+    for spell in previous.champion_spell_snapshots {
+        runtime.upsert_champion_spell_snapshot(spell);
+    }
+    for champion_id in previous.complete_champion_spellbooks {
+        runtime.complete_champion_spellbooks.insert(champion_id);
+    }
     for object in previous.world_object_snapshots {
         runtime.upsert_world_object_snapshot(object);
     }
@@ -1256,7 +1276,11 @@ fn hydrate_runtime_champions_and_occupancy(
                     owner_participant_id: Some(participant.id().to_string()),
                     blocking: champion.status == "active",
                 });
+                let champion_id = champion.id();
                 runtime.upsert_champion_snapshot(champion);
+                if session.current_turn == 1 {
+                    runtime.mark_champion_spellbook_complete(champion_id);
+                }
             }
         }
     }
@@ -1449,6 +1473,34 @@ pub(crate) fn runtime_learned_champion_spell(
                         && spell.spell_slug.as_deref() == Some(spell_slug)
                 })
             })
+    })
+}
+
+pub(crate) fn runtime_champion_spell_slugs_if_complete(
+    session_id: &str,
+    turn_number: u32,
+    champion_id: Id<Champion>,
+) -> Option<Vec<String>> {
+    let key = runtime_key(session_id, turn_number);
+    let champion_key = champion_id.key();
+    let champion_id_text = champion_id.to_string();
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let runtimes = runtimes.borrow();
+        let runtime = runtimes.get(&key)?;
+        if !runtime
+            .complete_champion_spellbooks
+            .contains(&champion_id_text)
+        {
+            return None;
+        }
+        let mut slugs = runtime
+            .champion_spell_snapshots
+            .iter()
+            .filter(|spell| spell.champion_id == champion_key)
+            .filter_map(|spell| spell.spell_slug.clone())
+            .collect::<Vec<_>>();
+        slugs.sort();
+        Some(slugs)
     })
 }
 

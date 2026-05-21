@@ -7508,3 +7508,42 @@ Decision:
 - Keep this checkpoint. It removes a shared scenario-progress read floor and improves four measured endpoints, not just one query.
 - Park scenario progress for the next rotation.
 - Next useful targets are `learn_champion_spell`, a non-scenario setup/session floor, or a shared floor exposed through `submit_dwelling_recruit`.
+
+## Runtime Complete Spellbooks
+
+Time: `2026-05-21T05:59:54Z`.
+
+Cut:
+
+- Rotated to the champion spellbook cluster.
+- The rejected query-seeded spellbook cache was not reused. Query-call heap writes do not persist into update calls, so that shape left both durable spellbook pages in place.
+- `SessionTurnRuntime` now tracks champion spellbooks that are complete for the active turn.
+- First-turn active champions are marked complete-empty during runtime hydration, learned runtime spells are carried in `champion_spell_snapshots`, and both learned spell snapshots and complete markers carry forward into the next turn runtime.
+- `preview_champion_progression` and `learn_champion_spell` now read runtime spell slugs first and only page durable `ChampionSpell` rows when the active runtime does not know the complete spellbook.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-runtime-spellbook-complete-local/endpoint-surface`, passed in `188s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-scenario-progress-cache-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `16.0625B -> 14.6549B`, `-1.4076B`, `-8.8%`.
+- `learn_champion_spell`: `1.4044B -> 0.7053B`.
+- `preview_champion_progression`: `0.7034B -> 0.00004B`.
+- `cast_adventure_spell`: `0.7055B -> 0.7052B`.
+- `champions.spells_by_champion` dropped out of the benchmark repo-op table.
+- Remaining repo ops are now `players.create_player_account` (`2` calls / `0.9491B`), `sessions.insert_participants_atomic` (`1` call / `0.4868B`), and `sessions.create_game_session` (`1` call / `0.4778B`).
+
+Decision:
+
+- Keep this checkpoint. It removes the last measured champion spellbook durable page scans from the endpoint surface and moves learning into the common `~0.705B` floor.
+- Park champion spellbook for the next rotation.
+- Next useful targets are the remaining setup/session repo-op floor or a shared floor exposed through `submit_dwelling_recruit`.

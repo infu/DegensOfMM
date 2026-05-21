@@ -26,7 +26,11 @@ pub(crate) fn preview_champion_progression(
     let context = session_context::require_session_caller_runtime_first(caller, &session_id)?;
     let champion_id = session_context::parse_id::<Champion>(&champion_id, "champion_id")?;
     let champion = require_owned_champion(&context, champion_id)?;
-    progression_view(&champion, context.session.current_turn)
+    progression_view(
+        &context.session.id().to_string(),
+        &champion,
+        context.session.current_turn,
+    )
 }
 
 pub(crate) fn select_champion_level_up(
@@ -327,34 +331,49 @@ fn apply_spell_learning(
             false,
         ));
     }
-    let known_spells = champions_artifacts::page_champion_spells(
+    let known_count = if let Some(slugs) = runtime_spell_slugs(
+        &context.session.id().to_string(),
+        context.session.current_turn,
         champion.id(),
-        domm_game::CHAMPION_SPELLBOOK_CAP as u32,
-        None,
-    )?
-    .items;
-    if let Some(existing) = known_spell_for_definition(&known_spells, spell.id()) {
-        if existing.last_command_id == Some(command.id().key()) {
-            return Ok((
-                receipt(
-                    &command,
-                    &champion,
-                    "learn_champion_spell",
-                    None,
-                    Some(spell_slug),
-                    Vec::new(),
-                ),
-                Vec::new(),
-                Vec::new(),
+    ) {
+        if slugs.iter().any(|slug| slug == spell_slug) {
+            return Err(public_error(
+                "spell_already_learned",
+                "champion already knows this spell",
+                false,
             ));
         }
-        return Err(public_error(
-            "spell_already_learned",
-            "champion already knows this spell",
-            false,
-        ));
-    }
-    let known_count = known_spells.len();
+        slugs.len()
+    } else {
+        let known_spells = champions_artifacts::page_champion_spells(
+            champion.id(),
+            domm_game::CHAMPION_SPELLBOOK_CAP as u32,
+            None,
+        )?
+        .items;
+        if let Some(existing) = known_spell_for_definition(&known_spells, spell.id()) {
+            if existing.last_command_id == Some(command.id().key()) {
+                return Ok((
+                    receipt(
+                        &command,
+                        &champion,
+                        "learn_champion_spell",
+                        None,
+                        Some(spell_slug),
+                        Vec::new(),
+                    ),
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+            return Err(public_error(
+                "spell_already_learned",
+                "champion already knows this spell",
+                false,
+            ));
+        }
+        known_spells.len()
+    };
     if known_count.saturating_add(1) > domm_game::CHAMPION_SPELLBOOK_CAP {
         return Err(public_error(
             "spellbook_cap_exceeded",
@@ -503,6 +522,7 @@ fn apply_adventure_cast(
 }
 
 fn progression_view(
+    session_id: &str,
     champion: &Champion,
     current_turn: u32,
 ) -> Result<ChampionProgressionView, ApiError> {
@@ -519,7 +539,7 @@ fn progression_view(
         },
         mana_max: champion.mana_max,
         mana_turn: current_turn,
-        learned_spell_slugs: learned_spell_slugs(champion.id())?,
+        learned_spell_slugs: learned_spell_slugs(session_id, current_turn, champion.id())?,
         level_up_choices: skill_choices(champion),
     })
 }
@@ -563,7 +583,14 @@ fn skill_choices(champion: &Champion) -> Vec<ChampionSkillChoiceView> {
     .collect()
 }
 
-fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiError> {
+fn learned_spell_slugs(
+    session_id: &str,
+    current_turn: u32,
+    champion_id: Id<Champion>,
+) -> Result<Vec<String>, ApiError> {
+    if let Some(slugs) = runtime_spell_slugs(session_id, current_turn, champion_id) {
+        return Ok(slugs);
+    }
     let page = champions_artifacts::page_champion_spells(
         champion_id,
         domm_game::CHAMPION_SPELLBOOK_CAP as u32,
@@ -586,6 +613,18 @@ fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiErro
     }
     slugs.sort();
     Ok(slugs)
+}
+
+fn runtime_spell_slugs(
+    session_id: &str,
+    current_turn: u32,
+    champion_id: Id<Champion>,
+) -> Option<Vec<String>> {
+    session_turn_runtime::runtime_champion_spell_slugs_if_complete(
+        session_id,
+        current_turn,
+        champion_id,
+    )
 }
 
 fn persist_or_mirror_active_champion(

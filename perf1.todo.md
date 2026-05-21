@@ -1045,9 +1045,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 62. Random Endpoint Cluster: Spellbook, Dwelling, Or Remaining Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-scenario-progress-cache-local`; prefer `learn_champion_spell`, a non-scenario setup/session floor, or `submit_dwelling_recruit` only if it exposes a shared command/content floor.
-- [ ] Keep scenario-progress queries parked unless a regression blocks scenario flow; `get_scenario_rules` and `get_objective_progress` are now in the near-zero cache-backed band.
-- [ ] Avoid broad caches that only move one `0.7B` query unless they also remove repo ops or unlock several endpoints; preserve benchmark Wasm headroom.
+- [x] Pick a different bounded endpoint/cluster from `20260521-scenario-progress-cache-local`; prefer `learn_champion_spell`, a non-scenario setup/session floor, or `submit_dwelling_recruit` only if it exposes a shared command/content floor. Picked active spellbook runtime completeness.
+- [x] Keep scenario-progress queries parked unless a regression blocks scenario flow; `get_scenario_rules` and `get_objective_progress` are now in the near-zero cache-backed band.
+- [x] Avoid broad caches that only move one `0.7B` query unless they also remove repo ops or unlock several endpoints; preserve benchmark Wasm headroom. This cut removed the `champions.spells_by_champion` repo op table entry and improved both `preview_champion_progression` and `learn_champion_spell`.
+- [x] Make active turn runtime authoritative for complete champion spellbooks. Current-turn runtime now tracks which champion spellbooks are complete, carries that marker and learned spells forward, marks first-turn active champion spellbooks complete, and lets champion progression/learning read runtime spell slugs before durable spellbook pages.
+- [x] Measure the runtime spellbook cut. Artifact `target/benchmarks/20260521-runtime-spellbook-complete-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `16.0625B -> 14.6549B` (`-1.4076B`, `-8.8%`) versus `20260521-scenario-progress-cache-local`. `learn_champion_spell` moved `1.4044B -> 0.7053B`, `preview_champion_progression` moved `0.7034B -> 0.00004B`, and `champions.spells_by_champion` dropped out of the benchmark repo-op table.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 63. Random Endpoint Cluster: Setup Floor Or Dwelling Shared Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-runtime-spellbook-complete-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or `submit_dwelling_recruit` only if it exposes a shared command/content floor.
+- [ ] Keep champion spellbook parked unless a regression blocks scenario flow; `learn_champion_spell` is now around the common `0.705B` floor and `preview_champion_progression` is near zero.
+- [ ] Be careful with the remaining `0.7B` methods: many may be benchmark/query floor rather than endpoint logic. Prefer cuts that remove repo ops, row growth, or multiple endpoint costs.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

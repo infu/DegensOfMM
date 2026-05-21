@@ -8215,3 +8215,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. `flush_barrier` no longer has a separate session-runtime flush implementation. Upgrade safety still needs worldmap kernel serialization before timer repair; that remains the next Section 72B item.
+
+## Worldmap Runtime Upgrade Snapshot
+
+Time: `2026-05-21T21:34:00Z`.
+
+Cut:
+
+- Added production-only upgrade snapshot storage for `SessionTurnRuntime` in stable memory id `24`.
+- This does not collide with IcyDB stable memory ids `20/21/22`, commit memory id `119`, or battle runtime memory id `23`.
+- The snapshot uses Candid to preserve active session-turn runtimes, including runtime command/events, dirty projection queues, and projection checkpoints.
+- `pre_upgrade` now writes the session runtime snapshot before the upgrade flush barrier, runs the barrier, then writes it again so completed projection entries are not replayed after upgrade.
+- `post_upgrade` restores session runtimes before active-session admission repair, first-playable repair, and `system_jobs::repair_and_schedule_after_install_or_upgrade`, so timer repair can see restored kernel deadlines before relying on durable job rows.
+- Added encode/decode coverage proving dirty queues and projection checkpoints survive snapshot round trip.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister projection -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Worldmap kernels now have the same upgrade-safety class as battle runtimes, but with the full dirty queue/checkpoint snapshot needed for deferred projection recovery. Projection diagnostics and upgrade-recovery benchmark coverage remain open Section 72B items.

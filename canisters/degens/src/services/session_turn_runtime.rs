@@ -6,11 +6,17 @@
 
 #![allow(dead_code)]
 
+#[cfg(not(feature = "benchmark"))]
+use std::borrow::Cow;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
 };
 
+#[cfg(not(feature = "benchmark"))]
+use canic_cdk::structures::{
+    Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
+};
 use domm_degens_schema::schema::{
     Champion, GameCommand, GameParticipant, GameSession, MovementIntent, QuestState,
     ScenarioRuleState, WorldObject,
@@ -32,8 +38,67 @@ use crate::repos::{
 use crate::repos::{cleanup, commands_events_effects, economy, movement, scenario_progress};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
+#[cfg(not(feature = "benchmark"))]
+pub(crate) const SESSION_TURN_RUNTIME_MEMORY_ID: u8 = 24;
+#[cfg(not(feature = "benchmark"))]
+const MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES: u32 = 64 * 1024 * 1024;
+
+#[cfg(not(feature = "benchmark"))]
+struct SessionTurnRuntimeStableCell;
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RawSessionTurnRuntimeSnapshot(Vec<u8>);
+
+#[cfg(not(feature = "benchmark"))]
+impl RawSessionTurnRuntimeSnapshot {
+    const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+impl Storable for RawSessionTurnRuntimeSnapshot {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        Cow::Borrowed(self.as_bytes())
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        Self(bytes.into_owned())
+    }
+
+    fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+
+    const BOUND: Bound = Bound::Bounded {
+        max_size: MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES,
+        is_fixed_size: false,
+    };
+}
+
+#[cfg(not(feature = "benchmark"))]
+thread_local! {
+    static SESSION_TURN_RUNTIME_SNAPSHOT_CELL: RefCell<
+        StableCell<RawSessionTurnRuntimeSnapshot, VirtualMemory<DefaultMemoryImpl>>,
+    > = RefCell::new(StableCell::init(
+        icydb::__reexports::canic_memory::ic_memory!(
+            SessionTurnRuntimeStableCell,
+            SESSION_TURN_RUNTIME_MEMORY_ID
+        ),
+        RawSessionTurnRuntimeSnapshot::empty(),
+    ));
+}
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnRuntime {
     pub session_id: String,
     pub turn_number: u32,
@@ -574,6 +639,10 @@ const PROJECTION_PRIORITY_NORMAL: u8 = 50;
 
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct ProjectionDirtyEntry {
     pub kernel_id: String,
     pub generation: u64,
@@ -587,6 +656,10 @@ pub(crate) struct ProjectionDirtyEntry {
 
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) enum ProjectionEntity {
     Session,
     Participant,
@@ -607,6 +680,10 @@ pub(crate) enum ProjectionEntity {
 
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) enum ProjectionDirtyOp {
     Upsert,
     Tombstone,
@@ -614,6 +691,10 @@ pub(crate) enum ProjectionDirtyOp {
 
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct ProjectionCheckpoint {
     pub kernel_id: String,
     pub flushed_generation: u64,
@@ -665,6 +746,10 @@ pub(crate) struct ProjectionFlushOutcome {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnParticipant {
     pub participant_id: String,
     pub player_id: String,
@@ -681,6 +766,10 @@ pub(crate) struct RuntimeReadinessCounts {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct RuntimeOccupancyCell {
     pub x: u16,
     pub y: u16,
@@ -692,6 +781,10 @@ pub(crate) struct RuntimeOccupancyCell {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct RuntimeContactCell {
     pub x: u16,
     pub y: u16,
@@ -716,6 +809,10 @@ fn contact_projection_key(cell: &RuntimeContactCell) -> String {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct RuntimeMovementIntent {
     pub intent_id: String,
     pub command_id: String,
@@ -759,6 +856,10 @@ impl RuntimeMovementIntent {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct RuntimeChampionSpell {
     pub champion_id: Ulid,
     pub spell_id: Ulid,
@@ -769,6 +870,10 @@ pub(crate) struct RuntimeChampionSpell {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnCommandReceipt {
     pub command_id: String,
     pub command_type: String,
@@ -789,6 +894,10 @@ impl SessionTurnCommandReceipt {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnEvent {
     pub command_id: Option<String>,
     pub event: ApiEventView,
@@ -796,6 +905,10 @@ pub(crate) struct SessionTurnEvent {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnEventSeqBlock {
     pub next_event_seq: u64,
     pub exclusive_end_event_seq: u64,
@@ -813,6 +926,10 @@ impl SessionTurnEventSeqBlock {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct ObjectTurnDelta {
     pub subject_kind: String,
     pub subject_id: String,
@@ -822,6 +939,10 @@ pub(crate) struct ObjectTurnDelta {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct ResourceTurnDelta {
     pub participant_id: String,
     pub gold: i64,
@@ -837,6 +958,10 @@ pub(crate) struct ResourceTurnDelta {
 
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct ResourceLedgerDelta {
     pub command_id: String,
     pub ledger_key: String,
@@ -847,12 +972,20 @@ pub(crate) struct ResourceLedgerDelta {
 }
 
 #[derive(Clone)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct MovementCursor {
     pub consumed_steps: u32,
     pub parked_intents: u32,
 }
 
 #[derive(Clone, Default)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnDirtySets {
     pub participants: bool,
     pub ready: bool,
@@ -872,6 +1005,10 @@ pub(crate) struct SessionTurnDirtySets {
 }
 
 #[derive(Default)]
+#[cfg_attr(
+    not(feature = "benchmark"),
+    derive(candid::CandidType, serde::Deserialize)
+)]
 pub(crate) struct SessionTurnRuntimeSnapshot {
     pub runtimes: Vec<SessionTurnRuntime>,
 }
@@ -2638,6 +2775,51 @@ pub(crate) fn restore_from_upgrade(snapshot: SessionTurnRuntimeSnapshot) {
     });
 }
 
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
+    let bytes = encode_snapshot_for_upgrade(&snapshot_for_upgrade())?;
+    if bytes.len() > MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES as usize {
+        return Err(format!(
+            "session turn runtime snapshot exceeds {} bytes: {}",
+            MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES,
+            bytes.len()
+        ));
+    }
+
+    SESSION_TURN_RUNTIME_SNAPSHOT_CELL.with(|cell| {
+        cell.borrow_mut().set(RawSessionTurnRuntimeSnapshot(bytes));
+    });
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
+    let raw = SESSION_TURN_RUNTIME_SNAPSHOT_CELL.with(|cell| cell.borrow().get().clone());
+    if raw.as_bytes().is_empty() {
+        return Ok(());
+    }
+
+    let snapshot = decode_snapshot_for_upgrade(raw.as_bytes())?;
+    restore_from_upgrade(snapshot);
+    SESSION_TURN_RUNTIME_SNAPSHOT_CELL.with(|cell| {
+        cell.borrow_mut()
+            .set(RawSessionTurnRuntimeSnapshot::empty());
+    });
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn encode_snapshot_for_upgrade(snapshot: &SessionTurnRuntimeSnapshot) -> Result<Vec<u8>, String> {
+    candid::encode_one(snapshot)
+        .map_err(|error| format!("encode session turn runtime snapshot failed: {error}"))
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn decode_snapshot_for_upgrade(bytes: &[u8]) -> Result<SessionTurnRuntimeSnapshot, String> {
+    candid::decode_one(bytes)
+        .map_err(|error| format!("decode session turn runtime snapshot failed: {error}"))
+}
+
 #[cfg(test)]
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
@@ -2849,6 +3031,43 @@ mod tests {
         assert_eq!(active_runtime_count(), 2);
         assert!(contains_runtime("session:1", 2));
         assert!(contains_runtime("session:1", 3));
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    #[test]
+    fn upgrade_snapshot_encoding_preserves_dirty_queue_and_checkpoint() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:1".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:1".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+        runtime.push_event(event(10, "public"));
+        insert_runtime(runtime);
+
+        let snapshot = snapshot_for_upgrade();
+        let bytes =
+            encode_snapshot_for_upgrade(&snapshot).expect("session runtime snapshot should encode");
+        let decoded =
+            decode_snapshot_for_upgrade(&bytes).expect("session runtime snapshot should decode");
+
+        assert_eq!(decoded.runtimes.len(), 1);
+        let decoded_runtime = &decoded.runtimes[0];
+        assert_eq!(decoded_runtime.active_events.len(), 1);
+        assert_eq!(decoded_runtime.projection_dirty_queue.len(), 2);
+        assert_eq!(decoded_runtime.projection_checkpoint.pending_entries, 2);
+        assert_eq!(
+            decoded_runtime.projection_checkpoint.kernel_id,
+            decoded_runtime.key()
+        );
     }
 
     #[test]

@@ -8365,3 +8365,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Active battle sync and end-turn now both answer from runtime receipts/events; the next active battle cleanup should move round advancement authority away from durable `SystemJob` rows.
+
+## Runtime Battle Round Wakeups
+
+Time: `2026-05-21T23:47:47Z`.
+
+Cut:
+
+- Replaced production active battle round scheduling with `BattleRuntime` wakeups. Runtime readiness now records `BattleRuntime.deadline.round_job_key` and schedules a zero-delay runtime timer instead of inserting a `battle_round_advance` `SystemJob`.
+- The runtime timer loads the live session, rechecks runtime readiness through `BattleKernelDriver`, drives round auto-defends through the shared driver, reschedules itself for partial round batches, clears stale runtime round keys, and then schedules the next runtime timeout wakeup from the live battle header.
+- Benchmark builds and row-backed repair/fallback paths keep the existing durable `SystemJob` branch.
+- Focused PocketIC assertions now accept either the legacy `system_job` changed subject or the runtime `battle_round_advance` wakeup subject.
+
+Verification:
+
+- `cargo fmt`
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_both_players_end_round_and_timer_catches_up --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffff9` / `12,582,905` bytes, `7` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Active battle round authority now lives in the runtime timer path; durable round `SystemJob` processing remains as benchmark/repair/fallback infrastructure.

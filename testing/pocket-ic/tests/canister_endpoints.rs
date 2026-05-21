@@ -3280,11 +3280,12 @@ fn pocket_ic_battle_round_readiness_advances_and_replays() {
             .changed_subjects
             .iter()
             .any(|subject| subject.subject_kind == "battle_participant_round_ready");
-        if action
-            .changed_subjects
-            .iter()
-            .any(|subject| subject.subject_kind == "system_job")
-        {
+        if action.changed_subjects.iter().any(|subject| {
+            matches!(
+                subject.subject_kind.as_str(),
+                "system_job" | "battle_round_advance"
+            )
+        }) {
             saw_auto_ready = true;
             break;
         }
@@ -3684,27 +3685,34 @@ fn pocket_ic_battle_round_both_players_end_round_and_timer_catches_up() {
     .expect("player two end_battle_turn should decode")
     .expect("player two end_battle_turn should succeed");
     assert_eq!(player_two_ready.status, CommandStatus::Applied);
+    let used_runtime_round_wakeup = player_two_ready
+        .changed_subjects
+        .iter()
+        .any(|subject| subject.subject_kind == "battle_round_advance");
     assert!(
-        player_two_ready
-            .changed_subjects
-            .iter()
-            .any(|subject| subject.subject_kind == "system_job"),
-        "second participant ending should enqueue an immediate battle_round_advance job"
+        used_runtime_round_wakeup
+            || player_two_ready
+                .changed_subjects
+                .iter()
+                .any(|subject| subject.subject_kind == "system_job"),
+        "second participant ending should enqueue an immediate battle round advance"
     );
 
     let round_job_key = format!("battle_round_advance:{battle_id}:{opening_round}");
-    let scheduled_round_job = diagnostic_system_jobs(
-        &fixture,
-        Some(session_id.clone()),
-        Some("scheduled".to_string()),
-    );
-    assert!(
-        scheduled_round_job
-            .jobs
-            .iter()
-            .any(|job| job.job_key == round_job_key),
-        "all-ready battle round should schedule zero-delay battle_round_advance"
-    );
+    if !used_runtime_round_wakeup {
+        let scheduled_round_job = diagnostic_system_jobs(
+            &fixture,
+            Some(session_id.clone()),
+            Some("scheduled".to_string()),
+        );
+        assert!(
+            scheduled_round_job
+                .jobs
+                .iter()
+                .any(|job| job.job_key == round_job_key),
+            "all-ready battle round should schedule zero-delay battle_round_advance"
+        );
+    }
     let mut after_round_advance = opening_view;
     let mut round_job_completed = false;
     for _ in 0..40 {
@@ -3725,7 +3733,7 @@ fn pocket_ic_battle_round_both_players_end_round_and_timer_catches_up() {
         .jobs
         .iter()
         .any(|job| job.job_key == round_job_key);
-        if round_job_completed
+        if (used_runtime_round_wakeup || round_job_completed)
             && (after_round_advance.current_round > opening_round
                 || after_round_advance.state != "active")
         {
@@ -3745,10 +3753,12 @@ fn pocket_ic_battle_round_both_players_end_round_and_timer_catches_up() {
         after_round_advance.state,
         after_round_advance.current_round
     );
-    assert!(
-        round_job_completed,
-        "battle_round_advance job should complete after zero-delay timer catchup"
-    );
+    if !used_runtime_round_wakeup {
+        assert!(
+            round_job_completed,
+            "battle_round_advance job should complete after zero-delay timer catchup"
+        );
+    }
 }
 
 #[test]

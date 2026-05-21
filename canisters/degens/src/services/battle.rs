@@ -262,6 +262,55 @@ impl<'a> BattleKernelDriver<'a> {
         Ok(true)
     }
 
+    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+    fn drive_runtime_round_advance_timer(
+        &mut self,
+        battle_id: Id<Battle>,
+        round_number: u16,
+    ) -> Result<bool, ApiError> {
+        let battle_id_text = battle_id.to_string();
+        let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
+            return Ok(false);
+        };
+        if runtime.session_id != self.session.id().to_string() {
+            return Ok(false);
+        }
+        let runtime_round_key = format!("battle_round_advance:{battle_id}:{round_number}");
+        let battle = runtime
+            .state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .clone();
+        if battle.state != "active" || battle.current_round != round_number {
+            clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
+            return Ok(true);
+        }
+
+        let readiness = self.drive_readiness_and_schedule(battle_id, None, None, false, false)?;
+        if !readiness.all_ready {
+            clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
+            return Ok(true);
+        }
+
+        let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
+        let outcome = self.drive_round_auto_defends(
+            battle_id,
+            round_number,
+            now_ms,
+            CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE,
+        )?;
+        if outcome.incomplete {
+            schedule_runtime_battle_round_wakeup(self.session.id(), battle_id, round_number)?;
+            return Ok(true);
+        }
+
+        clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
+        if let Some(updated_battle) = runtime_battle_header(self.session.id(), battle_id)? {
+            schedule_runtime_battle_timeout_job(self.session.id(), battle_id, &updated_battle)?;
+        }
+        Ok(true)
+    }
+
     fn drive_readiness_and_schedule(
         &mut self,
         battle_id: Id<Battle>,
@@ -487,6 +536,19 @@ fn schedule_runtime_battle_timeout_wakeup(
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn schedule_runtime_battle_round_wakeup(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    round_number: u16,
+) -> Result<(), ApiError> {
+    #[cfg(target_arch = "wasm32")]
+    schedule_runtime_battle_round_timer(session_id, battle_id, round_number);
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (session_id, battle_id, round_number);
+    Ok(())
+}
+
 #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
 fn schedule_runtime_battle_timeout_timer(
     session_id: Id<GameSession>,
@@ -501,6 +563,26 @@ fn schedule_runtime_battle_timeout_timer(
             process_runtime_battle_timeout_timer(&session_id_text, &battle_id_text, deadline_ms)
         {
             canic_cdk::eprintln!("runtime battle timeout failed: {}", error.message);
+        }
+        if let Err(error) = system_job_service::schedule_nearest_due_job() {
+            canic_cdk::eprintln!("system job reschedule failed: {}", error.message);
+        }
+    });
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn schedule_runtime_battle_round_timer(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+    round_number: u16,
+) {
+    let session_id_text = session_id.to_string();
+    let battle_id_text = battle_id.to_string();
+    canic_cdk::timers::set_timer(Duration::from_millis(0), async move {
+        if let Err(error) =
+            process_runtime_battle_round_timer(&session_id_text, &battle_id_text, round_number)
+        {
+            canic_cdk::eprintln!("runtime battle round advance failed: {}", error.message);
         }
         if let Err(error) = system_job_service::schedule_nearest_due_job() {
             canic_cdk::eprintln!("system job reschedule failed: {}", error.message);
@@ -530,6 +612,24 @@ fn process_runtime_battle_timeout_timer(
     let mut changed_subjects = Vec::new();
     BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
         .drive_runtime_timeout_timer(battle_id, deadline_ms)?;
+    Ok(())
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn process_runtime_battle_round_timer(
+    session_id_text: &str,
+    battle_id_text: &str,
+    round_number: u16,
+) -> Result<(), ApiError> {
+    let session_id = session_context::parse_id::<GameSession>(session_id_text, "session_id")?;
+    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        return Ok(());
+    };
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+        .drive_runtime_round_advance_timer(battle_id, round_number)?;
     Ok(())
 }
 
@@ -3543,28 +3643,49 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
     };
 
     if let Some(round_job_key) = runtime_summary.round_job_key.clone() {
-        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: round_job_key.clone(),
-            job_kind: "battle_round_advance".to_string(),
-            session_id,
-            battle_id: Some(battle_id),
-            turn_number: None,
-            due_at: Timestamp::now(),
-            command_id,
-            cursor_json: None,
-        })?;
-        battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
-            runtime.deadline.round_job_key = Some(round_job_key);
-            runtime.mark_dirty();
-        });
-        runtime_summary
-            .summary
-            .changed_subjects
-            .push(command_response::changed(
-                "system_job",
-                &job.id().to_string(),
-                "upsert",
-            ));
+        #[cfg(not(feature = "benchmark"))]
+        {
+            let _ = command_id;
+            let round_number = battle_round_from_job_key(&round_job_key).unwrap_or(0);
+            battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+                runtime.deadline.round_job_key = Some(round_job_key.clone());
+                runtime.mark_dirty();
+            });
+            schedule_runtime_battle_round_wakeup(session_id, battle_id, round_number)?;
+            runtime_summary
+                .summary
+                .changed_subjects
+                .push(command_response::changed(
+                    "battle_round_advance",
+                    &format!("runtime:{round_job_key}"),
+                    "wakeup",
+                ));
+        }
+        #[cfg(feature = "benchmark")]
+        {
+            let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+                job_key: round_job_key.clone(),
+                job_kind: "battle_round_advance".to_string(),
+                session_id,
+                battle_id: Some(battle_id),
+                turn_number: None,
+                due_at: Timestamp::now(),
+                command_id,
+                cursor_json: None,
+            })?;
+            battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+                runtime.deadline.round_job_key = Some(round_job_key);
+                runtime.mark_dirty();
+            });
+            runtime_summary
+                .summary
+                .changed_subjects
+                .push(command_response::changed(
+                    "system_job",
+                    &job.id().to_string(),
+                    "upsert",
+                ));
+        }
     }
 
     if let Some(deadline_ms) = runtime_summary.timeout_deadline {
@@ -3764,6 +3885,16 @@ fn battle_round_processing(battle_id: Id<Battle>, round_number: u16) -> Result<b
                     || (job.status == system_job_repo::STATUS_SCHEDULED && job.due_at <= now))
         }),
     )
+}
+
+#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+fn clear_runtime_battle_round_wakeup(battle_id: &str, round_job_key: &str) {
+    battle_runtime::with_runtime_mut(battle_id, |runtime| {
+        if runtime.deadline.round_job_key.as_deref() == Some(round_job_key) {
+            runtime.deadline.round_job_key = None;
+            runtime.mark_dirty();
+        }
+    });
 }
 
 fn battle_round_from_job_key(job_key: &str) -> Option<u16> {

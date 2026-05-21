@@ -1153,7 +1153,7 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 #### 72B. Projection Flush And Recovery
 
-- [ ] Define a typed projection dirty queue: `{ kernel_id, generation, entity, key, op, priority, first_dirty_at_ms, last_dirty_at_ms }`.
+- [x] Define a typed projection dirty queue: `{ kernel_id, generation, entity, key, op, priority, first_dirty_at_ms, last_dirty_at_ms }`. Added the production `SessionTurnRuntime` queue with typed entity/op enums, coalescing by kernel/entity/key, tombstone support for occupancy removals, and full-flush clearing. The queue is excluded from `feature=benchmark` until projection benchmark coverage exists, preserving the benchmark Wasm code section at `0x00bfffe1` / `12,582,881` bytes (`31` bytes under the IC limit).
 - [ ] Add bounded projection flushing with max rows, max instruction budget, max stable-page delta, retryable chunks, and idempotent upserts by durable natural keys. Include tombstones for deletes/removals such as occupancy, temporary battle occupancy, movement completion, and temporary objects.
 - [ ] Add projection cursors/checkpoints per kernel so recovery knows which kernel generation reached IcyDB.
 - [ ] Keep `flush_barrier` as the strong-read, upgrade, battle handoff, and runtime-eviction path, but make it call the same chunked flusher. If the dirty queue cannot fully flush within budget, diagnostics should show backlog instead of hiding it.

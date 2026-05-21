@@ -62,6 +62,8 @@ pub(crate) struct SessionTurnRuntime {
     pub resource_deltas: Vec<ResourceTurnDelta>,
     pub partial_cursor: Option<MovementCursor>,
     pub dirty: SessionTurnDirtySets,
+    #[cfg(not(feature = "benchmark"))]
+    pub projection_dirty_queue: Vec<ProjectionDirtyEntry>,
 }
 
 impl SessionTurnRuntime {
@@ -102,6 +104,8 @@ impl SessionTurnRuntime {
             resource_deltas: Vec::new(),
             partial_cursor: None,
             dirty: SessionTurnDirtySets::default(),
+            #[cfg(not(feature = "benchmark"))]
+            projection_dirty_queue: Vec::new(),
         }
     }
 
@@ -114,6 +118,8 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_participant(&mut self, participant: SessionTurnParticipant) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = participant.participant_id.clone();
         if let Some(existing) = self
             .participants
             .iter_mut()
@@ -130,9 +136,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.participants = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Participant,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_champion_snapshot(&mut self, champion: Champion) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = champion.id().to_string();
         if let Some(existing) = self
             .champion_snapshots
             .iter_mut()
@@ -144,10 +159,19 @@ impl SessionTurnRuntime {
         }
         self.dirty.champion_snapshots = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Champion,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_champion_spell_snapshot(&mut self, spell: RuntimeChampionSpell) {
         let champion_id = Id::<Champion>::from_key(spell.champion_id).to_string();
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = format!("{}:{}", spell.champion_id, spell.spell_id);
         if let Some(existing) = self.champion_spell_snapshots.iter_mut().find(|existing| {
             existing.champion_id == spell.champion_id && existing.spell_id == spell.spell_id
         }) {
@@ -158,6 +182,13 @@ impl SessionTurnRuntime {
         self.complete_champion_spellbooks.insert(champion_id);
         self.dirty.champion_spell_snapshots = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::ChampionSpell,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn mark_champion_spellbook_complete(&mut self, champion_id: Id<Champion>) {
@@ -167,10 +198,19 @@ impl SessionTurnRuntime {
         {
             self.dirty.champion_spell_snapshots = true;
             self.mark_dirty();
+            #[cfg(not(feature = "benchmark"))]
+            self.record_projection_dirty(
+                ProjectionEntity::ChampionSpell,
+                champion_id.to_string(),
+                ProjectionDirtyOp::Upsert,
+                PROJECTION_PRIORITY_NORMAL,
+            );
         }
     }
 
     pub(crate) fn upsert_world_object_snapshot(&mut self, object: WorldObject) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = object.id().to_string();
         if let Some(existing) = self
             .world_object_snapshots
             .iter_mut()
@@ -182,9 +222,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.world_object_snapshots = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::WorldObject,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_occupancy_cell(&mut self, cell: RuntimeOccupancyCell) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = occupancy_projection_key(&cell);
         if let Some(existing) = self.occupancy_index.iter_mut().find(|existing| {
             existing.x == cell.x && existing.y == cell.y && existing.layer == cell.layer
         }) {
@@ -194,9 +243,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.occupancy_index = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Occupancy,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_occupancy_for_occupant(&mut self, cell: RuntimeOccupancyCell) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = occupancy_projection_key(&cell);
         self.occupancy_index.retain(|existing| {
             !(existing.layer == cell.layer
                 && (existing.x == cell.x && existing.y == cell.y
@@ -206,6 +264,13 @@ impl SessionTurnRuntime {
         self.occupancy_index.push(cell);
         self.dirty.occupancy_index = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Occupancy,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn remove_occupancy_for_occupant(&mut self, layer: &str, occupant_id_text: &str) {
@@ -218,10 +283,19 @@ impl SessionTurnRuntime {
         if self.occupancy_index.len() != before {
             self.dirty.occupancy_index = true;
             self.mark_dirty();
+            #[cfg(not(feature = "benchmark"))]
+            self.record_projection_dirty(
+                ProjectionEntity::Occupancy,
+                format!("{layer}:champion:{occupant_id_text}"),
+                ProjectionDirtyOp::Tombstone,
+                PROJECTION_PRIORITY_NORMAL,
+            );
         }
     }
 
     pub(crate) fn upsert_contact_cell(&mut self, cell: RuntimeContactCell) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = contact_projection_key(&cell);
         if let Some(existing) = self.contact_index.iter_mut().find(|existing| {
             existing.x == cell.x
                 && existing.y == cell.y
@@ -234,9 +308,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.contact_index = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Contact,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_quest_snapshot(&mut self, quest: QuestState) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = quest.id().to_string();
         if let Some(existing) = self
             .quest_snapshots
             .iter_mut()
@@ -248,9 +331,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.quest_snapshots = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Quest,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn upsert_scenario_rule_snapshot(&mut self, rule: ScenarioRuleState) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = rule.id().to_string();
         if let Some(existing) = self
             .scenario_rule_snapshots
             .iter_mut()
@@ -262,15 +354,41 @@ impl SessionTurnRuntime {
         }
         self.dirty.scenario_rule_snapshots = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::ScenarioRule,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn mark_ready(&mut self, participant_id: impl Into<String>) -> bool {
-        let inserted = self.ready_participants.insert(participant_id.into());
-        if inserted {
-            self.dirty.ready = true;
-            self.mark_dirty();
+        #[cfg(feature = "benchmark")]
+        {
+            let inserted = self.ready_participants.insert(participant_id.into());
+            if inserted {
+                self.dirty.ready = true;
+                self.mark_dirty();
+            }
+            inserted
         }
-        inserted
+        #[cfg(not(feature = "benchmark"))]
+        {
+            let participant_id = participant_id.into();
+            let inserted = self.ready_participants.insert(participant_id.clone());
+            if inserted {
+                self.dirty.ready = true;
+                self.mark_dirty();
+                self.record_projection_dirty(
+                    ProjectionEntity::Ready,
+                    participant_id,
+                    ProjectionDirtyOp::Upsert,
+                    PROJECTION_PRIORITY_NORMAL,
+                );
+            }
+            inserted
+        }
     }
 
     pub(crate) fn readiness_counts(&self) -> Option<RuntimeReadinessCounts> {
@@ -300,6 +418,8 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_intent(&mut self, intent: RuntimeMovementIntent) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = intent.intent_id.clone();
         if let Some(existing) = self
             .intents
             .iter_mut()
@@ -311,9 +431,18 @@ impl SessionTurnRuntime {
         }
         self.dirty.intents = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::MovementIntent,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn insert_command_receipt(&mut self, receipt: SessionTurnCommandReceipt) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = receipt.command_id.clone();
         if let Some(existing) = self
             .command_receipts
             .iter_mut()
@@ -325,6 +454,13 @@ impl SessionTurnRuntime {
         }
         self.dirty.command_receipts = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::CommandReceipt,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn command_receipt_by_nonce(
@@ -339,23 +475,128 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn push_event(&mut self, event: SessionTurnEvent) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = event.event.event_key.clone();
         self.active_events.push(event);
         self.dirty.events = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::Event,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn push_resource_delta(&mut self, delta: ResourceTurnDelta) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = delta
+            .ledger
+            .as_ref()
+            .map(|ledger| ledger.ledger_key.clone())
+            .unwrap_or_else(|| delta.participant_id.clone());
         self.resource_deltas.push(delta);
         self.dirty.resource_deltas = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::ResourceDelta,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
 
     pub(crate) fn push_object_delta(&mut self, delta: ObjectTurnDelta) {
+        #[cfg(not(feature = "benchmark"))]
+        let projection_key = format!("{}:{}", delta.subject_kind, delta.subject_id);
         self.central_objectives_completed = None;
         self.object_deltas.push(delta);
         self.dirty.object_deltas = true;
         self.mark_dirty();
+        #[cfg(not(feature = "benchmark"))]
+        self.record_projection_dirty(
+            ProjectionEntity::ObjectDelta,
+            projection_key,
+            ProjectionDirtyOp::Upsert,
+            PROJECTION_PRIORITY_NORMAL,
+        );
     }
+
+    #[cfg(not(feature = "benchmark"))]
+    fn record_projection_dirty(
+        &mut self,
+        entity: ProjectionEntity,
+        key: String,
+        op: ProjectionDirtyOp,
+        priority: u8,
+    ) {
+        let now_ms = crate::services::clock::now_ms();
+        let kernel_id = self.key();
+        if let Some(existing) = self.projection_dirty_queue.iter_mut().find(|entry| {
+            entry.kernel_id == kernel_id && entry.entity == entity && entry.key == key
+        }) {
+            existing.generation = self.generation;
+            existing.op = op;
+            existing.priority = existing.priority.min(priority);
+            existing.last_dirty_at_ms = now_ms;
+            return;
+        }
+        self.projection_dirty_queue.push(ProjectionDirtyEntry {
+            kernel_id,
+            generation: self.generation,
+            entity,
+            key,
+            op,
+            priority,
+            first_dirty_at_ms: now_ms,
+            last_dirty_at_ms: now_ms,
+        });
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+const PROJECTION_PRIORITY_NORMAL: u8 = 50;
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionDirtyEntry {
+    pub kernel_id: String,
+    pub generation: u64,
+    pub entity: ProjectionEntity,
+    pub key: String,
+    pub op: ProjectionDirtyOp,
+    pub priority: u8,
+    pub first_dirty_at_ms: u64,
+    pub last_dirty_at_ms: u64,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionEntity {
+    Session,
+    Participant,
+    Ready,
+    Champion,
+    ChampionSpell,
+    WorldObject,
+    Occupancy,
+    Contact,
+    MovementIntent,
+    CommandReceipt,
+    Event,
+    ObjectDelta,
+    ResourceDelta,
+    Quest,
+    ScenarioRule,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProjectionDirtyOp {
+    Upsert,
+    Tombstone,
 }
 
 #[derive(Clone)]
@@ -394,6 +635,19 @@ pub(crate) struct RuntimeContactCell {
     pub owner_participant_id: Option<String>,
     pub guarded_neutral_army_id: Option<String>,
     pub status: String,
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn occupancy_projection_key(cell: &RuntimeOccupancyCell) -> String {
+    format!("{}:{}:{}", cell.layer, cell.x, cell.y)
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn contact_projection_key(cell: &RuntimeContactCell) -> String {
+    format!(
+        "{}:{}:{}:{}",
+        cell.x, cell.y, cell.subject_kind, cell.subject_id_text
+    )
 }
 
 #[derive(Clone)]
@@ -1033,9 +1287,27 @@ pub(crate) fn mirror_session_update(session: &GameSession) -> bool {
         {
             runtime.session = Some(session.clone());
             runtime.mark_dirty();
+            #[cfg(not(feature = "benchmark"))]
+            runtime.record_projection_dirty(
+                ProjectionEntity::Session,
+                session_id.clone(),
+                ProjectionDirtyOp::Upsert,
+                PROJECTION_PRIORITY_NORMAL,
+            );
             updated = true;
         }
         updated
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn projection_dirty_queue_snapshot() -> Vec<ProjectionDirtyEntry> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .flat_map(|runtime| runtime.projection_dirty_queue.iter().cloned())
+            .collect()
     })
 }
 
@@ -1637,6 +1909,7 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
             for runtime_event in &mut runtime.active_events {
                 runtime_event.flushed = true;
             }
+            runtime.projection_dirty_queue.clear();
         }
     });
     Ok(flushed)
@@ -1930,6 +2203,46 @@ mod tests {
         assert_eq!(runtime.intents.len(), 1);
         assert_eq!(runtime.intents[0].command_id, "command:2");
         assert!(runtime.dirty.intents);
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    #[test]
+    fn projection_dirty_queue_coalesces_entity_key_and_tracks_generation() {
+        let mut runtime = runtime();
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:1".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:1".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:2".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;1,2".to_string(),
+            path_hash: "hash:2".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+
+        assert_eq!(runtime.generation, 2);
+        assert_eq!(runtime.projection_dirty_queue.len(), 1);
+        let dirty = &runtime.projection_dirty_queue[0];
+        assert_eq!(dirty.kernel_id, runtime.key());
+        assert_eq!(dirty.generation, runtime.generation);
+        assert_eq!(dirty.entity, ProjectionEntity::MovementIntent);
+        assert_eq!(dirty.key, "intent:1");
+        assert_eq!(dirty.op, ProjectionDirtyOp::Upsert);
+        assert!(dirty.last_dirty_at_ms >= dirty.first_dirty_at_ms);
     }
 
     #[test]

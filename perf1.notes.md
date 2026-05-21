@@ -8100,3 +8100,31 @@ Test note:
 Decision:
 
 - Keep this checkpoint. The active session kernel is now the first source for the setup progress response, while durable rows remain the fallback when no active runtime exists.
+
+## Worldmap Projection Dirty Queue
+
+Time: `2026-05-21T20:56:29Z`.
+
+Cut:
+
+- Added a typed production dirty queue to `SessionTurnRuntime` with `{ kernel_id, generation, entity, key, op, priority, first_dirty_at_ms, last_dirty_at_ms }`.
+- Queue entries use typed `ProjectionEntity` and `ProjectionDirtyOp` enums, coalesce repeated changes by kernel/entity/key, keep the first dirty timestamp, update the latest generation/timestamp, and preserve tombstones for occupancy removals.
+- Runtime mutation helpers now enqueue projection dirty entries for session, participant, ready, champion, champion spell, world object, occupancy, contact, movement intent, command receipt, event, object delta, resource delta, quest, and scenario rule surfaces.
+- The current full `flush_runtime_projections_for_upgrade` barrier clears the queue after flushing. Bounded chunk flushing and projection cursors remain the next Section 72B items.
+- The queue is compiled out of `feature=benchmark` for now because projection flushing itself is not benchmark-enabled yet and the benchmark Wasm budget is only 31 bytes.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister projection_dirty_queue -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Code-size note:
+
+- The first benchmark release build after this patch exceeded the IC code-section limit at `0x00c0007a`, because `mark_ready` gained a benchmark-visible clone while adding the production queue entry. Splitting `mark_ready` by cfg restored the benchmark path to the previous `0x00bfffe1` size.
+
+Decision:
+
+- Keep this checkpoint. It gives worldmap runtime state a real typed projection backlog without changing active benchmark hot paths. The next work should add bounded flushing over this queue and projection generation cursors.

@@ -11,7 +11,6 @@ use domm_game::{
     ObjectiveProgressView, QuestPreview, QuestProgressView, ResourceBalances, ScenarioRuleView,
     ScenarioRulesView, WorldEventView, WorldEventsView,
 };
-#[cfg(not(feature = "benchmark"))]
 use icydb::types::Timestamp;
 use icydb::{traits::EntityValue, types::Id};
 
@@ -21,7 +20,6 @@ use crate::repos::{
     map_visibility_occupancy, scenario_progress, sessions, system_jobs as system_job_repo,
 };
 
-#[cfg(not(feature = "benchmark"))]
 use super::system_jobs as system_job_service;
 use super::{
     command_response,
@@ -395,18 +393,9 @@ pub(crate) fn schedule_turn_maintenance_jobs(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<(), ApiError> {
-    #[cfg(feature = "benchmark")]
-    {
-        let _ = (session, command_id);
-        return Ok(());
-    }
-    #[cfg(not(feature = "benchmark"))]
-    {
-        schedule_turn_maintenance_jobs_durable(session, command_id)
-    }
+    schedule_turn_maintenance_jobs_durable(session, command_id)
 }
 
-#[cfg(not(feature = "benchmark"))]
 fn schedule_turn_maintenance_jobs_durable(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
@@ -419,7 +408,6 @@ fn schedule_turn_maintenance_jobs_durable(
     Ok(())
 }
 
-#[cfg(not(feature = "benchmark"))]
 fn schedule_scenario_job(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
@@ -447,18 +435,69 @@ fn schedule_scenario_job(
     system_job_service::schedule_nearest_due_job()
 }
 
-#[cfg(feature = "benchmark")]
-pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
-    system_job_repo::complete_system_job(job)?;
-    Ok(())
-}
-
-#[cfg(not(feature = "benchmark"))]
 pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
     let fallback = job.clone();
     if let Err(error) = process_scenario_maintenance_job_inner(job) {
         system_job_repo::fail_system_job(fallback, error.retryable, error.message.clone())?;
         return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "benchmark")]
+fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError> {
+    let session_id = Id::<GameSession>::from_key(job.session_id);
+    let Some(session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "scenario maintenance session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
+    if session.state != "active" {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+    if job
+        .turn_number
+        .is_some_and(|turn| turn != session.current_turn)
+    {
+        system_job_repo::complete_system_job(job)?;
+        return Ok(());
+    }
+
+    match job.job_kind.as_str() {
+        "scenario_objectives" => {
+            sync_objective_rows_for_session(session.id(), None)?;
+        }
+        "world_events" => {
+            ensure_current_world_event(&session, None)?;
+        }
+        "advanced_victory" => {
+            let objective_summary = sync_objective_rows_for_session(session.id(), None)?;
+            sync_scenario_rule_rows_for_session_with_completed_objectives(
+                &session,
+                None,
+                Some(objective_summary.completed),
+            )?;
+        }
+        _ => {
+            system_job_repo::fail_system_job(
+                job,
+                false,
+                "unsupported scenario maintenance job kind".to_string(),
+            )?;
+            return Ok(());
+        }
+    }
+
+    let completed_job_kind = job.job_kind.clone();
+    system_job_repo::complete_system_job(job)?;
+    match completed_job_kind.as_str() {
+        "scenario_objectives" => schedule_scenario_job(&session, None, "world_events")?,
+        "world_events" => schedule_scenario_job(&session, None, "advanced_victory")?,
+        _ => {}
     }
     Ok(())
 }

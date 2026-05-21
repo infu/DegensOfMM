@@ -1970,7 +1970,9 @@ fn new_setup_command(session: &GameSession) -> GameCommand {
 fn schedule_runtime_setup_session_timer(session_id: Id<GameSession>) {
     let session_id_text = session_id.to_string();
     canic_cdk::timers::set_timer(Duration::from_millis(0), async move {
-        let _ = process_runtime_setup_session_timer(&session_id_text);
+        let _ = crate::metrics::benchmark_timer("runtime_timer:setup_session".to_string(), || {
+            process_runtime_setup_session_timer(&session_id_text)
+        });
     });
 }
 

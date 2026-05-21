@@ -5663,6 +5663,243 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
 }
 
 #[test]
+fn pocket_ic_benchmark_timer_surface_records_every_timer_path() {
+    let fixture = install_degens_canister_fixture();
+    let player_one = candid::Principal::self_authenticating(b"domm-timer-surface-one");
+    let player_two = candid::Principal::self_authenticating(b"domm-timer-surface-two");
+    let player_three = candid::Principal::self_authenticating(b"domm-timer-surface-three");
+    let player_four = candid::Principal::self_authenticating(b"domm-timer-surface-four");
+    let player_five = candid::Principal::self_authenticating(b"domm-timer-surface-five");
+    let player_six = candid::Principal::self_authenticating(b"domm-timer-surface-six");
+    let player_seven = candid::Principal::self_authenticating(b"domm-timer-surface-seven");
+    let player_eight = candid::Principal::self_authenticating(b"domm-timer-surface-eight");
+    let mut metrics = GateJMetrics::default();
+
+    metrics.reset_benchmark_canister(&fixture);
+    metrics.set_benchmark_scenario("diagnostics");
+    let initial_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
+
+    metrics.set_benchmark_scenario("timer_surface");
+
+    let deadline_session = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_one,
+        player_two,
+        "timer-surface-deadline",
+    );
+    let _ = deadline_session;
+    advance_time_for_timers(&fixture, 61_000);
+    wait_for_benchmark_timer_method(&fixture, "system_job:turn_deadline", 48);
+
+    let resolution_session = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_three,
+        player_four,
+        "timer-surface-resolution",
+    );
+    for (player, suffix) in [(player_three, "one"), (player_four, "two")] {
+        let ended = gate_update_as::<CommandResponse>(
+            &mut metrics,
+            &fixture,
+            player,
+            "end_turn",
+            (
+                resolution_session.clone(),
+                format!("nonce:timer-surface:end-turn:{suffix}"),
+            ),
+        )
+        .expect("timer surface end_turn should succeed");
+        metrics.observe_command_response(&ended);
+        assert_eq!(ended.status, CommandStatus::Applied);
+    }
+    wait_for_benchmark_timer_method(&fixture, "system_job:turn_resolution", 48);
+    for job_kind in ["scenario_objectives", "world_events", "advanced_victory"] {
+        wait_for_benchmark_timer_method(&fixture, &format!("system_job:{job_kind}"), 48);
+    }
+
+    let timeout_session = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_five,
+        player_six,
+        "timer-surface-timeout",
+    );
+    let timeout_champion_id =
+        gate_owned_champion_id(&mut metrics, &fixture, player_five, &timeout_session);
+    let (neutral_sync, _) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_five,
+        &timeout_session,
+        &timeout_champion_id,
+        vec![
+            MoveCoord::new(9, 24),
+            MoveCoord::new(10, 24),
+            MoveCoord::new(11, 24),
+            MoveCoord::new(12, 24),
+            MoveCoord::new(12, 23),
+            MoveCoord::new(12, 22),
+        ],
+        "nonce:timer-surface:timeout:move",
+        "nonce:timer-surface:timeout:sync:",
+        61_000,
+        "neutral_encounter_pending",
+    );
+    let timeout_battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let timeout_battle = gate_query_as::<BattleView>(
+        &mut metrics,
+        &fixture,
+        player_five,
+        "get_battle_state",
+        (timeout_session.clone(), timeout_battle_id.clone()),
+    )
+    .expect("timer surface timeout battle should load");
+    let timeout_deadline = timeout_battle
+        .action_deadline_at
+        .expect("timer surface timeout battle should have a deadline");
+    let timeout_view = compact_game_view(&fixture, player_five, &timeout_session);
+    advance_time_for_timers(
+        &fixture,
+        millis_until_due(timeout_view.render_time.server_now_ms, timeout_deadline),
+    );
+    wait_for_benchmark_timer_method(&fixture, "system_job:battle_timeout", 48);
+
+    let pvp_session = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        player_eight,
+        "timer-surface-round",
+    );
+    let west_champion_id =
+        gate_owned_champion_id(&mut metrics, &fixture, player_seven, &pvp_session);
+    let east_champion_id =
+        gate_owned_champion_id(&mut metrics, &fixture, player_eight, &pvp_session);
+    gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        &pvp_session,
+        &west_champion_id,
+        (9_u16..=18)
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>(),
+        "nonce:timer-surface:round:west-preposition",
+        "nonce:timer-surface:round:west-preposition-sync:",
+        1_000,
+        "session_turn_synced",
+    );
+    gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_eight,
+        &pvp_session,
+        &east_champion_id,
+        (29_u16..=38)
+            .rev()
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>(),
+        "nonce:timer-surface:round:east-preposition",
+        "nonce:timer-surface:round:east-preposition-sync:",
+        61_000,
+        "session_turn_synced",
+    );
+    gate_submit_move_intent(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        &pvp_session,
+        &west_champion_id,
+        (19_u16..=24)
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>(),
+        "nonce:timer-surface:round:west",
+    );
+    gate_submit_move_intent(
+        &mut metrics,
+        &fixture,
+        player_eight,
+        &pvp_session,
+        &east_champion_id,
+        (23_u16..=28)
+            .rev()
+            .map(|x| MoveCoord::new(x, 24))
+            .collect::<Vec<_>>(),
+        "nonce:timer-surface:round:east",
+    );
+    let (champion_sync, _) = gate_sync_until_event(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        &pvp_session,
+        "nonce:timer-surface:round:sync:",
+        183_000,
+        "champion_encounter_pending",
+        12,
+    );
+    let pvp_battle_id = battle_id_from_events(&champion_sync, "champion_encounter_pending");
+    let pvp_opening = gate_query_as::<BattleView>(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        "get_battle_state",
+        (pvp_session.clone(), pvp_battle_id.clone()),
+    )
+    .expect("timer surface pvp battle should load");
+    for (player, suffix) in [(player_seven, "one"), (player_eight, "two")] {
+        let ended = gate_update_as::<CommandResponse>(
+            &mut metrics,
+            &fixture,
+            player,
+            "end_battle_turn",
+            (
+                pvp_session.clone(),
+                pvp_battle_id.clone(),
+                format!("nonce:timer-surface:round:end:{suffix}"),
+            ),
+        )
+        .expect("timer surface end_battle_turn should succeed");
+        metrics.observe_command_response(&ended);
+        assert_eq!(ended.status, CommandStatus::Applied);
+    }
+    let round_job_key = format!(
+        "battle_round_advance:{}:{}",
+        pvp_battle_id, pvp_opening.current_round
+    );
+    let _ = round_job_key;
+    wait_for_benchmark_timer_method(&fixture, "system_job:battle_round_advance", 48);
+
+    let timer_methods = diagnostic_benchmark_timer_methods(&fixture);
+    for expected in [
+        "runtime_timer:setup_session",
+        "system_job:turn_deadline",
+        "system_job:turn_resolution",
+        "system_job:scenario_objectives",
+        "system_job:world_events",
+        "system_job:advanced_victory",
+        "system_job:battle_timeout",
+        "system_job:battle_round_advance",
+    ] {
+        assert!(
+            timer_methods.contains(expected),
+            "timer benchmark should record {expected}; saw {timer_methods:?}"
+        );
+    }
+
+    metrics.set_benchmark_scenario("diagnostics");
+    let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
+    metrics.print_named_report(
+        "Timer Surface",
+        &initial_storage,
+        &final_storage,
+        &final_storage,
+    );
+    metrics.write_benchmark_artifacts(&fixture, "timer_surface", &initial_storage, &final_storage);
+}
+
+#[test]
 fn pocket_ic_gate_j_strategic_loop_persists_icydb_rows() {
     let fixture = install_degens_canister_fixture();
     let player_one = candid::Principal::self_authenticating(b"domm-pocket-gate-j-one");
@@ -9668,6 +9905,38 @@ fn diagnostic_system_jobs(
     )
     .expect("diagnostic system jobs should decode")
     .expect("diagnostic system jobs should load")
+}
+
+fn diagnostic_benchmark_timer_methods(fixture: &StandaloneCanisterFixture) -> BTreeSet<String> {
+    query_as::<DiagnosticBenchmarkCallPage>(
+        fixture,
+        candid::Principal::anonymous(),
+        "get_diagnostic_benchmark_metrics",
+        (Some(0_u64), 1024_u32),
+    )
+    .expect("diagnostic benchmark metrics should decode")
+    .expect("diagnostic benchmark metrics should load")
+    .calls
+    .into_iter()
+    .filter(|call| call.kind == "timer")
+    .map(|call| call.method)
+    .collect()
+}
+
+fn wait_for_benchmark_timer_method(
+    fixture: &StandaloneCanisterFixture,
+    method: &str,
+    max_ticks: u32,
+) {
+    for _ in 0..max_ticks {
+        let methods = diagnostic_benchmark_timer_methods(fixture);
+        if methods.contains(method) {
+            return;
+        }
+        advance_time_for_timers(fixture, 1_000);
+    }
+    let methods = diagnostic_benchmark_timer_methods(fixture);
+    panic!("timer benchmark should record {method} after {max_ticks} ticks; saw {methods:?}");
 }
 
 fn force_system_job_running(

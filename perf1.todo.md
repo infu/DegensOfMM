@@ -1124,7 +1124,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Flush queued timer measurements into benchmark artifacts and split markdown summaries into `Public Methods` and `System Jobs / Timers`.
 - [x] Verify the path with a focused Gate J probe. It recorded four `system_job:turn_deadline` timer samples averaging `11.7678B` instructions, proving timer work is now visible.
 - [x] Run the full benchmark suite and record the first all-gate timer-inclusive run ID. Suite `target/benchmarks/20260521-150957-timer-inclusive` passed all five gates with `59/59` endpoint coverage; timer rows now appear in Gate J/K/L/M summaries.
-- [ ] Use the timer-inclusive summaries to decide whether `sync_session_turn`, `sync_battle`, and their timer jobs should share a smaller runtime driver instead of duplicating row-backed sync work.
+- [x] Add a dedicated `timer-surface` benchmark gate so timer coverage is intentional instead of incidental to Gate J/K/L/M scenarios.
+- [x] Measure the benchmark runtime setup timer as `runtime_timer:setup_session`; it is not a `SystemJob` in benchmark builds, so it needed its own wrapper.
+- [x] Force scenario-maintenance timer coverage for `system_job:scenario_objectives`, `system_job:world_events`, and `system_job:advanced_victory`. Benchmark builds schedule the real jobs and run the scenario sync work, but skip synthetic `GameCommand` bookkeeping to keep the benchmark canister under the IC Wasm code-section limit; production keeps the full command-backed path.
+- [x] Force battle-timeout timer coverage by scheduling new benchmark battle timeouts through the durable `battle_timeout` system job instead of the benchmark no-op runtime wakeup.
+- [x] Run focused `timer-surface` after each coverage fix. Passing artifact: `target/benchmarks/20260521-155645-timer-surface-local/timer-surface`; it recorded all eight timer labels.
+- [x] Run the full all-timer benchmark suite. Suite `target/benchmarks/20260521-160211-all-timers` passed endpoint-surface, timer-surface, Gate J, Gate K, Gate L, and Gate M with `59/59` endpoint coverage, 841 public method samples, 299 timer/system-job samples, and 8 timer jobs covered.
+- [x] Replace `bench.x.md` with the all-gate aggregate from `20260521-160211-all-timers`.
+- [x] Use the timer-inclusive summaries to decide whether `sync_session_turn`, `sync_battle`, and their timer jobs should share a smaller runtime driver instead of duplicating row-backed sync work. Decision: yes. The top timer rows are still expensive (`runtime_timer:setup_session` `14.5155B`, `system_job:turn_deadline` `13.1504B`, `system_job:battle_round_advance` `3.9430B`, scenario timer jobs `1.8B-3.8B`), so the next design pass should treat public sync endpoints and timer jobs as two callers of the same runtime-owned driver, not separate row-backed workflows.
 
 ## Expected Outcome
 

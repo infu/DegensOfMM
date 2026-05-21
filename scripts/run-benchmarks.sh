@@ -55,9 +55,10 @@ if ! [[ "$benchmark_jobs" =~ ^[0-9]+$ ]] || ((benchmark_jobs < 1)); then
     benchmark_jobs=1
 fi
 
-GATES=("endpoint-surface" "gate-j" "gate-k" "gate-l" "gate-m")
+GATES=("endpoint-surface" "timer-surface" "gate-j" "gate-k" "gate-l" "gate-m")
 declare -A GATE_TEST_FILE=(
     ["endpoint-surface"]="canister_endpoints"
+    ["timer-surface"]="canister_endpoints"
     ["gate-j"]="canister_endpoints"
     ["gate-k"]="canister_endpoints"
     ["gate-l"]="canister_endpoints"
@@ -65,6 +66,7 @@ declare -A GATE_TEST_FILE=(
 )
 declare -A GATE_TEST_NAME=(
     ["endpoint-surface"]="pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint"
+    ["timer-surface"]="pocket_ic_benchmark_timer_surface_records_every_timer_path"
     ["gate-j"]="pocket_ic_gate_j_strategic_loop_persists_icydb_rows"
     ["gate-k"]="pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows"
     ["gate-l"]="pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state"
@@ -72,6 +74,7 @@ declare -A GATE_TEST_NAME=(
 )
 declare -A GATE_DESCRIPTION=(
     ["endpoint-surface"]="Required public endpoint surface"
+    ["timer-surface"]="Timer and system job surface"
     ["gate-j"]="Strategic loop persistence"
     ["gate-k"]="Battle aftermath and victory history"
     ["gate-l"]="First-playable public endpoint route"

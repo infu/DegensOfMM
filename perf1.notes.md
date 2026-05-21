@@ -7856,3 +7856,47 @@ Decision:
 
 - Keep this checkpoint. It answers whether timer-triggered work is measured: yes, it is now visible in the same benchmark artifacts.
 - Use the new timer rows to judge `sync_session_turn` / `sync_battle` design work. If timer jobs duplicate the same row-backed sync cost, the next architectural cut should be a shared runtime driver rather than separate public/timer implementations.
+
+## Full Timer Surface Coverage
+
+Time: `2026-05-21T16:02:11Z`.
+
+Cut:
+
+- Added a dedicated `timer-surface` benchmark gate to `scripts/run-benchmarks.sh`.
+- Wrapped the benchmark runtime setup-session timer as `runtime_timer:setup_session`, because setup is not dispatched through `SystemJob` in benchmark builds.
+- Re-enabled benchmark scheduling for scenario maintenance jobs so `scenario_objectives`, `world_events`, and `advanced_victory` are visible as timer rows.
+- Kept benchmark scenario maintenance code-size safe by running the scenario sync work without the synthetic `GameCommand` bookkeeping; production still uses the full command-backed scenario job path.
+- Made benchmark new-battle timeout scheduling enqueue a durable `battle_timeout` system job instead of using the benchmark no-op runtime wakeup.
+- Added a `timer-surface` Pocket IC route that drives setup, turn deadline, turn resolution, scenario maintenance, battle timeout, and battle round advance, then asserts all timer labels appear.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run`
+- Focused `timer-surface` passed at `target/benchmarks/20260521-155645-timer-surface-local/timer-surface`.
+- Full suite `target/benchmarks/20260521-160211-all-timers` passed with endpoint-surface, timer-surface, Gate J, Gate K, Gate L, and Gate M.
+- Cleaned leftover Pocket IC processes after focused direct runs.
+
+Measurement:
+
+- Full-suite endpoint coverage stayed `59/59`.
+- Public method samples: `841`.
+- Timer/system-job samples: `299`.
+- Timer jobs covered: `8`.
+- Timer rows in the combined aggregate:
+  - `system_job:turn_resolution`: `1` call, `18.4160B` avg.
+  - `runtime_timer:setup_session`: `153` calls, `14.5155B` avg.
+  - `system_job:turn_deadline`: `33` calls, `13.1504B` avg.
+  - `system_job:battle_round_advance`: `21` calls, `3.9430B` avg.
+  - `system_job:world_events`: `27` calls, `3.8134B` avg.
+  - `system_job:scenario_objectives`: `30` calls, `3.5171B` avg.
+  - `system_job:battle_timeout`: `7` calls, `2.5367B` avg.
+  - `system_job:advanced_victory`: `27` calls, `1.8078B` avg.
+- Replaced `bench.x.md` with the new aggregate from `20260521-160211-all-timers`.
+
+Decision:
+
+- Keep this checkpoint. The benchmark is no longer missing known timer paths.
+- The numbers argue for a shared runtime-owned driver for public sync endpoints and timer jobs. Setup, turn deadline/resolution, battle round advance, battle timeout, and scenario maintenance are still paying multi-billion instruction paths, so the next architecture pass should remove row-backed duplicate work rather than tuning public and timer paths separately.

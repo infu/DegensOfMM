@@ -123,6 +123,16 @@ pub(crate) fn schedule_new_battle_timeout_job(
     let Some(deadline) = battle.action_deadline_at else {
         return Ok(());
     };
+    #[cfg(feature = "benchmark")]
+    {
+        return schedule_battle_timeout_job_at(
+            session_id,
+            battle.id(),
+            battle.created_turn,
+            deadline,
+        );
+    }
+    #[cfg(not(feature = "benchmark"))]
     schedule_runtime_battle_timeout_wakeup(session_id, battle.id(), deadline)
 }
 

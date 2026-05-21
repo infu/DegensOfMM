@@ -66,6 +66,8 @@ pub(crate) struct SessionTurnRuntime {
     pub dirty: SessionTurnDirtySets,
     #[cfg(not(feature = "benchmark"))]
     pub projection_dirty_queue: Vec<ProjectionDirtyEntry>,
+    #[cfg(not(feature = "benchmark"))]
+    pub projection_checkpoint: ProjectionCheckpoint,
 }
 
 impl SessionTurnRuntime {
@@ -76,8 +78,12 @@ impl SessionTurnRuntime {
         turn_deadline_at_ms: u64,
         turn_duration_ms: u64,
     ) -> Self {
+        let session_id = session_id.into();
+        #[cfg(not(feature = "benchmark"))]
+        let projection_checkpoint =
+            ProjectionCheckpoint::new(runtime_key(&session_id, turn_number));
         Self {
-            session_id: session_id.into(),
+            session_id,
             turn_number,
             session: None,
             turn_started_at_ms,
@@ -108,6 +114,8 @@ impl SessionTurnRuntime {
             dirty: SessionTurnDirtySets::default(),
             #[cfg(not(feature = "benchmark"))]
             projection_dirty_queue: Vec::new(),
+            #[cfg(not(feature = "benchmark"))]
+            projection_checkpoint,
         }
     }
 
@@ -536,13 +544,15 @@ impl SessionTurnRuntime {
     ) {
         let now_ms = crate::services::clock::now_ms();
         let kernel_id = self.key();
-        if let Some(existing) = self.projection_dirty_queue.iter_mut().find(|entry| {
+        if let Some(index) = self.projection_dirty_queue.iter().position(|entry| {
             entry.kernel_id == kernel_id && entry.entity == entity && entry.key == key
         }) {
+            let existing = &mut self.projection_dirty_queue[index];
             existing.generation = self.generation;
             existing.op = op;
             existing.priority = existing.priority.min(priority);
             existing.last_dirty_at_ms = now_ms;
+            self.projection_checkpoint.pending_entries = self.projection_dirty_queue.len();
             return;
         }
         self.projection_dirty_queue.push(ProjectionDirtyEntry {
@@ -555,6 +565,7 @@ impl SessionTurnRuntime {
             first_dirty_at_ms: now_ms,
             last_dirty_at_ms: now_ms,
         });
+        self.projection_checkpoint.pending_entries = self.projection_dirty_queue.len();
     }
 }
 
@@ -599,6 +610,27 @@ pub(crate) enum ProjectionEntity {
 pub(crate) enum ProjectionDirtyOp {
     Upsert,
     Tombstone,
+}
+
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ProjectionCheckpoint {
+    pub kernel_id: String,
+    pub flushed_generation: u64,
+    pub flushed_at_ms: u64,
+    pub pending_entries: usize,
+}
+
+#[cfg(not(feature = "benchmark"))]
+impl ProjectionCheckpoint {
+    fn new(kernel_id: String) -> Self {
+        Self {
+            kernel_id,
+            flushed_generation: 0,
+            flushed_at_ms: 0,
+            pending_entries: 0,
+        }
+    }
 }
 
 #[cfg(not(feature = "benchmark"))]
@@ -1345,6 +1377,17 @@ pub(crate) fn projection_dirty_queue_snapshot() -> Vec<ProjectionDirtyEntry> {
 }
 
 #[cfg(not(feature = "benchmark"))]
+pub(crate) fn projection_checkpoints_snapshot() -> Vec<ProjectionCheckpoint> {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .map(|runtime| runtime.projection_checkpoint.clone())
+            .collect()
+    })
+}
+
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_runtime_projection_queue(
     limits: ProjectionFlushLimits,
 ) -> Result<ProjectionFlushOutcome, ApiError> {
@@ -1433,7 +1476,28 @@ fn complete_projection_dirty_entry(entry: &ProjectionDirtyEntry) {
                 && candidate.entity == entry.entity
                 && candidate.key == entry.key)
         });
+        refresh_projection_checkpoint(runtime);
     });
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn refresh_projection_checkpoint(runtime: &mut SessionTurnRuntime) {
+    let min_pending_generation = runtime
+        .projection_dirty_queue
+        .iter()
+        .map(|entry| entry.generation)
+        .min();
+    let flushed_generation = min_pending_generation
+        .map(|generation| generation.saturating_sub(1))
+        .unwrap_or(runtime.generation)
+        .min(runtime.generation);
+    runtime.projection_checkpoint.kernel_id = runtime.key();
+    runtime.projection_checkpoint.flushed_generation = runtime
+        .projection_checkpoint
+        .flushed_generation
+        .max(flushed_generation);
+    runtime.projection_checkpoint.flushed_at_ms = crate::services::clock::now_ms();
+    runtime.projection_checkpoint.pending_entries = runtime.projection_dirty_queue.len();
 }
 
 pub(crate) fn with_runtime<R>(
@@ -2821,6 +2885,40 @@ mod tests {
 
         assert!(projection_dirty_queue_snapshot().is_empty());
         assert!(active_events_after("session:1", "public", 9).is_empty());
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    #[test]
+    fn projection_checkpoint_advances_to_oldest_pending_generation() {
+        clear_all_for_tests();
+        let mut runtime = runtime();
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: "intent:1".to_string(),
+            command_id: "command:1".to_string(),
+            actor_participant_id: "participant:1".to_string(),
+            champion_id: "champion:1".to_string(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:1".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+        runtime.push_event(event(10, "public"));
+        let mut entries = runtime.projection_dirty_queue.clone();
+        entries.sort_by_key(|entry| entry.generation);
+        insert_runtime(runtime);
+
+        complete_projection_dirty_entry(&entries[0]);
+        let checkpoints = projection_checkpoints_snapshot();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0].flushed_generation, 1);
+        assert_eq!(checkpoints[0].pending_entries, 1);
+
+        complete_projection_dirty_entry(&entries[1]);
+        let checkpoints = projection_checkpoints_snapshot();
+        assert_eq!(checkpoints[0].flushed_generation, 2);
+        assert_eq!(checkpoints[0].pending_entries, 0);
     }
 
     #[test]

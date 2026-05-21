@@ -8166,3 +8166,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Bounded worldmap projection flushing now exists, but `flush_barrier` still calls the older full flush path and generation cursors are not recorded yet. Those are the next Section 72B cuts.
+
+## Worldmap Projection Checkpoints
+
+Time: `2026-05-21T21:15:16Z`.
+
+Cut:
+
+- Added production `ProjectionCheckpoint` state inside each `SessionTurnRuntime`.
+- The checkpoint tracks kernel id, flushed generation, last flush timestamp, and pending dirty entry count.
+- Dirty recording updates pending entry counts.
+- Completed projection entries refresh the checkpoint conservatively:
+  - when entries remain, `flushed_generation` advances to one generation before the oldest pending dirty entry;
+  - when the queue is empty, `flushed_generation` advances to the runtime generation.
+- Added `projection_checkpoints_snapshot()` for the upcoming diagnostics/recovery surface.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister projection -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Recovery can now tell the last conservatively flushed kernel generation from runtime state. `flush_barrier` still needs to call the bounded flusher, and durable upgrade serialization for worldmap kernels remains a later Section 72B item.

@@ -907,8 +907,10 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 45. Random Endpoint Cluster: Remaining Domain Receipts
 
-- [ ] Rotate again instead of polishing the tavern/participant cut. Current heavy update endpoints are `submit_dwelling_recruit` (`4.2527B`), `hire_tavern_champion` (`3.3224B`), `claim_quest_reward` (`3.0748B`), `learn_champion_spell` (`3.0631B`), `sync_world_generation` (`2.9312B`), and `sync_advanced_victory` (`2.8180B`).
-- [ ] Pick one different bounded endpoint/row family and cut the largest remaining stable read/write floor without changing route shape.
+- [x] Rotate again instead of polishing the tavern/participant cut. Current heavy update endpoints are `submit_dwelling_recruit` (`4.2527B`), `hire_tavern_champion` (`3.3224B`), `claim_quest_reward` (`3.0748B`), `learn_champion_spell` (`3.0631B`), `sync_world_generation` (`2.9312B`), and `sync_advanced_victory` (`2.8180B`).
+- [x] Pick one different bounded endpoint/row family and cut the largest remaining stable read/write floor without changing route shape. Picked champion magic: active `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` now mirror champion snapshots into `SessionTurnRuntime` instead of writing `champions.update_champion` immediately. Verified with `cargo fmt --check`, `git diff --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
+- [ ] Measure the champion-magic projection cut in the next batched endpoint-surface run and confirm `champions.update_champion` drops from the active magic traces.
+- [ ] Rotate again after measurement or one more small independent cut; do not keep polishing champion magic unless the benchmark shows it is still the largest shared floor.
 
 ## Expected Outcome
 

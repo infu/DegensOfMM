@@ -267,8 +267,7 @@ fn apply_level_choice(
         _ => {}
     }
     champion.last_command_id = Some(command.id().key());
-    champion = champions_artifacts::update_champion(champion)?;
-    session_turn_runtime::mirror_champion_update(&champion);
+    champion = persist_or_mirror_active_champion(context, champion)?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),
@@ -369,8 +368,7 @@ fn apply_spell_learning(
         command.id(),
     )?;
     champion.last_command_id = Some(command.id().key());
-    champion = champions_artifacts::update_champion(champion)?;
-    session_turn_runtime::mirror_champion_update(&champion);
+    champion = persist_or_mirror_active_champion(context, champion)?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),
@@ -462,8 +460,7 @@ fn apply_adventure_cast(
             .min(champion.movement_max);
     }
     champion.last_command_id = Some(command.id().key());
-    champion = champions_artifacts::update_champion(champion)?;
-    session_turn_runtime::mirror_champion_update(&champion);
+    champion = persist_or_mirror_active_champion(context, champion)?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),
@@ -580,6 +577,23 @@ fn learned_spell_slugs(champion_id: Id<Champion>) -> Result<Vec<String>, ApiErro
     }
     slugs.sort();
     Ok(slugs)
+}
+
+fn persist_or_mirror_active_champion(
+    context: &session_context::SessionCallerContext,
+    champion: Champion,
+) -> Result<Champion, ApiError> {
+    if session_turn_runtime::contains_runtime(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+    ) {
+        session_turn_runtime::mirror_champion_update(&champion);
+        Ok(champion)
+    } else {
+        let champion = champions_artifacts::update_champion(champion)?;
+        session_turn_runtime::mirror_champion_update(&champion);
+        Ok(champion)
+    }
 }
 
 fn require_known_spell(

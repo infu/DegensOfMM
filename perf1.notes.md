@@ -6850,3 +6850,26 @@ Decision:
 
 - Keep this checkpoint. It removes three stable update floors while preserving endpoint coverage, route shape, row growth, and stable page growth.
 - Rotate again. Remaining heavy endpoints now need deeper domain receipt/projection cuts or shared champion/scenario/worldgen row cuts rather than another participant/tavern-only pass.
+
+## Champion Magic Projection Cut
+
+Time: `2026-05-21T00:33:00Z`.
+
+Cut:
+
+- Rotated to champion magic instead of continuing the tavern/participant cut.
+- Active `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell` now mirror the mutated `Champion` row into `SessionTurnRuntime` instead of immediately calling `champions.update_champion`.
+- Durable fallback remains unchanged when no active session-turn runtime is present.
+- Non-benchmark upgrade durability is covered by the existing session-turn champion snapshot flush path.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep this as a compile-verified checkpoint and batch its PocketIC measurement with the next small independent cut.
+- Expected endpoint-surface repo-op change: remove `champions.update_champion` from `select_champion_level_up`, `learn_champion_spell`, and `cast_adventure_spell`, roughly `1.44B` total in the latest artifact.

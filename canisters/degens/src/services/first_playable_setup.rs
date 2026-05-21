@@ -984,16 +984,17 @@ fn seed_dwelling_pools(
         else {
             continue;
         };
-        if economy_expansion::find_dwelling_pool_by_object(session.id(), world_object.id())?
-            .is_some()
+        if let Some(pool) =
+            economy_expansion::find_dwelling_pool_by_object(session.id(), world_object.id())?
         {
+            crate::services::economy_expansion::mirror_runtime_dwelling_pool(&pool);
             continue;
         }
         let owner = object
             .owner_slot_index
             .and_then(|slot| participants_by_slot.get(&slot))
             .map(EntityValue::id);
-        economy_expansion::create_dwelling_pool(
+        let pool = economy_expansion::create_dwelling_pool(
             session.id(),
             world_object.id(),
             owner,
@@ -1004,6 +1005,7 @@ fn seed_dwelling_pools(
             domm_game::DWELLING_GROWTH_PER_WEEK,
             true,
         )?;
+        crate::services::economy_expansion::mirror_runtime_dwelling_pool(&pool);
     }
     Ok(())
 }

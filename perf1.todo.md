@@ -1054,9 +1054,18 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 63. Random Endpoint Cluster: Setup Floor Or Dwelling Shared Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-runtime-spellbook-complete-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or `submit_dwelling_recruit` only if it exposes a shared command/content floor.
-- [ ] Keep champion spellbook parked unless a regression blocks scenario flow; `learn_champion_spell` is now around the common `0.705B` floor and `preview_champion_progression` is near zero.
-- [ ] Be careful with the remaining `0.7B` methods: many may be benchmark/query floor rather than endpoint logic. Prefer cuts that remove repo ops, row growth, or multiple endpoint costs.
+- [x] Pick a different bounded endpoint/cluster from `20260521-runtime-spellbook-complete-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or `submit_dwelling_recruit` only if it exposes a shared command/content floor. Picked dwelling pool seed mirroring because the setup floor is a broader durable identity/session boundary and the dwelling pool lookup is a shared get/preview/submit floor.
+- [x] Keep champion spellbook parked unless a regression blocks scenario flow; `learn_champion_spell` is now around the common `0.705B` floor and `preview_champion_progression` is near zero.
+- [x] Be careful with the remaining `0.7B` methods: many may be benchmark/query floor rather than endpoint logic. Prefer cuts that remove repo ops, row growth, or multiple endpoint costs. This cut improved three dwelling endpoints with a tiny code-size change and no row-growth change.
+- [x] Mirror first-playable dwelling pools into the existing runtime pool cache during setup, both when a pool is newly created and when setup reuses an existing durable pool. This lets active dwelling get/preview/submit read the pool from heap instead of paging `DwellingPool` by object.
+- [x] Measure the dwelling seed runtime-pool cut. Artifact `target/benchmarks/20260521-dwelling-seed-runtime-pool-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `14.6549B -> 12.5426B` (`-2.1123B`, `-14.4%`) versus `20260521-runtime-spellbook-complete-local`. `get_dwelling_pool` moved `0.7053B -> 0.0015B`, `preview_dwelling_recruit` moved `0.7059B -> 0.0015B`, and `submit_dwelling_recruit` moved `1.4096B -> 0.7058B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 64. Random Endpoint Cluster: Setup Repo Floor Or Common 0.7B Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-dwelling-seed-runtime-pool-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or a common `0.7B` endpoint floor that can be proven to affect several endpoints.
+- [ ] Keep dwelling parked unless a regression blocks scenario flow; `submit_dwelling_recruit` is now around the common `0.705B` floor and dwelling get/preview are near zero.
+- [ ] Do not make setup faster by hiding durable identity/session work without a real runtime authority and recovery story. If touching setup, preserve replay, active-session admission, setup timers, and upgrade flush.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

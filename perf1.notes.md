@@ -7547,3 +7547,41 @@ Decision:
 - Keep this checkpoint. It removes the last measured champion spellbook durable page scans from the endpoint surface and moves learning into the common `~0.705B` floor.
 - Park champion spellbook for the next rotation.
 - Next useful targets are the remaining setup/session repo-op floor or a shared floor exposed through `submit_dwelling_recruit`.
+
+## Dwelling Seed Runtime Pool Cache
+
+Time: `2026-05-21T06:11:47Z`.
+
+Cut:
+
+- Rotated away from spellbooks.
+- Evaluated the setup repo-op floor first. The remaining player/session creates are real durable identity/session boundaries; cutting them cleanly needs a broader runtime lobby/session authority pass, not a hollow fast path.
+- Picked the dwelling shared floor because `get_dwelling_pool`, `preview_dwelling_recruit`, and `submit_dwelling_recruit` all paid the same durable `DwellingPool` by-object read before any recruit mutation populated the runtime pool cache.
+- First-playable setup now mirrors dwelling pools into the existing runtime pool cache when it creates a pool and when setup reuses an existing durable pool.
+- The existing active dwelling get/preview/submit paths already read `runtime_dwelling_pool` first, so no public API behavior had to change.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-dwelling-seed-runtime-pool-local/endpoint-surface`, passed in `185s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-runtime-spellbook-complete-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `14.6549B -> 12.5426B`, `-2.1123B`, `-14.4%`.
+- `get_dwelling_pool`: `0.7053B -> 0.0015B`.
+- `preview_dwelling_recruit`: `0.7059B -> 0.0015B`.
+- `submit_dwelling_recruit`: `1.4096B -> 0.7058B`.
+- Remaining repo ops are still the setup/session floor: `players.create_player_account` (`2` calls / `0.9491B`), `sessions.insert_participants_atomic` (`1` call / `0.4868B`), and `sessions.create_game_session` (`1` call / `0.4778B`).
+
+Decision:
+
+- Keep this checkpoint. It removes a shared durable dwelling-pool read from three endpoints with a very small code change.
+- Park dwelling for the next rotation.
+- Next useful target is the setup/session repo-op floor, but only with a real runtime authority/recovery story; otherwise pick another common `0.7B` floor that affects multiple endpoints.

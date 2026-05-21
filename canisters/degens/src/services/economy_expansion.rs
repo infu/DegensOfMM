@@ -1169,7 +1169,7 @@ fn runtime_dwelling_pool(
     })
 }
 
-fn mirror_runtime_dwelling_pool(pool: &DwellingPool) {
+pub(crate) fn mirror_runtime_dwelling_pool(pool: &DwellingPool) {
     RUNTIME_DWELLING_POOLS.with_borrow_mut(|pools| {
         if let Some(existing) = pools.iter_mut().find(|existing| {
             existing.session_id == pool.session_id && existing.object_id == pool.object_id

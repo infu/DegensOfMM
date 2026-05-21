@@ -7304,3 +7304,41 @@ Decision:
 - Keep this checkpoint. It moves quest live state onto the active runtime and preserves production durability through upgrade flush.
 - Park quest accept/claim unless the runtime overlay or flush path regresses; both endpoints are now at the same `~0.7B` command/event floor as other already-cut routes.
 - Rotate next to `learn_champion_spell` or the larger `submit_dwelling_recruit` aggregate.
+
+## Learn Spell Runtime Create Cut
+
+Time: `2026-05-21T06:28:00Z`.
+
+Cut:
+
+- Rotated to `learn_champion_spell`.
+- Tried a fuller runtime spellbook cache that would remove the spellbook page and the durable learned-spell create from `learn_champion_spell`, but it exceeded the IC benchmark Wasm code-section limit.
+- Kept the installable smaller cut: active `learn_champion_spell` mirrors a lightweight learned-spell snapshot into `SessionTurnRuntime` instead of immediately creating the durable `ChampionSpell` row.
+- `cast_adventure_spell` now treats that runtime learned-spell snapshot as proof before falling back to durable `ChampionSpell`.
+- Production upgrade flush creates the missing durable `ChampionSpell` row from runtime learned-spell snapshots.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bffb2f` / `12,581,679` bytes, `1,233` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-learn-runtime-spell-create-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-quest-runtime-snapshot-v2-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages moved `2049 -> 61953` to `2049 -> 61441`.
+- Scenario instructions: `24.3289B -> 23.8616B`, `-0.4673B`, `-1.9%`.
+- `learn_champion_spell`: `1.8825B -> 1.4082B`, `-25.2%`.
+- `champions.create_champion_spell` dropped out of the endpoint-surface repo-op table.
+- `champions.spells_by_champion` remained at `2` calls / `0.7020B`; removing that needs more code-size headroom than this checkpoint has.
+
+Decision:
+
+- Keep this checkpoint. It removes the durable learned-spell create row from the active route and keeps same-turn spell casting correct through runtime snapshots.
+- Park `learn_champion_spell` for now. The remaining floor is spellbook paging plus content/command/event overhead, and the attempted full cache crossed the benchmark Wasm limit.
+- Rotate next to `submit_dwelling_recruit`; its remaining floor is the larger dwelling pool plus champion army aggregate, not another receipt lookup micro-cut.

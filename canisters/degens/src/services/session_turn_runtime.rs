@@ -17,11 +17,11 @@ use domm_degens_schema::schema::{
 };
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
 #[cfg(not(feature = "benchmark"))]
+use icydb::{traits::EntityKey, types::Timestamp};
 use icydb::{
-    traits::EntityKey,
-    types::{Timestamp, Ulid},
+    traits::EntityValue,
+    types::{Id, Ulid},
 };
-use icydb::{traits::EntityValue, types::Id};
 
 use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
@@ -46,6 +46,7 @@ pub(crate) struct SessionTurnRuntime {
     pub participants: Vec<SessionTurnParticipant>,
     pub ready_participants: BTreeSet<String>,
     pub champion_snapshots: Vec<Champion>,
+    pub champion_spell_snapshots: Vec<RuntimeChampionSpell>,
     pub world_object_snapshots: Vec<WorldObject>,
     pub occupancy_index: Vec<RuntimeOccupancyCell>,
     pub contact_index: Vec<RuntimeContactCell>,
@@ -84,6 +85,7 @@ impl SessionTurnRuntime {
             participants: Vec::new(),
             ready_participants: BTreeSet::new(),
             champion_snapshots: Vec::new(),
+            champion_spell_snapshots: Vec::new(),
             world_object_snapshots: Vec::new(),
             occupancy_index: Vec::new(),
             contact_index: Vec::new(),
@@ -139,6 +141,18 @@ impl SessionTurnRuntime {
             self.champion_snapshots.push(champion);
         }
         self.dirty.champion_snapshots = true;
+        self.mark_dirty();
+    }
+
+    pub(crate) fn upsert_champion_spell_snapshot(&mut self, spell: RuntimeChampionSpell) {
+        if let Some(existing) = self.champion_spell_snapshots.iter_mut().find(|existing| {
+            existing.champion_id == spell.champion_id && existing.spell_id == spell.spell_id
+        }) {
+            *existing = spell;
+        } else {
+            self.champion_spell_snapshots.push(spell);
+        }
+        self.dirty.champion_spell_snapshots = true;
         self.mark_dirty();
     }
 
@@ -412,6 +426,16 @@ impl RuntimeMovementIntent {
 }
 
 #[derive(Clone)]
+pub(crate) struct RuntimeChampionSpell {
+    pub champion_id: Ulid,
+    pub spell_id: Ulid,
+    pub spell_slug: Option<String>,
+    pub learned_turn: u32,
+    pub last_command_id: Option<Ulid>,
+    pub needs_flush: bool,
+}
+
+#[derive(Clone)]
 pub(crate) struct SessionTurnCommandReceipt {
     pub command_id: String,
     pub command_type: String,
@@ -500,6 +524,7 @@ pub(crate) struct SessionTurnDirtySets {
     pub participants: bool,
     pub ready: bool,
     pub champion_snapshots: bool,
+    pub champion_spell_snapshots: bool,
     pub world_object_snapshots: bool,
     pub occupancy_index: bool,
     pub contact_index: bool,
@@ -577,6 +602,18 @@ pub(crate) fn quest_snapshot(
 pub(crate) fn mirror_quest_snapshot(session_id: &str, turn_number: u32, quest: QuestState) -> bool {
     with_runtime_mut(session_id, turn_number, |runtime| {
         runtime.upsert_quest_snapshot(quest);
+        true
+    })
+    .unwrap_or(false)
+}
+
+pub(crate) fn mirror_champion_spell_snapshot(
+    session_id: &str,
+    turn_number: u32,
+    spell: RuntimeChampionSpell,
+) -> bool {
+    with_runtime_mut(session_id, turn_number, |runtime| {
+        runtime.upsert_champion_spell_snapshot(spell);
         true
     })
     .unwrap_or(false)
@@ -1397,25 +1434,19 @@ pub(crate) fn command_receipt_by_nonce(
 
 pub(crate) fn runtime_learned_champion_spell(
     session_id: &str,
-    champion_id: &str,
+    champion_id: Id<Champion>,
     spell_slug: &str,
 ) -> bool {
+    let champion_key = champion_id.key();
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
         runtimes
             .borrow()
             .values()
             .filter(|runtime| runtime.session_id == session_id)
             .any(|runtime| {
-                runtime.command_receipts.iter().any(|receipt| {
-                    receipt.command_type == "learn_champion_spell"
-                        && receipt.response.status == domm_game::CommandStatus::Applied
-                        && matches!(
-                            &receipt.response.result,
-                            domm_game::CommandResult::ChampionMagic(magic)
-                                if magic.action == "learn_champion_spell"
-                                    && magic.champion_id == champion_id
-                                    && magic.spell_slug.as_deref() == Some(spell_slug)
-                        )
+                runtime.champion_spell_snapshots.iter().any(|spell| {
+                    spell.champion_id == champion_key
+                        && spell.spell_slug.as_deref() == Some(spell_slug)
                 })
             })
     })
@@ -1475,6 +1506,33 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
     for runtime in &runtimes {
         for participant_id in &runtime.ready_participants {
             if flush_runtime_ready_participant(runtime, participant_id)? {
+                flushed = flushed.saturating_add(1);
+            }
+        }
+    }
+    for runtime in &runtimes {
+        let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
+        for spell in &runtime.champion_spell_snapshots {
+            if !spell.needs_flush {
+                continue;
+            }
+            if champions_artifacts::find_champion_spell(
+                Id::<Champion>::from_key(spell.champion_id),
+                Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
+            )?
+            .is_none()
+            {
+                let Some(command_id) = spell.last_command_id else {
+                    continue;
+                };
+                champions_artifacts::create_champion_spell(
+                    session_id,
+                    Id::<Champion>::from_key(spell.champion_id),
+                    Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
+                    spell.spell_slug.as_deref().unwrap_or(""),
+                    spell.learned_turn,
+                    Id::<GameCommand>::from_key(command_id),
+                )?;
                 flushed = flushed.saturating_add(1);
             }
         }

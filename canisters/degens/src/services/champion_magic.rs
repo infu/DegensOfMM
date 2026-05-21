@@ -1,5 +1,5 @@
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{Champion, ChampionSpell, GameCommand, SpellDefinition};
+use domm_degens_schema::schema::{Champion, GameCommand, SpellDefinition};
 use domm_game::{
     ApiError, ChampionMagicReceipt, ChampionProgressionView, ChampionSkillChoiceView,
     ChangedSubject, CommandResponse, CommandResult,
@@ -362,14 +362,7 @@ fn apply_spell_learning(
             false,
         ));
     }
-    champions_artifacts::create_champion_spell(
-        context.session.id(),
-        champion.id(),
-        spell.id(),
-        &spell.slug,
-        context.session.current_turn,
-        command.id(),
-    )?;
+    persist_or_mirror_active_champion_spell(context, champion.id(), &spell, command.id())?;
     champion.last_command_id = Some(command.id().key());
     champion = persist_or_mirror_active_champion(context, champion)?;
     let event = command_response::append_runtime_or_fresh_public_event(
@@ -403,9 +396,9 @@ fn apply_spell_learning(
 }
 
 fn known_spell_for_definition(
-    known_spells: &[ChampionSpell],
+    known_spells: &[domm_degens_schema::schema::ChampionSpell],
     spell_id: Id<SpellDefinition>,
-) -> Option<&ChampionSpell> {
+) -> Option<&domm_degens_schema::schema::ChampionSpell> {
     let spell_key = spell_id.key();
     known_spells
         .iter()
@@ -612,6 +605,43 @@ fn persist_or_mirror_active_champion(
     }
 }
 
+fn persist_or_mirror_active_champion_spell(
+    context: &session_context::SessionCallerContext,
+    champion_id: Id<Champion>,
+    spell: &SpellDefinition,
+    command_id: Id<GameCommand>,
+) -> Result<(), ApiError> {
+    if session_turn_runtime::contains_runtime(
+        &context.session.id().to_string(),
+        context.session.current_turn,
+    ) {
+        let learned = session_turn_runtime::RuntimeChampionSpell {
+            champion_id: champion_id.key(),
+            spell_id: spell.id().key(),
+            spell_slug: Some(spell.slug.clone()),
+            learned_turn: context.session.current_turn,
+            last_command_id: Some(command_id.key()),
+            needs_flush: true,
+        };
+        session_turn_runtime::mirror_champion_spell_snapshot(
+            &context.session.id().to_string(),
+            context.session.current_turn,
+            learned.clone(),
+        );
+        Ok(())
+    } else {
+        champions_artifacts::create_champion_spell(
+            context.session.id(),
+            champion_id,
+            spell.id(),
+            &spell.slug,
+            context.session.current_turn,
+            command_id,
+        )
+        .map(|_| ())
+    }
+}
+
 fn require_known_spell(
     champion: &Champion,
     spell_slug: &str,
@@ -624,7 +654,7 @@ fn require_known_spell(
             })?;
     let learned_in_runtime = session_turn_runtime::runtime_learned_champion_spell(
         &context.session.id().to_string(),
-        &champion.id().to_string(),
+        champion.id(),
         spell_slug,
     );
     if !learned_in_runtime

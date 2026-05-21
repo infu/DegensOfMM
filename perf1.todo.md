@@ -1002,10 +1002,19 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 57. Random Endpoint Cluster: Next Learning Or Dwelling Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-quest-runtime-snapshot-v2-local`; prefer `learn_champion_spell` or `submit_dwelling_recruit`.
-- [ ] Keep quest accept/claim parked unless runtime snapshot flush or query overlay regresses; both active quest commands are now around the `0.7B` command/event floor.
-- [ ] If picking `learn_champion_spell`, favor removing the durable `ChampionSpell` create/page floor only if runtime learned-spell snapshots still keep `cast_adventure_spell`, progression views, and production upgrade flush correct.
-- [ ] If picking `submit_dwelling_recruit`, do not micro-polish receipt lookup again; the remaining floor is the larger dwelling pool plus champion army aggregate.
+- [x] Pick a different bounded endpoint cluster from `20260521-quest-runtime-snapshot-v2-local`; prefer `learn_champion_spell` or `submit_dwelling_recruit`. Picked `learn_champion_spell`.
+- [x] Keep quest accept/claim parked unless runtime snapshot flush or query overlay regresses; both active quest commands are now around the `0.7B` command/event floor.
+- [x] If picking `learn_champion_spell`, favor removing the durable `ChampionSpell` create/page floor only if runtime learned-spell snapshots still keep `cast_adventure_spell`, progression views, and production upgrade flush correct. Tried the fuller spellbook-cache version, but it exceeded the benchmark Wasm code-section limit. Kept the installable create-row cut instead.
+- [x] If picking `submit_dwelling_recruit`, do not micro-polish receipt lookup again; the remaining floor is the larger dwelling pool plus champion army aggregate.
+- [x] Apply and measure the runtime learned-spell create cut. Active `learn_champion_spell` now mirrors a lightweight learned-spell snapshot into `SessionTurnRuntime` instead of creating a durable `ChampionSpell` row immediately; `cast_adventure_spell` reads that runtime snapshot, and production upgrade flush creates the durable `ChampionSpell` row if missing.
+- [x] Measure the learn runtime-spell create cut. Artifact `target/benchmarks/20260521-learn-runtime-spell-create-local/endpoint-surface` passed with `59/59` endpoints, row growth `108`, stable pages `2049 -> 61441`, and scenario instructions `24.3289B -> 23.8616B` (`-0.4673B`, `-1.9%`) versus `20260521-quest-runtime-snapshot-v2-local`. `learn_champion_spell` moved `1.8825B -> 1.4082B`, and `champions.create_champion_spell` dropped out of repo ops.
+
+### 58. Random Endpoint Cluster: Dwelling Aggregate Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-learn-runtime-spell-create-local`; prefer `submit_dwelling_recruit`.
+- [ ] Keep `learn_champion_spell` parked unless we first free enough benchmark Wasm headroom for a real spellbook-cache cut; the current installable cut removed the durable create row but left the spellbook page.
+- [ ] Do not micro-polish the dwelling receipt path again. The remaining `submit_dwelling_recruit` floor is durable `DwellingPool` update plus champion army stack update, so the next useful cut should be a runtime dwelling pool plus runtime champion army projection with production upgrade flush.
+- [ ] Watch code-section headroom closely. The current benchmark Wasm code section is `0x00bffb2f`, only `1,233` bytes under the IC limit.
 
 ## Expected Outcome
 

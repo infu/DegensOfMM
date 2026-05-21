@@ -949,8 +949,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 51. Random Endpoint Cluster: Next Scenario Or Champion Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260521-dwelling-runtime-receipt-lookup-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `hire_tavern_champion`, or `cast_adventure_spell`.
-- [ ] Avoid spending more time on dwelling until we are ready for the larger aggregate: a runtime dwelling pool plus runtime champion army projection with upgrade flush.
+- [x] Pick a different bounded endpoint cluster from `20260521-dwelling-runtime-receipt-lookup-local`; prefer `sync_advanced_victory`, `claim_quest_reward`, `hire_tavern_champion`, or `cast_adventure_spell`. Picked `cast_adventure_spell`.
+- [x] Avoid spending more time on dwelling until we are ready for the larger aggregate: a runtime dwelling pool plus runtime champion army projection with upgrade flush.
+- [x] Apply and measure a bounded champion magic cut. Active runtime `learn_champion_spell` receipts now prove that the champion knows the spell, so `cast_adventure_spell` skips the durable `ChampionSpell` lookup when the spell was learned in the same active runtime. Durable fallback still checks the real learned-spell row when runtime cannot prove it.
+- [x] Measure the cast runtime learned-spell proof. Artifact `target/benchmarks/20260521-cast-runtime-learned-spell-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `33.2871B -> 32.5792B` (`-0.7079B`, `-2.1%`) versus `20260521-dwelling-runtime-receipt-lookup-local`. `cast_adventure_spell` moved `1.4055B -> 0.7047B`.
+- [x] Rotate again after this champion magic proof. Current next candidates are `submit_dwelling_recruit` (`3.5430B`, defer until larger dwelling/army aggregate), `hire_tavern_champion` (`2.8438B`), `sync_advanced_victory` (`2.8137B`), `claim_quest_reward` (`2.3654B`), and `learn_champion_spell` (`1.8825B`).
+
+### 52. Random Endpoint Cluster: Next Non-Dwelling Heavy Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260521-cast-runtime-learned-spell-local`; prefer `hire_tavern_champion`, `sync_advanced_victory`, `claim_quest_reward`, or `learn_champion_spell`.
+- [ ] Keep `cast_adventure_spell` parked unless we decide to add a content/spell-definition runtime cache; the remaining `0.7047B` is mostly the spell definition/content lookup plus command response overhead.
+- [ ] Keep dwelling parked until the larger runtime dwelling pool plus runtime champion army projection can remove the remaining durable pool/army writes.
 
 ## Expected Outcome
 

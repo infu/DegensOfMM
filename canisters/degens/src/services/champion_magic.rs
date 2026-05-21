@@ -616,7 +616,14 @@ fn require_known_spell(
             .ok_or_else(|| {
                 public_error("spell_not_found", "spell definition was not found", false)
             })?;
-    if champions_artifacts::find_champion_spell(champion.id(), spell.id())?.is_none() {
+    let learned_in_runtime = session_turn_runtime::runtime_learned_champion_spell(
+        &context.session.id().to_string(),
+        &champion.id().to_string(),
+        spell_slug,
+    );
+    if !learned_in_runtime
+        && champions_artifacts::find_champion_spell(champion.id(), spell.id())?.is_none()
+    {
         return Err(public_error(
             "spell_not_learned",
             "champion has not learned this spell",

@@ -1260,6 +1260,32 @@ pub(crate) fn command_receipt_by_nonce(
     })
 }
 
+pub(crate) fn runtime_learned_champion_spell(
+    session_id: &str,
+    champion_id: &str,
+    spell_slug: &str,
+) -> bool {
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .filter(|runtime| runtime.session_id == session_id)
+            .any(|runtime| {
+                runtime.command_receipts.iter().any(|receipt| {
+                    receipt.command_type == "learn_champion_spell"
+                        && receipt.response.status == domm_game::CommandStatus::Applied
+                        && matches!(
+                            &receipt.response.result,
+                            domm_game::CommandResult::ChampionMagic(magic)
+                                if magic.action == "learn_champion_spell"
+                                    && magic.champion_id == champion_id
+                                    && magic.spell_slug.as_deref() == Some(spell_slug)
+                        )
+                })
+            })
+    })
+}
+
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError> {
     let runtimes = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {

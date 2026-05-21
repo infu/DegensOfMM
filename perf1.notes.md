@@ -7087,3 +7087,38 @@ Decision:
 
 - Keep this checkpoint. It preserves durable recruitment history while removing one active-command lookup.
 - Do not keep polishing dwelling with micro-cuts. The remaining path needs a real aggregate: runtime dwelling pool availability plus runtime champion army stack projection with upgrade flush.
+
+## Cast Runtime Learned-Spell Proof
+
+Time: `2026-05-21T02:05:00Z`.
+
+Cut:
+
+- Rotated away from dwelling to `cast_adventure_spell`.
+- Added an active-runtime proof helper that scans applied runtime `learn_champion_spell` command receipts for the same champion and spell slug.
+- `cast_adventure_spell` still loads the spell definition for mana/effect data, but it now skips the durable `ChampionSpell` lookup when the active runtime already proves the spell was learned.
+- If runtime cannot prove the learned spell, the old durable `find_champion_spell` fallback still runs.
+
+Verification:
+
+- `cargo fmt`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bff7e0` / `12,580,832` bytes, `2,080` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260521-cast-runtime-learned-spell-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-dwelling-runtime-receipt-lookup-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `33.2871B -> 32.5792B`, `-0.7079B`, `-2.1%`.
+- `cast_adventure_spell`: `1.4055B -> 0.7047B`, `-49.9%`.
+
+Decision:
+
+- Keep this checkpoint. It removes one active stable learned-spell lookup without shifting work to another endpoint.
+- Park cast for now; the remaining floor is the spell definition/content lookup plus command response overhead. A further cut needs a small content/spell-definition projection or cache, but code-section headroom is only about 2 KB.
+- Rotate to another non-dwelling heavy endpoint next: tavern hire, advanced victory, quest reward, or learning.

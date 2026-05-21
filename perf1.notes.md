@@ -7010,3 +7010,41 @@ Decision:
 
 - Keep this checkpoint. It gives a large endpoint win with no row-growth change and preserves the full repair path for initial/missing state.
 - Rotate again. The next top floors are `submit_dwelling_recruit`, `sync_advanced_victory`, champion magic spellbook reads, and claim quest scenario writes.
+
+## Champion Spellbook Single-Read Cut
+
+Time: `2026-05-21T01:50:00Z`.
+
+Cut:
+
+- Rotated to `learn_champion_spell` after the worldgen fast path.
+- Reused the champion spellbook page for both duplicate detection and spellbook-cap checking.
+- Removed the separate `find_champion_spell` stable lookup from the learning path. The durable `ChampionSpell` create remains, so learned-spell state is still persisted immediately.
+
+Decision:
+
+- Keep this as a read-floor cut, not a full champion spell aggregate yet. It is low-risk because the page already contains all known spell rows needed for duplicate detection and capacity.
+- Remaining `learn_champion_spell` cost is still above target because it still needs the spell definition lookup, the spellbook page, the durable learned-spell row, and command/result handling. A bigger cut would need runtime learned-spell projection with upgrade flush.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Direct benchmark Wasm size: `0x00bff31a` / `12,579,610` bytes, `3,302` bytes under the IC code-section limit.
+- Endpoint-surface artifact: `target/benchmarks/20260520-spellbook-single-read-local/endpoint-surface`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-worldgen-fast-path-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `108`.
+- Stable pages stayed `2049 -> 62465`.
+- Scenario instructions: `34.6934B -> 33.9835B`, `-0.7099B`, `-2.0%`.
+- `learn_champion_spell`: `2.5849B -> 1.8825B`, `-27.2%`.
+- `champions.spells_by_champion` stayed at `2` calls because the endpoint-surface scenario also uses spellbook reads in progression/cast coverage; the removed lookup was the separate spell-specific read inside learning.
+
+Decision:
+
+- Keep this checkpoint. It buys about one stable read worth of instructions for minimal behavior risk.
+- Rotate again. The largest remaining endpoint is `submit_dwelling_recruit`, but scenario/victory row scans are also still substantial.

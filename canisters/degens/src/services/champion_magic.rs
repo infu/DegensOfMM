@@ -1,5 +1,5 @@
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{Champion, GameCommand, SpellDefinition};
+use domm_degens_schema::schema::{Champion, ChampionSpell, GameCommand, SpellDefinition};
 use domm_game::{
     ApiError, ChampionMagicReceipt, ChampionProgressionView, ChampionSkillChoiceView,
     ChangedSubject, CommandResponse, CommandResult,
@@ -327,7 +327,10 @@ fn apply_spell_learning(
             false,
         ));
     }
-    if let Some(existing) = champions_artifacts::find_champion_spell(champion.id(), spell.id())? {
+    let known_spells =
+        champions_artifacts::page_champion_spells(champion.id(), domm_game::MAX_LIST_LIMIT, None)?
+            .items;
+    if let Some(existing) = known_spell_for_definition(&known_spells, spell.id()) {
         if existing.last_command_id == Some(command.id().key()) {
             return Ok((
                 receipt(
@@ -348,10 +351,7 @@ fn apply_spell_learning(
             false,
         ));
     }
-    let known_count =
-        champions_artifacts::page_champion_spells(champion.id(), domm_game::MAX_LIST_LIMIT, None)?
-            .items
-            .len();
+    let known_count = known_spells.len();
     if known_count.saturating_add(1) > domm_game::CHAMPION_SPELLBOOK_CAP {
         return Err(public_error(
             "spellbook_cap_exceeded",
@@ -397,6 +397,16 @@ fn apply_spell_learning(
             "update",
         )],
     ))
+}
+
+fn known_spell_for_definition(
+    known_spells: &[ChampionSpell],
+    spell_id: Id<SpellDefinition>,
+) -> Option<&ChampionSpell> {
+    let spell_key = spell_id.key();
+    known_spells
+        .iter()
+        .find(|known| known.spell_id == spell_key)
 }
 
 fn apply_adventure_cast(

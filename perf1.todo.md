@@ -935,8 +935,15 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 49. Random Endpoint Cluster: Next Heavy Command Floor
 
-- [ ] Pick a different bounded endpoint cluster from `20260520-worldgen-fast-path-local`; do not return to `sync_world_generation` unless a regression appears. Prefer `submit_dwelling_recruit`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`.
-- [ ] Apply one low-risk storage or CPU cut and explain whether the remaining cost is a live aggregate problem, a query/read floor, or unavoidable rules CPU.
+- [x] Pick a different bounded endpoint cluster from `20260520-worldgen-fast-path-local`; do not return to `sync_world_generation` unless a regression appears. Prefer `submit_dwelling_recruit`, `sync_advanced_victory`, `learn_champion_spell`, or `claim_quest_reward`. Picked `learn_champion_spell`.
+- [x] Apply one low-risk storage or CPU cut and explain whether the remaining cost is a live aggregate problem, a query/read floor, or unavoidable rules CPU. Reused the champion spellbook page for both duplicate detection and cap checking, removing the separate spell-specific stable lookup before the durable `ChampionSpell` create. Remaining cost is the spell definition lookup, spellbook page, durable `ChampionSpell` row, and result/event handling.
+- [x] Measure the spellbook single-read cut. Artifact `target/benchmarks/20260520-spellbook-single-read-local/endpoint-surface` passed with `59/59` endpoints, kept row growth `108`, kept stable pages `2049 -> 62465`, and moved scenario instructions `34.6934B -> 33.9835B` (`-0.7099B`, `-2.0%`) versus `20260520-worldgen-fast-path-local`. `learn_champion_spell` moved `2.5849B -> 1.8825B`.
+- [x] Rotate again after this champion magic read cut. Current next candidates are `submit_dwelling_recruit` (`4.2408B`), `hire_tavern_champion` (`2.8461B`), `sync_advanced_victory` (`2.8207B`), `claim_quest_reward` (`2.3692B`), and `cast_adventure_spell` (`1.4055B`).
+
+### 50. Random Endpoint Cluster: Next Aggregate Or Scenario Floor
+
+- [ ] Pick a different bounded endpoint cluster from `20260520-spellbook-single-read-local`; prefer `submit_dwelling_recruit`, `sync_advanced_victory`, or `claim_quest_reward`.
+- [ ] Favor a cut that moves live state into an aggregate/projection or skips a repeated sync/read floor. If the next cut cannot get the endpoint close to `0.3B-0.6B`, identify the larger aggregate needed.
 
 ## Expected Outcome
 

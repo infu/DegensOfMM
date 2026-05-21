@@ -1401,12 +1401,20 @@ pub(crate) fn get_setup_progress(session_id: String) -> Result<SetupProgressView
 
 fn setup_progress_view(session: &GameSession) -> Result<SetupProgressView, ApiError> {
     let setup_command = setup_command_for_progress(session)?;
-    let setup_job = system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?;
     let total_effect_count = u32::try_from(SETUP_EFFECTS.len()).unwrap_or(u32::MAX);
     let setup_complete = session.state == "active"
         || setup_command
             .as_ref()
             .is_some_and(|command| command.status == "applied");
+    let setup_job = if session.state == "active"
+        && setup_command
+            .as_ref()
+            .is_some_and(|command| command.status == "applied")
+    {
+        None
+    } else {
+        system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?
+    };
     let completed_index = if setup_complete {
         SETUP_EFFECTS.len()
     } else {

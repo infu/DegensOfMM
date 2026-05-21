@@ -7585,3 +7585,39 @@ Decision:
 - Keep this checkpoint. It removes a shared durable dwelling-pool read from three endpoints with a very small code change.
 - Park dwelling for the next rotation.
 - Next useful target is the setup/session repo-op floor, but only with a real runtime authority/recovery story; otherwise pick another common `0.7B` floor that affects multiple endpoints.
+
+## Active Setup Progress Job Skip
+
+Time: `2026-05-21T06:23:13Z`.
+
+Cut:
+
+- Rotated away from dwelling.
+- Evaluated the remaining setup/session floor. Player/session/participant creates are still real durable identity and admission boundaries, so this checkpoint did not hide or fake them.
+- Picked the active `get_setup_progress` floor because the endpoint still read the durable setup job after the session was already `active` and the setup command was already `applied`.
+- `setup_progress_view` now keeps the old durable job lookup while setup is still running, but skips it once active session state plus the applied setup command already prove completion.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark-feature Wasm build passed.
+- Endpoint-surface artifact: `target/benchmarks/20260521-setup-progress-active-cache-local/endpoint-surface`, passed in `188s`.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260521-dwelling-seed-runtime-pool-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth stayed `106`.
+- Stable pages stayed `2049 -> 59905`.
+- Scenario instructions: `12.5426B -> 11.8381B`, `-0.7045B`, `-5.6%`.
+- `get_setup_progress`: `0.7045B -> 0.00003B`.
+- `start_session`: unchanged at `0.4885B`.
+- Remaining repo ops are still the setup/session floor: `players.create_player_account` (`2` calls / `0.9491B`), `sessions.insert_participants_atomic` (`1` call / `0.4868B`), and `sessions.create_game_session` (`1` call / `0.4778B`).
+
+Decision:
+
+- Keep this checkpoint. It removes one completed-setup durable job read without weakening setup durability or replay.
+- Park setup-progress for the next rotation.
+- Next useful targets are common `0.7B` floors such as adventure spell/content lookup, world-info/config queries, quest preview/accept, or a real runtime authority pass for the remaining setup/session repo ops.

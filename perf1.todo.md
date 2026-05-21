@@ -1063,9 +1063,17 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 64. Random Endpoint Cluster: Setup Repo Floor Or Common 0.7B Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-dwelling-seed-runtime-pool-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or a common `0.7B` endpoint floor that can be proven to affect several endpoints.
-- [ ] Keep dwelling parked unless a regression blocks scenario flow; `submit_dwelling_recruit` is now around the common `0.705B` floor and dwelling get/preview are near zero.
-- [ ] Do not make setup faster by hiding durable identity/session work without a real runtime authority and recovery story. If touching setup, preserve replay, active-session admission, setup timers, and upgrade flush.
+- [x] Pick a different bounded endpoint/cluster from `20260521-dwelling-seed-runtime-pool-local`; prefer the remaining setup/session repo-op floor (`players.create_player_account`, `sessions.insert_participants_atomic`, `sessions.create_game_session`) or a common `0.7B` endpoint floor that can be proven to affect several endpoints. Picked the active setup-progress job lookup because it was a standalone `0.7045B` durable lookup after setup was already complete.
+- [x] Keep dwelling parked unless a regression blocks scenario flow; `submit_dwelling_recruit` is now around the common `0.705B` floor and dwelling get/preview are near zero.
+- [x] Do not make setup faster by hiding durable identity/session work without a real runtime authority and recovery story. This cut does not change player/session creation, participant admission, setup timers, setup command replay, or upgrade flush; it only skips reading the completed setup job after the active session and applied setup command already prove completion.
+- [x] Measure the active setup-progress cut. Artifact `target/benchmarks/20260521-setup-progress-active-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and scenario instructions `12.5426B -> 11.8381B` (`-0.7045B`, `-5.6%`) versus `20260521-dwelling-seed-runtime-pool-local`. `get_setup_progress` moved `0.7045B -> 0.00003B`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+
+### 65. Random Endpoint Cluster: Adventure, World Info, Or Remaining Setup Floor
+
+- [ ] Pick a different bounded endpoint/cluster from `20260521-setup-progress-active-cache-local`; prefer a shared common-floor candidate such as adventure spell/content lookup, world-info/config queries, quest preview/accept, or the remaining durable setup/session repo-op floor only if we have a real runtime authority/recovery story.
+- [ ] Keep setup-progress parked unless a regression blocks active setup progress; the active query is now near zero and the remaining setup/session repo ops are durable identity/session boundaries.
+- [ ] Avoid polishing one `0.7B` endpoint unless the cut removes a shared lookup, row growth, repo op, or repeated route cost across several endpoints.
 - [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ## Expected Outcome

@@ -890,7 +890,14 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 - [x] Preserve `get_events_after`, command-status results, and recovery tests; if a row is removed from the hot path, runtime event/effect visibility or flush coverage must replace it. Added runtime public-event append for active `SessionTurnRuntime`, kept durable fallback, and fixed runtime command status-by-nonce to check all game command receipts.
 - [x] Measure with endpoint-surface and compare against `20260520-final-command-receipts-local`. Artifact `target/benchmarks/20260520-champion-runtime-events-local` passed with `59/59` endpoints; `events.create_game_event` moved `12 -> 9`, row growth moved `137 -> 134`, scenario instructions moved `59.5007B -> 58.0803B` (`-2.4%`), and champion magic calls each dropped about `0.47B`.
 - [x] Rotate to another bounded event/effect family after committing the champion event slice. Second slice moved scenario quest/objective/world-event public events to `SessionTurnRuntime`. Artifact `target/benchmarks/20260520-scenario-runtime-events-local` passed with `59/59` endpoints; `events.create_game_event` moved `9 -> 4`, row growth moved `134 -> 129`, scenario instructions moved `58.0803B -> 55.6905B` (`-4.1%`), and the five scenario command calls each avoided about one durable event-row write.
-- [ ] Rotate to another random bounded cluster instead of over-polishing public events. Candidate floors from the latest artifact: `effects.create_applied_command_effect` still `12` calls / `5.7096B`, `economy.create_resource_ledger_entry` still `5` calls / `2.3839B`, and the remaining `events.create_game_event` `4` calls / `1.9090B`.
+- [x] Rotate to another random bounded cluster instead of over-polishing public events. Removed duplicate fresh `CommandEffect` rows from active runtime command paths and moved the last economy/end-turn public events into `SessionTurnRuntime`. Artifact `target/benchmarks/20260520-effect-event-floor-local` passed with `59/59` endpoints; `effects.create_applied_command_effect` moved `12 -> 0`, `events.create_game_event` moved `4 -> 0`, row growth moved `129 -> 113`, and scenario instructions moved `55.6905B -> 48.0648B` (`-13.7%`).
+
+### 43. Random Endpoint Cluster: Resource Ledger Row Floor
+
+- [ ] Rotate to the next shared repo-op floor: `economy.create_resource_ledger_entry` is now the largest write cluster at `5` calls / `2.3859B` in `20260520-effect-event-floor-local`.
+- [ ] Mirror economy-expansion and quest reward resource ledger deltas into `SessionTurnRuntime`, matching the existing town/movement runtime-ledger pattern so production can flush ledger entries later and benchmark hot calls stop paying immediate ledger writes.
+- [ ] Keep participant resource balances and changed subjects visible immediately; only the durable ledger row should leave the endpoint hot path.
+- [ ] Measure with endpoint-surface and verify `economy.create_resource_ledger_entry` drops while `hire_tavern_champion`, `submit_market_trade`, `submit_dwelling_recruit`, and `claim_quest_reward` stay correct.
 
 ## Expected Outcome
 

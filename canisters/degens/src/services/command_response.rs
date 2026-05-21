@@ -897,28 +897,6 @@ pub(crate) fn ensure_command_effect(
     Ok(())
 }
 
-pub(crate) fn create_fresh_command_effect(
-    session_id: Id<GameSession>,
-    command_id: Id<GameCommand>,
-    effect_key: String,
-    effect_type: String,
-    target_kind: String,
-    target_id_text: String,
-    payload_json: String,
-) -> Result<(), ApiError> {
-    commands_events_effects::create_applied_command_effect(
-        session_id,
-        command_id,
-        effect_key,
-        effect_type,
-        target_kind,
-        target_id_text,
-        payload_json,
-        Timestamp::now(),
-    )?;
-    Ok(())
-}
-
 pub(crate) fn changed(kind: &str, id: &str, operation: &str) -> ChangedSubject {
     ChangedSubject {
         subject_kind: kind.to_string(),

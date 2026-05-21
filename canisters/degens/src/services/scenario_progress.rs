@@ -206,15 +206,6 @@ pub(crate) fn sync_objectives(
         Some(session_id_text.clone()),
         result_json.clone(),
     )?;
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        "scenario:sync_objectives".to_string(),
-        "objective_sync".to_string(),
-        "session".to_string(),
-        session_id_text,
-        result_json.clone(),
-    )?;
     command_response::apply_runtime_command_with_result(
         caller,
         &context,
@@ -275,15 +266,6 @@ pub(crate) fn sync_world_events(
         "world_event_synced".to_string(),
         Some("world_event".to_string()),
         Some(event_key.clone()),
-        result_json.clone(),
-    )?;
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("scenario:world_event:{event_key}"),
-        "world_event_sync".to_string(),
-        "world_event".to_string(),
-        event_key,
         result_json.clone(),
     )?;
     command_response::apply_runtime_command_with_result(
@@ -351,15 +333,6 @@ pub(crate) fn sync_advanced_victory(
         "advanced_victory_synced".to_string(),
         Some("session".to_string()),
         Some(session_id_text.clone()),
-        result_json.clone(),
-    )?;
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        "scenario:sync_advanced_victory".to_string(),
-        "advanced_victory_sync".to_string(),
-        "session".to_string(),
-        session_id_text,
         result_json.clone(),
     )?;
     command_response::apply_runtime_command_with_result(
@@ -593,15 +566,6 @@ fn apply_accept_quest(
         Some(quest.quest_key.clone()),
         result_json.clone(),
     )?;
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("scenario:quest_accept:{}", quest.quest_key),
-        "quest_accept".to_string(),
-        "quest".to_string(),
-        quest.quest_key.clone(),
-        result_json.clone(),
-    )?;
     command_response::apply_runtime_command_with_result(
         caller,
         context,
@@ -688,15 +652,6 @@ fn apply_claim_quest_reward(
         "quest_reward_claimed".to_string(),
         Some("quest".to_string()),
         Some(quest.quest_key.clone()),
-        result_json.clone(),
-    )?;
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("scenario:quest_claim:{}", quest.quest_key),
-        "quest_reward".to_string(),
-        "quest".to_string(),
-        quest.quest_key.clone(),
         result_json.clone(),
     )?;
     command_response::apply_runtime_command_with_result(

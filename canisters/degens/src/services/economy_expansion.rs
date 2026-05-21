@@ -500,10 +500,9 @@ fn apply_hire_command(
     );
     let result_json = receipt_json(&receipt);
     let event_key = format!("hire:{offer_key}:{}", command.id());
-    let effect_key = format!("hire:{offer_key}");
     let event = if fresh_hire {
-        command_response::append_fresh_public_event(
-            &mut context.session,
+        command_response::append_runtime_or_fresh_public_event(
+            context,
             command.id(),
             event_key,
             "champion_hired".to_string(),
@@ -522,21 +521,11 @@ fn apply_hire_command(
             result_json.clone(),
         )?
     };
-    if fresh_hire {
-        command_response::create_fresh_command_effect(
-            context.session.id(),
-            command.id(),
-            effect_key,
-            "champion_hire".to_string(),
-            "champion".to_string(),
-            champion.id().to_string(),
-            result_json.clone(),
-        )?;
-    } else {
+    if !fresh_hire {
         command_response::ensure_command_effect(
             context.session.id(),
             command.id(),
-            effect_key,
+            format!("hire:{offer_key}"),
             "champion_hire".to_string(),
             "champion".to_string(),
             champion.id().to_string(),
@@ -643,10 +632,9 @@ fn apply_market_trade_command(
     );
     let result_json = receipt_json(&receipt);
     let event_key = format!("market:{}:{}", quote.rate_key, command.id());
-    let effect_key = format!("market:{}:{}", quote.from_resource, quote.to_resource);
     let event = if fresh_trade {
-        command_response::append_fresh_public_event(
-            &mut context.session,
+        command_response::append_runtime_or_fresh_public_event(
+            context,
             command.id(),
             event_key,
             "market_trade".to_string(),
@@ -665,21 +653,11 @@ fn apply_market_trade_command(
             result_json.clone(),
         )?
     };
-    if fresh_trade {
-        command_response::create_fresh_command_effect(
-            context.session.id(),
-            command.id(),
-            effect_key,
-            "market_trade".to_string(),
-            "participant".to_string(),
-            context.participant.id().to_string(),
-            result_json.clone(),
-        )?;
-    } else {
+    if !fresh_trade {
         command_response::ensure_command_effect(
             context.session.id(),
             command.id(),
-            effect_key,
+            format!("market:{}:{}", quote.from_resource, quote.to_resource),
             "market_trade".to_string(),
             "participant".to_string(),
             context.participant.id().to_string(),
@@ -812,10 +790,9 @@ fn apply_dwelling_recruit_command(
     );
     let result_json = receipt_json(&receipt);
     let event_key = format!("dwelling_recruit:{}:{}", object.id(), command.id());
-    let effect_key = format!("dwelling_recruit:{}:{unit_slug}", object.id());
     let event = if fresh_recruitment {
-        command_response::append_fresh_public_event(
-            &mut context.session,
+        command_response::append_runtime_or_fresh_public_event(
+            context,
             command.id(),
             event_key,
             "dwelling_recruit".to_string(),
@@ -834,21 +811,11 @@ fn apply_dwelling_recruit_command(
             result_json.clone(),
         )?
     };
-    if fresh_recruitment {
-        command_response::create_fresh_command_effect(
-            context.session.id(),
-            command.id(),
-            effect_key,
-            "dwelling_recruit".to_string(),
-            "champion".to_string(),
-            champion.id().to_string(),
-            result_json.clone(),
-        )?;
-    } else {
+    if !fresh_recruitment {
         command_response::ensure_command_effect(
             context.session.id(),
             command.id(),
-            effect_key,
+            format!("dwelling_recruit:{}:{unit_slug}", object.id()),
             "dwelling_recruit".to_string(),
             "champion".to_string(),
             champion.id().to_string(),

@@ -269,18 +269,6 @@ fn apply_level_choice(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("skill:{skill_key}:{}", champion.id()),
-        "champion_skill_choice".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        format!(
-            r#"{{"skill_key":"{}"}}"#,
-            command_response::escape_json(skill_key)
-        ),
-    )?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),
@@ -383,18 +371,6 @@ fn apply_spell_learning(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("learn_spell:{spell_slug}:{}", champion.id()),
-        "champion_spell_learned".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        format!(
-            r#"{{"spell_slug":"{}"}}"#,
-            command_response::escape_json(spell_slug)
-        ),
-    )?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),
@@ -488,18 +464,6 @@ fn apply_adventure_cast(
     champion.last_command_id = Some(command.id().key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    command_response::create_fresh_command_effect(
-        context.session.id(),
-        command.id(),
-        format!("cast_adventure_spell:{spell_slug}:{}", champion.id()),
-        "adventure_spell_cast".to_string(),
-        "champion".to_string(),
-        champion.id().to_string(),
-        format!(
-            r#"{{"spell_slug":"{}"}}"#,
-            command_response::escape_json(spell_slug)
-        ),
-    )?;
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),

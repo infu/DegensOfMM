@@ -486,8 +486,8 @@ pub(crate) fn end_turn(
         r#"{{"turn_number":{current_turn},"ready_count":{ready_count},"participant_count":{participant_count},"all_ready":{all_ready}}}"#
     );
     let event = if ready_mark.created {
-        command_response::append_fresh_public_event(
-            &mut context.session,
+        command_response::append_runtime_or_fresh_public_event(
+            &context,
             command.id(),
             event_key,
             "participant_turn_ready".to_string(),

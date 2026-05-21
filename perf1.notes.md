@@ -6722,3 +6722,50 @@ Decision:
 
 - Keep this checkpoint. The existing runtime event merge handled another five public-event rows without adding shared code.
 - Rotate again instead of polishing public events. The latest floor is now `effects.create_applied_command_effect` at `12` calls / `5.7096B`, `economy.create_resource_ledger_entry` at `5` calls / `2.3839B`, and the remaining `events.create_game_event` at `4` calls / `1.9090B`.
+
+## Effect/Event Floor Measurement
+
+Time: `2026-05-21T00:06:00Z`.
+
+Cut:
+
+- Removed duplicate fresh `CommandEffect` writes from active runtime command paths: champion magic, scenario progress, economy expansion, and worldgen.
+- Kept fallback `ensure_command_effect` for non-fresh/recovered economy expansion paths.
+- Moved the remaining fresh economy and `end_turn` public events to `append_runtime_or_fresh_public_event`.
+- Removed the now-unused `create_fresh_command_effect` helper.
+
+Correctness argument:
+
+- These fresh active-turn paths already have runtime command receipts for status/replay and domain rows for the actual game projection.
+- IC traps revert partial writes, so the effect row is not needed as a saga checkpoint inside the same endpoint call.
+- Public event visibility remains covered by `SessionTurnRuntime.active_events`, `get_events_after`, and non-benchmark runtime event flushing.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+- Direct benchmark Wasm size: `0x00bfdeca` / `12,574,410` bytes, `8,502` bytes under the IC code-section limit.
+- Endpoint-surface benchmark artifact: `target/benchmarks/20260520-effect-event-floor-local`, passed.
+- Cleaned the leftover PocketIC process after the run.
+
+Measurement versus `20260520-scenario-runtime-events-local`:
+
+- Coverage stayed `59/59` required endpoints.
+- Row growth: `129 -> 113`.
+- Stable pages: `2049 -> 71169` became `2049 -> 65153`.
+- Scenario instructions: `55.6905B -> 48.0648B`, `-7.6257B`, `-13.7%`.
+- `effects.create_applied_command_effect`: `12 -> 0` calls and `5.7096B -> 0`.
+- `events.create_game_event`: `4 -> 0` calls and `1.9090B -> 0`.
+- `select_champion_level_up`: `0.9579B -> 0.4820B`, `-49.7%`.
+- `sync_world_events`: `1.1802B -> 0.7056B`, `-40.2%`.
+- `end_turn`: `1.6568B -> 1.1799B`, `-28.8%`.
+- `submit_market_trade`: `4.4948B -> 3.5479B`, `-21.1%`.
+- `hire_tavern_champion`: `6.4086B -> 5.4608B`, `-14.8%`.
+- `submit_dwelling_recruit`: `6.3815B -> 5.4223B`, `-15.0%`.
+- `sync_world_generation`: `3.4118B -> 2.9323B`, `-14.1%`.
+
+Decision:
+
+- Keep this checkpoint. The durable event/effect write floor is gone from the measured endpoint surface.
+- Rotate to resource ledger rows next. `economy.create_resource_ledger_entry` is now the largest remaining write cluster at `5` calls / `2.3859B`.

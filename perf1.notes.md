@@ -8268,3 +8268,48 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Section 72B now has a controller-visible projection lag surface for runtime recovery and flush debugging. The remaining Section 72B item is end-to-end projection-surface and upgrade-recovery benchmark coverage.
+
+## Projection Surface Benchmark Blocked By Production Wasm Size
+
+Time: `2026-05-21T22:42:42Z`.
+
+Attempt:
+
+- Drafted a focused PocketIC route to dirty runtime movement, verify runtime command/event reads before flush, run the strong-read projection flush, verify durable `MovementIntent`/`GameCommand`/`GameEvent` rows and zero lag, dirty `end_turn`, upgrade, and verify restored kernel status.
+- Running it against the default production canister failed during install before assertions.
+
+Blocker:
+
+- Default production Wasm code section was `13,668,633` bytes, above the IC limit of `12,582,912`.
+- The benchmark Wasm remains installable, but the projection runtime/diagnostics are compiled out of `feature=benchmark`, so the existing benchmark canister cannot cover the production projection surface.
+- Do not wire `projection-surface` into `scripts/run-benchmarks.sh` until either production code size is below the IC limit or a smaller projection-enabled benchmark feature exists.
+
+Decision:
+
+- Leave the Section 72B projection-surface benchmark item open and move to the next implementable kernel cleanup item.
+
+## Shared Battle Kernel Driver
+
+Time: `2026-05-21T23:10:52Z`.
+
+Cut:
+
+- Added a production `BattleKernelDriver` in `services/battle.rs`.
+- The driver owns the common battle-kernel progression flow for sync timeout catchup, runtime timeout timers/jobs, durable timeout fallback, readiness scheduling, and round auto-defends while collecting events and changed subjects.
+- Routed `sync_battle`, `submit_battle_action` timeout catchup/readiness, `submit_runtime_battle_action` readiness, `end_battle_turn` readiness, runtime timeout timers, durable `battle_timeout` jobs, and `battle_round_advance` jobs through the driver in production builds.
+- Kept `feature=benchmark` on the previous direct call shape because the benchmark Wasm budget is still extremely tight.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_battle_round_timer_auto_defends_without_sync_battle_and_replays_noop --no-run`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_all_ready_battle_round_schedules_immediate_advance --no-run`
+- `git diff --check`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffff9` / `12,582,905` bytes, `7` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. The production battle paths now have one orchestrator for timeout/readiness/round progression, which gives the remaining 72C runtime-receipt and battle-child-row cleanup work a smaller surface to move across.

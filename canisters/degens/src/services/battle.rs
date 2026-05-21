@@ -51,6 +51,330 @@ struct RuntimeBattleCommandContext {
     created_at_ms: u64,
 }
 
+#[cfg(not(feature = "benchmark"))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct BattleKernelDriverOutcome {
+    used_runtime: bool,
+    timeout_actions_applied: u32,
+    round_auto_defends_applied: u32,
+    incomplete: bool,
+}
+
+#[cfg(not(feature = "benchmark"))]
+struct BattleKernelDriver<'a> {
+    session: &'a mut GameSession,
+    response_participant_id: Option<String>,
+    events: &'a mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &'a mut Vec<domm_game::ChangedSubject>,
+}
+
+#[cfg(not(feature = "benchmark"))]
+impl<'a> BattleKernelDriver<'a> {
+    fn new(
+        session: &'a mut GameSession,
+        response_participant_id: Option<&str>,
+        events: &'a mut Vec<domm_game::ApiEventView>,
+        changed_subjects: &'a mut Vec<domm_game::ChangedSubject>,
+    ) -> Self {
+        Self {
+            session,
+            response_participant_id: response_participant_id.map(str::to_string),
+            events,
+            changed_subjects,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn drive_sync_timeouts(
+        &mut self,
+        battle_id: Id<Battle>,
+        now_ms: u64,
+        max_timeout_actions: u32,
+        command_id: Id<GameCommand>,
+    ) -> Result<BattleKernelDriverOutcome, ApiError> {
+        match apply_due_runtime_timeouts_for_sync(
+            self.session,
+            battle_id,
+            now_ms,
+            max_timeout_actions,
+            command_id,
+            self.response_participant_id.as_deref(),
+            self.events,
+            self.changed_subjects,
+        ) {
+            Ok(Some((incomplete, applied))) => Ok(BattleKernelDriverOutcome {
+                used_runtime: true,
+                timeout_actions_applied: applied,
+                incomplete,
+                ..BattleKernelDriverOutcome::default()
+            }),
+            Ok(None) => self.drive_durable_timeouts(battle_id, now_ms, max_timeout_actions),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn drive_durable_timeouts(
+        &mut self,
+        battle_id: Id<Battle>,
+        now_ms: u64,
+        max_timeout_actions: u32,
+    ) -> Result<BattleKernelDriverOutcome, ApiError> {
+        let before = count_battle_events(self.events, "battle_timeout_auto_defend");
+        let incomplete = apply_due_timeouts(
+            self.session,
+            battle_id,
+            now_ms,
+            max_timeout_actions,
+            self.response_participant_id.as_deref(),
+            self.events,
+            self.changed_subjects,
+        )?;
+        let after = count_battle_events(self.events, "battle_timeout_auto_defend");
+        Ok(BattleKernelDriverOutcome {
+            timeout_actions_applied: after.saturating_sub(before),
+            incomplete,
+            ..BattleKernelDriverOutcome::default()
+        })
+    }
+
+    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+    fn drive_runtime_timeout_timer(
+        &mut self,
+        battle_id: Id<Battle>,
+        deadline_ms: i64,
+    ) -> Result<bool, ApiError> {
+        let battle_id_text = battle_id.to_string();
+        let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
+            return Ok(false);
+        };
+        if runtime.session_id != self.session.id().to_string() {
+            return Ok(false);
+        }
+        let battle = runtime
+            .state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .clone();
+        if battle.state != "active" {
+            return Ok(true);
+        }
+        let Some(current_deadline_ms) = battle.action_deadline_at else {
+            return Ok(true);
+        };
+        if Some(current_deadline_ms) != u64::try_from(deadline_ms).ok() {
+            return Ok(true);
+        }
+        let deadline = Timestamp::from_millis(deadline_ms);
+        if deadline > Timestamp::now() {
+            schedule_runtime_battle_timeout_wakeup(self.session.id(), battle_id, deadline)?;
+            return Ok(true);
+        }
+        let Some(active_stack_id) = battle.active_stack_id else {
+            return Ok(true);
+        };
+
+        let command = begin_timeout_command(
+            self.session,
+            battle_id,
+            &active_stack_id,
+            current_deadline_ms,
+        )?;
+        apply_timeout_command(
+            self.session,
+            command,
+            battle_id,
+            active_stack_id,
+            current_deadline_ms,
+            self.response_participant_id.as_deref(),
+            self.events,
+            self.changed_subjects,
+        )?;
+        self.drive_readiness_and_schedule(battle_id, None, None, true, true)?;
+        Ok(true)
+    }
+
+    fn drive_runtime_timeout_job(
+        &mut self,
+        job: &SystemJob,
+        battle_id: Id<Battle>,
+    ) -> Result<bool, ApiError> {
+        let battle_id_text = battle_id.to_string();
+        let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
+            return Ok(false);
+        };
+        if runtime.session_id != self.session.id().to_string() {
+            return Ok(false);
+        }
+        let battle = runtime
+            .state
+            .battle(&battle_id_text)
+            .map_err(map_battle_error)?
+            .clone();
+        if battle.state != "active" {
+            system_job_repo::complete_system_job(job.clone())?;
+            return Ok(true);
+        }
+        let Some(deadline_ms) = battle.action_deadline_at else {
+            system_job_repo::complete_system_job(job.clone())?;
+            return Ok(true);
+        };
+        let deadline = Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX));
+        if job.due_at != deadline {
+            system_job_repo::complete_system_job(job.clone())?;
+            return Ok(true);
+        }
+        if deadline > Timestamp::now() {
+            system_job_repo::reschedule_system_job(job.clone(), deadline, None)?;
+            system_job_service::schedule_nearest_due_job()?;
+            return Ok(true);
+        }
+        if let Some(active_stack_id) = battle.active_stack_id {
+            let command =
+                begin_timeout_command(self.session, battle_id, &active_stack_id, deadline_ms)?;
+            apply_timeout_command(
+                self.session,
+                command,
+                battle_id,
+                active_stack_id,
+                deadline_ms,
+                self.response_participant_id.as_deref(),
+                self.events,
+                self.changed_subjects,
+            )?;
+            self.drive_readiness_and_schedule(battle_id, None, None, true, true)?;
+        }
+        system_job_repo::complete_system_job(job.clone())?;
+        Ok(true)
+    }
+
+    fn drive_readiness_and_schedule(
+        &mut self,
+        battle_id: Id<Battle>,
+        durable_battle: Option<&Battle>,
+        command_id: Option<Id<GameCommand>>,
+        schedule_if_ready: bool,
+        schedule_timeout: bool,
+    ) -> Result<BattleRoundReadinessSummary, ApiError> {
+        if let Some(summary) = recompute_runtime_battle_round_readiness_and_schedule(
+            self.session.id(),
+            battle_id,
+            command_id,
+            schedule_if_ready,
+            schedule_timeout,
+        )? {
+            self.changed_subjects
+                .extend(summary.changed_subjects.iter().cloned());
+            return Ok(summary);
+        }
+
+        let battle = match durable_battle {
+            Some(battle) => battle.clone(),
+            None => battles::load_battle(battle_id)?.ok_or_else(|| {
+                public_error(
+                    "battle_not_found",
+                    "battle not found while driving battle readiness",
+                    true,
+                )
+            })?,
+        };
+        let summary = recompute_battle_round_readiness_and_schedule(
+            self.session.id(),
+            &battle,
+            command_id,
+            schedule_if_ready,
+        )?;
+        if schedule_timeout && battle.state == "active" {
+            schedule_battle_timeout_job(self.session.id(), &battle)?;
+        }
+        self.changed_subjects
+            .extend(summary.changed_subjects.iter().cloned());
+        Ok(summary)
+    }
+
+    fn drive_round_auto_defends(
+        &mut self,
+        battle_id: Id<Battle>,
+        round_number: u16,
+        now_ms: u64,
+        max_auto_defends: u32,
+    ) -> Result<BattleKernelDriverOutcome, ApiError> {
+        let mut auto_defends = 0_u32;
+        let battle_id_text = battle_id.to_string();
+        loop {
+            if auto_defends >= max_auto_defends {
+                return Ok(BattleKernelDriverOutcome {
+                    round_auto_defends_applied: auto_defends,
+                    incomplete: true,
+                    ..BattleKernelDriverOutcome::default()
+                });
+            }
+            let runtime_state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+                (runtime.session_id == self.session.id().to_string()).then(|| runtime.state.clone())
+            })
+            .flatten();
+            let state = if let Some(state) = runtime_state {
+                let current_battle = state.battle(&battle_id_text).map_err(map_battle_error)?;
+                if current_battle.state != "active" || current_battle.current_round != round_number
+                {
+                    break;
+                }
+                state
+            } else {
+                let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+                    public_error(
+                        "battle_not_found",
+                        "battle disappeared during round advance",
+                        true,
+                    )
+                })?;
+                if current_battle.state != "active" || current_battle.current_round != round_number
+                {
+                    break;
+                }
+                battle_rows::load_battle_state_from_row(self.session, current_battle)?
+            };
+            let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id_text)
+                .map_err(map_battle_error)?
+            else {
+                break;
+            };
+            let stack = state.stack(&stack_id).map_err(map_battle_error)?;
+            if !stack.is_living() || stack.acted_round >= round_number {
+                break;
+            }
+            let command =
+                begin_round_auto_defend_command(self.session, battle_id, &stack_id, round_number)?;
+            apply_round_auto_defend_command(
+                self.session,
+                command,
+                battle_id,
+                stack_id,
+                round_number,
+                now_ms,
+                self.response_participant_id.as_deref(),
+                self.events,
+                self.changed_subjects,
+            )?;
+            auto_defends = auto_defends.saturating_add(1);
+        }
+
+        Ok(BattleKernelDriverOutcome {
+            round_auto_defends_applied: auto_defends,
+            ..BattleKernelDriverOutcome::default()
+        })
+    }
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn count_battle_events(events: &[domm_game::ApiEventView], event_type: &str) -> u32 {
+    events
+        .iter()
+        .filter(|event| event.event_type == event_type)
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX)
+}
+
 fn runtime_battle_header(
     session_id: Id<GameSession>,
     battle_id: Id<Battle>,
@@ -187,58 +511,10 @@ fn process_runtime_battle_timeout_timer(
     let Some(mut session) = sessions::load_session(session_id)? else {
         return Ok(());
     };
-    let Some(runtime) = battle_runtime::with_runtime(battle_id_text, Clone::clone) else {
-        return Ok(());
-    };
-    if runtime.session_id != session_id_text {
-        return Ok(());
-    }
-    let battle = runtime
-        .state
-        .battle(battle_id_text)
-        .map_err(map_battle_error)?
-        .clone();
-    if battle.state != "active" {
-        return Ok(());
-    }
-    let Some(current_deadline_ms) = battle.action_deadline_at else {
-        return Ok(());
-    };
-    if Some(current_deadline_ms) != u64::try_from(deadline_ms).ok() {
-        return Ok(());
-    }
-    let deadline = Timestamp::from_millis(deadline_ms);
-    if deadline > Timestamp::now() {
-        schedule_runtime_battle_timeout_timer(session_id, battle_id, deadline);
-        return Ok(());
-    }
-    let Some(active_stack_id) = battle.active_stack_id else {
-        return Ok(());
-    };
-
-    let command =
-        begin_timeout_command(&session, battle_id, &active_stack_id, current_deadline_ms)?;
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
-    apply_timeout_command(
-        &mut session,
-        command,
-        battle_id,
-        active_stack_id,
-        current_deadline_ms,
-        None,
-        &mut events,
-        &mut changed_subjects,
-    )?;
-    if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
-        session.id(),
-        battle_id,
-        None,
-        true,
-        true,
-    )? {
-        changed_subjects.extend(readiness.changed_subjects);
-    }
+    BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+        .drive_runtime_timeout_timer(battle_id, deadline_ms)?;
     Ok(())
 }
 
@@ -1324,36 +1600,80 @@ pub(crate) fn submit_battle_action(
         return command_response::fail_command(caller, &context, command, &client_nonce, error);
     }
     let skip_timeout_for_submit_grace = battle_action_submit_grace_applies(&battle, &input, now_ms);
-    let sync_result = if skip_timeout_for_submit_grace {
-        Ok(false)
+    let sync_incomplete = if skip_timeout_for_submit_grace {
+        false
     } else {
-        match apply_due_runtime_timeouts_for_sync(
-            &mut context.session,
-            battle.id(),
-            now_ms,
-            CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
-            command.id(),
-            Some(&response_participant_id),
-            &mut events,
-            &mut changed_subjects,
-        ) {
-            Ok(Some((sync_incomplete, _applied))) => Ok(sync_incomplete),
-            Ok(None) => apply_due_timeouts(
+        #[cfg(not(feature = "benchmark"))]
+        {
+            match BattleKernelDriver::new(
+                &mut context.session,
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+            .drive_sync_timeouts(
+                battle.id(),
+                now_ms,
+                CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                command.id(),
+            ) {
+                Ok(outcome) => outcome.incomplete,
+                Err(error) => {
+                    return command_response::fail_command(
+                        caller,
+                        &context,
+                        command,
+                        &client_nonce,
+                        error,
+                    );
+                }
+            }
+        }
+        #[cfg(feature = "benchmark")]
+        {
+            match apply_due_runtime_timeouts_for_sync(
                 &mut context.session,
                 battle.id(),
                 now_ms,
                 CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                command.id(),
                 Some(&response_participant_id),
                 &mut events,
                 &mut changed_subjects,
-            ),
-            Err(error) => Err(error),
+            ) {
+                Ok(Some((sync_incomplete, _applied))) => sync_incomplete,
+                Ok(None) => match apply_due_timeouts(
+                    &mut context.session,
+                    battle.id(),
+                    now_ms,
+                    CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                    Some(&response_participant_id),
+                    &mut events,
+                    &mut changed_subjects,
+                ) {
+                    Ok(sync_incomplete) => sync_incomplete,
+                    Err(error) => {
+                        return command_response::fail_command(
+                            caller,
+                            &context,
+                            command,
+                            &client_nonce,
+                            error,
+                        );
+                    }
+                },
+                Err(error) => {
+                    return command_response::fail_command(
+                        caller,
+                        &context,
+                        command,
+                        &client_nonce,
+                        error,
+                    );
+                }
+            }
         }
     };
-    if let Err(error) = sync_result {
-        return command_response::fail_command(caller, &context, command, &client_nonce, error);
-    }
-    let sync_incomplete = sync_result.unwrap_or(false);
     if sync_incomplete {
         return command_response::fail_command(
             caller,
@@ -1385,23 +1705,44 @@ pub(crate) fn submit_battle_action(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
-    if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
-        context.session.id(),
-        battle.id(),
-        Some(command.id()),
-        true,
-        true,
-    )? {
-        changed_subjects.extend(readiness.changed_subjects);
-    } else if let Some(updated_battle) = battles::load_battle(battle.id())? {
-        let readiness = recompute_battle_round_readiness_and_schedule(
+    #[cfg(not(feature = "benchmark"))]
+    {
+        if let Some(updated_battle) = battles::load_battle(battle.id())? {
+            BattleKernelDriver::new(
+                &mut context.session,
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+            .drive_readiness_and_schedule(
+                battle.id(),
+                Some(&updated_battle),
+                Some(command.id()),
+                true,
+                true,
+            )?;
+        }
+    }
+    #[cfg(feature = "benchmark")]
+    {
+        if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
             context.session.id(),
-            &updated_battle,
+            battle.id(),
             Some(command.id()),
             true,
-        )?;
-        changed_subjects.extend(readiness.changed_subjects);
-        schedule_battle_timeout_job(context.session.id(), &updated_battle)?;
+            true,
+        )? {
+            changed_subjects.extend(readiness.changed_subjects);
+        } else if let Some(updated_battle) = battles::load_battle(battle.id())? {
+            let readiness = recompute_battle_round_readiness_and_schedule(
+                context.session.id(),
+                &updated_battle,
+                Some(command.id()),
+                true,
+            )?;
+            changed_subjects.extend(readiness.changed_subjects);
+            schedule_battle_timeout_job(context.session.id(), &updated_battle)?;
+        }
     }
 
     let result_json = battle_action_result_json(&receipt);
@@ -1474,14 +1815,27 @@ fn submit_runtime_battle_action(
 
     let response = match action_result {
         Ok(receipt) => {
-            if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
-                context.session.id(),
-                battle_id,
-                None,
-                true,
-                false,
-            )? {
-                changed_subjects.extend(readiness.changed_subjects);
+            #[cfg(not(feature = "benchmark"))]
+            {
+                BattleKernelDriver::new(
+                    &mut context.session,
+                    Some(&response_participant_id),
+                    &mut events,
+                    &mut changed_subjects,
+                )
+                .drive_readiness_and_schedule(battle_id, None, None, true, false)?;
+            }
+            #[cfg(feature = "benchmark")]
+            {
+                if let Some(readiness) = recompute_runtime_battle_round_readiness_and_schedule(
+                    context.session.id(),
+                    battle_id,
+                    None,
+                    true,
+                    false,
+                )? {
+                    changed_subjects.extend(readiness.changed_subjects);
+                }
             }
             let result = CommandResult::BattleAction(receipt);
             command_response::runtime_command_response(
@@ -1819,46 +2173,106 @@ pub(crate) fn sync_battle(
             return command_response::fail_command(caller, &context, command, &client_nonce, error);
         }
     };
-    let mut used_runtime_sync = false;
-    let sync_result = match apply_due_runtime_timeouts_for_sync(
-        &mut context.session,
-        battle.id(),
-        now_ms,
-        CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
-        command.id(),
-        Some(&response_participant_id),
-        &mut events,
-        &mut changed_subjects,
-    ) {
-        Ok(Some((sync_incomplete, _applied))) => {
-            used_runtime_sync = true;
-            Ok(sync_incomplete)
-        }
-        Ok(None) => apply_due_timeouts(
+    #[cfg(not(feature = "benchmark"))]
+    let (used_runtime_sync, sync_incomplete, kernel_timeout_actions) = {
+        let kernel_outcome = match BattleKernelDriver::new(
+            &mut context.session,
+            Some(&response_participant_id),
+            &mut events,
+            &mut changed_subjects,
+        )
+        .drive_sync_timeouts(
+            battle.id(),
+            now_ms,
+            CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+            command.id(),
+        ) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return command_response::fail_command(
+                    caller,
+                    &context,
+                    command,
+                    &client_nonce,
+                    error,
+                );
+            }
+        };
+        (
+            kernel_outcome.used_runtime,
+            kernel_outcome.incomplete,
+            kernel_outcome.timeout_actions_applied,
+        )
+    };
+    #[cfg(feature = "benchmark")]
+    let (used_runtime_sync, sync_incomplete) = {
+        let mut used_runtime_sync = false;
+        let sync_result = match apply_due_runtime_timeouts_for_sync(
             &mut context.session,
             battle.id(),
             now_ms,
             CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+            command.id(),
             Some(&response_participant_id),
             &mut events,
             &mut changed_subjects,
-        ),
-        Err(error) => Err(error),
-    };
-    let sync_incomplete = match sync_result {
-        Ok(sync_incomplete) => sync_incomplete,
-        Err(error) => {
-            return command_response::fail_command(caller, &context, command, &client_nonce, error);
+        ) {
+            Ok(Some((sync_incomplete, _applied))) => {
+                used_runtime_sync = true;
+                Ok(sync_incomplete)
+            }
+            Ok(None) => apply_due_timeouts(
+                &mut context.session,
+                battle.id(),
+                now_ms,
+                CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+            .map(|sync_incomplete| sync_incomplete),
+            Err(error) => Err(error),
+        };
+        match sync_result {
+            Ok(sync_incomplete) => (used_runtime_sync, sync_incomplete),
+            Err(error) => {
+                return command_response::fail_command(
+                    caller,
+                    &context,
+                    command,
+                    &client_nonce,
+                    error,
+                );
+            }
         }
     };
     if !used_runtime_sync && let Some(updated_battle) = battles::load_battle(battle.id())? {
-        let readiness = recompute_battle_round_readiness_and_schedule(
-            context.session.id(),
-            &updated_battle,
-            Some(command.id()),
-            true,
-        )?;
-        changed_subjects.extend(readiness.changed_subjects);
+        #[cfg(not(feature = "benchmark"))]
+        {
+            BattleKernelDriver::new(
+                &mut context.session,
+                Some(&response_participant_id),
+                &mut events,
+                &mut changed_subjects,
+            )
+            .drive_readiness_and_schedule(
+                battle.id(),
+                Some(&updated_battle),
+                Some(command.id()),
+                true,
+                false,
+            )?;
+        }
+        #[cfg(feature = "benchmark")]
+        {
+            let readiness = recompute_battle_round_readiness_and_schedule(
+                context.session.id(),
+                &updated_battle,
+                Some(command.id()),
+                true,
+            )?;
+            changed_subjects.extend(readiness.changed_subjects);
+        }
     }
     if !used_runtime_sync {
         if let Err(error) = apply_resolved_battle_aftermath_with_runtime_projection(
@@ -1872,14 +2286,19 @@ pub(crate) fn sync_battle(
         }
     }
     let active_stack_id = response_active_stack_id(context.session.id(), battle.id())?;
+    #[cfg(not(feature = "benchmark"))]
+    let timeout_actions_applied =
+        count_battle_events(&events, "battle_timeout_auto_defend").max(kernel_timeout_actions);
+    #[cfg(feature = "benchmark")]
+    let timeout_actions_applied = events
+        .iter()
+        .filter(|event| event.event_type == "battle_timeout_auto_defend")
+        .count()
+        .try_into()
+        .unwrap_or(u32::MAX);
     let outcome = BattleSyncOutcome {
         battle_id,
-        timeout_actions_applied: events
-            .iter()
-            .filter(|event| event.event_type == "battle_timeout_auto_defend")
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX),
+        timeout_actions_applied,
         recovered_commands: recovered,
         battle_sync_incomplete: sync_incomplete,
         active_stack_id,
@@ -2004,6 +2423,24 @@ pub(crate) fn end_battle_turn(
             "upsert",
         )]
     };
+    #[cfg(not(feature = "benchmark"))]
+    let readiness = {
+        let mut kernel_events = Vec::new();
+        BattleKernelDriver::new(
+            &mut context.session,
+            Some(&caller_participant_text),
+            &mut kernel_events,
+            &mut changed_subjects,
+        )
+        .drive_readiness_and_schedule(
+            battle.id(),
+            Some(&battle),
+            Some(command.id()),
+            true,
+            false,
+        )?
+    };
+    #[cfg(feature = "benchmark")]
     let readiness = recompute_runtime_battle_round_readiness_and_schedule(
         context.session.id(),
         battle.id(),
@@ -2022,11 +2459,11 @@ pub(crate) fn end_battle_turn(
         },
         Ok,
     )?;
-    changed_subjects.extend(readiness.changed_subjects);
-
     let ready_count = readiness.ready_count;
     let participant_count = readiness.participant_count;
     let all_ready = readiness.all_ready;
+    #[cfg(feature = "benchmark")]
+    changed_subjects.extend(readiness.changed_subjects);
     let event = command_response::append_public_event(
         &mut context.session,
         command.id(),
@@ -2096,8 +2533,21 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
-    if process_runtime_battle_timeout_job(&mut session, &job, battle_id)? {
-        return Ok(());
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    #[cfg(not(feature = "benchmark"))]
+    {
+        if BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+            .drive_runtime_timeout_job(&job, battle_id)?
+        {
+            return Ok(());
+        }
+    }
+    #[cfg(feature = "benchmark")]
+    {
+        if process_runtime_battle_timeout_job(&mut session, &job, battle_id)? {
+            return Ok(());
+        }
     }
     let Some(battle) = battles::load_battle(battle_id)? else {
         system_job_repo::complete_system_job(job)?;
@@ -2113,8 +2563,16 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     }
 
     let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
-    let mut events = Vec::new();
-    let mut changed_subjects = Vec::new();
+    #[cfg(not(feature = "benchmark"))]
+    let sync_incomplete =
+        BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+            .drive_durable_timeouts(
+                battle_id,
+                now_ms,
+                CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE,
+            )?
+            .incomplete;
+    #[cfg(feature = "benchmark")]
     let sync_incomplete = apply_due_timeouts(
         &mut session,
         battle_id,
@@ -2130,7 +2588,26 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     }
 
     if let Some(updated_battle) = battles::load_battle(battle_id)? {
-        recompute_battle_round_readiness_and_schedule(session.id(), &updated_battle, None, true)?;
+        #[cfg(not(feature = "benchmark"))]
+        {
+            BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+                .drive_readiness_and_schedule(
+                    battle_id,
+                    Some(&updated_battle),
+                    None,
+                    true,
+                    false,
+                )?;
+        }
+        #[cfg(feature = "benchmark")]
+        {
+            recompute_battle_round_readiness_and_schedule(
+                session.id(),
+                &updated_battle,
+                None,
+                true,
+            )?;
+        }
     }
 
     system_job_repo::complete_system_job(job)?;
@@ -2152,6 +2629,7 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     Ok(())
 }
 
+#[cfg(feature = "benchmark")]
 fn process_runtime_battle_timeout_job(
     session: &mut GameSession,
     job: &SystemJob,
@@ -2265,6 +2743,12 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         return Ok(());
     }
 
+    let mut events = Vec::new();
+    let mut changed_subjects = Vec::new();
+    #[cfg(not(feature = "benchmark"))]
+    let readiness = BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+        .drive_readiness_and_schedule(battle_id, Some(&battle), None, false, false)?;
+    #[cfg(feature = "benchmark")]
     let readiness = recompute_runtime_battle_round_readiness_and_schedule(
         session_id, battle_id, None, false, false,
     )?
@@ -2277,64 +2761,81 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         return Ok(());
     }
 
-    let mut events = Vec::new();
-    let mut changed_subjects = Vec::new();
     let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
-    let mut auto_defends = 0_u32;
-    let mut round_incomplete = false;
-    let battle_id_text = battle_id.to_string();
-    loop {
-        if auto_defends >= CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE {
-            round_incomplete = true;
-            break;
-        }
-        let runtime_state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
-            (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
-        })
-        .flatten();
-        let state = if let Some(state) = runtime_state {
-            let current_battle = state.battle(&battle_id_text).map_err(map_battle_error)?;
-            if current_battle.state != "active" || current_battle.current_round != round_number {
+    #[cfg(not(feature = "benchmark"))]
+    let kernel_outcome =
+        BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
+            .drive_round_auto_defends(
+                battle_id,
+                round_number,
+                now_ms,
+                CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE,
+            )?;
+    #[cfg(not(feature = "benchmark"))]
+    let _round_auto_defends_applied = kernel_outcome.round_auto_defends_applied;
+    #[cfg(not(feature = "benchmark"))]
+    let round_incomplete = kernel_outcome.incomplete;
+    #[cfg(feature = "benchmark")]
+    let round_incomplete = {
+        let mut auto_defends = 0_u32;
+        let mut round_incomplete = false;
+        let battle_id_text = battle_id.to_string();
+        loop {
+            if auto_defends >= CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE {
+                round_incomplete = true;
                 break;
             }
-            state
-        } else {
-            let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
-                public_error(
-                    "battle_not_found",
-                    "battle disappeared during round advance",
-                    true,
-                )
-            })?;
-            if current_battle.state != "active" || current_battle.current_round != round_number {
+            let runtime_state = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+                (runtime.session_id == session.id().to_string()).then(|| runtime.state.clone())
+            })
+            .flatten();
+            let state = if let Some(state) = runtime_state {
+                let current_battle = state.battle(&battle_id_text).map_err(map_battle_error)?;
+                if current_battle.state != "active" || current_battle.current_round != round_number
+                {
+                    break;
+                }
+                state
+            } else {
+                let current_battle = battles::load_battle(battle_id)?.ok_or_else(|| {
+                    public_error(
+                        "battle_not_found",
+                        "battle disappeared during round advance",
+                        true,
+                    )
+                })?;
+                if current_battle.state != "active" || current_battle.current_round != round_number
+                {
+                    break;
+                }
+                battle_rows::load_battle_state_from_row(&session, current_battle)?
+            };
+            let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id.to_string())
+                .map_err(map_battle_error)?
+            else {
+                break;
+            };
+            let stack = state.stack(&stack_id).map_err(map_battle_error)?;
+            if !stack.is_living() || stack.acted_round >= round_number {
                 break;
             }
-            battle_rows::load_battle_state_from_row(&session, current_battle)?
-        };
-        let Some(stack_id) = domm_game::select_active_stack_id(&state, &battle_id.to_string())
-            .map_err(map_battle_error)?
-        else {
-            break;
-        };
-        let stack = state.stack(&stack_id).map_err(map_battle_error)?;
-        if !stack.is_living() || stack.acted_round >= round_number {
-            break;
+            let command =
+                begin_round_auto_defend_command(&session, battle_id, &stack_id, round_number)?;
+            apply_round_auto_defend_command(
+                &mut session,
+                command,
+                battle_id,
+                stack_id,
+                round_number,
+                now_ms,
+                None,
+                &mut events,
+                &mut changed_subjects,
+            )?;
+            auto_defends = auto_defends.saturating_add(1);
         }
-        let command =
-            begin_round_auto_defend_command(&session, battle_id, &stack_id, round_number)?;
-        apply_round_auto_defend_command(
-            &mut session,
-            command,
-            battle_id,
-            stack_id,
-            round_number,
-            now_ms,
-            None,
-            &mut events,
-            &mut changed_subjects,
-        )?;
-        auto_defends = auto_defends.saturating_add(1);
-    }
+        round_incomplete
+    };
 
     if round_incomplete {
         system_job_repo::reschedule_system_job(job, Timestamp::now(), None)?;

@@ -7917,3 +7917,26 @@ Decision:
 - Updated `perf1.todo.md` with Section 72, `Kernel Runtime Architecture: Worldmap And Battle`.
 - Pause random endpoint micro-cuts unless they unblock code size or a benchmark gate.
 - Target the next implementation around shared worldmap and battle kernel drivers, starting with the public/timer pairs that still show multi-billion instruction costs in `bench.x.md`.
+
+## Kernel Implementation Plan Review
+
+Time: `2026-05-21T16:45:00Z`.
+
+Inputs:
+
+- Ran three codebase review agents: worldmap/session-turn, battle runtime, and projection/recovery/benchmark architecture.
+- Local read confirmed the same core surfaces: `SessionTurnRuntime`, `BattleRuntime`, `flush_barrier`, `system_jobs`, `movement`, `scenario_progress`, battle tactical tables, and benchmark summaries.
+
+Findings:
+
+- `SessionTurnRuntime` already owns most of the future `WorldMapRuntime`: session, participants, readiness, champions, objects, occupancy/contact indexes, intents, receipts, events, resource/object deltas, quests, rules, and dirty flags.
+- The major missing cut is shared driving. Public `sync_session_turn` has runtime pieces, but timer `turn_deadline` / `turn_resolution` still duplicate row-backed durable work through `MovementPersistenceMode::DurableBridge`.
+- `BattleRuntime` is already an ephemeral battle kernel for common submit actions, but `sync_battle`, `end_battle_turn`, battle round jobs, timeout jobs, upgrade restore, aftermath, and `CastAbility` still retain durable row dependencies.
+- Projection flushing is currently barrier/upgrade oriented. It needs typed dirty queues, generation cursors, chunked idempotent flush, projection lag metrics, and upgrade restore that does not depend on one huge final flush.
+- We should not delete tables first. First remove them from hot paths, then prove recovery/history/projection no longer use the indexes before dropping them.
+
+Plan update:
+
+- Rewrote Section 72 in `perf1.todo.md` into five implementation tracks: worldmap kernel driver, projection flush/recovery, ephemeral battle cleanup, table/index taxonomy, and benchmark gates.
+- Paused random endpoint micro-cuts in the plan. The next work should be shared worldmap/battle kernel drivers and projection infrastructure.
+- Baseline targets remain `target/benchmarks/20260521-160211-all-timers` / `bench.x.md`: setup timer `14.5155B`, turn deadline `13.1504B`, turn resolution `18.4160B`, sync battle `8.6881B`, battle round advance `3.9430B`, battle timeout `2.5367B`, and sync session turn `1.6226B`.

@@ -110,6 +110,20 @@ fn remember_session_row(session: &GameSession) {
     SESSION_ROW_CACHE.with(|cache| *cache.borrow_mut() = Some(session.clone()));
 }
 
+pub(crate) fn remember_session_update(session: &GameSession) {
+    remember_session_row(session);
+    let session_id = session.id().to_string();
+    SESSION_VIEW_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache
+            .as_ref()
+            .is_some_and(|view| view.session_id == session_id)
+        {
+            *cache = None;
+        }
+    });
+}
+
 fn cached_session_view(session_id: &str) -> Option<SessionView> {
     SESSION_VIEW_CACHE.with(|cache| {
         cache

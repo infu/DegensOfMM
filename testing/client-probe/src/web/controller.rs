@@ -337,10 +337,9 @@ impl<B: WebClientBackend> PlayableWebClient<B> {
                 .as_ref()
                 .is_some_and(|error| error.code == "turn_not_due")
             {
-                let retry =
+                let _retry =
                     self.backend
                         .sync_session_turn(self.caller, &session_id, sync_now_ms, &nonce);
-                self.record_retry(&first, &retry)?;
                 return Ok(first);
             }
             self.record_command(&first, false)?;

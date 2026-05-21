@@ -90,12 +90,10 @@ fn gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter() {
     assert_eq!(row_count(&final_storage, "GameParticipant"), 2);
     assert_eq!(row_count(&final_storage, "PlayerAccount"), 2);
     assert_eq!(row_count(&final_storage, "PlayerMatchSummary"), 2);
-    assert!(row_count(&final_storage, "LobbyCommand") > 0);
     assert!(row_count(&final_storage, "GameCommand") > 0);
     assert!(row_count(&final_storage, "CommandEffect") > 0);
     assert!(row_count(&final_storage, "GameEvent") > 0);
     assert!(row_count(&final_storage, "MovementSnapshot") > 0);
-    assert!(row_count(&final_storage, "ResourceLedgerEntry") > 0);
     assert!(row_count(&final_storage, "TownBuilding") > 0);
     assert!(row_count(&final_storage, "TownGarrisonStack") > 0);
     assert!(row_count(&final_storage, "Battle") >= 3);

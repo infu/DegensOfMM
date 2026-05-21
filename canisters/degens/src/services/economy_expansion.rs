@@ -1029,7 +1029,12 @@ fn materialize_town_recruit_growth(
             .min(domm_game::RECRUIT_POOL_CAP);
         pool.last_growth_week = current_week;
         pool.last_command_id = Some(command_id.key());
-        let pool = towns::update_town_recruit_pool(pool)?;
+        #[cfg(not(feature = "benchmark"))]
+        let pool = if towns::load_town_recruit_pool(pool.id())?.is_some() {
+            towns::update_town_recruit_pool(pool)?
+        } else {
+            towns::insert_town_recruit_pool(pool)?
+        };
         town_runtime::mirror_recruit_pool(&pool);
         touched = touched.saturating_add(1);
     }

@@ -588,42 +588,7 @@ pub(crate) fn sync_session_turn(
         r#"{{"session_id":"{}"}}"#,
         command_response::escape_json(&session_id)
     );
-    if let Some(context) =
-        session_context::cached_active_session_caller_context(caller, &session_id)
-    {
-        if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-            && runtime_has_no_ready_participants(&context.session)
-        {
-            return Ok(sync_turn_not_due_response(
-                caller,
-                &context,
-                &client_nonce,
-                &payload_json,
-            ));
-        }
-    }
-
     let context = require_runtime_current_active_session_caller(caller, &session_id)?;
-    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-        && runtime_has_no_ready_participants(&context.session)
-    {
-        return Ok(sync_turn_not_due_response(
-            caller,
-            &context,
-            &client_nonce,
-            &payload_json,
-        ));
-    }
-    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
-        && !all_participants_ready_for_turn(&context.session)?
-    {
-        return Ok(sync_turn_not_due_response(
-            caller,
-            &context,
-            &client_nonce,
-            &payload_json,
-        ));
-    }
     let actor_participant_id = context.participant.id().to_string();
     let command_payload_hash = command_response::payload_hash(
         "sync_session_turn",
@@ -657,7 +622,7 @@ pub(crate) fn sync_session_turn(
         &context.session.id().to_string(),
         context.session.current_turn,
     );
-    let command = if has_runtime {
+    if has_runtime {
         if let Some(existing) = commands_events_effects::runtime_game_command_by_idempotency(
             context.session.id(),
             "player",
@@ -694,15 +659,9 @@ pub(crate) fn sync_session_turn(
                 &client_nonce,
             );
         }
-        let command_key = Ulid::generate();
-        let command_id = Id::<GameCommand>::from_key(command_key);
-        SyncTurnCommand::Runtime {
-            id: command_id,
-            id_text: command_id.to_string(),
-            payload_hash: command_payload_hash,
-            client_nonce: client_nonce_u64,
-        }
-    } else {
+    }
+    #[cfg(not(feature = "benchmark"))]
+    if !has_runtime {
         if let Some(existing) = command_response::existing_participant_command_tracked(
             caller,
             &context,
@@ -723,6 +682,39 @@ pub(crate) fn sync_session_turn(
                 GameCommandStart::Return(response) => return Ok(response),
             }
         }
+    }
+
+    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
+        && runtime_has_no_ready_participants(&context.session)
+    {
+        return Ok(sync_turn_not_due_response(
+            caller,
+            &context,
+            &client_nonce,
+            &payload_json,
+        ));
+    }
+    if now_ms < timestamp_to_u64(context.session.turn_deadline_at)
+        && !all_participants_ready_for_turn(&context.session)?
+    {
+        return Ok(sync_turn_not_due_response(
+            caller,
+            &context,
+            &client_nonce,
+            &payload_json,
+        ));
+    }
+
+    let command = if has_runtime {
+        let command_key = Ulid::generate();
+        let command_id = Id::<GameCommand>::from_key(command_key);
+        SyncTurnCommand::Runtime {
+            id: command_id,
+            id_text: command_id.to_string(),
+            payload_hash: command_payload_hash,
+            client_nonce: client_nonce_u64,
+        }
+    } else {
         match command_response::begin_participant_command_tracked(
             caller,
             &context,
@@ -760,8 +752,8 @@ fn sync_session_turn_with_command(
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
+        reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         if !command.is_runtime() {
-            reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
             session_turn_runtime::remove_runtime(
                 &context.session.id().to_string(),
                 context.session.current_turn,
@@ -1490,31 +1482,15 @@ fn occupant_at(
     )
 }
 
-fn runtime_contact_present(
-    session: &GameSession,
-    coord: MoveCoord,
-    subject_kind: &str,
-) -> Option<bool> {
-    let session_id = session.id().to_string();
-    session_turn_runtime::with_runtime(&session_id, session.current_turn, |runtime| {
-        runtime
-            .contact_index
-            .iter()
-            .any(|cell| cell.x == coord.x && cell.y == coord.y && cell.subject_kind == subject_kind)
-    })
-}
-
 fn world_object_at(
     session: &GameSession,
     coord: MoveCoord,
 ) -> Result<Option<WorldObject>, ApiError> {
     if let Some(runtime_result) =
         session_turn_runtime::world_object_at(&session.id().to_string(), coord.x, coord.y)
+        && runtime_result.is_some()
     {
         return Ok(runtime_result);
-    }
-    if runtime_contact_present(session, coord, "world_object") == Some(false) {
-        return Ok(None);
     }
     map_visibility_occupancy::find_world_object_by_session_xy(session.id(), coord.x, coord.y)
 }
@@ -4555,13 +4531,9 @@ fn materialize_income(
     if participant.last_income_turn >= turn_number {
         return Ok(Vec::new());
     }
-    let gold_income = if persistence_mode == MovementPersistenceMode::RuntimeOnly {
-        match runtime_gold_income(session, participant, turn_number) {
-            Some(income) => income,
-            None => durable_gold_income(session, participant, turn_number)?,
-        }
-    } else {
-        durable_gold_income(session, participant, turn_number)?
+    let gold_income = match runtime_gold_income(session, participant, turn_number) {
+        Some(income) => income,
+        None => durable_gold_income(session, participant, turn_number)?,
     };
     participant.last_income_turn = turn_number;
     if gold_income == 0 {

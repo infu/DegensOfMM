@@ -281,7 +281,9 @@ pub(crate) fn get_battle_state(
     }
 
     let stacks = battles::list_battle_stacks(battle.id(), CANISTER_MAX_BATTLE_STACKS_PER_BATTLE)?;
-    if !battle_visible_to_participant_from_stacks(&stacks, context.participant.id()) {
+    if !battle_visible_to_participant_from_stacks(&stacks, context.participant.id())
+        && !resolved_battle_visible_to_participant(&battle, &context.participant)?
+    {
         return Err(public_error(
             "battle_not_visible",
             "caller is not a participant in this battle",
@@ -334,6 +336,12 @@ fn battle_visible_to_participant_from_runtime(
     runtime: &BattleRuntime,
     caller_participant_id: &str,
 ) -> bool {
+    if runtime
+        .participant_audience_keys
+        .contains_key(caller_participant_id)
+    {
+        return true;
+    }
     runtime.state.stacks.iter().any(|stack| {
         stack.battle_id == runtime.battle_id
             && stack.owner_participant_id.as_deref() == Some(caller_participant_id)
@@ -360,6 +368,35 @@ fn battle_visible_to_participant_from_stacks(
     stacks
         .iter()
         .any(|stack| stack.owner_participant_id == Some(participant_id.key()))
+}
+
+fn resolved_battle_visible_to_participant(
+    battle: &Battle,
+    participant: &GameParticipant,
+) -> Result<bool, ApiError> {
+    if battle.state == "active" {
+        return Ok(false);
+    }
+
+    let participant_key = participant.id().key();
+    if battle.winner_participant_id == Some(participant_key)
+        || battle
+            .attacker_champion_id
+            .is_some_and(|champion_id| participant.champion_ids.contains(&champion_id))
+        || battle
+            .defender_champion_id
+            .is_some_and(|champion_id| participant.champion_ids.contains(&champion_id))
+    {
+        return Ok(true);
+    }
+
+    if let Some(town_id) = battle.defender_town_id
+        && let Some(town) = towns::load_town(Id::<Town>::from_key(town_id))?
+    {
+        return Ok(town.owner_participant_id == Some(participant_key));
+    }
+
+    Ok(false)
 }
 
 fn should_suppress_battle_actions(
@@ -1682,23 +1719,24 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<(), ApiError> {
     let battle_id_text = battle_id.to_string();
+    let mut runtime_projected = false;
     if let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) {
-        let is_resolved = runtime
+        let runtime_battle = runtime
             .state
             .battle(&battle_id_text)
-            .map_err(map_battle_error)?
-            .state
-            == "resolved";
-        if is_resolved {
-            battle_rows::persist_battle_state(&runtime.state, command_id)?;
-            battle_runtime::archive_runtime_events(&runtime);
-            changed_subjects.push(command_response::changed(
-                "battle",
-                &battle_id_text,
-                "runtime_projection",
-            ));
-            battle_runtime::insert_runtime(runtime);
+            .map_err(map_battle_error)?;
+        if runtime_battle.state != "resolved" {
+            return Ok(());
         }
+        battle_rows::persist_battle_state(&runtime.state, command_id)?;
+        battle_runtime::archive_runtime_events(&runtime);
+        changed_subjects.push(command_response::changed(
+            "battle",
+            &battle_id_text,
+            "runtime_projection",
+        ));
+        battle_runtime::insert_runtime(runtime);
+        runtime_projected = true;
     }
 
     battle_aftermath::apply_resolved_battle_aftermath(
@@ -1708,7 +1746,9 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
         events,
         changed_subjects,
     )?;
-    if battles::load_battle(battle_id)?.is_some_and(|battle| battle.state != "active") {
+    if runtime_projected
+        || battles::load_battle(battle_id)?.is_some_and(|battle| battle.state != "active")
+    {
         enforce_runtime_eviction_barrier();
         battle_runtime::remove_runtime(&battle_id_text);
     }

@@ -127,6 +127,7 @@ fn apply_neutral_aftermath(
 
     let mut champion = champions_artifacts::load_champion(champion_id)?
         .ok_or_else(|| public_error("champion_not_found", "champion not found", true))?;
+    let previous_champion_coord = (champion.x, champion.y);
     champion.status = "active".to_string();
     champion.in_battle_id = None;
     champion.x = neutral.x;
@@ -137,7 +138,12 @@ fn apply_neutral_aftermath(
     champion.last_command_id = Some(command_id.key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    move_champion_occupancy(session.id(), command_id, &champion)?;
+    move_champion_occupancy(
+        session.id(),
+        command_id,
+        Some(previous_champion_coord),
+        &champion,
+    )?;
 
     if let Some(object) =
         capture_guarded_object_if_present(session, command_id, winner_id, neutral.x, neutral.y)?
@@ -230,6 +236,7 @@ fn apply_town_aftermath(
 
     let mut champion = champions_artifacts::load_champion(champion_id)?
         .ok_or_else(|| public_error("champion_not_found", "champion not found", true))?;
+    let previous_champion_coord = (champion.x, champion.y);
     champion.status = "active".to_string();
     champion.in_battle_id = None;
     champion.x = town.x;
@@ -239,7 +246,12 @@ fn apply_town_aftermath(
     champion.last_command_id = Some(command_id.key());
     champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    move_champion_occupancy(session.id(), command_id, &champion)?;
+    move_champion_occupancy(
+        session.id(),
+        command_id,
+        Some(previous_champion_coord),
+        &champion,
+    )?;
 
     let event = command_response::append_public_event(
         session,
@@ -313,6 +325,7 @@ fn apply_champion_aftermath(
     cleanup_occupancy_by_occupant(session.id(), "champion", &defeated.id().to_string())?;
 
     let mut victor = victor;
+    let previous_victor_coord = (victor.x, victor.y);
     victor.status = "active".to_string();
     victor.in_battle_id = None;
     victor.x = defeated.x;
@@ -322,7 +335,12 @@ fn apply_champion_aftermath(
     victor.last_command_id = Some(command_id.key());
     victor = champions_artifacts::update_champion(victor)?;
     session_turn_runtime::mirror_champion_update(&victor);
-    move_champion_occupancy(session.id(), command_id, &victor)?;
+    move_champion_occupancy(
+        session.id(),
+        command_id,
+        Some(previous_victor_coord),
+        &victor,
+    )?;
     capture_artifacts(command_id, victor.id(), defeated.id())?;
 
     let event = command_response::append_public_event(
@@ -464,9 +482,9 @@ fn capture_guarded_object_if_present(
     object.income_started_turn = session.current_turn.saturating_add(1);
     object.last_visited_turn = session.current_turn;
     object.last_command_id = Some(command_id.key());
-    map_visibility_occupancy::update_world_object(object)
-        .map(Some)
-        .map_err(Into::into)
+    let object = map_visibility_occupancy::update_world_object(object)?;
+    session_turn_runtime::mirror_world_object_update(&object);
+    Ok(Some(object))
 }
 
 fn finalize_victory_if_ready(
@@ -518,6 +536,8 @@ fn finalize_victory_if_ready(
     session.finish_reason = Some("elimination".to_string());
     session.last_command_id = Some(command_id.key());
     *session = sessions::update_session(session.clone())?;
+    session_turn_runtime::mirror_session_update(session);
+    account_lobby_session::remember_session_update(session);
     account_lobby_session::forget_active_session_id(session.id());
     write_match_summaries(session, winner_id, &participants)?;
     command_response::ensure_command_effect(
@@ -687,17 +707,29 @@ fn cleanup_occupancy_by_occupant(
     Ok(())
 }
 
+fn cleanup_occupancy_cell(
+    session_id: Id<GameSession>,
+    x: u16,
+    y: u16,
+    layer: &str,
+) -> Result<(), ApiError> {
+    if let Some(row) = map_visibility_occupancy::find_occupancy_cell(session_id, x, y, layer)? {
+        cleanup::delete_row_by_id::<MapOccupancy>("map.delete_occupancy_by_cell", row.id())?;
+    }
+    Ok(())
+}
+
 fn move_champion_occupancy(
     session_id: Id<GameSession>,
     command_id: Id<GameCommand>,
+    previous_coord: Option<(u16, u16)>,
     champion: &Champion,
 ) -> Result<(), ApiError> {
     cleanup_occupancy_by_occupant(session_id, "champion", &champion.id().to_string())?;
-    if let Some(row) = map_visibility_occupancy::find_occupancy_cell(
-        session_id, champion.x, champion.y, "champion",
-    )? {
-        cleanup::delete_row_by_id::<MapOccupancy>("map.delete_occupancy_by_cell", row.id())?;
+    if let Some((x, y)) = previous_coord {
+        cleanup_occupancy_cell(session_id, x, y, "champion")?;
     }
+    cleanup_occupancy_cell(session_id, champion.x, champion.y, "champion")?;
     let mut row = map_visibility_occupancy::create_occupancy_cell(
         session_id,
         champion.x,

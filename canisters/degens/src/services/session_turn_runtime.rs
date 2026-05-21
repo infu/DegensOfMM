@@ -1022,6 +1022,23 @@ pub(crate) fn remove_runtime(session_id: &str, turn_number: u32) -> Option<Sessi
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().remove(&key))
 }
 
+pub(crate) fn mirror_session_update(session: &GameSession) -> bool {
+    let session_id = session.id().to_string();
+    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
+        let mut updated = false;
+        for runtime in runtimes
+            .borrow_mut()
+            .values_mut()
+            .filter(|runtime| runtime.session_id == session_id)
+        {
+            runtime.session = Some(session.clone());
+            runtime.mark_dirty();
+            updated = true;
+        }
+        updated
+    })
+}
+
 pub(crate) fn with_runtime<R>(
     session_id: &str,
     turn_number: u32,

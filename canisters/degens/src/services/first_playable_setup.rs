@@ -911,23 +911,38 @@ fn seed_occupancy(
             .occupancy_rows
             .into_iter()
             .filter(|row| matches!(row.occupant_kind.as_str(), "town" | "champion"))
-            .map(|row| MapOccupancy {
-                id: Ulid::generate(),
-                session_id: session.id().key(),
-                x: row.x,
-                y: row.y,
-                chunk_x: row.chunk_x,
-                chunk_y: row.chunk_y,
-                layer: row.layer,
-                occupant_kind: row.occupant_kind,
-                occupant_id_text: row.occupant_id_text,
-                occupant_cell_index: u8::try_from(row.occupant_cell_index).unwrap_or(u8::MAX),
-                blocking: row.blocking,
-                last_command_id: None,
-                created_at: now,
-                updated_at: now,
+            .map(|row| {
+                let occupant_id_text = match row.occupant_kind.as_str() {
+                    "champion" => champions_artifacts::find_champion_by_session_xy(
+                        session.id(),
+                        row.x,
+                        row.y,
+                    )?
+                    .map(|champion| champion.id().to_string())
+                    .unwrap_or(row.occupant_id_text),
+                    "town" => towns::find_town_by_session_xy(session.id(), row.x, row.y)?
+                        .map(|town| town.id().to_string())
+                        .unwrap_or(row.occupant_id_text),
+                    _ => row.occupant_id_text,
+                };
+                Ok(MapOccupancy {
+                    id: Ulid::generate(),
+                    session_id: session.id().key(),
+                    x: row.x,
+                    y: row.y,
+                    chunk_x: row.chunk_x,
+                    chunk_y: row.chunk_y,
+                    layer: row.layer,
+                    occupant_kind: row.occupant_kind,
+                    occupant_id_text,
+                    occupant_cell_index: u8::try_from(row.occupant_cell_index).unwrap_or(u8::MAX),
+                    blocking: row.blocking,
+                    last_command_id: None,
+                    created_at: now,
+                    updated_at: now,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<foundation::RepoResult<Vec<_>>>()?;
         foundation::insert_many_atomic("map.seed_occupancy", rows)?;
     }
     Ok(())

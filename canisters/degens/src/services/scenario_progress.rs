@@ -950,7 +950,7 @@ fn sync_quest_victory_rule_after_claim(
     }
     let previous_current_value = rule.current_value;
     let previous_victory_state = rule.victory_state.clone();
-    rule.current_value = claimed_quest_count(session.id())?;
+    rule.current_value = rule.current_value.saturating_add(1);
     rule.victory_state = if rule.current_value >= rule.required_value {
         "complete".to_string()
     } else {

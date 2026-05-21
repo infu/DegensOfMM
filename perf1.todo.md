@@ -914,8 +914,10 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 46. Random Endpoint Cluster: Next Heavy Floor
 
-- [ ] Pick the next different bounded endpoint cluster from the latest artifact. Prefer a real shared floor over a single-endpoint polish: dwelling recruit live rows, scenario quest/rule reads, or worldgen CPU/no-repo cost.
-- [ ] Apply the smallest safe cut that removes at least one measured stable row/read family or names why the remaining cost is not storage.
+- [x] Pick the next different bounded endpoint cluster from the latest artifact. Prefer a real shared floor over a single-endpoint polish: dwelling recruit live rows, scenario quest/rule reads, or worldgen CPU/no-repo cost.
+- [x] Apply the smallest safe cut that removes at least one measured stable row/read family or names why the remaining cost is not storage. Picked `claim_quest_reward`: after a successful quest claim transition, increment `rule:quest-victory.current_value` directly instead of rescanning all opening quest rows in that hot path. Full scenario sync still recomputes the count from rows for reconciliation. Verified with `cargo fmt --check`, `git diff --check`, `cargo check -p domm-degens-canister --features benchmark`, and `cargo check -p domm-degens-canister`.
+- [ ] Measure the scenario quest-rule increment cut in the next endpoint-surface run and confirm `scenario.quests_by_session_key` drops from `claim_quest_reward`.
+- [ ] Rotate again after measurement; likely next target is dwelling recruit live state or tavern hire receipt/occupancy rows.
 
 ## Expected Outcome
 

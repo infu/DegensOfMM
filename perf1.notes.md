@@ -6891,3 +6891,25 @@ Decision:
 
 - Keep this checkpoint. It removed the predicted three stable champion update rows without changing row growth, stable page growth, endpoint coverage, or route shape.
 - Rotate again. The remaining heavy list is now dominated by dwelling recruit live rows, tavern hire receipt/occupancy rows, claim quest scenario rows, and worldgen/sync victory costs.
+
+## Quest Claim Rule Increment Cut
+
+Time: `2026-05-21T00:48:00Z`.
+
+Cut:
+
+- Rotated to `claim_quest_reward` from the latest heavy list.
+- After a successful quest claim transition, `sync_quest_victory_rule_after_claim` now increments `rule:quest-victory.current_value` directly instead of calling `claimed_quest_count`, which scanned all opening quest rows in the hot path.
+- The broader scenario sync path still recomputes quest victory from rows, so reconciliation coverage remains available outside the direct claim command.
+
+Verification:
+
+- `cargo fmt --check`
+- `git diff --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister`
+
+Decision:
+
+- Keep this as a compile-verified checkpoint and batch measurement with the next endpoint-surface run.
+- Expected endpoint-surface change: `claim_quest_reward` should lose the two-operation `scenario.quests_by_session_key` page cost, roughly `0.70B` in `20260520-champion-projection-local`.

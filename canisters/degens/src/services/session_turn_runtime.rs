@@ -2421,125 +2421,25 @@ fn flush_runtime_scenario_rule(
 
 #[cfg(not(feature = "benchmark"))]
 pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError> {
-    let runtimes = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
-        runtimes
-            .borrow()
-            .values()
-            .cloned()
-            .collect::<Vec<SessionTurnRuntime>>()
-    });
-    let mut flushed = 0_usize;
-    let mut latest_by_session = BTreeMap::<String, &SessionTurnRuntime>::new();
-    for runtime in &runtimes {
-        match latest_by_session.get(&runtime.session_id) {
-            Some(existing) if existing.turn_number >= runtime.turn_number => {}
-            _ => {
-                latest_by_session.insert(runtime.session_id.clone(), runtime);
-            }
-        }
+    let outcome = flush_runtime_projection_queue(ProjectionFlushLimits::unbounded())?;
+    if outcome.truncated || outcome.queue_len_after != 0 {
+        return Err(ApiError::new(
+            "projection_flush_incomplete",
+            "runtime projection flush barrier left pending dirty entries",
+            true,
+        )
+        .with_details(format!(
+            r#"{{"queue_len_before":{},"queue_len_after":{},"entries_processed":{},"rows_flushed":{},"truncated":{},"instruction_delta":{},"stable_pages_delta":{}}}"#,
+            outcome.queue_len_before,
+            outcome.queue_len_after,
+            outcome.entries_processed,
+            outcome.rows_flushed,
+            outcome.truncated,
+            outcome.instruction_delta,
+            outcome.stable_pages_delta,
+        )));
     }
-    for runtime in latest_by_session.values() {
-        if let Some(session) = runtime.session.clone() {
-            sessions::update_session(session)?;
-            flushed = flushed.saturating_add(1);
-        }
-        for participant in runtime
-            .participants
-            .iter()
-            .filter_map(|participant| participant.participant.clone())
-        {
-            sessions::update_participant(participant)?;
-            flushed = flushed.saturating_add(1);
-        }
-        for champion in &runtime.champion_snapshots {
-            if champions_artifacts::load_champion(champion.id())?.is_some() {
-                champions_artifacts::update_champion(champion.clone())?;
-            } else {
-                champions_artifacts::insert_champion_row(champion.clone())?;
-            }
-            flushed = flushed.saturating_add(1);
-        }
-    }
-    for runtime in &runtimes {
-        for receipt in &runtime.command_receipts {
-            if flush_runtime_command_receipt(runtime, receipt)? {
-                flushed = flushed.saturating_add(1);
-            }
-        }
-    }
-    for runtime in &runtimes {
-        for resource_delta in &runtime.resource_deltas {
-            if flush_runtime_resource_delta(runtime, resource_delta)? {
-                flushed = flushed.saturating_add(1);
-            }
-        }
-    }
-    for runtime in &runtimes {
-        for participant_id in &runtime.ready_participants {
-            if flush_runtime_ready_participant(runtime, participant_id)? {
-                flushed = flushed.saturating_add(1);
-            }
-        }
-    }
-    for runtime in &runtimes {
-        let session_id = parse_ulid_id::<GameSession>(&runtime.session_id)?;
-        for spell in &runtime.champion_spell_snapshots {
-            if !spell.needs_flush {
-                continue;
-            }
-            if champions_artifacts::find_champion_spell(
-                Id::<Champion>::from_key(spell.champion_id),
-                Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
-            )?
-            .is_none()
-            {
-                let Some(command_id) = spell.last_command_id else {
-                    continue;
-                };
-                champions_artifacts::create_champion_spell(
-                    session_id,
-                    Id::<Champion>::from_key(spell.champion_id),
-                    Id::<domm_degens_schema::schema::SpellDefinition>::from_key(spell.spell_id),
-                    spell.spell_slug.as_deref().unwrap_or(""),
-                    spell.learned_turn,
-                    Id::<GameCommand>::from_key(command_id),
-                )?;
-                flushed = flushed.saturating_add(1);
-            }
-        }
-    }
-    for runtime in &runtimes {
-        for quest in &runtime.quest_snapshots {
-            scenario_progress::update_quest_state(quest.clone())?;
-            flushed = flushed.saturating_add(1);
-        }
-    }
-    for runtime in &runtimes {
-        for rule in &runtime.scenario_rule_snapshots {
-            scenario_progress::update_scenario_rule_state(rule.clone())?;
-            flushed = flushed.saturating_add(1);
-        }
-    }
-    for runtime in &runtimes {
-        for runtime_event in runtime
-            .active_events
-            .iter()
-            .filter(|runtime_event| !runtime_event.flushed)
-        {
-            if flush_runtime_event(runtime_event)? {
-                flushed = flushed.saturating_add(1);
-            }
-        }
-    }
-    ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
-        for runtime in runtimes.borrow_mut().values_mut() {
-            for runtime_event in &mut runtime.active_events {
-                runtime_event.flushed = true;
-            }
-            runtime.projection_dirty_queue.clear();
-        }
-    });
-    Ok(flushed)
+    Ok(outcome.rows_flushed)
 }
 
 #[cfg(not(feature = "benchmark"))]

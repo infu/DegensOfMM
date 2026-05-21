@@ -8192,3 +8192,26 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Recovery can now tell the last conservatively flushed kernel generation from runtime state. `flush_barrier` still needs to call the bounded flusher, and durable upgrade serialization for worldmap kernels remains a later Section 72B item.
+
+## Flush Barrier Uses Projection Queue
+
+Time: `2026-05-21T21:21:40Z`.
+
+Cut:
+
+- Routed the session runtime portion of `flush_barrier` through `flush_runtime_projection_queue(ProjectionFlushLimits::unbounded())`.
+- Strong-read, upgrade, turn-advance, battle-handoff, and runtime-eviction barriers now use the same chunked projection flusher as bounded background flushes.
+- If the barrier leaves any session runtime dirty entries behind, it returns `projection_flush_incomplete` with structured details for queue length, processed entries, rows flushed, truncation, instruction delta, and stable-page delta instead of silently clearing or hiding backlog.
+- Other barrier participants still use their existing full flush/archive paths; this checkpoint only covers the worldmap/session runtime projection queue.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister projection -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfffe1` / `12,582,881` bytes, `31` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. `flush_barrier` no longer has a separate session-runtime flush implementation. Upgrade safety still needs worldmap kernel serialization before timer repair; that remains the next Section 72B item.

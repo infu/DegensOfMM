@@ -167,6 +167,16 @@ if command -v jq >/dev/null 2>&1; then
     jq_available=1
 fi
 
+hard_target_floor_instruction_delta=300000000
+hard_target_ceiling_instruction_delta=600000000
+hard_target_available=0
+hard_target_method_count=0
+hard_target_pass_count=0
+hard_target_boundary_count=0
+hard_target_violation_count=0
+hard_target_report_md="$output_dir/hard-targets.md"
+hard_target_report_json="$output_dir/hard-targets.json"
+
 format_scaled() {
     local value="$1"
     local scale="$2"
@@ -347,11 +357,155 @@ write_suite_markdown() {
                 "$gate" "$status" "$calls" "$scenarios" "$required" "$row_growth" \
                 "$stable_pages" "$instructions" "$cycles" "$memory" "$artifacts"
         done
+
+        if ((hard_target_available == 1)); then
+            printf "\n## Hard Target Audit\n\n"
+            printf -- "- Target band: \`0.3B-0.6B\` average instruction delta for gameplay kernel commands.\n"
+            printf -- "- Method observations audited: \`%s\`\n" "$hard_target_method_count"
+            printf -- "- Passing or below band: \`%s\`\n" "$hard_target_pass_count"
+            printf -- "- Named durable boundaries: \`%s\`\n" "$hard_target_boundary_count"
+            printf -- "- Violations: \`%s\`\n" "$hard_target_violation_count"
+            printf -- "- Report: \`hard-targets.md\`\n"
+        fi
     } > "$suite_md"
 }
 
 json_escape() {
     sed 's/\\/\\\\/g; s/"/\\"/g' <<<"$1"
+}
+
+is_hard_target_method() {
+    local method="$1"
+    case "$method" in
+        runtime_timer:*|system_job:*|create_session|join_session|start_session|register_player|mark_ready)
+            return 1
+            ;;
+        submit_*|sync_*|end_*|accept_quest|claim_quest_reward|learn_champion_spell|hire_tavern_champion|cast_adventure_spell|select_champion_level_up)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+hard_target_boundary_reason() {
+    local gate="$1"
+    local method="$2"
+    case "$gate:$method" in
+        endpoint-surface:accept_quest)
+            printf "quest acceptance still crosses durable quest/objective boundary"
+            ;;
+        endpoint-surface:learn_champion_spell)
+            printf "spell learning still crosses durable champion-spell boundary"
+            ;;
+        endpoint-surface:submit_dwelling_recruit)
+            printf "dwelling recruit still crosses durable recruit-pool/garrison boundary"
+            ;;
+        timer-surface:end_turn)
+            printf "timer-surface end_turn samples the durable turn-close boundary"
+            ;;
+        timer-surface:sync_session_turn)
+            printf "timer-surface sync_session_turn includes turn timer and projection boundary work"
+            ;;
+        gate-k:sync_session_turn|gate-l:sync_session_turn|gate-m:sync_session_turn)
+            printf "scenario sync crosses battle/scenario durable handoff boundary"
+            ;;
+        gate-k:sync_battle|gate-l:sync_battle|gate-m:sync_battle)
+            printf "scenario sync_battle crosses timeout/aftermath durable handoff boundary"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+write_hard_target_report() {
+    local rows_file="$output_dir/.hard-target-rows.tsv"
+    local gate summary method call_count avg status reason avg_b first
+    local -a summary_files=()
+    while IFS= read -r summary; do
+        summary_files+=("$summary")
+    done < <(suite_summary_files)
+
+    hard_target_available=0
+    hard_target_method_count=0
+    hard_target_pass_count=0
+    hard_target_boundary_count=0
+    hard_target_violation_count=0
+
+    if ((jq_available == 0)) || ((${#summary_files[@]} == 0)); then
+        return
+    fi
+
+    hard_target_available=1
+    : > "$rows_file"
+
+    for summary in "${summary_files[@]}"; do
+        gate="$(basename "$(dirname "$summary")")"
+        while IFS=$'\t' read -r method call_count avg; do
+            [[ -z "$method" || -z "$avg" || "$avg" == "null" ]] && continue
+            if ! is_hard_target_method "$method"; then
+                continue
+            fi
+
+            hard_target_method_count=$((hard_target_method_count + 1))
+            reason=""
+            if awk -v avg="$avg" -v ceiling="$hard_target_ceiling_instruction_delta" 'BEGIN { exit !(avg <= ceiling) }'; then
+                status="pass"
+                hard_target_pass_count=$((hard_target_pass_count + 1))
+            elif reason="$(hard_target_boundary_reason "$gate" "$method")"; then
+                status="named-boundary"
+                hard_target_boundary_count=$((hard_target_boundary_count + 1))
+            else
+                status="violation"
+                reason="missing durable-boundary reason"
+                hard_target_violation_count=$((hard_target_violation_count + 1))
+            fi
+
+            avg_b="$(format_scaled "$avg" 1000000000)"
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+                "$gate" "$method" "$call_count" "$avg" "$avg_b" "$status" "$reason" >> "$rows_file"
+        done < <(jq -r '.methods[] | select(.kind == "update") | [.method, .call_count, .avg_instruction_delta] | @tsv' "$summary")
+    done
+
+    {
+        printf "# Hard Target Audit\n\n"
+        printf -- "- Target band: \`0.3B-0.6B\` average instruction delta for gameplay kernel commands.\n"
+        printf -- "- Method observations audited: \`%s\`\n" "$hard_target_method_count"
+        printf -- "- Passing or below band: \`%s\`\n" "$hard_target_pass_count"
+        printf -- "- Named durable boundaries: \`%s\`\n" "$hard_target_boundary_count"
+        printf -- "- Violations: \`%s\`\n\n" "$hard_target_violation_count"
+        printf "| Gate | Method | Calls | Avg instructions B | Status | Boundary reason |\n"
+        printf "| --- | --- | ---: | ---: | --- | --- |\n"
+        while IFS=$'\t' read -r gate method call_count avg avg_b status reason; do
+            printf "| %s | %s | %s | %s | %s | %s |\n" \
+                "$gate" "$method" "$call_count" "$avg_b" "$status" "${reason:-n/a}"
+        done < "$rows_file"
+    } > "$hard_target_report_md"
+
+    {
+        printf '{\n'
+        printf '  "floor_instruction_delta": %s,\n' "$hard_target_floor_instruction_delta"
+        printf '  "ceiling_instruction_delta": %s,\n' "$hard_target_ceiling_instruction_delta"
+        printf '  "method_count": %s,\n' "$hard_target_method_count"
+        printf '  "pass_count": %s,\n' "$hard_target_pass_count"
+        printf '  "named_boundary_count": %s,\n' "$hard_target_boundary_count"
+        printf '  "violation_count": %s,\n' "$hard_target_violation_count"
+        printf '  "rows": [\n'
+        first=1
+        while IFS=$'\t' read -r gate method call_count avg avg_b status reason; do
+            if ((first == 0)); then
+                printf ',\n'
+            fi
+            first=0
+            printf '    {"gate": "%s", "method": "%s", "call_count": %s, "avg_instruction_delta": %s, "avg_instruction_delta_b": "%s", "status": "%s", "boundary_reason": "%s"}' \
+                "$(json_escape "$gate")" "$(json_escape "$method")" "$call_count" "$avg" \
+                "$(json_escape "$avg_b")" "$(json_escape "$status")" "$(json_escape "$reason")"
+        done < "$rows_file"
+        printf '\n  ]\n'
+        printf '}\n'
+    } > "$hard_target_report_json"
 }
 
 write_suite_json() {
@@ -379,6 +533,22 @@ write_suite_json() {
         printf '  "required_game_endpoint_count": %s,\n' "$suite_required"
         printf '  "covered_required_endpoint_count": %s,\n' "$suite_covered"
         printf '  "missing_required_endpoints": %s,\n' "$suite_missing_json"
+        printf '  "hard_target": {\n'
+        printf '    "available": %s,\n' "$hard_target_available"
+        printf '    "floor_instruction_delta": %s,\n' "$hard_target_floor_instruction_delta"
+        printf '    "ceiling_instruction_delta": %s,\n' "$hard_target_ceiling_instruction_delta"
+        printf '    "method_count": %s,\n' "$hard_target_method_count"
+        printf '    "pass_count": %s,\n' "$hard_target_pass_count"
+        printf '    "named_boundary_count": %s,\n' "$hard_target_boundary_count"
+        printf '    "violation_count": %s,\n' "$hard_target_violation_count"
+        if ((hard_target_available == 1)); then
+            printf '    "report_markdown": "%s",\n' "$(json_escape "$hard_target_report_md")"
+            printf '    "report_json": "%s"\n' "$(json_escape "$hard_target_report_json")"
+        else
+            printf '    "report_markdown": null,\n'
+            printf '    "report_json": null\n'
+        fi
+        printf '  },\n'
         printf '  "gates": [\n'
         for gate in "${GATES[@]}"; do
             gate_dir="$output_dir/$gate"
@@ -410,6 +580,7 @@ write_suite_json() {
     } > "$suite_json"
 }
 
+write_hard_target_report
 write_suite_markdown
 write_suite_json
 
@@ -424,6 +595,10 @@ done
 printf "\nBenchmark artifacts:\n"
 printf "  %s\n" "$output_dir/suite-summary.md"
 printf "  %s\n" "$output_dir/suite-summary.json"
+if ((hard_target_available == 1)); then
+    printf "  %s\n" "$hard_target_report_md"
+    printf "  %s\n" "$hard_target_report_json"
+fi
 printf "  %s\n" "$suite_output"
 for gate in "${GATES[@]}"; do
     if [[ -f "$output_dir/$gate/summary.md" ]]; then
@@ -433,7 +608,11 @@ for gate in "${GATES[@]}"; do
     fi
 done
 
+if ((hard_target_violation_count > 0)); then
+    failed=1
+fi
+
 if ((failed != 0)); then
-    printf "\nAt least one benchmark gate failed. See per-gate logs above.\n" >&2
+    printf "\nAt least one benchmark gate failed or hard-target audit violation occurred. See artifacts above.\n" >&2
     exit 1
 fi

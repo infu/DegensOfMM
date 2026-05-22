@@ -8989,3 +8989,28 @@ Notes:
 Decision:
 
 - Mark the projection-surface wiring item complete using the smaller native measurement harness. The remaining Section 72 item is the hard target rule for future gameplay kernel benchmark claims.
+
+## Hard Target Benchmark Audit
+
+Time: `2026-05-22T05:15:58Z`.
+
+Cut:
+
+- Added a hard-target audit pass to `scripts/run-benchmarks.sh`.
+- The audit scans gameplay update methods from each gate `summary.json`, writes `hard-targets.md` and `hard-targets.json`, embeds counts in the suite summary artifacts, and fails the suite if a gameplay command averages above `0.6B` without a named durable-boundary reason.
+- Current named boundaries cover the deliberately durable quest/spell/dwelling endpoint-surface cases, timer-surface turn close/sync samples, and Gate K/L/M battle/scenario handoff samples.
+
+Verification:
+
+- `bash -n scripts/run-benchmarks.sh`
+- `DOMM_BENCH_JOBS=5 DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260522-hard-target-audit-suite scripts/run-benchmarks.sh`
+
+Measurement:
+
+- Full suite passed with `59/59` required endpoints covered.
+- Hard-target audit: `45` gameplay command observations, `34` passing or below-band, `11` named durable boundaries, `0` violations.
+- Report artifacts: `target/benchmarks/20260522-hard-target-audit-suite/hard-targets.md` and `target/benchmarks/20260522-hard-target-audit-suite/hard-targets.json`.
+
+Decision:
+
+- Mark the Section 72 hard-target rule complete. Section 72 now has an enforced benchmark artifact instead of relying on prose-only discipline.

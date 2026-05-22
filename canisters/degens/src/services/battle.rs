@@ -2617,7 +2617,7 @@ fn try_sync_runtime_battle(
     caller: CandidPrincipal,
     context: &mut session_context::SessionCallerContext,
     battle_id_text: &str,
-    _now_ms: u64,
+    now_ms: u64,
     client_nonce_text: &str,
 ) -> Result<Option<CommandResponse>, ApiError> {
     let Some(outcome) = battle_runtime::with_runtime(battle_id_text, |runtime| {
@@ -2626,6 +2626,15 @@ fn try_sync_runtime_battle(
         }
         let battle = runtime.state.battle(battle_id_text).ok()?;
         if battle.state != "active" {
+            return None;
+        }
+        if battle.active_stack_id.is_none() {
+            return None;
+        }
+        if battle
+            .action_deadline_at
+            .is_none_or(|deadline| now_ms >= deadline)
+        {
             return None;
         }
         Some(BattleSyncOutcome {

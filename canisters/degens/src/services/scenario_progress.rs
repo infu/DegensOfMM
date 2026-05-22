@@ -417,32 +417,29 @@ fn schedule_scenario_job(
 ) -> Result<(), ApiError> {
     let due_at = Timestamp::now();
     let job_key = format!("{job_kind}:{}:{}", session.id(), session.current_turn);
+    let draft = system_job_repo::SystemJobDraft {
+        job_key,
+        job_kind: job_kind.to_string(),
+        session_id: session.id(),
+        battle_id: None,
+        turn_number: Some(session.current_turn),
+        due_at,
+        command_id,
+        cursor_json: None,
+    };
     #[cfg(feature = "benchmark")]
     {
-        system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
-            job_key,
-            job_kind: job_kind.to_string(),
-            session_id: session.id(),
-            battle_id: None,
-            turn_number: Some(session.current_turn),
-            due_at,
-            command_id,
-            cursor_json: None,
-        })?;
+        let job = system_job_service::schedule_job(draft)?;
+        if job.status == system_job_repo::STATUS_COMPLETED {
+            let mut job = job;
+            job.command_id = command_id.map(|id| id.key());
+            system_job_repo::reschedule_system_job(job, due_at, None)?;
+        }
         return Ok(());
     }
     #[cfg(not(feature = "benchmark"))]
     {
-        let job = system_job_repo::upsert_system_job(system_job_repo::SystemJobDraft {
-            job_key,
-            job_kind: job_kind.to_string(),
-            session_id: session.id(),
-            battle_id: None,
-            turn_number: Some(session.current_turn),
-            due_at,
-            command_id,
-            cursor_json: None,
-        })?;
+        let job = system_job_repo::upsert_system_job(draft)?;
 
         if job.status == system_job_repo::STATUS_COMPLETED {
             let mut job = job;

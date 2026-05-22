@@ -8904,3 +8904,49 @@ Measurement:
 Decision:
 
 - Mark focused battle acceptance complete for the focused timer-surface battle paths. Scenario/full-suite acceptance remains open for Gate J/K/L/M row growth, projection lag, and the full benchmark script.
+
+## Scenario Acceptance Runtime Sync Fallback
+
+Time: `2026-05-22T04:54:09Z`.
+
+Cut:
+
+- Narrowed the benchmark-only active-runtime `sync_battle` shortcut so it only handles active battles with a live stack and a future deadline. Due, no-deadline, and resolved runtime battles now fall through to the timeout/aftermath sync path.
+- Made benchmark scenario-maintenance scheduling idempotent for repeated same-turn aftermath by using the existing job key instead of inserting duplicate `scenario_objectives` rows.
+- Updated Gate L and Gate M assertions to accept runtime-visible movement evidence (`mine_captured`) when active movement stays projection-only and no durable `MovementSnapshot` rows are written yet.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo check -p domm-pocket-ic-tests --test client_probe_canister`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bff92e` / `12,581,166` bytes, `1,746` bytes under the IC limit.
+- Focused Gate K: `target/benchmarks/20260522-gate-k-idempotent-scenario-jobs`, passed with row growth `91`.
+- Focused Gate L: `target/benchmarks/20260522-gate-l-runtime-movement-assert`, passed with row growth `150`.
+- Focused Gate M: `target/benchmarks/20260522-gate-m-runtime-movement-assert`, passed with row growth `105`.
+- Full suite: `DOMM_BENCH_JOBS=5 DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260522-scenario-acceptance-pass2-local scripts/run-benchmarks.sh`, passed.
+
+Full-suite measurement:
+
+| Gate | Status | Row growth | Previous all-timer row growth | Stable pages |
+| --- | --- | ---: | ---: | --- |
+| endpoint-surface | passed | 106 | 106 | 2049 -> 59905 |
+| timer-surface | passed | 436 | 473 | 2049 -> 234497 |
+| Gate J | passed | 35 | 35 | 2049 -> 62465 |
+| Gate K | passed | 91 | 107 | 2049 -> 80257 |
+| Gate L | passed | 150 | 168 | 2049 -> 81793 |
+| Gate M | passed | 105 | 120 | 2049 -> 95233 |
+
+Notes:
+
+- The full suite covered `59/59` required endpoints across gates.
+- Timer-surface kept the focused battle samples below the target band: `sync_battle` `36,521` instructions, `end_battle_turn` `0.2401B`, `system_job:battle_round_advance` `8,493` instructions, and `system_job:battle_timeout` `7,809` instructions.
+- The normal benchmark build still reports `projection: null` because the mixed `benchmark,projection-benchmark` Wasm is above the IC code-section limit. The native projection-surface test remains the zero-lag flush proof for this checkpoint; wiring it into the suite remains the separate code-size-gated item.
+
+Decision:
+
+- Mark scenario acceptance complete for the default full-suite gate. Keep the projection-surface wiring item open until the projection-enabled Wasm fits.

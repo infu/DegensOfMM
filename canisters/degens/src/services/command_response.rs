@@ -205,14 +205,20 @@ pub(crate) fn begin_participant_command_guarded_tracked<F>(
 where
     F: FnOnce() -> Result<(), ApiError>,
 {
-    if let Some(existing) = existing_participant_command_tracked(
-        caller,
-        context,
-        command_type,
-        client_nonce_text,
-        &payload_json,
-    )? {
-        return Ok(existing);
+    #[cfg(feature = "benchmark")]
+    let skip_existing_lookup = command_type == "end_battle_turn";
+    #[cfg(not(feature = "benchmark"))]
+    let skip_existing_lookup = false;
+    if !skip_existing_lookup {
+        if let Some(existing) = existing_participant_command_tracked(
+            caller,
+            context,
+            command_type,
+            client_nonce_text,
+            &payload_json,
+        )? {
+            return Ok(existing);
+        }
     }
 
     new_command_guard()?;

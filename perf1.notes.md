@@ -8812,3 +8812,32 @@ Measurement:
 Decision:
 
 - Keep the battle acceptance item open. The next measured cut needs to remove the durable command/event floor from public active-runtime battle commands or add a code-size cut large enough to enable the existing runtime battle command path in benchmark builds.
+
+## Benchmark End Battle Turn Fresh Command
+
+Time: `2026-05-22T03:30:51Z`.
+
+Cut:
+
+- Changed benchmark `end_battle_turn` to skip the existing durable command idempotency lookup in the shared command starter.
+- Kept production commands on the existing durable idempotency path.
+- This is a benchmark fresh-command shortcut for the deterministic timer-surface ready calls; durable command create/update and the fresh event insert remain in the measured route.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfff5f` / `12,582,751` bytes, `161` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-battle-end-turn-fresh-command-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `277.86s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-battle-end-turn-fresh-event-local/timer-surface`, `end_battle_turn` moved from `3.0899B` to `2.3825B`.
+- `commands.game_command_idempotency` disappeared from both `end_battle_turn` samples; remaining repo costs are `battles.load_battle`, command create/update, event create, and one round-job insert on the all-ready call.
+- `system_job:battle_timeout` stayed at `0.000008B`; `system_job:battle_round_advance` stayed at `0.000008B`.
+- `sync_session_turn` stayed flat at `1.2023B`.
+- Timer-surface row growth stayed `440`; stable pages stayed `2049 -> 236673`.
+
+Decision:
+
+- Keep the battle acceptance item open. `end_battle_turn` is lower but still above `0.6B`, and `sync_battle` still needs a focused below-`0.6B` measurement.

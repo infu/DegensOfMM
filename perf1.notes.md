@@ -8488,3 +8488,22 @@ Verification:
 Decision:
 
 - Keep this as a doc-only checkpoint because the benchmark Wasm has only `492` bytes of code-section headroom after the runtime `CastAbility` cut.
+
+## Active Worldmap Projection Taxonomy
+
+Time: `2026-05-22T00:23:40Z`.
+
+Cut:
+
+- Extended `perf1.table-taxonomy.md` with the active worldmap projection/history slice.
+- Marked active `GameSession` turn fields, active `GameParticipant` resources/readiness, ready rows, movement rows, command/effect/event rows, resource ledger rows, scenario progress rows, visibility/occupancy/known-object rows, mutable world-object state, and town/champion/tavern/dwelling child rows as projection/history-only while a worldmap kernel exists.
+- Recorded `SessionTurnRuntime` and the worldmap kernel facade as live authority for those active gameplay surfaces.
+- Kept durable rows as setup/adoption, explicit projection flush, post-upgrade recovery, diagnostics, history, and row-backed fallback surfaces.
+
+Verification:
+
+- `git diff --check`
+
+Decision:
+
+- Keep this as a doc-only checkpoint. The taxonomy prevents row-backed fallback paths from being treated as active authority while avoiding additional benchmark Wasm growth.

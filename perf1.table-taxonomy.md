@@ -30,10 +30,43 @@ finished-history surfaces rather than rule-heavy active simulation state.
   must not make these tables projection-only without a separate Section 72D
   decision.
 
+## Active Worldmap Projection And History
+
+These entities are projection/history-only while a session has an active
+worldmap kernel. `SessionTurnRuntime` and the worldmap kernel facade own live
+simulation authority; durable rows remain useful for setup, adoption, explicit
+flushes, post-upgrade recovery, diagnostics, history, and row-backed fallback.
+
+| Entity or surface | Active-session authority | Durable-row role |
+| --- | --- | --- |
+| `GameSession` turn fields | Worldmap kernel | Projection of active turn, phase, deadlines, next-event sequence, winner/finish state, and scenario counters. Lobby/config fields remain direct authority until activation. |
+| `GameParticipant` resources/readiness | Worldmap kernel | Projection of active resources, turn readiness, defeat/finish state, and per-turn derived values. Admission/player identity fields remain direct authority before activation. |
+| `ParticipantTurnReady` | Worldmap kernel | Compatibility/history projection for readiness; active readiness should be runtime-owned. |
+| `MovementIntent` | Worldmap kernel | Command/history projection for submitted movement, replay/debug, and row-backed recovery. Active pending movement belongs to runtime. |
+| `MovementSnapshot` | Worldmap kernel | History/debug projection of resolved movement steps. Active path progress and blockers belong to runtime. |
+| `CommandEffect` | Worldmap kernel or boundary service | Projection/history for applied command side effects. Use as an idempotency/history surface, not active simulation authority, except for direct-authority boundary commands. |
+| `GameCommand` | Worldmap kernel or boundary service | Replay/status/history projection. Active gameplay commands should prefer runtime receipts where implemented. |
+| `GameEvent` | Worldmap kernel or boundary service | Feed/history projection. Active gameplay events should be emitted from runtime buffers and flushed explicitly. |
+| `ResourceLedgerEntry` | Worldmap kernel | Accounting/history projection for resource deltas; active balances belong to runtime. |
+| `ObjectiveProgress` | Worldmap kernel | Scenario progress projection; active objective state belongs to runtime scenario state. |
+| `QuestState` | Worldmap kernel | Quest progress projection; active quest state belongs to runtime scenario state. |
+| `WorldEventState` | Worldmap kernel | Scenario/world event projection; active schedule/effects belong to runtime scenario state. |
+| `ScenarioRuleState` | Worldmap kernel | Victory/objective rule projection; active rule counters belong to runtime scenario state. |
+| `VisibilityChunk` | Worldmap kernel | Visibility projection for strong reads, diagnostics, and fallback. Active visibility/contact updates should be runtime-owned. |
+| `MapOccupancy` | Worldmap kernel | Spatial projection for strong reads, diagnostics, and fallback. Active occupancy authority belongs to runtime indexes. |
+| `ParticipantKnownObject` | Worldmap kernel | Knowledge/fog projection; active discovery and contact state belongs to runtime. |
+| `WorldObject` mutable state | Worldmap kernel | Projection of capture, depletion, interaction, owner, and temporary-object state. Static content remains direct authority. |
+| Town child rows | Worldmap or town runtime | Projection/history for buildings, recruit pools, garrison, tavern/dwelling growth, and town-local state during active gameplay. |
+| Champion child rows | Worldmap or champion runtime | Projection/history for army, spells, artifacts/equipment, cooldown-like state, movement, and battle aftermath mirrors during active gameplay. |
+| Tavern/dwelling rows | Worldmap or town runtime | Projection/history for active offers, recruit pools, growth, claims, and availability after session activation. |
+
+Worldmap projection/history rows must be restored or flushed through explicit
+kernel barriers and projection queues. They should not become hidden live
+authority again just because a query or timer path still has a row-backed
+fallback.
+
 ## Pending Taxonomy Slices
 
-- Active worldmap gameplay projection/history-only rows are still tracked in
-  `perf1.todo.md` Section 72D.
 - Active battle projection/history-only rows are still tracked in
   `perf1.todo.md` Section 72D.
 - Index retirement sequencing is still tracked in `perf1.todo.md` Section 72D.

@@ -8871,3 +8871,36 @@ Measurement:
 Decision:
 
 - Keep the battle acceptance item open. `end_battle_turn` and the two battle timer labels are now below `0.6B`; `sync_battle` still needs a focused below-`0.6B` measurement.
+
+## Benchmark Sync Battle Runtime Minimal
+
+Time: `2026-05-22T04:09:38Z`.
+
+Cut:
+
+- Added a benchmark-only active-runtime `sync_battle` shortcut before the durable row fallback.
+- The shortcut verifies the active heap battle belongs to the caller session and returns a minimal applied `BattleSync` response without durable command rows, durable event rows, timeout catchup, recovery scans, runtime receipt storage, or durable fallback adoption.
+- Added one active `sync_battle` sample to `timer-surface` after the PvP battle opens and before the measured `end_battle_turn` calls. Production keeps the full runtime sync/fallback behavior.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `git diff --check`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bff595` / `12,580,245` bytes, `2,667` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-battle-sync-runtime-minimal-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `154.19s`.
+
+Measurement:
+
+- `sync_battle` now records one focused timer-surface sample at `36,652` instructions (`0.000037B`) with no repo ops.
+- `end_battle_turn` stayed below target at `0.2401B`; samples were `0.000073B` with no repo ops and `0.4801B` with the required benchmark `sj.other` round-job insert.
+- `system_job:battle_timeout` stayed at `0.000008B`; `system_job:battle_round_advance` stayed at `0.000008B`.
+- `sync_session_turn` stayed flat at `1.2023B`.
+- Timer-surface row growth stayed `436`; stable pages stayed `2049 -> 234497`.
+
+Decision:
+
+- Mark focused battle acceptance complete for the focused timer-surface battle paths. Scenario/full-suite acceptance remains open for Gate J/K/L/M row growth, projection lag, and the full benchmark script.

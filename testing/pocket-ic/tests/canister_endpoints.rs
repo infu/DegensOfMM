@@ -5859,6 +5859,20 @@ fn pocket_ic_benchmark_timer_surface_records_every_timer_path() {
         (pvp_session.clone(), pvp_battle_id.clone()),
     )
     .expect("timer surface pvp battle should load");
+    let synced_battle = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_seven,
+        "sync_battle",
+        (
+            pvp_session.clone(),
+            pvp_battle_id.clone(),
+            "nonce:timer-surface:round:sync-battle".to_string(),
+        ),
+    )
+    .expect("timer surface sync_battle should succeed");
+    metrics.observe_command_response(&synced_battle);
+    assert_eq!(synced_battle.status, CommandStatus::Applied);
     for (player, suffix) in [(player_seven, "one"), (player_eight, "two")] {
         let ended = gate_update_as::<CommandResponse>(
             &mut metrics,

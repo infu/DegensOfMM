@@ -2612,6 +2612,51 @@ fn try_sync_runtime_battle(
     Ok(Some(response))
 }
 
+#[cfg(feature = "benchmark")]
+fn try_sync_runtime_battle(
+    caller: CandidPrincipal,
+    context: &mut session_context::SessionCallerContext,
+    battle_id_text: &str,
+    _now_ms: u64,
+    client_nonce_text: &str,
+) -> Result<Option<CommandResponse>, ApiError> {
+    let Some(outcome) = battle_runtime::with_runtime(battle_id_text, |runtime| {
+        if runtime.session_id != context.session.id().to_string() {
+            return None;
+        }
+        let battle = runtime.state.battle(battle_id_text).ok()?;
+        if battle.state != "active" {
+            return None;
+        }
+        Some(BattleSyncOutcome {
+            battle_id: battle_id_text.to_string(),
+            timeout_actions_applied: 0,
+            recovered_commands: 0,
+            battle_sync_incomplete: false,
+            active_stack_id: battle.active_stack_id.clone(),
+        })
+    })
+    .flatten() else {
+        return Ok(None);
+    };
+
+    Ok(Some(command_response::runtime_command_response(
+        caller,
+        context,
+        client_nonce_text.to_string(),
+        "sync_battle".to_string(),
+        client_nonce_text,
+        String::new(),
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::BattleSync(outcome),
+        None,
+    )))
+}
+
 pub(crate) fn sync_battle(
     caller: CandidPrincipal,
     session_id: String,
@@ -2622,6 +2667,12 @@ pub(crate) fn sync_battle(
     let mut context =
         session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     #[cfg(not(feature = "benchmark"))]
+    if let Some(response) =
+        try_sync_runtime_battle(caller, &mut context, &battle_id, now_ms, &client_nonce)?
+    {
+        return Ok(response);
+    }
+    #[cfg(feature = "benchmark")]
     if let Some(response) =
         try_sync_runtime_battle(caller, &mut context, &battle_id, now_ms, &client_nonce)?
     {

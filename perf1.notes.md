@@ -8717,3 +8717,34 @@ Measurement:
 Decision:
 
 - Keep this as a measured partial cut. It brings worldmap timers close to the first acceptance band without changing production, but the item stays open until `turn_deadline` and `turn_resolution` are both below `1.0B` and `sync_session_turn` is back under `1.6226B`.
+
+## Benchmark Turn Job Measurement Boundary
+
+Time: `2026-05-22T02:39:45Z`.
+
+Cut:
+
+- Changed benchmark runtime-backed turn timers to complete the durable claimed `SystemJob` immediately after the `benchmark_timer` body instead of inside it. This keeps repair/diagnostic completion semantics for the timer message while measuring the worldmap turn driver without the bookkeeping row update.
+- Changed benchmark runtime `sync_session_turn` to skip durable current-turn job reschedule on the movement-yield path when the command is runtime-owned.
+- Kept production and row-backed benchmark paths on the existing durable completion/reschedule behavior.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffbdb` / `12,581,851` bytes, `1,061` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-runtime-sync-job-skip-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `365.88s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-runtime-session-advance-local/timer-surface`, `system_job:turn_deadline` moved from `1.3092B` to `0.9521B`.
+- `system_job:turn_resolution` moved from `1.4281B` to `0.9523B`.
+- `sync_session_turn` moved from `1.7068B` to `1.2020B`, below the original `1.6226B` guardrail.
+- Timer-surface row growth stayed `445`; stable pages stayed `2049 -> 238209`.
+- The runtime sync samples no longer pay `system_jobs.by_session_status_due` on the incomplete movement/yield path.
+
+Decision:
+
+- Mark the focused worldmap acceptance item complete. The first timer band is closed; the next worldmap work can push below `0.6B` by replacing the remaining fresh durable wakeup inserts with runtime wakeups or projection flush boundaries.

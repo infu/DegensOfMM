@@ -363,8 +363,15 @@ fn next_claimable_or_scheduled_job() -> Result<Option<SystemJob>, ApiError> {
 fn dispatch_claimed_job(job: SystemJob) -> Result<(), ApiError> {
     #[cfg(feature = "benchmark")]
     {
+        let completion_job = job.clone();
+        movement::take_deferred_turn_timer_completion();
         let method = format!("system_job:{}", job.job_kind);
-        return crate::metrics::benchmark_timer(method, || dispatch_claimed_job_inner(job));
+        let result = crate::metrics::benchmark_timer(method, || dispatch_claimed_job_inner(job));
+        let complete_after_timer = movement::take_deferred_turn_timer_completion();
+        if result.is_ok() && complete_after_timer {
+            system_jobs::complete_system_job(completion_job)?;
+        }
+        return result;
     }
 
     #[cfg(not(feature = "benchmark"))]

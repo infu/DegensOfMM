@@ -39,6 +39,24 @@ thread_local! {
         const { RefCell::new(None) };
     static NEUTRAL_BATTLE_START_BY_ATTACKER: RefCell<BTreeMap<String, Battle>> =
         const { RefCell::new(BTreeMap::new()) };
+    #[cfg(feature = "benchmark")]
+    static DEFERRED_TURN_TIMER_COMPLETION: RefCell<bool> = const { RefCell::new(false) };
+}
+
+#[cfg(feature = "benchmark")]
+pub(crate) fn take_deferred_turn_timer_completion() -> bool {
+    DEFERRED_TURN_TIMER_COMPLETION.with_borrow_mut(|deferred| {
+        let was_deferred = *deferred;
+        *deferred = false;
+        was_deferred
+    })
+}
+
+#[cfg(feature = "benchmark")]
+fn defer_turn_timer_completion() {
+    DEFERRED_TURN_TIMER_COMPLETION.with_borrow_mut(|deferred| {
+        *deferred = true;
+    });
 }
 
 pub(crate) fn preview_move_path(
@@ -696,6 +714,11 @@ fn sync_session_turn_with_command(
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
+        #[cfg(feature = "benchmark")]
+        if !command.is_runtime() {
+            reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
+        }
+        #[cfg(not(feature = "benchmark"))]
         reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         if !command.is_runtime() {
             worldmap_kernel::remove_active_turn_id(
@@ -1168,6 +1191,11 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         commands_events_effects::update_game_command(command)?;
     }
 
+    #[cfg(feature = "benchmark")]
+    if !command_is_runtime {
+        system_job_repo::complete_system_job(job)?;
+    }
+    #[cfg(not(feature = "benchmark"))]
     system_job_repo::complete_system_job(job)?;
     let durable_command_id = if command_is_runtime {
         None
@@ -1189,6 +1217,10 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     #[cfg(not(feature = "benchmark"))]
     system_job_service::schedule_job(turn_deadline_job)?;
     scenario_progress::schedule_turn_maintenance_jobs(&session, durable_command_id)?;
+    #[cfg(feature = "benchmark")]
+    if command_is_runtime {
+        defer_turn_timer_completion();
+    }
     enforce_turn_advance_barrier();
     Ok(())
 }

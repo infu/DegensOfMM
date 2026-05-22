@@ -8469,3 +8469,22 @@ Verification:
 Decision:
 
 - Keep this checkpoint, but note the benchmark Wasm is very close to the IC code-section ceiling. The next cut should prefer taxonomy/docs or code-size-neutral changes unless it frees headroom first.
+
+## Direct IcyDB Authority Taxonomy
+
+Time: `2026-05-22T00:22:15Z`.
+
+Cut:
+
+- Added `perf1.table-taxonomy.md` as the Section 72D ownership artifact.
+- Marked `PlayerAccount`, account/profile identity, static content definitions, controller/admin diagnostics, durable finished match summaries, and pre-active lobby/session admission as direct IcyDB authority.
+- Recorded that caches around those rows are mirrors, negative caches, or replay helpers only; durable rows remain the source of truth for uniqueness, conflicts, recovery, and finished-history reads.
+- Left the active worldmap, active battle, and index-retirement taxonomy slices open for later checkpoints.
+
+Verification:
+
+- `git diff --check`
+
+Decision:
+
+- Keep this as a doc-only checkpoint because the benchmark Wasm has only `492` bytes of code-section headroom after the runtime `CastAbility` cut.

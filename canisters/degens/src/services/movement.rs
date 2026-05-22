@@ -1018,6 +1018,20 @@ pub(crate) fn process_turn_resolution_job(job: SystemJob) -> Result<(), ApiError
 
 fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let session_id = Id::<GameSession>::from_key(job.session_id);
+    #[cfg(feature = "benchmark")]
+    let session_id_text = session_id.to_string();
+    #[cfg(feature = "benchmark")]
+    let runtime_rows = session_turn_runtime::latest_session_rows(&session_id_text);
+    #[cfg(feature = "benchmark")]
+    let mut session = if let Some((session, _)) = runtime_rows.as_ref() {
+        session.clone()
+    } else if let Some(session) = sessions::load_session(session_id)? {
+        session
+    } else {
+        system_job_repo::fail_system_job(job, false, "turn session row not found".to_string())?;
+        return Ok(());
+    };
+    #[cfg(not(feature = "benchmark"))]
     let Some(mut session) = sessions::load_session(session_id)? else {
         system_job_repo::fail_system_job(job, false, "turn session row not found".to_string())?;
         return Ok(());
@@ -1083,7 +1097,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let income_turn = session.current_turn;
     #[cfg(feature = "benchmark")]
     let participants = if command_is_runtime {
-        session_turn_runtime::latest_session_rows(&session.id().to_string())
+        runtime_rows
             .map(|(_, participants)| participants)
             .unwrap_or_default()
     } else {

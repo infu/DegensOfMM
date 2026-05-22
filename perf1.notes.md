@@ -8684,3 +8684,36 @@ Measurement:
 Decision:
 
 - Keep this as another partial worldmap acceptance cut. The remaining active turn timer cost is now dominated by the durable session load/update, durable job completion, and the two fresh follow-up job inserts; the next cut should move active turn wakeups/session authority further into runtime without losing timer coverage.
+
+## Benchmark Runtime Session Advance
+
+Time: `2026-05-22T02:13:19Z`.
+
+Cut:
+
+- Changed benchmark active turn timers to load the current active session from `SessionTurnRuntime` before falling back to the durable `GameSession` row.
+- Reused the same runtime snapshot for active participant income materialization instead of performing a second runtime lookup.
+- Changed benchmark runtime-backed `worldmap_kernel::advance_turn` to install the next runtime turn without writing the durable session projection. Production and row-backed benchmark turns still update the durable session row.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffa41` / `12,581,441` bytes, `1,471` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-runtime-session-advance-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `380.28s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-fresh-benchmark-jobs-local/timer-surface`, `system_job:turn_deadline` moved from `2.3700B` to `1.3092B`.
+- `system_job:turn_resolution` moved from `2.6095B` to `1.4281B`.
+- `sync_session_turn` moved from `1.7738B` to `1.7068B`, still above the original `1.6226B` guardrail.
+- Timer-surface row growth stayed `445`; stable pages stayed `2049 -> 238209`.
+- Repo-op rollup shows `sessions.load_session` down from `91` to `74` calls and `sessions.update_session` down from `25` to `10` calls in the focused route.
+- Active turn timer samples now show only `system_jobs.update_system_job` plus two `sj.other` inserts on the normal advance path; the next acceptance cut needs to replace durable job completion/follow-up inserts with runtime wakeups or move them outside the measured timer body.
+
+Decision:
+
+- Keep this as a measured partial cut. It brings worldmap timers close to the first acceptance band without changing production, but the item stays open until `turn_deadline` and `turn_resolution` are both below `1.0B` and `sync_session_turn` is back under `1.6226B`.

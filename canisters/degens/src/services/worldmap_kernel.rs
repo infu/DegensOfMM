@@ -94,12 +94,22 @@ pub(crate) fn advance_turn(
     if domm_game::week_for_turn(session.current_turn) != domm_game::week_for_turn(income_turn) {
         economy_expansion::materialize_weekly_economy(session, command_id)?;
     }
+    #[cfg(feature = "benchmark")]
+    let runtime_only_advance =
+        matches!(&runtime_mode, TurnAdvanceRuntimeMode::CarryPrevious { .. });
     let prepared_runtime = match runtime_mode {
         TurnAdvanceRuntimeMode::HydrateRows => prepare_active_turn(session)?,
         TurnAdvanceRuntimeMode::CarryPrevious { previous_turn } => {
             prepare_next_turn_from_previous(session, previous_turn)?
         }
     };
+    #[cfg(feature = "benchmark")]
+    if runtime_only_advance {
+        if let Some(runtime) = prepared_runtime {
+            insert_active_turn(runtime);
+        }
+        return Ok(());
+    }
     *session = sessions::update_session(session.clone())?;
     if let Some(runtime) = prepared_runtime {
         insert_active_turn(runtime);

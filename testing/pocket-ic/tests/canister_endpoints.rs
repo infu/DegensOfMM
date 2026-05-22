@@ -5882,6 +5882,7 @@ fn pocket_ic_benchmark_timer_surface_records_every_timer_path() {
     let _ = round_job_key;
     wait_for_benchmark_timer_method(&fixture, "system_job:battle_round_advance", 48);
 
+    let projection_flush_timers_available = maybe_run_projection_flush_timer_surface(&fixture);
     let timer_methods = diagnostic_benchmark_timer_methods(&fixture);
     for expected in [
         "runtime_timer:setup_session",
@@ -5897,6 +5898,14 @@ fn pocket_ic_benchmark_timer_surface_records_every_timer_path() {
             timer_methods.contains(expected),
             "timer benchmark should record {expected}; saw {timer_methods:?}"
         );
+    }
+    if projection_flush_timers_available {
+        for expected in ["projection_flush:worldmap", "projection_flush:battle"] {
+            assert!(
+                timer_methods.contains(expected),
+                "timer benchmark should record {expected}; saw {timer_methods:?}"
+            );
+        }
     }
 
     metrics.set_benchmark_scenario("diagnostics");
@@ -10181,6 +10190,41 @@ fn diagnostic_benchmark_timer_methods(fixture: &StandaloneCanisterFixture) -> BT
     .filter(|call| call.kind == "timer")
     .map(|call| call.method)
     .collect()
+}
+
+fn maybe_run_projection_flush_timer_surface(fixture: &StandaloneCanisterFixture) -> bool {
+    let projection_expected = env::var("DOMM_CANISTER_FEATURES")
+        .ok()
+        .is_some_and(|features| {
+            features
+                .split(',')
+                .any(|feature| feature.trim() == "projection-benchmark")
+        });
+    let worldmap = update_as::<DiagnosticProjectionFlushView>(
+        fixture,
+        candid::Principal::anonymous(),
+        "run_diagnostic_projection_flush",
+        (),
+    );
+    let Ok(worldmap) = worldmap else {
+        assert!(
+            !projection_expected,
+            "projection benchmark build should expose run_diagnostic_projection_flush"
+        );
+        return false;
+    };
+    worldmap.expect("worldmap projection flush should succeed");
+
+    update_as::<DiagnosticProjectionFlushView>(
+        fixture,
+        candid::Principal::anonymous(),
+        "run_diagnostic_battle_projection_flush",
+        (),
+    )
+    .expect("battle projection flush should decode when worldmap projection flush exists")
+    .expect("battle projection flush should succeed");
+
+    true
 }
 
 fn wait_for_benchmark_timer_method(

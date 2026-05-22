@@ -8596,3 +8596,28 @@ Verification:
 Decision:
 
 - Keep this as benchmark-harness reporting only. The `projection-surface` suite hook remains code-size gated until the production or mixed `benchmark,projection-benchmark` Wasm can install, but the artifact schema and Markdown report are ready for that gate.
+
+## Projection Flush Timer Labels
+
+Time: `2026-05-22T01:15:39Z`.
+
+Cut:
+
+- Changed projection-enabled `run_diagnostic_projection_flush` to record a benchmark timer row as `projection_flush:worldmap` instead of an update row when built with `feature=benchmark`.
+- Added controller-gated `run_diagnostic_battle_projection_flush`, backed by `BattleRuntime` command/event archive flushing, with the same diagnostic flush metric shape: entries processed, rows flushed, queue before/after, truncation flag, stable pages, and instructions.
+- Widened the battle runtime command payload field to `benchmark,projection-benchmark` so battle archive flushes can persist runtime command receipts in projection-enabled benchmark builds.
+- Extended the timer-surface PocketIC route to run and assert `projection_flush:worldmap` and `projection_flush:battle` when `DOMM_CANISTER_FEATURES` includes `projection-benchmark`; default benchmark runs skip those optional endpoints until the mixed Wasm fits.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister --features benchmark,projection-benchmark`
+- `cargo test -p domm-degens-canister exported_candid_contains_every_required_game_endpoint -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid --features benchmark,projection-benchmark -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path --no-run`
+
+Decision:
+
+- Keep the labels feature-gated for now. This completes timer-surface wiring for projection-enabled builds without spending the default benchmark Wasm headroom; full suite execution with the labels still waits on the open projection benchmark code-size gate.

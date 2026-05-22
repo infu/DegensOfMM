@@ -45,9 +45,29 @@ fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectionSnapshot, 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[update]
 fn run_diagnostic_projection_flush() -> Result<DiagnosticProjectionFlushView, ApiError> {
-    crate::metrics::benchmark_update("run_diagnostic_projection_flush", || {
-        crate::services::diagnostics::run_diagnostic_projection_flush()
-    })
+    #[cfg(feature = "benchmark")]
+    {
+        return crate::metrics::benchmark_timer("projection_flush:worldmap".to_string(), || {
+            crate::services::diagnostics::run_diagnostic_projection_flush()
+        });
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    crate::services::diagnostics::run_diagnostic_projection_flush()
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+#[update]
+fn run_diagnostic_battle_projection_flush() -> Result<DiagnosticProjectionFlushView, ApiError> {
+    #[cfg(feature = "benchmark")]
+    {
+        return crate::metrics::benchmark_timer("projection_flush:battle".to_string(), || {
+            crate::services::diagnostics::run_diagnostic_battle_projection_flush()
+        });
+    }
+
+    #[cfg(not(feature = "benchmark"))]
+    crate::services::diagnostics::run_diagnostic_battle_projection_flush()
 }
 
 #[cfg(feature = "benchmark")]

@@ -19,13 +19,13 @@ use canic_cdk::structures::{
 use domm_degens_schema::schema::{
     Battle, BattleObstacle, BattleOccupancy, BattleStack, GameSession,
 };
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use domm_degens_schema::schema::{GameCommand, GameParticipant};
 use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
 use icydb::traits::EntityValue;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use icydb::types::Timestamp;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use icydb::{
     traits::EntityKey,
     types::{Id, Ulid},
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "benchmark"))]
 use crate::repos::battles as battle_repo;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use crate::repos::commands_events_effects;
 use crate::repos::sessions as session_repo;
 
@@ -356,7 +356,7 @@ pub(crate) struct BattleRuntimeCommandReceipt {
     pub client_nonce_text: String,
     pub client_nonce: u64,
     pub payload_hash: String,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     pub payload_json: Option<String>,
     pub response: CommandResponse,
 }
@@ -656,7 +656,63 @@ pub(crate) fn archive_runtime_command_receipts(runtime: &BattleRuntime) {
     });
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+pub(crate) fn runtime_archive_projection_pending_entries() -> usize {
+    let active_runtimes = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
+        runtimes
+            .borrow()
+            .values()
+            .cloned()
+            .collect::<Vec<BattleRuntime>>()
+    });
+    let archived_events = ARCHIVED_SESSION_RUNTIME_EVENTS.with(|archived| {
+        archived
+            .borrow()
+            .values()
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    let archived_receipts = ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| {
+        archived
+            .borrow()
+            .iter()
+            .flat_map(|(session_id, receipts)| {
+                receipts
+                    .iter()
+                    .cloned()
+                    .map(|receipt| (session_id.clone(), receipt))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let mut pending = BTreeSet::<String>::new();
+    for runtime in &active_runtimes {
+        for receipt in &runtime.command_receipts {
+            pending.insert(format!("command:{}", receipt.command_id));
+        }
+        for runtime_event in runtime
+            .active_events
+            .iter()
+            .filter(|runtime_event| !runtime_event.flushed)
+        {
+            pending.insert(format!("event:{}", runtime_event.event.event_key));
+        }
+    }
+    for (_, receipt) in &archived_receipts {
+        pending.insert(format!("command:{}", receipt.command_id));
+    }
+    for runtime_event in archived_events
+        .iter()
+        .filter(|runtime_event| !runtime_event.flushed)
+    {
+        pending.insert(format!("event:{}", runtime_event.event.event_key));
+    }
+    pending.len()
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn flush_runtime_archives_for_barrier() -> Result<usize, ApiError> {
     let active_runtimes = ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
         runtimes
@@ -738,7 +794,7 @@ pub(crate) fn flush_runtime_archives_for_barrier() -> Result<usize, ApiError> {
     Ok(flushed)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_command_receipt(
     runtime: &BattleRuntime,
     receipt: &BattleRuntimeCommandReceipt,
@@ -746,7 +802,7 @@ fn flush_runtime_command_receipt(
     flush_runtime_command_receipt_for_session(&runtime.session_id, receipt)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_command_receipt_for_session(
     session_id_text: &str,
     receipt: &BattleRuntimeCommandReceipt,
@@ -801,7 +857,7 @@ fn flush_runtime_command_receipt_for_session(
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_event(runtime_event: &BattleRuntimeEvent) -> Result<bool, ApiError> {
     let session_id = parse_ulid_id::<GameSession>(&runtime_event.event.session_id)?;
     if commands_events_effects::find_event_by_key(session_id, &runtime_event.event.event_key)?
@@ -830,7 +886,7 @@ fn flush_runtime_event(runtime_event: &BattleRuntimeEvent) -> Result<bool, ApiEr
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCommand>>, ApiError> {
     let Some(command_id_text) = command_id_text else {
         return Ok(None);
@@ -845,7 +901,7 @@ fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCom
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn parse_ulid_id<E>(value: &str) -> Result<Id<E>, ApiError>
 where
     E: EntityKey<Key = Ulid>,
@@ -859,7 +915,7 @@ where
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn try_parse_ulid_id<E>(value: &str) -> Result<Id<E>, ()>
 where
     E: EntityKey<Key = Ulid>,

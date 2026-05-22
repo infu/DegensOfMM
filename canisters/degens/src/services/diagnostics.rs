@@ -32,7 +32,7 @@ use crate::{
     contract::{
         DiagnosticProjectionFlushView, DiagnosticProjectionKernelView, DiagnosticProjectionSnapshot,
     },
-    services::session_turn_runtime,
+    services::{battle_runtime, clock, session_turn_runtime},
 };
 #[cfg(not(feature = "benchmark"))]
 use crate::{
@@ -43,6 +43,9 @@ use crate::{
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
 const MAX_DIAGNOSTIC_ROWS_PER_ENTITY: u32 = 512;
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+type DiagnosticProjectionFlushResult = Result<DiagnosticProjectionFlushView, ApiError>;
 
 pub(crate) fn get_diagnostic_storage_snapshot(
     entity_names: Vec<String>,
@@ -125,13 +128,13 @@ pub(crate) fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectio
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
-pub(crate) fn run_diagnostic_projection_flush() -> Result<DiagnosticProjectionFlushView, ApiError> {
+pub(crate) fn run_diagnostic_projection_flush() -> DiagnosticProjectionFlushResult {
     crate::auth::require_controller("run_diagnostic_projection_flush")?;
     let outcome = session_turn_runtime::flush_runtime_projection_queue(
         session_turn_runtime::ProjectionFlushLimits::unbounded(),
     )?;
     Ok(DiagnosticProjectionFlushView {
-        flushed_at_ms: crate::services::clock::now_ms(),
+        flushed_at_ms: clock::now_ms(),
         entries_processed: outcome.entries_processed as u64,
         rows_flushed: outcome.rows_flushed as u64,
         queue_len_before: outcome.queue_len_before as u64,
@@ -139,6 +142,29 @@ pub(crate) fn run_diagnostic_projection_flush() -> Result<DiagnosticProjectionFl
         flush_truncated: outcome.truncated,
         stable_pages_delta: outcome.stable_pages_delta,
         flush_instructions: outcome.instruction_delta,
+    })
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+pub(crate) fn run_diagnostic_battle_projection_flush() -> DiagnosticProjectionFlushResult {
+    crate::auth::require_controller("run_diagnostic_battle_projection_flush")?;
+    let queue_len_before = battle_runtime::runtime_archive_projection_pending_entries() as u64;
+    let stable_pages_before = diagnostic_stable_size();
+    let instruction_before = diagnostic_instruction_counter();
+    let rows_flushed = battle_runtime::flush_runtime_archives_for_barrier()? as u64;
+    let instruction_after = diagnostic_instruction_counter();
+    let stable_pages_after = diagnostic_stable_size();
+    let queue_len_after = battle_runtime::runtime_archive_projection_pending_entries() as u64;
+
+    Ok(DiagnosticProjectionFlushView {
+        flushed_at_ms: clock::now_ms(),
+        entries_processed: queue_len_before.saturating_sub(queue_len_after),
+        rows_flushed,
+        queue_len_before,
+        queue_len_after,
+        flush_truncated: false,
+        stable_pages_delta: stable_pages_after.saturating_sub(stable_pages_before),
+        flush_instructions: instruction_after.saturating_sub(instruction_before),
     })
 }
 
@@ -164,6 +190,30 @@ pub(crate) fn get_diagnostic_benchmark_metrics(
     }
 
     Ok(crate::metrics::benchmark_metrics_page(cursor, limit))
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn diagnostic_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        canic_cdk::api::instruction_counter()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn diagnostic_stable_size() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        canic_cdk::api::stable_size()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
 }
 
 #[cfg(not(feature = "benchmark"))]

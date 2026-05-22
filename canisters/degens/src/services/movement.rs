@@ -1077,13 +1077,29 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     }
 
     let income_turn = session.current_turn;
+    #[cfg(feature = "benchmark")]
+    let participants = if command_is_runtime {
+        session_turn_runtime::latest_session_rows(&session.id().to_string())
+            .map(|(_, participants)| participants)
+            .unwrap_or_default()
+    } else {
+        sessions::page_participants_by_session_status(
+            session.id(),
+            "active",
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items
+    };
+    #[cfg(not(feature = "benchmark"))]
     let participants = sessions::page_participants_by_session_status(
         session.id(),
         "active",
         domm_game::MAX_LIST_LIMIT,
         None,
-    )?;
-    for mut participant in participants.items {
+    )?
+    .items;
+    for mut participant in participants {
         let income_events = materialize_income(
             &mut session,
             command_id,

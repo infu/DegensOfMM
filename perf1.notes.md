@@ -8621,3 +8621,33 @@ Verification:
 Decision:
 
 - Keep the labels feature-gated for now. This completes timer-surface wiring for projection-enabled builds without spending the default benchmark Wasm headroom; full suite execution with the labels still waits on the open projection benchmark code-size gate.
+
+## Worldmap Timer Runtime Participants
+
+Time: `2026-05-22T01:39:12Z`.
+
+Cut:
+
+- Changed benchmark active-runtime turn timers to reuse `SessionTurnRuntime` participant rows for income materialization instead of paging active participants from IcyDB.
+- Kept production and row-backed benchmark jobs on the durable participant page path.
+- Tried a broader active-runtime session+participant cut first, but the benchmark Wasm exceeded the IC code-section limit. The kept cut fits at code section `0x00bffe99` / `12,582,553` bytes, `359` bytes under the limit.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffe99` / `12,582,553` bytes, `359` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260522-runtime-participants-timer-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `305.92s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260521-scenario-maint-runtime-local/timer-surface`, `system_job:turn_deadline` moved from `5.0123B` to `4.4817B`.
+- `system_job:turn_resolution` moved from `6.1334B` to `5.4275B`.
+- `sync_session_turn` in the focused route measured `1.7748B`, above the original `1.6226B` guardrail, so the worldmap acceptance item stays open.
+
+Decision:
+
+- Keep this as a measured partial cut. The next worldmap timer work needs to remove larger stable costs, especially durable job scheduling/completion and session loads, while staying inside the benchmark Wasm limit.

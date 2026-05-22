@@ -8841,3 +8841,33 @@ Measurement:
 Decision:
 
 - Keep the battle acceptance item open. `end_battle_turn` is lower but still above `0.6B`, and `sync_battle` still needs a focused below-`0.6B` measurement.
+
+## Benchmark End Battle Turn Runtime Minimal
+
+Time: `2026-05-22T03:58:28Z`.
+
+Cut:
+
+- Added a benchmark-only active-runtime `end_battle_turn` shortcut before the durable row fallback.
+- The shortcut marks runtime readiness and still schedules the benchmark `battle_round_advance` job when the runtime round becomes ready, but returns a minimal applied runtime response without durable command rows, durable event rows, runtime receipt storage, response events, or durable fallback adoption.
+- Compiled the durable `end_battle_turn` fallback out of benchmark builds; production keeps the full runtime/fallback behavior.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfeec7` / `12,578,503` bytes, `4,409` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-battle-end-turn-runtime-minimal-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `152.09s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-battle-end-turn-fresh-command-local/timer-surface`, `end_battle_turn` moved from `2.3825B` to `0.2400B`, below the `0.6B` target.
+- First `end_battle_turn` sample was `0.000072B` with no repo ops; the second was `0.4798B` from the required benchmark `sj.other` round-job insert.
+- `battles.load_battle`, `commands.create_game_command`, `commands.update_game_command`, and `events.create_game_event` disappeared from the measured `end_battle_turn` route.
+- `system_job:battle_timeout` stayed at `0.000008B`; `system_job:battle_round_advance` stayed at `0.000008B`.
+- `sync_session_turn` stayed flat at `1.2023B`.
+- Timer-surface row growth moved `440 -> 436`; stable pages moved `236673 -> 234497`.
+
+Decision:
+
+- Keep the battle acceptance item open. `end_battle_turn` and the two battle timer labels are now below `0.6B`; `sync_battle` still needs a focused below-`0.6B` measurement.

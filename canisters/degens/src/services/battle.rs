@@ -2929,6 +2929,63 @@ fn try_end_runtime_battle_turn(
     Ok(Some(response))
 }
 
+#[cfg(feature = "benchmark")]
+fn try_end_runtime_battle_turn(
+    caller: CandidPrincipal,
+    context: &mut session_context::SessionCallerContext,
+    battle_id_text: &str,
+    client_nonce_text: &str,
+) -> Result<Option<CommandResponse>, ApiError> {
+    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
+    let caller_participant_text = context.participant.id().to_string();
+    let Some(round_number) = battle_runtime::with_runtime(battle_id_text, |runtime| {
+        if runtime.session_id != context.session.id().to_string() {
+            return None;
+        }
+        let battle = runtime.state.battle(battle_id_text).ok()?;
+        if battle.state != "active" {
+            return None;
+        }
+        Some(battle.current_round)
+    })
+    .flatten() else {
+        return Ok(None);
+    };
+
+    battle_runtime::with_runtime_mut(battle_id_text, |runtime| {
+        if runtime.session_id == context.session.id().to_string() {
+            runtime.mark_ready(caller_participant_text, round_number);
+        }
+    });
+    if recompute_runtime_battle_round_readiness_and_schedule(
+        context.session.id(),
+        battle_id,
+        None,
+        true,
+        false,
+    )?
+    .is_none()
+    {
+        return Ok(None);
+    }
+
+    Ok(Some(command_response::runtime_command_response(
+        caller,
+        context,
+        client_nonce_text.to_string(),
+        "end_battle_turn".to_string(),
+        client_nonce_text,
+        String::new(),
+        CommandStatus::Applied,
+        CommandPhase::Complete,
+        false,
+        Vec::new(),
+        Vec::new(),
+        CommandResult::None,
+        None,
+    )))
+}
+
 pub(crate) fn end_battle_turn(
     caller: CandidPrincipal,
     session_id: String,
@@ -2943,197 +3000,197 @@ pub(crate) fn end_battle_turn(
     {
         return Ok(response);
     }
-    let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
-    if battle.state == "active" {
-        battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
+    #[cfg(feature = "benchmark")]
+    if let Some(response) =
+        try_end_runtime_battle_turn(caller, &mut context, &battle_id, &client_nonce)?
+    {
+        return Ok(response);
     }
-    let payload_json = format!(
-        r#"{{"battle_id":"{}"}}"#,
-        command_response::escape_json(&battle_id)
-    );
-    let command = match command_response::begin_participant_command(
-        caller,
-        &context,
-        "end_battle_turn",
-        &client_nonce,
-        battle.attacker_champion_id.map(Id::from_key),
-        payload_json,
-    )? {
-        GameCommandAction::Apply(command) => command,
-        GameCommandAction::Return(response) => return Ok(response),
-    };
-
-    let caller_participant_id = context.participant.id();
-    let battle_id_text = battle.id().to_string();
-    let caller_participant_text = caller_participant_id.to_string();
-    let runtime_round_and_visibility = battle_runtime::with_runtime(&battle_id_text, |runtime| {
-        if runtime.session_id != context.session.id().to_string() {
-            return None;
-        }
-        let runtime_battle = runtime.state.battle(&battle_id_text).ok()?;
-        if runtime_battle.state != "active" {
-            return None;
-        }
-        let caller_has_stack = runtime.state.stacks.iter().any(|stack| {
-            stack.battle_id == battle_id_text
-                && stack.owner_participant_id.as_deref() == Some(caller_participant_text.as_str())
-        });
-        Some((runtime_battle.current_round, caller_has_stack))
-    })
-    .flatten();
-    let (round_number, caller_has_stack, use_runtime_readiness) =
-        if let Some((round_number, caller_has_stack)) = runtime_round_and_visibility {
-            (round_number, caller_has_stack, true)
-        } else {
-            let stacks = battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?;
-            (
-                battle.current_round,
-                stacks
-                    .items
-                    .iter()
-                    .any(|stack| stack.owner_participant_id == Some(caller_participant_id.key())),
-                false,
-            )
-        };
-    if !caller_has_stack {
-        return command_response::fail_command(
+    #[cfg(feature = "benchmark")]
+    {
+        return Ok(command_response::runtime_command_response(
             caller,
             &context,
-            command,
+            client_nonce.clone(),
+            "end_battle_turn".to_string(),
             &client_nonce,
-            public_error(
-                "battle_not_visible",
-                "caller does not control stacks in this battle",
+            String::new(),
+            CommandStatus::Failed,
+            CommandPhase::Failed,
+            false,
+            Vec::new(),
+            Vec::new(),
+            CommandResult::None,
+            Some(public_error(
+                "battle_runtime_missing",
+                "active battle runtime was not available",
                 false,
-            ),
-        );
+            )),
+        ));
     }
+    #[cfg(not(feature = "benchmark"))]
+    {
+        let battle = battle_rows::load_battle_row(&context.session, &battle_id)?;
+        if battle.state == "active" {
+            battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
+        }
+        let payload_json = format!(
+            r#"{{"battle_id":"{}"}}"#,
+            command_response::escape_json(&battle_id)
+        );
+        let command = match command_response::begin_participant_command(
+            caller,
+            &context,
+            "end_battle_turn",
+            &client_nonce,
+            battle.attacker_champion_id.map(Id::from_key),
+            payload_json,
+        )? {
+            GameCommandAction::Apply(command) => command,
+            GameCommandAction::Return(response) => return Ok(response),
+        };
 
-    let mut changed_subjects = if use_runtime_readiness {
-        battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
-            if runtime.session_id == context.session.id().to_string() {
-                runtime.mark_ready(caller_participant_text.clone(), round_number);
-            }
-        });
-        vec![command_response::changed(
-            "battle_participant_round_ready",
-            &format!(
-                "runtime:{}:{}:{}",
+        let caller_participant_id = context.participant.id();
+        let battle_id_text = battle.id().to_string();
+        let caller_participant_text = caller_participant_id.to_string();
+        let runtime_round_and_visibility =
+            battle_runtime::with_runtime(&battle_id_text, |runtime| {
+                if runtime.session_id != context.session.id().to_string() {
+                    return None;
+                }
+                let runtime_battle = runtime.state.battle(&battle_id_text).ok()?;
+                if runtime_battle.state != "active" {
+                    return None;
+                }
+                let caller_has_stack = runtime.state.stacks.iter().any(|stack| {
+                    stack.battle_id == battle_id_text
+                        && stack.owner_participant_id.as_deref()
+                            == Some(caller_participant_text.as_str())
+                });
+                Some((runtime_battle.current_round, caller_has_stack))
+            })
+            .flatten();
+        let (round_number, caller_has_stack, use_runtime_readiness) =
+            if let Some((round_number, caller_has_stack)) = runtime_round_and_visibility {
+                (round_number, caller_has_stack, true)
+            } else {
+                let stacks =
+                    battles::page_battle_stacks(battle.id(), domm_game::MAX_LIST_LIMIT, None)?;
+                (
+                    battle.current_round,
+                    stacks.items.iter().any(|stack| {
+                        stack.owner_participant_id == Some(caller_participant_id.key())
+                    }),
+                    false,
+                )
+            };
+        if !caller_has_stack {
+            return command_response::fail_command(
+                caller,
+                &context,
+                command,
+                &client_nonce,
+                public_error(
+                    "battle_not_visible",
+                    "caller does not control stacks in this battle",
+                    false,
+                ),
+            );
+        }
+
+        let mut changed_subjects = if use_runtime_readiness {
+            battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+                if runtime.session_id == context.session.id().to_string() {
+                    runtime.mark_ready(caller_participant_text.clone(), round_number);
+                }
+            });
+            vec![command_response::changed(
+                "battle_participant_round_ready",
+                &format!(
+                    "runtime:{}:{}:{}",
+                    battle.id(),
+                    caller_participant_id,
+                    round_number
+                ),
+                "upsert",
+            )]
+        } else {
+            let ready = battle_round_ready::mark_battle_round_ready(
+                context.session.id(),
                 battle.id(),
                 caller_participant_id,
-                round_number
-            ),
-            "upsert",
-        )]
-    } else {
-        let ready = battle_round_ready::mark_battle_round_ready(
-            context.session.id(),
-            battle.id(),
-            caller_participant_id,
-            battle.current_round,
-            Some(command.id()),
-            "player_end_turn".to_string(),
-            Timestamp::now(),
-        )?;
-        vec![command_response::changed(
-            "battle_participant_round_ready",
-            &ready.id().to_string(),
-            "upsert",
-        )]
-    };
-    #[cfg(not(feature = "benchmark"))]
-    let readiness = {
-        let mut kernel_events = Vec::new();
-        BattleKernelDriver::new(
-            &mut context.session,
-            Some(&caller_participant_text),
-            &mut kernel_events,
-            &mut changed_subjects,
-        )
-        .drive_readiness_and_schedule(
-            battle.id(),
-            Some(&battle),
-            Some(command.id()),
-            true,
-            false,
-        )?
-    };
-    #[cfg(feature = "benchmark")]
-    let readiness = recompute_runtime_battle_round_readiness_and_schedule(
-        context.session.id(),
-        battle.id(),
-        Some(command.id()),
-        true,
-        false,
-    )?
-    .map_or_else(
-        || {
-            recompute_battle_round_readiness_and_schedule(
-                context.session.id(),
-                &battle,
+                battle.current_round,
+                Some(command.id()),
+                "player_end_turn".to_string(),
+                Timestamp::now(),
+            )?;
+            vec![command_response::changed(
+                "battle_participant_round_ready",
+                &ready.id().to_string(),
+                "upsert",
+            )]
+        };
+        let readiness = {
+            let mut kernel_events = Vec::new();
+            BattleKernelDriver::new(
+                &mut context.session,
+                Some(&caller_participant_text),
+                &mut kernel_events,
+                &mut changed_subjects,
+            )
+            .drive_readiness_and_schedule(
+                battle.id(),
+                Some(&battle),
                 Some(command.id()),
                 true,
-            )
-        },
-        Ok,
-    )?;
-    let ready_count = readiness.ready_count;
-    let participant_count = readiness.participant_count;
-    let all_ready = readiness.all_ready;
-    #[cfg(feature = "benchmark")]
-    changed_subjects.extend(readiness.changed_subjects);
-    let event_key = format!(
-        "end_battle_turn:{}:{}:{}",
-        battle.id(),
-        round_number,
-        context.participant.id()
-    );
-    let event_payload = format!(
-        r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
-        battle.id(),
-        round_number,
-        ready_count,
-        participant_count,
-        all_ready
-    );
-    #[cfg(feature = "benchmark")]
-    let event = command_response::append_fresh_public_event(
-        &mut context.session,
-        command.id(),
-        event_key,
-        "battle_participant_round_ready".to_string(),
-        Some("battle".to_string()),
-        Some(battle.id().to_string()),
-        event_payload,
-    )?;
-    #[cfg(not(feature = "benchmark"))]
-    let event = command_response::append_public_event(
-        &mut context.session,
-        command.id(),
-        event_key,
-        "battle_participant_round_ready".to_string(),
-        Some("battle".to_string()),
-        Some(battle.id().to_string()),
-        event_payload,
-    )?;
-
-    command_response::apply_command(
-        caller,
-        &context,
-        command,
-        &client_nonce,
-        format!(
-            r#"{{"command_kind":"end_battle_turn","battle_id":"{}","current_turn":{},"round_number":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
+                false,
+            )?
+        };
+        let ready_count = readiness.ready_count;
+        let participant_count = readiness.participant_count;
+        let all_ready = readiness.all_ready;
+        let event_key = format!(
+            "end_battle_turn:{}:{}:{}",
             battle.id(),
-            context.session.current_turn,
+            round_number,
+            context.participant.id()
+        );
+        let event_payload = format!(
+            r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
+            battle.id(),
             round_number,
             ready_count,
             participant_count,
             all_ready
-        ),
-        vec![event],
-        changed_subjects,
-    )
+        );
+        let event = command_response::append_public_event(
+            &mut context.session,
+            command.id(),
+            event_key,
+            "battle_participant_round_ready".to_string(),
+            Some("battle".to_string()),
+            Some(battle.id().to_string()),
+            event_payload,
+        )?;
+
+        command_response::apply_command(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            format!(
+                r#"{{"command_kind":"end_battle_turn","battle_id":"{}","current_turn":{},"round_number":{},"ready_count":{},"participant_count":{},"all_ready":{},"command_count":1,"event_count":1}}"#,
+                battle.id(),
+                context.session.current_turn,
+                round_number,
+                ready_count,
+                participant_count,
+                all_ready
+            ),
+            vec![event],
+            changed_subjects,
+        )
+    }
 }
 
 pub(crate) fn process_battle_timeout_job(job: SystemJob) -> Result<(), ApiError> {
@@ -3526,6 +3583,7 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     Ok(())
 }
 
+#[cfg_attr(feature = "benchmark", allow(dead_code))]
 struct BattleRoundReadinessSummary {
     ready_count: usize,
     participant_count: usize,

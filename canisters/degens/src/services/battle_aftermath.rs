@@ -2,7 +2,7 @@ use domm_degens_schema::schema::{
     Battle, Champion, ChampionArmyStack, GameCommand, GameParticipant, GameSession, MapOccupancy,
     NeutralArmy, PlayerAccount, Town, UnitDefinition, WorldObject,
 };
-use domm_game::{ApiError, ApiEventView, ChangedSubject, MAX_LIST_LIMIT};
+use domm_game::{ApiError, ApiEventView, BattleStackRecord, ChangedSubject, MAX_LIST_LIMIT};
 use icydb::{traits::EntityValue, types::Id};
 
 use crate::repos::{
@@ -16,10 +16,63 @@ use super::{
     session_turn_runtime, town_runtime,
 };
 
+#[derive(Clone, Copy)]
+enum BattleAftermathStackSource<'a> {
+    DurableRows,
+    Runtime(&'a [BattleStackRecord]),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BattleAftermathStackSummary {
+    unit_id: String,
+    side: String,
+    origin_kind: String,
+    origin_stack_id_text: Option<String>,
+    quantity: u32,
+    front_hp: u16,
+    status: String,
+}
+
 pub(crate) fn apply_resolved_battle_aftermath(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     battle_id: Id<Battle>,
+    events: &mut Vec<ApiEventView>,
+    changed_subjects: &mut Vec<ChangedSubject>,
+) -> Result<(), ApiError> {
+    apply_resolved_battle_aftermath_from_source(
+        session,
+        command_id,
+        battle_id,
+        BattleAftermathStackSource::DurableRows,
+        events,
+        changed_subjects,
+    )
+}
+
+pub(crate) fn apply_resolved_battle_aftermath_with_runtime_survivors(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    survivor_stacks: &[BattleStackRecord],
+    events: &mut Vec<ApiEventView>,
+    changed_subjects: &mut Vec<ChangedSubject>,
+) -> Result<(), ApiError> {
+    apply_resolved_battle_aftermath_from_source(
+        session,
+        command_id,
+        battle_id,
+        BattleAftermathStackSource::Runtime(survivor_stacks),
+        events,
+        changed_subjects,
+    )
+}
+
+fn apply_resolved_battle_aftermath_from_source(
+    session: &mut GameSession,
+    command_id: Id<GameCommand>,
+    battle_id: Id<Battle>,
+    stack_source: BattleAftermathStackSource<'_>,
     events: &mut Vec<ApiEventView>,
     changed_subjects: &mut Vec<ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -45,13 +98,30 @@ pub(crate) fn apply_resolved_battle_aftermath(
     }
 
     match battle.battle_type.as_str() {
-        "neutral" => {
-            apply_neutral_aftermath(session, command_id, &battle, events, changed_subjects)?
-        }
-        "town" => apply_town_aftermath(session, command_id, &battle, events, changed_subjects)?,
-        "champion" => {
-            apply_champion_aftermath(session, command_id, &battle, events, changed_subjects)?
-        }
+        "neutral" => apply_neutral_aftermath(
+            session,
+            command_id,
+            &battle,
+            stack_source,
+            events,
+            changed_subjects,
+        )?,
+        "town" => apply_town_aftermath(
+            session,
+            command_id,
+            &battle,
+            stack_source,
+            events,
+            changed_subjects,
+        )?,
+        "champion" => apply_champion_aftermath(
+            session,
+            command_id,
+            &battle,
+            stack_source,
+            events,
+            changed_subjects,
+        )?,
         _ => {}
     }
 
@@ -97,6 +167,7 @@ fn apply_neutral_aftermath(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     battle: &Battle,
+    stack_source: BattleAftermathStackSource<'_>,
     events: &mut Vec<ApiEventView>,
     changed_subjects: &mut Vec<ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -116,7 +187,7 @@ fn apply_neutral_aftermath(
         return Ok(());
     };
 
-    write_champion_survivors(battle.id(), command_id)?;
+    write_champion_survivors(battle.id(), command_id, stack_source)?;
     let mut neutral = neutrals::load_neutral_army(neutral_id)?
         .ok_or_else(|| public_error("neutral_army_not_found", "neutral army not found", true))?;
     neutral.state = "defeated".to_string();
@@ -207,6 +278,7 @@ fn apply_town_aftermath(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     battle: &Battle,
+    stack_source: BattleAftermathStackSource<'_>,
     events: &mut Vec<ApiEventView>,
     changed_subjects: &mut Vec<ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -232,7 +304,7 @@ fn apply_town_aftermath(
     town.last_command_id = Some(command_id.key());
     town = towns::update_town(town)?;
     town_runtime::mirror_town(&town);
-    write_town_garrison_survivors(battle.id(), &town, command_id)?;
+    write_town_garrison_survivors(battle.id(), &town, command_id, stack_source)?;
 
     let mut champion = champions_artifacts::load_champion(champion_id)?
         .ok_or_else(|| public_error("champion_not_found", "champion not found", true))?;
@@ -280,6 +352,7 @@ fn apply_champion_aftermath(
     session: &mut GameSession,
     command_id: Id<GameCommand>,
     battle: &Battle,
+    stack_source: BattleAftermathStackSource<'_>,
     events: &mut Vec<ApiEventView>,
     changed_subjects: &mut Vec<ChangedSubject>,
 ) -> Result<(), ApiError> {
@@ -314,7 +387,7 @@ fn apply_champion_aftermath(
         return Ok(());
     };
 
-    write_champion_survivors(battle.id(), command_id)?;
+    write_champion_survivors(battle.id(), command_id, stack_source)?;
     let mut defeated = defeated;
     defeated.status = "defeated".to_string();
     defeated.in_battle_id = None;
@@ -369,8 +442,9 @@ fn apply_champion_aftermath(
 fn write_champion_survivors(
     battle_id: Id<Battle>,
     command_id: Id<GameCommand>,
+    stack_source: BattleAftermathStackSource<'_>,
 ) -> Result<(), ApiError> {
-    for battle_stack in battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?.items {
+    for battle_stack in stack_summaries_for_aftermath(battle_id, stack_source)? {
         if battle_stack.origin_kind != "champion_army" {
             continue;
         }
@@ -397,25 +471,26 @@ fn write_town_garrison_survivors(
     battle_id: Id<Battle>,
     town: &Town,
     command_id: Id<GameCommand>,
+    stack_source: BattleAftermathStackSource<'_>,
 ) -> Result<(), ApiError> {
     for stack in town_runtime::projection_for_town(town)?.garrison_stacks {
         towns::delete_town_garrison_stack(stack.id())?;
     }
     let mut survivor_stacks = Vec::new();
-    for (slot_index, battle_stack) in battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?
-        .items
+    for (slot_index, battle_stack) in stack_summaries_for_aftermath(battle_id, stack_source)?
         .into_iter()
         .filter(|stack| stack.side == "attacker" && stack.status == "active" && stack.quantity > 0)
         .enumerate()
     {
-        let unit = content::load_unit(Id::<UnitDefinition>::from_key(battle_stack.unit_id))?
-            .ok_or_else(|| {
-                ApiError::new(
-                    "unit_not_found",
-                    "battle stack unit definition was not found",
-                    true,
-                )
-            })?;
+        let unit_id =
+            session_context::parse_id::<UnitDefinition>(&battle_stack.unit_id, "unit_id")?;
+        let unit = content::load_unit(unit_id)?.ok_or_else(|| {
+            ApiError::new(
+                "unit_not_found",
+                "battle stack unit definition was not found",
+                true,
+            )
+        })?;
         let stack = towns::create_town_garrison_stack(
             Id::<GameSession>::from_key(town.session_id),
             town.id(),
@@ -430,6 +505,47 @@ fn write_town_garrison_survivors(
     }
     town_runtime::replace_garrison_stacks(town, survivor_stacks)?;
     Ok(())
+}
+
+fn stack_summaries_for_aftermath(
+    battle_id: Id<Battle>,
+    source: BattleAftermathStackSource<'_>,
+) -> Result<Vec<BattleAftermathStackSummary>, ApiError> {
+    match source {
+        BattleAftermathStackSource::DurableRows => {
+            Ok(
+                battles::page_battle_stacks(battle_id, MAX_LIST_LIMIT, None)?
+                    .items
+                    .into_iter()
+                    .map(|stack| BattleAftermathStackSummary {
+                        unit_id: Id::<UnitDefinition>::from_key(stack.unit_id).to_string(),
+                        side: stack.side,
+                        origin_kind: stack.origin_kind,
+                        origin_stack_id_text: stack.origin_stack_id_text,
+                        quantity: stack.quantity,
+                        front_hp: stack.front_hp,
+                        status: stack.status,
+                    })
+                    .collect(),
+            )
+        }
+        BattleAftermathStackSource::Runtime(stacks) => {
+            let battle_id_text = battle_id.to_string();
+            Ok(stacks
+                .iter()
+                .filter(|stack| stack.battle_id == battle_id_text)
+                .map(|stack| BattleAftermathStackSummary {
+                    unit_id: stack.unit_id.clone(),
+                    side: stack.side.clone(),
+                    origin_kind: stack.origin_kind.clone(),
+                    origin_stack_id_text: stack.origin_stack_id_text.clone(),
+                    quantity: stack.quantity,
+                    front_hp: stack.front_hp,
+                    status: stack.status.clone(),
+                })
+                .collect())
+        }
+    }
 }
 
 fn capture_artifacts(
@@ -758,4 +874,88 @@ where
 {
     id.map(|id| format!(r#""{}""#, Id::<E>::from_key(id)))
         .unwrap_or_else(|| "null".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use icydb::types::Ulid;
+
+    use super::*;
+
+    fn battle_stack_record(
+        battle_id: String,
+        unit_id: String,
+        side: &str,
+        quantity: u32,
+    ) -> BattleStackRecord {
+        BattleStackRecord {
+            battle_stack_id: Id::<domm_degens_schema::schema::BattleStack>::from_key(
+                Ulid::generate(),
+            )
+            .to_string(),
+            battle_id,
+            unit_id,
+            owner_participant_id: None,
+            side: side.to_string(),
+            slot_index: 0,
+            origin_kind: "champion_army".to_string(),
+            origin_stack_id_text: Some(
+                Id::<ChampionArmyStack>::from_key(Ulid::generate()).to_string(),
+            ),
+            origin_slot_index: 0,
+            champion_might: 0,
+            champion_guard: 0,
+            attack: 1,
+            defense: 1,
+            damage_min: 1,
+            damage_max: 1,
+            max_hp: 10,
+            speed: 1,
+            initiative: 1,
+            ranged: false,
+            flying: false,
+            quantity,
+            front_hp: 8,
+            shots_remaining: 0,
+            battle_x: 0,
+            battle_y: 0,
+            readiness: 0,
+            acted_round: 0,
+            retaliated_round: 0,
+            defended_round: 0,
+            waited_round: 0,
+            cast_round: 0,
+            status: "active".to_string(),
+            last_command_id: None,
+            status_keys: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn runtime_stack_summaries_filter_to_battle_without_rows() {
+        let battle_id = Id::<Battle>::from_key(Ulid::generate());
+        let other_battle_id = Id::<Battle>::from_key(Ulid::generate());
+        let unit_id = Id::<UnitDefinition>::from_key(Ulid::generate()).to_string();
+        let stacks = vec![
+            battle_stack_record(battle_id.to_string(), unit_id.clone(), "attacker", 7),
+            battle_stack_record(other_battle_id.to_string(), unit_id.clone(), "defender", 3),
+        ];
+
+        let summaries =
+            stack_summaries_for_aftermath(battle_id, BattleAftermathStackSource::Runtime(&stacks))
+                .expect("runtime summaries should not read durable rows");
+
+        assert_eq!(
+            summaries,
+            vec![BattleAftermathStackSummary {
+                unit_id,
+                side: "attacker".to_string(),
+                origin_kind: "champion_army".to_string(),
+                origin_stack_id_text: stacks[0].origin_stack_id_text.clone(),
+                quantity: 7,
+                front_hp: 8,
+                status: "active".to_string(),
+            }]
+        );
+    }
 }

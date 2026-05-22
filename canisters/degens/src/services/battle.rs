@@ -2441,6 +2441,7 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
 ) -> Result<(), ApiError> {
     let battle_id_text = battle_id.to_string();
     let mut runtime_projected = false;
+    let mut runtime_survivor_stacks = None;
     if let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) {
         let runtime_battle = runtime
             .state
@@ -2449,7 +2450,8 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
         if runtime_battle.state != "resolved" {
             return Ok(());
         }
-        battle_rows::persist_battle_state(&runtime.state, command_id)?;
+        battle_rows::persist_battle_header_from_state(&runtime.state, command_id)?;
+        runtime_survivor_stacks = Some(runtime.state.stacks.clone());
         battle_runtime::archive_runtime_events(&runtime);
         changed_subjects.push(command_response::changed(
             "battle",
@@ -2460,13 +2462,24 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
         runtime_projected = true;
     }
 
-    battle_aftermath::apply_resolved_battle_aftermath(
-        session,
-        command_id,
-        battle_id,
-        events,
-        changed_subjects,
-    )?;
+    if let Some(survivor_stacks) = runtime_survivor_stacks.as_deref() {
+        battle_aftermath::apply_resolved_battle_aftermath_with_runtime_survivors(
+            session,
+            command_id,
+            battle_id,
+            survivor_stacks,
+            events,
+            changed_subjects,
+        )?;
+    } else {
+        battle_aftermath::apply_resolved_battle_aftermath(
+            session,
+            command_id,
+            battle_id,
+            events,
+            changed_subjects,
+        )?;
+    }
     if runtime_projected
         || battles::load_battle(battle_id)?.is_some_and(|battle| battle.state != "active")
     {

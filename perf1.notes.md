@@ -8417,3 +8417,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Active battle runtime restore no longer depends on durable tactical child rows for snapshots written by current production code, unblocking the next cleanup work around tactical child-row projection and aftermath reads.
+
+## Runtime Survivor Battle Aftermath
+
+Time: `2026-05-22T00:09:17Z`.
+
+Cut:
+
+- Added a runtime survivor stack source to `battle_aftermath`.
+- Active resolved battle handoff now persists only the resolved `Battle` header before applying aftermath.
+- Champion survivor updates and town garrison replacement can consume `BattleRuntime.state.stacks` summaries directly, avoiding the old full `BattleStack` projection just so aftermath could page those rows back.
+- Row-backed and legacy aftermath paths keep using durable `BattleStack` rows.
+- Added direct unit coverage for runtime stack-summary filtering without durable rows.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo test -p domm-degens-canister battle_aftermath -- --nocapture`
+- `cargo test -p domm-degens-canister battle -- --nocapture`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_render_projection_tracks_battle_aftermath_objects --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfe1fa` / `12,575,226` bytes, `7,686` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Active battle aftermath no longer depends on durable tactical survivor rows, leaving those rows as a row-backed/legacy fallback instead of an active runtime finalization prerequisite.

@@ -272,6 +272,13 @@ fn apply_level_choice(
     }
     champion.last_command_id = Some(command.id().key());
     champion = persist_or_mirror_active_champion(context, champion)?;
+    if skill_key == SKILL_SOUR_SORCERY {
+        session_turn_runtime::mark_runtime_champion_spellbook_complete(
+            &context.session.id().to_string(),
+            context.session.current_turn,
+            champion.id(),
+        );
+    }
     let event = command_response::append_runtime_or_fresh_public_event(
         context,
         command.id(),

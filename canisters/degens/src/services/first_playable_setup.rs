@@ -232,30 +232,33 @@ fn seed_content_definition_batches(
         content::cache_buildings(&rows);
     }
 
-    if !manifest.spells.is_empty()
-        && content::find_spell_by_ruleset_slug(ruleset_id, &manifest.spells[0].slug)?.is_none()
-    {
-        let rows = manifest
-            .spells
-            .iter()
-            .map(|spell| SpellDefinition {
-                id: Ulid::generate(),
-                ruleset_id: ruleset_id.key(),
-                slug: spell.slug.clone(),
-                name: spell.name.clone(),
-                description: spell.description.clone(),
-                icon_key: spell.icon_key.clone(),
-                school: spell.school.clone(),
-                level: spell.level,
-                mana_cost: spell.mana_cost,
-                target_type: spell.target_type.clone(),
-                effect_key: spell.effect_key.clone(),
-                duration_rounds: spell.duration_rounds,
-                created_at: now,
-                updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_spells", rows)?;
+    if !manifest.spells.is_empty() {
+        let preferred_cache_slug = manifest.spells.last().map(|spell| spell.slug.as_str());
+        let presence_slug = preferred_cache_slug.unwrap_or(&manifest.spells[0].slug);
+        if content::find_spell_by_ruleset_slug(ruleset_id, presence_slug)?.is_none() {
+            let rows = manifest
+                .spells
+                .iter()
+                .map(|spell| SpellDefinition {
+                    id: Ulid::generate(),
+                    ruleset_id: ruleset_id.key(),
+                    slug: spell.slug.clone(),
+                    name: spell.name.clone(),
+                    description: spell.description.clone(),
+                    icon_key: spell.icon_key.clone(),
+                    school: spell.school.clone(),
+                    level: spell.level,
+                    mana_cost: spell.mana_cost,
+                    target_type: spell.target_type.clone(),
+                    effect_key: spell.effect_key.clone(),
+                    duration_rounds: spell.duration_rounds,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .collect::<Vec<_>>();
+            let rows = foundation::insert_many_atomic("content.seed_spells", rows)?;
+            content::cache_seeded_spells(&rows, preferred_cache_slug);
+        }
     }
 
     if content::find_artifact_by_ruleset_slug(ruleset_id, "bent-banner")?.is_none() {

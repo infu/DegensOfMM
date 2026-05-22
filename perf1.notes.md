@@ -9014,3 +9014,32 @@ Measurement:
 Decision:
 
 - Mark the Section 72 hard-target rule complete. Section 72 now has an enforced benchmark artifact instead of relying on prose-only discipline.
+
+## Learn Spell Runtime Empty Spellbook Cache
+
+Time: `2026-05-22T05:51:38Z`.
+
+Cut:
+
+- Kept the spell cache bounded to the existing single-entry last-slug cache instead of adding a broad spell-definition cache.
+- Warmed that cache with the preferred endpoint spell during first-playable setup by checking the preferred slug for presence instead of the first manifest spell.
+- Marked the active runtime spellbook complete-empty when `select_champion_level_up` applies `sour_sorcery`; this lets the immediately following `learn_champion_spell` skip the durable spellbook page safely in the normal endpoint-surface flow.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister --features benchmark`
+- Benchmark Wasm build: code section `0x00bffdce`, about `562` bytes under the `0x00c00000` limit.
+- `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-learn-sour-spell-cache-local/endpoint-surface CANIC_POCKET_IC_LOCK_NAMESPACE=domm-bench-20260522-learn-sour-spell-cache-local cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint -- --nocapture`
+
+Measurement:
+
+- Endpoint-surface artifact: `target/benchmarks/20260522-learn-sour-spell-cache-local/endpoint-surface`.
+- Coverage stayed `59/59`; row growth stayed `106`; stable pages stayed `2049 -> 59905`.
+- `learn_champion_spell`: `0.7055B -> 0.0002B` versus `20260521-spell-slug-last-cache-local`.
+- `select_champion_level_up`: `0.0002B`; `cast_adventure_spell`: `0.0002B`.
+- Remaining top endpoint-surface costs are now `accept_quest` (`0.7082B`) and `submit_dwelling_recruit` (`0.7075B`), plus the setup/session floor.
+
+Decision:
+
+- Mark Section 70 complete. Keep champion magic parked unless a regression appears; the next round-robin target should be quest accept/preview, dwelling recruit, or the remaining setup/session floor with a real runtime authority/recovery story.

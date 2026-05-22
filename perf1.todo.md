@@ -1111,10 +1111,11 @@ Current measured state from `20260519-sync-income-reserved-event-gate-j`:
 
 ### 70. Random Endpoint Cluster: Quest, Learning, Dwelling, Or Setup Floor
 
-- [ ] Pick a different bounded endpoint/cluster from `20260521-spell-slug-last-cache-local`; prefer quest preview/accept, `learn_champion_spell`, `submit_dwelling_recruit`, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story.
-- [ ] Keep `cast_adventure_spell` parked unless a regression blocks adventure casting; repeated spell definition reads are now last-slug cached and the measured cast route is in the near-zero band.
-- [ ] Do not spend code-section headroom on broad caches unless the Wasm size is checked first; current benchmark Wasm headroom is only about `265` bytes.
-- [ ] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
+- [x] Pick a different bounded endpoint/cluster from `20260521-spell-slug-last-cache-local`; prefer quest preview/accept, `learn_champion_spell`, `submit_dwelling_recruit`, or the remaining durable setup/session repo-op floor only with a real runtime authority/recovery story. Picked `learn_champion_spell`: selecting Sour Sorcery now marks the active runtime spellbook complete-empty, and setup warms the single spell slug cache for the endpoint spell instead of the first manifest spell.
+- [x] Keep `cast_adventure_spell` parked unless a regression blocks adventure casting; repeated spell definition reads are now last-slug cached and the measured cast route is in the near-zero band. The new endpoint-surface artifact kept `cast_adventure_spell` at `0.0002B`.
+- [x] Do not spend code-section headroom on broad caches unless the Wasm size is checked first; current benchmark Wasm headroom is only about `265` bytes. Checked the installable benchmark Wasm after the cut: code section `0x00bffdce`, about `562` bytes under the `0x00c00000` limit; no broad cache was added.
+- [x] Measure the learn-spell cache cut. Artifact `target/benchmarks/20260522-learn-sour-spell-cache-local/endpoint-surface` passed with `59/59` endpoints, row growth `106`, stable pages `2049 -> 59905`, and moved `learn_champion_spell` `0.7055B -> 0.0002B` versus `20260521-spell-slug-last-cache-local`.
+- [x] Continue the round-robin rule: one bounded cut, one endpoint-surface benchmark, update notes/todo, commit, push.
 
 ### 71. Timer And System Job Benchmark Measurement
 

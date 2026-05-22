@@ -1130,6 +1130,18 @@ pub(crate) fn mirror_champion_spell_snapshot(
     .unwrap_or(false)
 }
 
+pub(crate) fn mark_runtime_champion_spellbook_complete(
+    session_id: &str,
+    turn_number: u32,
+    champion_id: Id<Champion>,
+) -> bool {
+    with_runtime_mut(session_id, turn_number, |runtime| {
+        runtime.mark_champion_spellbook_complete(champion_id);
+        true
+    })
+    .unwrap_or(false)
+}
+
 pub(crate) fn scenario_rule_snapshot(
     session_id: &str,
     turn_number: u32,

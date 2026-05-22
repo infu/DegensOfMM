@@ -198,6 +198,15 @@ fn cache_spell(row: &SpellDefinition) {
     })
 }
 
+pub(crate) fn cache_seeded_spells(rows: &[SpellDefinition], preferred_slug: Option<&str>) {
+    let preferred = preferred_slug
+        .and_then(|slug| rows.iter().find(|row| row.slug == slug))
+        .or_else(|| rows.last());
+    if let Some(row) = preferred {
+        cache_spell(row);
+    }
+}
+
 fn cached_spell_by_slug(ruleset_id: Id<RulesetDefinition>, slug: &str) -> Option<SpellDefinition> {
     let ruleset_key = ruleset_id.key();
     SPELL_SLUG_CACHE.with(|cache| {

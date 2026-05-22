@@ -89,6 +89,34 @@ Active battle projection rows must not be required for current-code upgrade
 restore or active aftermath. Legacy upgrades and row-backed fallback may still
 hydrate from rows until their compatibility windows close.
 
-## Pending Taxonomy Slices
+## Index Retirement Sequencing
 
-- Index retirement sequencing is still tracked in `perf1.todo.md` Section 72D.
+Do not delete schemas, tables, or indexes first. A table or index can be
+collapsed only after the owning kernel no longer treats it as live authority and
+after recovery/history/projection uses are explicitly covered.
+
+Retirement order:
+
+1. Remove the table or index from hot active paths.
+2. Prove public queries, timers, upgrade restore, projection flush, history, and
+   diagnostics either read the kernel/runtime state or use a deliberate
+   projection/fallback path.
+3. Keep the durable row/index through at least one measured checkpoint as a
+   compatibility and observability surface.
+4. Add benchmark or diagnostic evidence that row growth, projection lag, and
+   recovery behavior remain acceptable without the hot-path dependency.
+5. Only then collapse indexes, narrow projections, or delete schemas in a
+   separate migration-aware checkpoint.
+
+First retirement candidates:
+
+| Candidate | Why first | Required proof before collapse |
+| --- | --- | --- |
+| Movement status/turn indexes | Active movement intent ownership is moving into `SessionTurnRuntime`; status/turn scans are legacy row-backed lookup surfaces. | Runtime submit/sync/timer paths avoid the index, projection flush can reconstruct required history, and row-backed replay/recovery has a bounded fallback. |
+| Battle stack/occupancy indexes | Active battle tactics now live in `BattleRuntime`; stack/occupancy rows are projection/history/fallback surfaces. | Active get/sync/submit/timer/cast/aftermath/upgrade paths do not require tactical child-row indexes for current-code runtime battles. |
+| Ready-row indexes | Active worldmap and battle readiness are runtime-owned. | Public end-turn/end-battle-turn, timer repair, and diagnostics can use runtime readiness or a deliberate row-backed fallback. |
+| Child-row indexes used only for live rehydration | Town, champion, tavern/dwelling, battle, and worldmap child rows are becoming projections while active. | Startup/adoption, explicit projection flush, post-upgrade restore, and finished-history reads have a non-index-live-authority path. |
+
+Any retirement that changes schema or generated repository plans should be
+treated as a later migration checkpoint, not folded into a hot-path runtime
+cut.

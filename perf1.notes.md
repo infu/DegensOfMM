@@ -8526,3 +8526,22 @@ Verification:
 Decision:
 
 - Keep this as a doc-only checkpoint. Current-code battle upgrade restore and active aftermath no longer require tactical projection rows, so the taxonomy now reflects the implementation boundary without spending benchmark Wasm headroom.
+
+## Index Retirement Sequencing Taxonomy
+
+Time: `2026-05-22T00:26:47Z`.
+
+Cut:
+
+- Extended `perf1.table-taxonomy.md` with the Section 72D index-retirement sequencing rule.
+- Recorded that schemas and indexes are not deleted first; hot-path dependencies must be removed and recovery/projection/history/diagnostic coverage must be proven before collapse.
+- Listed first retirement candidates: movement status/turn indexes, battle stack/occupancy indexes, ready-row indexes, and child-row indexes used only for live rehydration.
+- Required a separate migration-aware checkpoint for any schema/index deletion.
+
+Verification:
+
+- `git diff --check`
+
+Decision:
+
+- Keep this as a doc-only checkpoint. Section 72D now states table authority and index-retirement order without consuming benchmark Wasm headroom.

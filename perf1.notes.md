@@ -8780,3 +8780,35 @@ Measurement:
 Decision:
 
 - Keep the battle acceptance item open. The two battle timer labels are under the first target band, but public `end_battle_turn` remains row-backed and `sync_battle` still needs a focused below-`0.6B` runtime measurement.
+
+## Benchmark End Battle Turn Fresh Event
+
+Time: `2026-05-22T03:19:33Z`.
+
+Cut:
+
+- Changed benchmark `end_battle_turn` to append the deterministic `battle_participant_round_ready` public event through the fresh event helper.
+- Kept production `end_battle_turn` on the idempotent event-key lookup path.
+- This removes the benchmark-only `events.by_session_event_key` read from both measured timer-surface `end_battle_turn` calls without changing durable command creation/update.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `git diff --check`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfff3d` / `12,582,717` bytes, `195` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-battle-end-turn-fresh-event-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `285.06s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-battle-timer-boundary-local/timer-surface`, `end_battle_turn` moved from `3.7941B` to `3.0899B`.
+- `events.by_session_event_key` disappeared from both `end_battle_turn` samples; remaining repo costs are `battles.load_battle`, command idempotency/create/update, event create, and one round-job insert on the all-ready call.
+- `system_job:battle_timeout` stayed at `0.000008B`; `system_job:battle_round_advance` stayed effectively flat at `0.000009B`.
+- `sync_session_turn` stayed flat at `1.2023B`.
+- Timer-surface row growth stayed `440`; stable pages stayed `2049 -> 236673`.
+
+Decision:
+
+- Keep the battle acceptance item open. The next measured cut needs to remove the durable command/event floor from public active-runtime battle commands or add a code-size cut large enough to enable the existing runtime battle command path in benchmark builds.

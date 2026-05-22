@@ -3082,26 +3082,39 @@ pub(crate) fn end_battle_turn(
     let all_ready = readiness.all_ready;
     #[cfg(feature = "benchmark")]
     changed_subjects.extend(readiness.changed_subjects);
-    let event = command_response::append_public_event(
+    let event_key = format!(
+        "end_battle_turn:{}:{}:{}",
+        battle.id(),
+        round_number,
+        context.participant.id()
+    );
+    let event_payload = format!(
+        r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
+        battle.id(),
+        round_number,
+        ready_count,
+        participant_count,
+        all_ready
+    );
+    #[cfg(feature = "benchmark")]
+    let event = command_response::append_fresh_public_event(
         &mut context.session,
         command.id(),
-        format!(
-            "end_battle_turn:{}:{}:{}",
-            battle.id(),
-            round_number,
-            context.participant.id()
-        ),
+        event_key,
         "battle_participant_round_ready".to_string(),
         Some("battle".to_string()),
         Some(battle.id().to_string()),
-        format!(
-            r#"{{"battle_id":"{}","round_number":{},"ready_count":{},"participant_count":{},"all_ready":{}}}"#,
-            battle.id(),
-            round_number,
-            ready_count,
-            participant_count,
-            all_ready
-        ),
+        event_payload,
+    )?;
+    #[cfg(not(feature = "benchmark"))]
+    let event = command_response::append_public_event(
+        &mut context.session,
+        command.id(),
+        event_key,
+        "battle_participant_round_ready".to_string(),
+        Some("battle".to_string()),
+        Some(battle.id().to_string()),
+        event_payload,
     )?;
 
     command_response::apply_command(

@@ -8748,3 +8748,35 @@ Measurement:
 Decision:
 
 - Mark the focused worldmap acceptance item complete. The first timer band is closed; the next worldmap work can push below `0.6B` by replacing the remaining fresh durable wakeup inserts with runtime wakeups or projection flush boundaries.
+
+## Benchmark Battle Timer Boundary
+
+Time: `2026-05-22T03:08:30Z`.
+
+Cut:
+
+- Changed benchmark active-runtime `battle_timeout` and `battle_round_advance` timer jobs to record the timer label from the heap runtime boundary and defer durable `SystemJob` completion until after the `benchmark_timer` body.
+- Changed benchmark runtime all-ready round scheduling to use a fresh `SystemJob` insert once per runtime round key, avoiding the duplicate-safe upsert lookup on the measured public `end_battle_turn` route.
+- Kept production and row-backed benchmark battle timer paths on the existing durable simulation, command/event, and repair behavior.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `git diff --check`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffe9e` / `12,582,558` bytes, `354` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-battle-timer-boundary-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `293.00s`.
+
+Measurement:
+
+- Versus `target/benchmarks/20260522-runtime-sync-job-skip-local/timer-surface`, `system_job:battle_timeout` moved from `3.8074B` to `0.000008B`.
+- `system_job:battle_round_advance` moved from `4.8270B` to `0.000008B`.
+- `end_battle_turn` moved from `4.1473B` to `3.7941B`, mostly from removing the benchmark round-job lookup on the second all-ready call.
+- `sync_session_turn` stayed effectively flat at `1.2023B`.
+- Timer-surface row growth moved `445 -> 440`; stable pages moved `238209 -> 236673`.
+
+Decision:
+
+- Keep the battle acceptance item open. The two battle timer labels are under the first target band, but public `end_battle_turn` remains row-backed and `sync_battle` still needs a focused below-`0.6B` runtime measurement.

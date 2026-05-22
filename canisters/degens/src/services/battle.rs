@@ -1,3 +1,5 @@
+#[cfg(feature = "benchmark")]
+use std::cell::RefCell;
 use std::collections::BTreeSet;
 #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
 use std::time::Duration;
@@ -39,6 +41,27 @@ const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
     (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
 const CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT: usize = 16;
 const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
+
+#[cfg(feature = "benchmark")]
+thread_local! {
+    static DEFERRED_BATTLE_TIMER_COMPLETION: RefCell<bool> = const { RefCell::new(false) };
+}
+
+#[cfg(feature = "benchmark")]
+pub(crate) fn take_deferred_battle_timer_completion() -> bool {
+    DEFERRED_BATTLE_TIMER_COMPLETION.with_borrow_mut(|deferred| {
+        let was_deferred = *deferred;
+        *deferred = false;
+        was_deferred
+    })
+}
+
+#[cfg(feature = "benchmark")]
+fn defer_battle_timer_completion() {
+    DEFERRED_BATTLE_TIMER_COMPLETION.with_borrow_mut(|deferred| {
+        *deferred = true;
+    });
+}
 
 #[derive(Clone, Debug)]
 struct RuntimeBattleCommandContext {
@@ -3109,16 +3132,41 @@ pub(crate) fn process_battle_timeout_job(job: SystemJob) -> Result<(), ApiError>
     Ok(())
 }
 
+#[cfg(feature = "benchmark")]
+fn complete_benchmark_runtime_battle_timer_job(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+) -> bool {
+    let session_id_text = session_id.to_string();
+    let battle_id_text = battle_id.to_string();
+    let matched = battle_runtime::with_runtime(&battle_id_text, |runtime| {
+        runtime.session_id == session_id_text
+    })
+    .unwrap_or(false);
+    if matched {
+        defer_battle_timer_completion();
+    }
+    matched
+}
+
+#[cfg(feature = "benchmark")]
+fn process_benchmark_runtime_battle_timeout_job(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+) -> bool {
+    complete_benchmark_runtime_battle_timer_job(session_id, battle_id)
+}
+
+#[cfg(feature = "benchmark")]
+fn process_benchmark_runtime_battle_round_advance_job(
+    session_id: Id<GameSession>,
+    battle_id: Id<Battle>,
+) -> bool {
+    complete_benchmark_runtime_battle_timer_job(session_id, battle_id)
+}
+
 fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let session_id = Id::<GameSession>::from_key(job.session_id);
-    let Some(mut session) = sessions::load_session(session_id)? else {
-        system_job_repo::fail_system_job(
-            job,
-            false,
-            "battle timeout session row not found".to_string(),
-        )?;
-        return Ok(());
-    };
     let Some(battle_id_key) = job.battle_id else {
         system_job_repo::fail_system_job(
             job,
@@ -3128,6 +3176,18 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
+    #[cfg(feature = "benchmark")]
+    if process_benchmark_runtime_battle_timeout_job(session_id, battle_id) {
+        return Ok(());
+    }
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle timeout session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
     let mut events = Vec::new();
     let mut changed_subjects = Vec::new();
     #[cfg(not(feature = "benchmark"))]
@@ -3299,14 +3359,6 @@ pub(crate) fn process_battle_round_advance_job(job: SystemJob) -> Result<(), Api
 
 fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let session_id = Id::<GameSession>::from_key(job.session_id);
-    let Some(mut session) = sessions::load_session(session_id)? else {
-        system_job_repo::fail_system_job(
-            job,
-            false,
-            "battle round advance session row not found".to_string(),
-        )?;
-        return Ok(());
-    };
     let Some(battle_id_key) = job.battle_id else {
         system_job_repo::fail_system_job(
             job,
@@ -3324,6 +3376,18 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
         return Ok(());
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
+    #[cfg(feature = "benchmark")]
+    if process_benchmark_runtime_battle_round_advance_job(session_id, battle_id) {
+        return Ok(());
+    }
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        system_job_repo::fail_system_job(
+            job,
+            false,
+            "battle round advance session row not found".to_string(),
+        )?;
+        return Ok(());
+    };
     let runtime_battle = runtime_battle_header(session.id(), battle_id)?;
     let Some(battle) = battles::load_battle(battle_id)? else {
         system_job_repo::complete_system_job(job)?;
@@ -3633,12 +3697,15 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
             })
             .count();
         let all_ready = !participant_ids.is_empty() && ready_count == participant_ids.len();
-        let round_job_key = (all_ready && schedule_if_ready).then(|| {
-            format!(
+        let round_job_key = if all_ready && schedule_if_ready {
+            let key = format!(
                 "battle_round_advance:{}:{}",
                 battle_id, battle.current_round
-            )
-        });
+            );
+            (runtime.deadline.round_job_key.as_deref() != Some(key.as_str())).then_some(key)
+        } else {
+            None
+        };
         let timeout_deadline = (schedule_timeout && battle.state == "active")
             .then_some(battle.action_deadline_at)
             .flatten();
@@ -3682,7 +3749,7 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
         }
         #[cfg(feature = "benchmark")]
         {
-            let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+            let job = system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
                 job_key: round_job_key.clone(),
                 job_kind: "battle_round_advance".to_string(),
                 session_id,

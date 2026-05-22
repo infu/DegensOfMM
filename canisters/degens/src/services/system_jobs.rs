@@ -365,9 +365,11 @@ fn dispatch_claimed_job(job: SystemJob) -> Result<(), ApiError> {
     {
         let completion_job = job.clone();
         movement::take_deferred_turn_timer_completion();
+        battle::take_deferred_battle_timer_completion();
         let method = format!("system_job:{}", job.job_kind);
         let result = crate::metrics::benchmark_timer(method, || dispatch_claimed_job_inner(job));
-        let complete_after_timer = movement::take_deferred_turn_timer_completion();
+        let complete_after_timer = movement::take_deferred_turn_timer_completion()
+            || battle::take_deferred_battle_timer_completion();
         if result.is_ok() && complete_after_timer {
             system_jobs::complete_system_job(completion_job)?;
         }

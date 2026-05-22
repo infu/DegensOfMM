@@ -55,7 +55,10 @@ if ! [[ "$benchmark_jobs" =~ ^[0-9]+$ ]] || ((benchmark_jobs < 1)); then
     benchmark_jobs=1
 fi
 
-GATES=("endpoint-surface" "timer-surface" "gate-j" "gate-k" "gate-l" "gate-m")
+GATES=("endpoint-surface" "timer-surface" "gate-j" "gate-k" "gate-l" "gate-m" "projection-surface")
+declare -A GATE_KIND=(
+    ["projection-surface"]="native"
+)
 declare -A GATE_TEST_FILE=(
     ["endpoint-surface"]="canister_endpoints"
     ["timer-surface"]="canister_endpoints"
@@ -63,6 +66,7 @@ declare -A GATE_TEST_FILE=(
     ["gate-k"]="canister_endpoints"
     ["gate-l"]="canister_endpoints"
     ["gate-m"]="client_probe_canister"
+    ["projection-surface"]="domm-degens-canister"
 )
 declare -A GATE_TEST_NAME=(
     ["endpoint-surface"]="pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint"
@@ -71,6 +75,7 @@ declare -A GATE_TEST_NAME=(
     ["gate-k"]="pocket_ic_gate_k_battle_aftermath_victory_history_persist_icydb_rows"
     ["gate-l"]="pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state"
     ["gate-m"]="gate_m_web_client_probe_runs_against_pocket_ic_canister_adapter"
+    ["projection-surface"]="projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot"
 )
 declare -A GATE_DESCRIPTION=(
     ["endpoint-surface"]="Required public endpoint surface"
@@ -79,6 +84,7 @@ declare -A GATE_DESCRIPTION=(
     ["gate-k"]="Battle aftermath and victory history"
     ["gate-l"]="First-playable public endpoint route"
     ["gate-m"]="Canister-backed web client probe"
+    ["projection-surface"]="Native projection flush and upgrade recovery"
 )
 
 printf "Running DoMM benchmark suite\n"
@@ -91,6 +97,8 @@ printf "Prebuilding benchmark test targets...\n"
         cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run
     DOMM_CANISTER_FEATURES=benchmark \
         cargo test -p domm-pocket-ic-tests --test client_probe_canister --no-run
+    cargo test -p domm-degens-canister \
+        projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot --no-run
 } >"$prebuild_output" 2>&1
 
 run_gate() {
@@ -106,12 +114,17 @@ run_gate() {
     printf "started %s at %s\n" "$gate" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$status_file"
 
     set +e
-    DOMM_CANISTER_FEATURES=benchmark \
-    DOMM_BENCH_OUTPUT_DIR="$gate_dir" \
-    DOMM_BENCH_QUERY_LOG_PATH="$gate_log" \
-    CANIC_POCKET_IC_LOCK_NAMESPACE="domm-bench-$run_id-$gate" \
-    cargo test -p domm-pocket-ic-tests --test "${GATE_TEST_FILE[$gate]}" \
-        "${GATE_TEST_NAME[$gate]}" -- --nocapture >"$gate_log" 2>&1
+    if [[ "${GATE_KIND[$gate]:-pocket_ic}" == "native" ]]; then
+        cargo test -p domm-degens-canister \
+            "${GATE_TEST_NAME[$gate]}" -- --nocapture >"$gate_log" 2>&1
+    else
+        DOMM_CANISTER_FEATURES=benchmark \
+        DOMM_BENCH_OUTPUT_DIR="$gate_dir" \
+        DOMM_BENCH_QUERY_LOG_PATH="$gate_log" \
+        CANIC_POCKET_IC_LOCK_NAMESPACE="domm-bench-$run_id-$gate" \
+        cargo test -p domm-pocket-ic-tests --test "${GATE_TEST_FILE[$gate]}" \
+            "${GATE_TEST_NAME[$gate]}" -- --nocapture >"$gate_log" 2>&1
+    fi
     status=$?
     set -e
 

@@ -8950,3 +8950,42 @@ Notes:
 Decision:
 
 - Mark scenario acceptance complete for the default full-suite gate. Keep the projection-surface wiring item open until the projection-enabled Wasm fits.
+
+## Projection Surface Native Suite Gate
+
+Time: `2026-05-22T05:05:43Z`.
+
+Cut:
+
+- Added `projection-surface` to `scripts/run-benchmarks.sh` as a native `domm-degens-canister` unit-test gate.
+- Prebuild now checks `projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot` before launching benchmark gates.
+- `run_gate` now distinguishes native gates from PocketIC gates, so projection flush/upgrade recovery can run in the full suite without installing the oversized `benchmark,projection-benchmark` Wasm.
+
+Verification:
+
+- `bash -n scripts/run-benchmarks.sh`
+- `cargo test -p domm-degens-canister projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot --no-run`
+- `cargo test -p domm-degens-canister projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot -- --nocapture`
+- `DOMM_BENCH_JOBS=5 DOMM_BENCH_OUTPUT_DIR=target/benchmarks/20260522-projection-surface-native-suite scripts/run-benchmarks.sh`
+
+Full-suite measurement:
+
+| Gate | Status | Row growth | Stable pages |
+| --- | --- | ---: | --- |
+| endpoint-surface | passed | 106 | 2049 -> 59905 |
+| timer-surface | passed | 436 | 2049 -> 234497 |
+| Gate J | passed | 35 | 2049 -> 62465 |
+| Gate K | passed | 91 | 2049 -> 80257 |
+| Gate L | passed | 150 | 2049 -> 81793 |
+| Gate M | passed | 105 | 2049 -> 95233 |
+| projection-surface | passed | n/a | n/a |
+
+Notes:
+
+- The full suite covered `59/59` required endpoints across the PocketIC benchmark gates.
+- `projection-surface` passed in `9s`; its artifact is `target/benchmarks/20260522-projection-surface-native-suite/projection-surface/test-output.log`.
+- Projection rows and lag are still proven by the native test. Normal benchmark summaries still report `projection: null` until a projection-enabled Wasm fits under the IC code-section limit.
+
+Decision:
+
+- Mark the projection-surface wiring item complete using the smaller native measurement harness. The remaining Section 72 item is the hard target rule for future gameplay kernel benchmark claims.

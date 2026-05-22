@@ -12,6 +12,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use candid::CandidType;
 use canic_cdk::structures::{
     Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
 };
@@ -21,17 +22,21 @@ use domm_degens_schema::schema::{
 #[cfg(not(feature = "benchmark"))]
 use domm_degens_schema::schema::{GameCommand, GameParticipant};
 use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
+use icydb::traits::EntityValue;
 #[cfg(not(feature = "benchmark"))]
 use icydb::types::Timestamp;
+#[cfg(not(feature = "benchmark"))]
 use icydb::{
-    traits::{EntityKey, EntityValue},
+    traits::EntityKey,
     types::{Id, Ulid},
 };
 use serde::{Deserialize, Serialize};
 
 #[cfg(not(feature = "benchmark"))]
+use crate::repos::battles as battle_repo;
+#[cfg(not(feature = "benchmark"))]
 use crate::repos::commands_events_effects;
-use crate::repos::{battles as battle_repo, sessions as session_repo};
+use crate::repos::sessions as session_repo;
 
 use super::battle_rows;
 
@@ -86,7 +91,7 @@ thread_local! {
     ));
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntime {
     pub session_id: String,
     pub battle_id: String,
@@ -325,7 +330,7 @@ fn hydrate_participant_audience_keys(runtime: &mut BattleRuntime) {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeAudience {
     pub participant_key: String,
     pub player_key: Option<String>,
@@ -343,7 +348,7 @@ impl BattleRuntimeAudience {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeCommandReceipt {
     pub command_id: String,
     pub command_type: String,
@@ -362,27 +367,27 @@ impl BattleRuntimeCommandReceipt {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeEvent {
     pub command_id: Option<String>,
     pub event: ApiEventView,
     pub flushed: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeReadyKey {
     pub participant_id: String,
     pub round_number: u16,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeDeadline {
     pub action_deadline_at_ms: Option<u64>,
     pub timeout_job_key: Option<String>,
     pub round_job_key: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub(crate) struct BattleRuntimeSnapshot {
     pub runtimes: Vec<BattleRuntime>,
 }
@@ -872,7 +877,8 @@ pub(crate) fn restore_from_upgrade(snapshot: BattleRuntimeSnapshot) {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
         let mut runtimes = runtimes.borrow_mut();
         runtimes.clear();
-        for runtime in snapshot.runtimes {
+        for mut runtime in snapshot.runtimes {
+            hydrate_participant_audience_keys(&mut runtime);
             runtimes.insert(runtime.battle_id.clone(), runtime);
         }
     });
@@ -886,9 +892,9 @@ pub(crate) fn clear_all_for_tests() {
     ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|receipts| receipts.borrow_mut().clear());
 }
 
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
-    let refs = upgrade_refs_for_active_runtimes();
-    let bytes = encode_upgrade_refs(&refs);
+    let bytes = encode_snapshot_for_upgrade(&snapshot_for_upgrade())?;
     if bytes.len() > MAX_BATTLE_RUNTIME_SNAPSHOT_BYTES as usize {
         return Err(format!(
             "battle runtime snapshot exceeds {} bytes: {}",
@@ -903,15 +909,23 @@ pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "benchmark")]
+pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
 pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
     let raw = BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| cell.borrow().get().clone());
     if raw.as_bytes().is_empty() {
         return Ok(());
     }
 
-    let refs = decode_upgrade_refs(raw.as_bytes())?;
-    for active_ref in refs {
-        restore_runtime_from_upgrade_ref(&active_ref)?;
+    if raw.as_bytes().starts_with(UPGRADE_REFS_MAGIC.as_bytes()) {
+        restore_legacy_upgrade_refs(raw.as_bytes())?;
+    } else {
+        let snapshot = decode_snapshot_for_upgrade(raw.as_bytes())?;
+        restore_from_upgrade(snapshot);
     }
     BATTLE_RUNTIME_SNAPSHOT_CELL.with(|cell| {
         cell.borrow_mut().set(RawBattleRuntimeSnapshot::empty());
@@ -919,6 +933,24 @@ pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "benchmark")]
+pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn encode_snapshot_for_upgrade(snapshot: &BattleRuntimeSnapshot) -> Result<Vec<u8>, String> {
+    candid::encode_one(snapshot)
+        .map_err(|error| format!("encode battle runtime snapshot failed: {error}"))
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn decode_snapshot_for_upgrade(bytes: &[u8]) -> Result<BattleRuntimeSnapshot, String> {
+    candid::decode_one(bytes)
+        .map_err(|error| format!("decode battle runtime snapshot failed: {error}"))
+}
+
+#[cfg(not(feature = "benchmark"))]
 fn upgrade_refs_for_active_runtimes() -> Vec<BattleRuntimeUpgradeRef> {
     ACTIVE_BATTLE_RUNTIMES.with(|runtimes| {
         runtimes
@@ -934,6 +966,7 @@ fn upgrade_refs_for_active_runtimes() -> Vec<BattleRuntimeUpgradeRef> {
     })
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn encode_upgrade_refs(refs: &[BattleRuntimeUpgradeRef]) -> Vec<u8> {
     let mut text = String::new();
     text.push_str(UPGRADE_REFS_MAGIC);
@@ -951,6 +984,7 @@ fn encode_upgrade_refs(refs: &[BattleRuntimeUpgradeRef]) -> Vec<u8> {
     text.into_bytes()
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn decode_upgrade_refs(bytes: &[u8]) -> Result<Vec<BattleRuntimeUpgradeRef>, String> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| format!("battle runtime snapshot is not UTF-8: {error}"))?;
@@ -998,6 +1032,17 @@ fn decode_upgrade_refs(bytes: &[u8]) -> Result<Vec<BattleRuntimeUpgradeRef>, Str
     Ok(refs)
 }
 
+#[cfg(not(feature = "benchmark"))]
+fn restore_legacy_upgrade_refs(bytes: &[u8]) -> Result<(), String> {
+    ACTIVE_BATTLE_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
+    let refs = decode_upgrade_refs(bytes)?;
+    for active_ref in refs {
+        restore_runtime_from_upgrade_ref(&active_ref)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "benchmark"))]
 fn restore_runtime_from_upgrade_ref(active_ref: &BattleRuntimeUpgradeRef) -> Result<(), String> {
     let session_id = parse_text_id::<GameSession>(&active_ref.session_id, "session_id")?;
     let battle_id = parse_text_id::<Battle>(&active_ref.battle_id, "battle_id")?;
@@ -1023,6 +1068,7 @@ fn restore_runtime_from_upgrade_ref(active_ref: &BattleRuntimeUpgradeRef) -> Res
     Ok(())
 }
 
+#[cfg(not(feature = "benchmark"))]
 fn parse_text_id<E>(value: &str, field: &str) -> Result<Id<E>, String>
 where
     E: EntityKey<Key = Ulid>,
@@ -1068,6 +1114,72 @@ mod tests {
             commands: Vec::new(),
             events: Vec::new(),
         }
+    }
+
+    fn runtime_with_tactical_state() -> BattleRuntime {
+        let mut state = empty_state("session:1", "battle:1");
+        state.stacks.push(domm_game::BattleStackRecord {
+            battle_stack_id: "stack:1".to_string(),
+            battle_id: "battle:1".to_string(),
+            unit_id: "unit:pikeman".to_string(),
+            owner_participant_id: Some("participant:1".to_string()),
+            side: domm_game::BATTLE_SIDE_ATTACKER.to_string(),
+            slot_index: 0,
+            origin_kind: "champion_army".to_string(),
+            origin_stack_id_text: Some("army-stack:1".to_string()),
+            origin_slot_index: 0,
+            champion_might: 1,
+            champion_guard: 2,
+            attack: 3,
+            defense: 4,
+            damage_min: 1,
+            damage_max: 2,
+            max_hp: 10,
+            speed: 5,
+            initiative: 6,
+            ranged: false,
+            flying: false,
+            quantity: 7,
+            front_hp: 8,
+            shots_remaining: 0,
+            battle_x: 1,
+            battle_y: 2,
+            readiness: 9,
+            acted_round: 0,
+            retaliated_round: 0,
+            defended_round: 0,
+            waited_round: 0,
+            cast_round: 0,
+            status: "active".to_string(),
+            last_command_id: None,
+            status_keys: vec!["battle_spell:test".to_string()],
+        });
+        state.obstacles.push(domm_game::BattleObstacleRecord {
+            battle_obstacle_id: "obstacle:1".to_string(),
+            battle_id: "battle:1".to_string(),
+            obstacle_type: "rock".to_string(),
+            battle_x: 4,
+            battle_y: 5,
+            width: 1,
+            height: 1,
+            hp: 99,
+            state: "intact".to_string(),
+            last_command_id: None,
+        });
+        state.occupancy.push(domm_game::BattleOccupancyRecord {
+            battle_occupancy_id: "occupancy:1".to_string(),
+            battle_id: "battle:1".to_string(),
+            battle_stack_id: "stack:1".to_string(),
+            battle_x: 1,
+            battle_y: 2,
+            last_command_id: None,
+        });
+
+        let mut runtime = BattleRuntime::new("session:1", "battle:1", state, 42);
+        runtime.mark_ready("participant:1", 1);
+        runtime.deadline.round_job_key = Some("battle_round_advance:battle:1:1".to_string());
+        runtime.dirty_generation = 7;
+        runtime
     }
 
     #[test]
@@ -1120,7 +1232,37 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_refs_round_trip_without_full_runtime_encoding() {
+    fn upgrade_snapshot_encoding_preserves_full_runtime_state() {
+        let runtime = runtime_with_tactical_state();
+        let snapshot = BattleRuntimeSnapshot {
+            runtimes: vec![runtime.clone()],
+        };
+
+        let bytes =
+            encode_snapshot_for_upgrade(&snapshot).expect("battle runtime snapshot should encode");
+        assert!(!bytes.starts_with(UPGRADE_REFS_MAGIC.as_bytes()));
+        let decoded =
+            decode_snapshot_for_upgrade(&bytes).expect("battle runtime snapshot should decode");
+
+        assert_eq!(decoded, snapshot);
+        clear_all_for_tests();
+        restore_from_upgrade(decoded);
+        assert_eq!(
+            with_runtime("battle:1", |runtime| runtime.state.stacks.clone()),
+            Some(runtime.state.stacks)
+        );
+        assert_eq!(
+            with_runtime("battle:1", |runtime| runtime.state.obstacles.clone()),
+            Some(runtime.state.obstacles)
+        );
+        assert_eq!(
+            with_runtime("battle:1", |runtime| runtime.state.occupancy.clone()),
+            Some(runtime.state.occupancy)
+        );
+    }
+
+    #[test]
+    fn legacy_upgrade_refs_round_trip_for_old_snapshots() {
         let refs = vec![BattleRuntimeUpgradeRef {
             session_id: "session:1".to_string(),
             battle_id: "battle:1".to_string(),

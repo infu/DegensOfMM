@@ -8391,3 +8391,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Active battle round authority now lives in the runtime timer path; durable round `SystemJob` processing remains as benchmark/repair/fallback infrastructure.
+
+## Self-Contained Battle Runtime Upgrade Snapshots
+
+Time: `2026-05-21T23:58:49Z`.
+
+Cut:
+
+- Replaced production battle runtime upgrade persistence with a full Candid-encoded `BattleRuntimeSnapshot`.
+- The snapshot now carries live `BattleState` tactical data, runtime events, runtime command receipts, ready participants, deadline metadata, event cursor, and dirty generation.
+- Post-upgrade restore installs the decoded runtime directly and no longer loads `Battle`, `BattleStack`, `BattleObstacle`, or `BattleOccupancy` rows for snapshots produced by the new code.
+- Kept a legacy ref-only snapshot reader for upgrades from older code; that compatibility path still hydrates from rows only when old snapshot bytes are encountered.
+- Benchmark builds use no-op battle runtime snapshot persistence/restore so the deployable benchmark Wasm stays under the IC code-section limit.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister battle_runtime -- --nocapture`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_timer_jobs_repair_deadlines_and_recover_expired_leases --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bfd3e7` / `12,571,623` bytes, `11,289` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint. Active battle runtime restore no longer depends on durable tactical child rows for snapshots written by current production code, unblocking the next cleanup work around tactical child-row projection and aftermath reads.

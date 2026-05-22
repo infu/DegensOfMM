@@ -7,7 +7,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use canic_testkit::pic::{StandaloneCanisterFixture, install_prebuilt_canister_with_cycles};
 use domm_degens_canister::{
-    CanisterEndpointView, DiagnosticBenchmarkCallPage, DiagnosticStorageSnapshot,
+    CanisterEndpointView, DiagnosticBenchmarkCallPage, DiagnosticProjectionFlushView,
+    DiagnosticProjectionKernelView, DiagnosticProjectionSnapshot, DiagnosticStorageSnapshot,
     DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind, REQUIRED_GAME_ENDPOINTS,
 };
 use domm_game::{
@@ -7618,6 +7619,81 @@ struct BenchmarkRepoOpSummary {
     total_instruction_delta: u128,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct BenchmarkProjectionFlushSummary {
+    flushed_at_ms: u64,
+    entries_processed: u64,
+    rows_flushed: u64,
+    queue_len_before: u64,
+    queue_len_after: u64,
+    flush_truncated: bool,
+    stable_pages_delta: u64,
+    stable_memory_delta_bytes: u64,
+    flush_instructions: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct BenchmarkProjectionSummary {
+    kernel_count: usize,
+    total_dirty_queue_len: u64,
+    max_dirty_queue_len: u64,
+    oldest_dirty_age_ms: Option<u64>,
+    max_lag_generations: u64,
+    max_lag_ms: u64,
+    total_pending_entries: u64,
+    last_flush: Option<BenchmarkProjectionFlushSummary>,
+}
+
+impl BenchmarkProjectionSummary {
+    fn from_snapshot(snapshot: &DiagnosticProjectionSnapshot) -> Self {
+        Self {
+            kernel_count: snapshot.kernels.len(),
+            total_dirty_queue_len: snapshot.total_dirty_queue_len,
+            max_dirty_queue_len: snapshot
+                .kernels
+                .iter()
+                .map(|kernel| kernel.dirty_queue_len)
+                .max()
+                .unwrap_or(0),
+            oldest_dirty_age_ms: snapshot.oldest_dirty_age_ms,
+            max_lag_generations: snapshot
+                .kernels
+                .iter()
+                .map(|kernel| kernel.lag_generations)
+                .max()
+                .unwrap_or(0),
+            max_lag_ms: snapshot
+                .kernels
+                .iter()
+                .map(|kernel| kernel.lag_ms)
+                .max()
+                .unwrap_or(0),
+            total_pending_entries: snapshot
+                .kernels
+                .iter()
+                .map(|kernel| kernel.pending_entries)
+                .sum(),
+            last_flush: snapshot.last_flush.as_ref().map(Into::into),
+        }
+    }
+}
+
+impl From<&DiagnosticProjectionFlushView> for BenchmarkProjectionFlushSummary {
+    fn from(flush: &DiagnosticProjectionFlushView) -> Self {
+        Self {
+            flushed_at_ms: flush.flushed_at_ms,
+            entries_processed: flush.entries_processed,
+            rows_flushed: flush.rows_flushed,
+            queue_len_before: flush.queue_len_before,
+            queue_len_after: flush.queue_len_after,
+            flush_truncated: flush.flush_truncated,
+            stable_pages_delta: flush.stable_pages_delta,
+            stable_memory_delta_bytes: flush.stable_pages_delta.saturating_mul(65_536),
+            flush_instructions: flush.flush_instructions,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct BenchmarkSummaryArtifact {
     run_id: String,
@@ -7636,6 +7712,8 @@ struct BenchmarkSummaryArtifact {
     methods: Vec<BenchmarkMethodSummary>,
     phases: Vec<BenchmarkPhaseSummary>,
     repo_ops: Vec<BenchmarkRepoOpSummary>,
+    #[serde(default)]
+    projection: Option<BenchmarkProjectionSummary>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -7675,6 +7753,7 @@ struct BenchmarkRecorder {
     canister_log_cursor: u64,
     query_log_path: Option<PathBuf>,
     query_log_entry_cursor: usize,
+    projection: Option<BenchmarkProjectionSummary>,
 }
 
 impl BenchmarkRecorder {
@@ -7690,6 +7769,7 @@ impl BenchmarkRecorder {
             canister_log_cursor: 0,
             query_log_path,
             query_log_entry_cursor: 0,
+            projection: None,
         })
     }
 
@@ -7948,6 +8028,18 @@ impl BenchmarkRecorder {
         }
     }
 
+    fn capture_projection_snapshot(&mut self, fixture: &StandaloneCanisterFixture) {
+        self.projection = query_as::<DiagnosticProjectionSnapshot>(
+            fixture,
+            candid::Principal::anonymous(),
+            "get_diagnostic_projection_snapshot",
+            (),
+        )
+        .ok()
+        .and_then(Result::ok)
+        .map(|snapshot| BenchmarkProjectionSummary::from_snapshot(&snapshot));
+    }
+
     fn write_artifacts(
         &self,
         benchmark_name: &str,
@@ -8030,6 +8122,7 @@ impl BenchmarkRecorder {
             methods,
             phases,
             repo_ops,
+            projection: self.projection.clone(),
         }
     }
 }
@@ -8499,12 +8592,59 @@ fn render_summary_markdown(summary: &BenchmarkSummaryArtifact) -> String {
             ));
         }
     }
+    if let Some(projection) = &summary.projection {
+        render_projection_summary_table(&mut out, projection);
+    }
     if !summary.missing_required_endpoints.is_empty() {
         out.push_str("\n## Missing Required Endpoints\n\n");
         out.push_str(&summary.missing_required_endpoints.join(", "));
         out.push('\n');
     }
     out
+}
+
+fn render_projection_summary_table(out: &mut String, projection: &BenchmarkProjectionSummary) {
+    out.push_str("\n## Projection Metrics\n\n");
+    out.push_str("| Kernels | Dirty queue | Max dirty queue | Oldest dirty age ms | Max lag gen | Max lag ms | Pending entries | Rows flushed | Truncated | Flush inst B | Stable MB | Stable pages |\n");
+    out.push_str(
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |\n",
+    );
+    let (rows_flushed, flush_truncated, flush_instructions, stable_mb, stable_pages) =
+        if let Some(flush) = &projection.last_flush {
+            (
+                flush.rows_flushed.to_string(),
+                yes_no(flush.flush_truncated).to_string(),
+                format_billions_u64(flush.flush_instructions),
+                format_mb_from_bytes_u64(flush.stable_memory_delta_bytes),
+                flush.stable_pages_delta.to_string(),
+            )
+        } else {
+            (
+                "n/a".to_string(),
+                "n/a".to_string(),
+                "n/a".to_string(),
+                "n/a".to_string(),
+                "n/a".to_string(),
+            )
+        };
+    out.push_str(&format!(
+        "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+        projection.kernel_count,
+        projection.total_dirty_queue_len,
+        projection.max_dirty_queue_len,
+        projection
+            .oldest_dirty_age_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "n/a".to_string()),
+        projection.max_lag_generations,
+        projection.max_lag_ms,
+        projection.total_pending_entries,
+        rows_flushed,
+        flush_truncated,
+        flush_instructions,
+        stable_mb,
+        stable_pages
+    ));
 }
 
 fn render_method_summary_table<'a>(
@@ -8554,6 +8694,10 @@ fn format_billions_u128(value: u128) -> String {
     format_scaled(value as f64 / 1_000_000_000.0)
 }
 
+fn format_billions_u64(value: u64) -> String {
+    format_scaled(value as f64 / 1_000_000_000.0)
+}
+
 fn format_billions_option(value: Option<f64>) -> String {
     value
         .map(|value| format_scaled(value / 1_000_000_000.0))
@@ -8573,6 +8717,10 @@ fn format_trillions_f64(value: f64) -> String {
 }
 
 fn format_mb_from_bytes_i128(value: i128) -> String {
+    format_scaled(value as f64 / 1_048_576.0)
+}
+
+fn format_mb_from_bytes_u64(value: u64) -> String {
     format_scaled(value as f64 / 1_048_576.0)
 }
 
@@ -8665,6 +8813,10 @@ fn count_label(count: u64, label: &str) -> String {
     }
 }
 
+fn yes_no(value: bool) -> &'static str {
+    if value { "yes" } else { "no" }
+}
+
 fn git_sha() -> String {
     let Ok(output) = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -8743,6 +8895,7 @@ fn benchmark_summary_deltas_compare_previous_run() {
         }],
         phases: Vec::new(),
         repo_ops: Vec::new(),
+        projection: None,
     };
 
     apply_previous_deltas(&mut scenarios, &mut methods, Some(&previous));
@@ -8805,11 +8958,84 @@ fn benchmark_summary_renders_scenario_workload_context() {
 #[test]
 fn benchmark_summary_formats_scaled_instruction_cycle_and_memory_values() {
     assert_eq!(format_billions_u128(1_423_456_789), "1.4235");
+    assert_eq!(format_billions_u64(1_423_456_789), "1.4235");
     assert_eq!(format_billions_option(Some(1_423_400_000.0)), "1.4234");
     assert_eq!(format_trillions_u128(1_123_200_000_000), "1.1232");
     assert_eq!(format_trillions_f64(1_500_000_000_000.0), "1.5");
     assert_eq!(format_mb_from_bytes_i128(1_572_864), "1.5");
+    assert_eq!(format_mb_from_bytes_u64(131_072), "0.125");
     assert_eq!(format_mb_from_bytes_f64(524_288.0), "0.5");
+}
+
+#[test]
+fn benchmark_summary_reports_projection_metrics() {
+    let snapshot = DiagnosticProjectionSnapshot {
+        kernels: vec![
+            DiagnosticProjectionKernelView {
+                kernel_id: "kernel-a".to_string(),
+                session_id: "session-a".to_string(),
+                turn_number: 3,
+                dirty_queue_len: 2,
+                oldest_dirty_age_ms: Some(200),
+                kernel_generation: 10,
+                flushed_generation: 7,
+                lag_generations: 3,
+                lag_ms: 1_200,
+                flushed_at_ms: 900,
+                pending_entries: 4,
+            },
+            DiagnosticProjectionKernelView {
+                kernel_id: "kernel-b".to_string(),
+                session_id: "session-b".to_string(),
+                turn_number: 5,
+                dirty_queue_len: 3,
+                oldest_dirty_age_ms: Some(100),
+                kernel_generation: 21,
+                flushed_generation: 17,
+                lag_generations: 4,
+                lag_ms: 300,
+                flushed_at_ms: 950,
+                pending_entries: 1,
+            },
+        ],
+        total_dirty_queue_len: 5,
+        oldest_dirty_age_ms: Some(200),
+        last_flush: Some(DiagnosticProjectionFlushView {
+            flushed_at_ms: 1_000,
+            entries_processed: 9,
+            rows_flushed: 11,
+            queue_len_before: 8,
+            queue_len_after: 1,
+            flush_truncated: true,
+            stable_pages_delta: 2,
+            flush_instructions: 1_234_567_890,
+        }),
+    };
+    let projection = BenchmarkProjectionSummary::from_snapshot(&snapshot);
+
+    assert_eq!(projection.kernel_count, 2);
+    assert_eq!(projection.total_dirty_queue_len, 5);
+    assert_eq!(projection.max_dirty_queue_len, 3);
+    assert_eq!(projection.max_lag_generations, 4);
+    assert_eq!(projection.max_lag_ms, 1_200);
+    assert_eq!(projection.total_pending_entries, 5);
+    assert_eq!(
+        projection
+            .last_flush
+            .as_ref()
+            .expect("projection should include flush")
+            .stable_memory_delta_bytes,
+        131_072
+    );
+
+    let mut summary = benchmark_test_summary();
+    summary.projection = Some(projection);
+    let markdown = render_summary_markdown(&summary);
+
+    assert!(markdown.contains("## Projection Metrics"));
+    assert!(
+        markdown.contains("| 2 | 5 | 3 | 200 | 4 | 1200 | 5 | 11 | yes | 1.2346 | 0.125 | 2 |")
+    );
 }
 
 #[test]
@@ -8846,6 +9072,7 @@ fn benchmark_recorder_reads_query_instruction_from_output_log_file() {
         canister_log_cursor: 0,
         query_log_path: Some(path.clone()),
         query_log_entry_cursor: 0,
+        projection: None,
     };
 
     assert_eq!(
@@ -8874,6 +9101,28 @@ fn benchmark_test_call(scenario_id: &str, method: &str, kind: &str) -> Benchmark
         memory_size_after_bytes: 1_020,
         phases: Vec::new(),
         repo_ops: Vec::new(),
+    }
+}
+
+fn benchmark_test_summary() -> BenchmarkSummaryArtifact {
+    BenchmarkSummaryArtifact {
+        run_id: "test-run".to_string(),
+        git_sha: "abc1234".to_string(),
+        generated_at_ms: 1,
+        benchmark_name: "test".to_string(),
+        scenario_count: 0,
+        call_count: 0,
+        required_game_endpoint_count: REQUIRED_GAME_ENDPOINTS.len(),
+        covered_required_endpoint_count: 0,
+        missing_required_endpoints: Vec::new(),
+        total_row_growth: 0,
+        stable_memory_pages_start: 0,
+        stable_memory_pages_final: 0,
+        scenarios: Vec::new(),
+        methods: Vec::new(),
+        phases: Vec::new(),
+        repo_ops: Vec::new(),
+        projection: None,
     }
 }
 
@@ -9057,6 +9306,7 @@ impl GateJMetrics {
                 self.benchmark_scenario_id.as_str()
             };
             benchmark.record_timer_measurements(fixture, scenario_id);
+            benchmark.capture_projection_snapshot(fixture);
             benchmark.write_artifacts(benchmark_name, initial_storage, final_storage);
         }
     }

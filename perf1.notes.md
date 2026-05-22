@@ -8574,3 +8574,25 @@ Verification:
 Decision:
 
 - Keep the coverage and diagnostic endpoint, but do not wire `projection-surface` into `scripts/run-benchmarks.sh` yet. The default benchmark build remains installable and unchanged; the projection-enabled Wasm is still too large for PocketIC, so suite wiring is now tracked as a separate Section 72E code-size-gated item.
+
+## Projection Benchmark Reporting
+
+Time: `2026-05-22T01:04:22Z`.
+
+Cut:
+
+- Added optional projection reporting to the PocketIC benchmark recorder. When the installed canister exposes `get_diagnostic_projection_snapshot`, the recorder stores a `projection` object in `summary.json`/`run.json`; normal benchmark builds without the endpoint leave it as `null`.
+- Added a `Projection Metrics` section to `summary.md` with kernel count, dirty queue length, oldest dirty age, max projection lag, pending entries, rows flushed, flush truncation, flush instructions, stable MB, and stable page delta.
+- Kept old benchmark artifacts readable by defaulting missing `projection` fields during `summary.json` deserialization, so previous-run deltas still work.
+- Added focused unit coverage for rolling a diagnostic projection snapshot into benchmark metrics and rendering the Markdown table.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints benchmark_summary -- --nocapture`
+- `cargo check -p domm-pocket-ic-tests --test canister_endpoints`
+- `cargo check -p domm-degens-canister --features benchmark`
+
+Decision:
+
+- Keep this as benchmark-harness reporting only. The `projection-surface` suite hook remains code-size gated until the production or mixed `benchmark,projection-benchmark` Wasm can install, but the artifact schema and Markdown report are ready for that gate.

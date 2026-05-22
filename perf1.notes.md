@@ -8545,3 +8545,32 @@ Verification:
 Decision:
 
 - Keep this as a doc-only checkpoint. Section 72D now states table authority and index-retirement order without consuming benchmark Wasm headroom.
+
+## Projection Surface Coverage
+
+Time: `2026-05-22T00:56:08Z`.
+
+Cut:
+
+- Added a controller-gated `run_diagnostic_projection_flush` endpoint that flushes only `SessionTurnRuntime` projection queue entries and returns the same projection flush metrics exposed by diagnostics.
+- Added `projection-benchmark` so projection diagnostics/dirty queues/snapshots can compile beside normal benchmark metrics without changing the default `benchmark` feature.
+- Extended runtime projection cfgs so command payloads, town/runtime command receipts, movement receipts, dirty queues, projection diagnostics, and session-runtime upgrade snapshots are available in the mixed feature.
+- Added focused native coverage for the projection surface: it seeds durable authority rows, dirties a worldmap runtime, proves runtime command-status and event reads before flush, flushes movement/command/event rows, verifies zero lag and last-flush metrics, then dirties readiness and restores the dirty kernel through the upgrade snapshot.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo check -p domm-degens-canister --features benchmark,projection-benchmark`
+- `cargo test -p domm-degens-canister projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot -- --nocapture`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid_contains_every_required_game_endpoint -- --nocapture`
+- `cargo test -p domm-degens-canister exported_candid --features benchmark,projection-benchmark -- --nocapture`
+- Normal benchmark Wasm build with `feature=benchmark`: code section `0x00bffe14` / `12,582,420` bytes, `492` bytes under the IC limit.
+- Mixed projection benchmark Wasm build with `features=benchmark,projection-benchmark`: code section `0x00ccf969` / `13,433,193` bytes, `850,281` bytes over the IC limit.
+- `git diff --check`
+
+Decision:
+
+- Keep the coverage and diagnostic endpoint, but do not wire `projection-surface` into `scripts/run-benchmarks.sh` yet. The default benchmark build remains installable and unchanged; the projection-enabled Wasm is still too large for PocketIC, so suite wiring is now tracked as a separate Section 72E code-size-gated item.

@@ -244,7 +244,7 @@ pub(crate) fn submit_move_intent(
                 client_nonce: client_nonce_u64,
                 turn_number: context.session.current_turn,
                 payload_hash: command_payload_hash,
-                #[cfg(not(feature = "benchmark"))]
+                #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
                 payload_json: Some(payload_json.clone()),
                 response: response.clone(),
             });
@@ -911,7 +911,7 @@ fn remember_runtime_sync_receipt(
     turn_number: u32,
     response: CommandResponse,
 ) {
-    #[cfg(feature = "benchmark")]
+    #[cfg(all(feature = "benchmark", not(feature = "projection-benchmark")))]
     let _ = &payload_json;
 
     let session_id = context.session.id().to_string();
@@ -923,7 +923,7 @@ fn remember_runtime_sync_receipt(
         client_nonce,
         turn_number,
         payload_hash,
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         payload_json: Some(payload_json),
         response,
     };

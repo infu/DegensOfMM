@@ -1231,6 +1231,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "benchmark"))]
     #[test]
     fn upgrade_snapshot_encoding_preserves_full_runtime_state() {
         let runtime = runtime_with_tactical_state();
@@ -1261,6 +1262,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(feature = "benchmark"))]
     #[test]
     fn legacy_upgrade_refs_round_trip_for_old_snapshots() {
         let refs = vec![BattleRuntimeUpgradeRef {

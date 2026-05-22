@@ -93,8 +93,10 @@ fn exported_candid_contains_every_required_game_endpoint() {
     #[cfg(not(feature = "benchmark"))]
     assert!(candid.contains("get_canister_endpoint_inventory :"));
     assert!(candid.contains("get_diagnostic_storage_snapshot :"));
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     assert!(candid.contains("get_diagnostic_projection_snapshot :"));
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    assert!(candid.contains("run_diagnostic_projection_flush :"));
 }
 
 #[cfg(feature = "benchmark")]

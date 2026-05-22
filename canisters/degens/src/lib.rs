@@ -30,7 +30,7 @@ pub use contract::{
     DiagnosticStorageSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView, EndpointKind,
     EndpointSpec, REQUIRED_GAME_ENDPOINTS, deferred_endpoint_decisions, required_endpoint_views,
 };
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub use contract::{
     DiagnosticProjectionFlushView, DiagnosticProjectionKernelView, DiagnosticProjectionSnapshot,
 };
@@ -72,6 +72,12 @@ fn pre_upgrade_impl() {
             panic!("session turn runtime post-barrier snapshot failed: {error}");
         }
     }
+    #[cfg(all(feature = "benchmark", feature = "projection-benchmark"))]
+    {
+        if let Err(error) = services::session_turn_runtime::persist_snapshot_for_upgrade() {
+            panic!("session turn runtime benchmark pre-upgrade snapshot failed: {error}");
+        }
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -85,7 +91,7 @@ fn post_upgrade() {
     if let Err(error) = services::battle_runtime::restore_snapshot_after_upgrade() {
         panic!("battle runtime post-upgrade restore failed: {error}");
     }
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     if let Err(error) = services::session_turn_runtime::restore_snapshot_after_upgrade() {
         panic!("session turn runtime post-upgrade restore failed: {error}");
     }

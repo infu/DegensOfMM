@@ -20,7 +20,7 @@ struct RuntimeTownCommand {
     command_id_text: String,
     client_nonce: u64,
     payload_hash: String,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     payload_json: String,
     command_type: String,
 }
@@ -593,7 +593,7 @@ fn begin_runtime_town_command(
         command_id,
         client_nonce,
         payload_hash,
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         payload_json,
         command_type: command_type.to_string(),
     }))
@@ -714,7 +714,7 @@ fn remember_runtime_town_receipt(
         client_nonce: command.client_nonce,
         turn_number: context.session.current_turn,
         payload_hash: command.payload_hash,
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         payload_json: Some(command.payload_json),
         response,
     };

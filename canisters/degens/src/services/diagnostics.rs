@@ -27,14 +27,18 @@ use crate::{
 
 #[cfg(feature = "benchmark")]
 use crate::contract::DiagnosticBenchmarkCallPage;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use crate::{
     contract::{
-        DiagnosticProjectionFlushView, DiagnosticProjectionKernelView,
-        DiagnosticProjectionSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView,
+        DiagnosticProjectionFlushView, DiagnosticProjectionKernelView, DiagnosticProjectionSnapshot,
     },
+    services::session_turn_runtime,
+};
+#[cfg(not(feature = "benchmark"))]
+use crate::{
+    contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView},
     repos::system_jobs,
-    services::{flush_barrier, session_turn_runtime, system_jobs as system_job_service},
+    services::{flush_barrier, system_jobs as system_job_service},
 };
 
 const MAX_DIAGNOSTIC_ENTITY_COUNTS: usize = 16;
@@ -103,7 +107,7 @@ pub(crate) fn get_diagnostic_system_jobs(
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectionSnapshot, ApiError>
 {
     crate::auth::require_controller("get_diagnostic_projection_snapshot")?;
@@ -117,6 +121,24 @@ pub(crate) fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectio
         total_dirty_queue_len: snapshot.total_dirty_queue_len as u64,
         oldest_dirty_age_ms: snapshot.oldest_dirty_age_ms,
         last_flush: snapshot.last_flush.as_ref().map(projection_flush_view),
+    })
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+pub(crate) fn run_diagnostic_projection_flush() -> Result<DiagnosticProjectionFlushView, ApiError> {
+    crate::auth::require_controller("run_diagnostic_projection_flush")?;
+    let outcome = session_turn_runtime::flush_runtime_projection_queue(
+        session_turn_runtime::ProjectionFlushLimits::unbounded(),
+    )?;
+    Ok(DiagnosticProjectionFlushView {
+        flushed_at_ms: crate::services::clock::now_ms(),
+        entries_processed: outcome.entries_processed as u64,
+        rows_flushed: outcome.rows_flushed as u64,
+        queue_len_before: outcome.queue_len_before as u64,
+        queue_len_after: outcome.queue_len_after as u64,
+        flush_truncated: outcome.truncated,
+        stable_pages_delta: outcome.stable_pages_delta,
+        flush_instructions: outcome.instruction_delta,
     })
 }
 
@@ -362,7 +384,7 @@ fn system_job_view(job: &SystemJob) -> DiagnosticSystemJobView {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn projection_kernel_view(
     kernel: &session_turn_runtime::ProjectionKernelDiagnostic,
 ) -> DiagnosticProjectionKernelView {
@@ -381,7 +403,7 @@ fn projection_kernel_view(
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn projection_flush_view(
     flush: &session_turn_runtime::ProjectionFlushDiagnostic,
 ) -> DiagnosticProjectionFlushView {

@@ -15,6 +15,7 @@ default = []
 sql = ["icydb/sql"]
 diagnostics = ["icydb/diagnostics"]
 benchmark = []
+projection-benchmark = []
 
 [dependencies]
 candid = { workspace = true }

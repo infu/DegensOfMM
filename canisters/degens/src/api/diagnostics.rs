@@ -7,10 +7,10 @@ use crate::contract::DiagnosticStorageSnapshot;
 
 #[cfg(feature = "benchmark")]
 use crate::contract::DiagnosticBenchmarkCallPage;
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+use crate::contract::{DiagnosticProjectionFlushView, DiagnosticProjectionSnapshot};
 #[cfg(not(feature = "benchmark"))]
-use crate::contract::{
-    DiagnosticProjectionSnapshot, DiagnosticSystemJobPage, DiagnosticSystemJobView,
-};
+use crate::contract::{DiagnosticSystemJobPage, DiagnosticSystemJobView};
 
 #[query]
 fn get_diagnostic_storage_snapshot(
@@ -34,11 +34,19 @@ fn get_diagnostic_system_jobs(
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[query]
 fn get_diagnostic_projection_snapshot() -> Result<DiagnosticProjectionSnapshot, ApiError> {
     crate::metrics::benchmark_query("get_diagnostic_projection_snapshot", || {
         crate::services::diagnostics::get_diagnostic_projection_snapshot()
+    })
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+#[update]
+fn run_diagnostic_projection_flush() -> Result<DiagnosticProjectionFlushView, ApiError> {
+    crate::metrics::benchmark_update("run_diagnostic_projection_flush", || {
+        crate::services::diagnostics::run_diagnostic_projection_flush()
     })
 }
 

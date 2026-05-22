@@ -709,7 +709,7 @@ fn remember_runtime_command_receipt(
         client_nonce: command.client_nonce,
         turn_number: context.session.current_turn,
         payload_hash: command.payload_hash.clone(),
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         payload_json: Some(command.payload_json.clone()),
         response,
     };

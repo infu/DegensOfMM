@@ -6,14 +6,14 @@
 
 #![allow(dead_code)]
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use std::borrow::Cow;
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
 };
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use canic_cdk::structures::{
     Cell as StableCell, DefaultMemoryImpl, Storable, memory::VirtualMemory, storable::Bound,
 };
@@ -21,10 +21,10 @@ use domm_degens_schema::schema::{
     Champion, GameCommand, GameParticipant, GameSession, MovementIntent, QuestState,
     ScenarioRuleState, WorldObject,
 };
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use domm_degens_schema::schema::{MapObjectDefinition, MapOccupancy, NeutralArmy};
 use domm_game::{ApiError, ApiEventView, CommandResponse, CommandStatusView};
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use icydb::{traits::EntityKey, types::Timestamp};
 use icydb::{
     traits::EntityValue,
@@ -34,23 +34,23 @@ use icydb::{
 use crate::repos::{
     champions_artifacts, map_visibility_occupancy, players, sessions, towns, turn_ready,
 };
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use crate::repos::{cleanup, commands_events_effects, economy, movement, scenario_progress};
 
 pub(crate) const SESSION_TURN_RUNTIME_EVENT_SEQ_BLOCK_SIZE: u64 = 4_096;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) const SESSION_TURN_RUNTIME_MEMORY_ID: u8 = 24;
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 const MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES: u32 = 64 * 1024 * 1024;
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 struct SessionTurnRuntimeStableCell;
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RawSessionTurnRuntimeSnapshot(Vec<u8>);
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 impl RawSessionTurnRuntimeSnapshot {
     const fn empty() -> Self {
         Self(Vec::new())
@@ -61,7 +61,7 @@ impl RawSessionTurnRuntimeSnapshot {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 impl Storable for RawSessionTurnRuntimeSnapshot {
     fn to_bytes(&self) -> Cow<'_, [u8]> {
         Cow::Borrowed(self.as_bytes())
@@ -81,7 +81,7 @@ impl Storable for RawSessionTurnRuntimeSnapshot {
     };
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 thread_local! {
     static SESSION_TURN_RUNTIME_SNAPSHOT_CELL: RefCell<
         StableCell<RawSessionTurnRuntimeSnapshot, VirtualMemory<DefaultMemoryImpl>>,
@@ -96,7 +96,7 @@ thread_local! {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnRuntime {
@@ -129,9 +129,9 @@ pub(crate) struct SessionTurnRuntime {
     pub resource_deltas: Vec<ResourceTurnDelta>,
     pub partial_cursor: Option<MovementCursor>,
     pub dirty: SessionTurnDirtySets,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     pub projection_dirty_queue: Vec<ProjectionDirtyEntry>,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     pub projection_checkpoint: ProjectionCheckpoint,
 }
 
@@ -144,7 +144,7 @@ impl SessionTurnRuntime {
         turn_duration_ms: u64,
     ) -> Self {
         let session_id = session_id.into();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_checkpoint =
             ProjectionCheckpoint::new(runtime_key(&session_id, turn_number));
         Self {
@@ -177,9 +177,9 @@ impl SessionTurnRuntime {
             resource_deltas: Vec::new(),
             partial_cursor: None,
             dirty: SessionTurnDirtySets::default(),
-            #[cfg(not(feature = "benchmark"))]
+            #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
             projection_dirty_queue: Vec::new(),
-            #[cfg(not(feature = "benchmark"))]
+            #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
             projection_checkpoint,
         }
     }
@@ -193,7 +193,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_participant(&mut self, participant: SessionTurnParticipant) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = participant.participant_id.clone();
         if let Some(existing) = self
             .participants
@@ -211,7 +211,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.participants = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Participant,
             projection_key,
@@ -221,7 +221,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_champion_snapshot(&mut self, champion: Champion) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = champion.id().to_string();
         if let Some(existing) = self
             .champion_snapshots
@@ -234,7 +234,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.champion_snapshots = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Champion,
             projection_key,
@@ -245,7 +245,7 @@ impl SessionTurnRuntime {
 
     pub(crate) fn upsert_champion_spell_snapshot(&mut self, spell: RuntimeChampionSpell) {
         let champion_id = Id::<Champion>::from_key(spell.champion_id).to_string();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = format!("{}:{}", spell.champion_id, spell.spell_id);
         if let Some(existing) = self.champion_spell_snapshots.iter_mut().find(|existing| {
             existing.champion_id == spell.champion_id && existing.spell_id == spell.spell_id
@@ -257,7 +257,7 @@ impl SessionTurnRuntime {
         self.complete_champion_spellbooks.insert(champion_id);
         self.dirty.champion_spell_snapshots = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::ChampionSpell,
             projection_key,
@@ -273,7 +273,7 @@ impl SessionTurnRuntime {
         {
             self.dirty.champion_spell_snapshots = true;
             self.mark_dirty();
-            #[cfg(not(feature = "benchmark"))]
+            #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
             self.record_projection_dirty(
                 ProjectionEntity::ChampionSpell,
                 champion_id.to_string(),
@@ -284,7 +284,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_world_object_snapshot(&mut self, object: WorldObject) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = object.id().to_string();
         if let Some(existing) = self
             .world_object_snapshots
@@ -297,7 +297,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.world_object_snapshots = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::WorldObject,
             projection_key,
@@ -307,7 +307,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_occupancy_cell(&mut self, cell: RuntimeOccupancyCell) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = occupancy_projection_key(&cell);
         if let Some(existing) = self.occupancy_index.iter_mut().find(|existing| {
             existing.x == cell.x && existing.y == cell.y && existing.layer == cell.layer
@@ -318,7 +318,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.occupancy_index = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Occupancy,
             projection_key,
@@ -328,7 +328,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_occupancy_for_occupant(&mut self, cell: RuntimeOccupancyCell) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = occupancy_projection_key(&cell);
         self.occupancy_index.retain(|existing| {
             !(existing.layer == cell.layer
@@ -339,7 +339,7 @@ impl SessionTurnRuntime {
         self.occupancy_index.push(cell);
         self.dirty.occupancy_index = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Occupancy,
             projection_key,
@@ -358,7 +358,7 @@ impl SessionTurnRuntime {
         if self.occupancy_index.len() != before {
             self.dirty.occupancy_index = true;
             self.mark_dirty();
-            #[cfg(not(feature = "benchmark"))]
+            #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
             self.record_projection_dirty(
                 ProjectionEntity::Occupancy,
                 format!("{layer}:champion:{occupant_id_text}"),
@@ -369,7 +369,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_contact_cell(&mut self, cell: RuntimeContactCell) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = contact_projection_key(&cell);
         if let Some(existing) = self.contact_index.iter_mut().find(|existing| {
             existing.x == cell.x
@@ -383,7 +383,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.contact_index = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Contact,
             projection_key,
@@ -393,7 +393,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_quest_snapshot(&mut self, quest: QuestState) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = quest.id().to_string();
         if let Some(existing) = self
             .quest_snapshots
@@ -406,7 +406,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.quest_snapshots = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Quest,
             projection_key,
@@ -416,7 +416,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_scenario_rule_snapshot(&mut self, rule: ScenarioRuleState) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = rule.id().to_string();
         if let Some(existing) = self
             .scenario_rule_snapshots
@@ -429,7 +429,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.scenario_rule_snapshots = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::ScenarioRule,
             projection_key,
@@ -439,7 +439,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn mark_ready(&mut self, participant_id: impl Into<String>) -> bool {
-        #[cfg(feature = "benchmark")]
+        #[cfg(all(feature = "benchmark", not(feature = "projection-benchmark")))]
         {
             let inserted = self.ready_participants.insert(participant_id.into());
             if inserted {
@@ -448,7 +448,7 @@ impl SessionTurnRuntime {
             }
             inserted
         }
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         {
             let participant_id = participant_id.into();
             let inserted = self.ready_participants.insert(participant_id.clone());
@@ -493,7 +493,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn upsert_intent(&mut self, intent: RuntimeMovementIntent) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = intent.intent_id.clone();
         if let Some(existing) = self
             .intents
@@ -506,7 +506,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.intents = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::MovementIntent,
             projection_key,
@@ -516,7 +516,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn insert_command_receipt(&mut self, receipt: SessionTurnCommandReceipt) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = receipt.command_id.clone();
         if let Some(existing) = self
             .command_receipts
@@ -529,7 +529,7 @@ impl SessionTurnRuntime {
         }
         self.dirty.command_receipts = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::CommandReceipt,
             projection_key,
@@ -550,12 +550,12 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn push_event(&mut self, event: SessionTurnEvent) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = event.event.event_key.clone();
         self.active_events.push(event);
         self.dirty.events = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::Event,
             projection_key,
@@ -565,7 +565,7 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn push_resource_delta(&mut self, delta: ResourceTurnDelta) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = delta
             .ledger
             .as_ref()
@@ -574,7 +574,7 @@ impl SessionTurnRuntime {
         self.resource_deltas.push(delta);
         self.dirty.resource_deltas = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::ResourceDelta,
             projection_key,
@@ -584,13 +584,13 @@ impl SessionTurnRuntime {
     }
 
     pub(crate) fn push_object_delta(&mut self, delta: ObjectTurnDelta) {
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         let projection_key = format!("{}:{}", delta.subject_kind, delta.subject_id);
         self.central_objectives_completed = None;
         self.object_deltas.push(delta);
         self.dirty.object_deltas = true;
         self.mark_dirty();
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         self.record_projection_dirty(
             ProjectionEntity::ObjectDelta,
             projection_key,
@@ -599,7 +599,7 @@ impl SessionTurnRuntime {
         );
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     fn record_projection_dirty(
         &mut self,
         entity: ProjectionEntity,
@@ -634,13 +634,13 @@ impl SessionTurnRuntime {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 const PROJECTION_PRIORITY_NORMAL: u8 = 50;
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct ProjectionDirtyEntry {
@@ -654,10 +654,10 @@ pub(crate) struct ProjectionDirtyEntry {
     pub last_dirty_at_ms: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) enum ProjectionEntity {
@@ -678,10 +678,10 @@ pub(crate) enum ProjectionEntity {
     ScenarioRule,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) enum ProjectionDirtyOp {
@@ -689,10 +689,10 @@ pub(crate) enum ProjectionDirtyOp {
     Tombstone,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct ProjectionCheckpoint {
@@ -702,7 +702,7 @@ pub(crate) struct ProjectionCheckpoint {
     pub pending_entries: usize,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 impl ProjectionCheckpoint {
     fn new(kernel_id: String) -> Self {
         Self {
@@ -714,7 +714,7 @@ impl ProjectionCheckpoint {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ProjectionFlushLimits {
     pub max_rows: usize,
@@ -722,7 +722,7 @@ pub(crate) struct ProjectionFlushLimits {
     pub max_stable_pages_delta: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 impl ProjectionFlushLimits {
     pub(crate) fn unbounded() -> Self {
         Self {
@@ -733,7 +733,7 @@ impl ProjectionFlushLimits {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ProjectionFlushOutcome {
     pub entries_processed: usize,
@@ -745,7 +745,7 @@ pub(crate) struct ProjectionFlushOutcome {
     pub stable_pages_delta: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProjectionKernelDiagnostic {
     pub kernel_id: String,
@@ -761,7 +761,7 @@ pub(crate) struct ProjectionKernelDiagnostic {
     pub pending_entries: usize,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProjectionFlushDiagnostic {
     pub flushed_at_ms: u64,
@@ -774,7 +774,7 @@ pub(crate) struct ProjectionFlushDiagnostic {
     pub flush_instructions: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ProjectionDiagnosticSnapshot {
     pub kernels: Vec<ProjectionKernelDiagnostic>,
@@ -785,7 +785,7 @@ pub(crate) struct ProjectionDiagnosticSnapshot {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnParticipant {
@@ -805,7 +805,7 @@ pub(crate) struct RuntimeReadinessCounts {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct RuntimeOccupancyCell {
@@ -820,7 +820,7 @@ pub(crate) struct RuntimeOccupancyCell {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct RuntimeContactCell {
@@ -833,12 +833,12 @@ pub(crate) struct RuntimeContactCell {
     pub status: String,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn occupancy_projection_key(cell: &RuntimeOccupancyCell) -> String {
     format!("{}:{}:{}", cell.layer, cell.x, cell.y)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn contact_projection_key(cell: &RuntimeContactCell) -> String {
     format!(
         "{}:{}:{}:{}",
@@ -848,7 +848,7 @@ fn contact_projection_key(cell: &RuntimeContactCell) -> String {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct RuntimeMovementIntent {
@@ -895,7 +895,7 @@ impl RuntimeMovementIntent {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct RuntimeChampionSpell {
@@ -909,7 +909,7 @@ pub(crate) struct RuntimeChampionSpell {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnCommandReceipt {
@@ -920,7 +920,7 @@ pub(crate) struct SessionTurnCommandReceipt {
     pub client_nonce: u64,
     pub turn_number: u32,
     pub payload_hash: String,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     pub payload_json: Option<String>,
     pub response: CommandResponse,
 }
@@ -933,7 +933,7 @@ impl SessionTurnCommandReceipt {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnEvent {
@@ -944,7 +944,7 @@ pub(crate) struct SessionTurnEvent {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnEventSeqBlock {
@@ -965,7 +965,7 @@ impl SessionTurnEventSeqBlock {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct ObjectTurnDelta {
@@ -978,7 +978,7 @@ pub(crate) struct ObjectTurnDelta {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct ResourceTurnDelta {
@@ -990,14 +990,14 @@ pub(crate) struct ResourceTurnDelta {
     pub crystal: i64,
     pub ember: i64,
     pub aether: i64,
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     pub ledger: Option<ResourceLedgerDelta>,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct ResourceLedgerDelta {
@@ -1011,7 +1011,7 @@ pub(crate) struct ResourceLedgerDelta {
 
 #[derive(Clone)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct MovementCursor {
@@ -1021,7 +1021,7 @@ pub(crate) struct MovementCursor {
 
 #[derive(Clone, Default)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnDirtySets {
@@ -1044,7 +1044,7 @@ pub(crate) struct SessionTurnDirtySets {
 
 #[derive(Default)]
 #[cfg_attr(
-    not(feature = "benchmark"),
+    any(not(feature = "benchmark"), feature = "projection-benchmark"),
     derive(candid::CandidType, serde::Deserialize)
 )]
 pub(crate) struct SessionTurnRuntimeSnapshot {
@@ -1054,7 +1054,7 @@ pub(crate) struct SessionTurnRuntimeSnapshot {
 thread_local! {
     static ACTIVE_SESSION_TURN_RUNTIMES: RefCell<BTreeMap<String, SessionTurnRuntime>> =
         RefCell::new(BTreeMap::new());
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     static LAST_SESSION_PROJECTION_FLUSH: RefCell<Option<ProjectionFlushDiagnostic>> =
         const { RefCell::new(None) };
 }
@@ -1365,7 +1365,7 @@ pub(crate) fn record_resource_delta(
     });
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn record_resource_ledger_delta(
     session_id: &str,
@@ -1413,7 +1413,7 @@ fn resource_turn_delta(
         crystal: 0,
         ember: 0,
         aether: 0,
-        #[cfg(not(feature = "benchmark"))]
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
         ledger: None,
     };
     match resource_key {
@@ -1530,7 +1530,7 @@ pub(crate) fn mirror_session_update(session: &GameSession) -> bool {
         {
             runtime.session = Some(session.clone());
             runtime.mark_dirty();
-            #[cfg(not(feature = "benchmark"))]
+            #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
             runtime.record_projection_dirty(
                 ProjectionEntity::Session,
                 session_id.clone(),
@@ -1543,7 +1543,7 @@ pub(crate) fn mirror_session_update(session: &GameSession) -> bool {
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn projection_dirty_queue_snapshot() -> Vec<ProjectionDirtyEntry> {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
         runtimes
@@ -1554,7 +1554,7 @@ pub(crate) fn projection_dirty_queue_snapshot() -> Vec<ProjectionDirtyEntry> {
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn projection_checkpoints_snapshot() -> Vec<ProjectionCheckpoint> {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
         runtimes
@@ -1565,7 +1565,7 @@ pub(crate) fn projection_checkpoints_snapshot() -> Vec<ProjectionCheckpoint> {
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn projection_diagnostic_snapshot() -> ProjectionDiagnosticSnapshot {
     let now_ms = crate::services::clock::now_ms();
     let mut kernels = ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
@@ -1591,7 +1591,7 @@ pub(crate) fn projection_diagnostic_snapshot() -> ProjectionDiagnosticSnapshot {
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn projection_kernel_diagnostic(
     runtime: &SessionTurnRuntime,
     now_ms: u64,
@@ -1621,7 +1621,7 @@ fn projection_kernel_diagnostic(
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn flush_runtime_projection_queue(
     limits: ProjectionFlushLimits,
 ) -> Result<ProjectionFlushOutcome, ApiError> {
@@ -1635,8 +1635,8 @@ pub(crate) fn flush_runtime_projection_queue(
             .then(left.key.cmp(&right.key))
     });
 
-    let instruction_start = canic_cdk::api::instruction_counter();
-    let stable_pages_start = canic_cdk::api::stable_size();
+    let instruction_start = projection_instruction_counter();
+    let stable_pages_start = projection_stable_size();
     let mut outcome = ProjectionFlushOutcome {
         queue_len_before,
         ..ProjectionFlushOutcome::default()
@@ -1660,9 +1660,8 @@ pub(crate) fn flush_runtime_projection_queue(
         outcome.rows_flushed = outcome.rows_flushed.saturating_add(rows_flushed);
     }
 
-    outcome.instruction_delta =
-        canic_cdk::api::instruction_counter().saturating_sub(instruction_start);
-    outcome.stable_pages_delta = canic_cdk::api::stable_size().saturating_sub(stable_pages_start);
+    outcome.instruction_delta = projection_instruction_counter().saturating_sub(instruction_start);
+    outcome.stable_pages_delta = projection_stable_size().saturating_sub(stable_pages_start);
     outcome.queue_len_after = projection_dirty_queue_snapshot().len();
     if outcome.queue_len_after != 0
         && projection_flush_limit_reached(&limits, &outcome, instruction_start, stable_pages_start)
@@ -1673,7 +1672,7 @@ pub(crate) fn flush_runtime_projection_queue(
     Ok(outcome)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn record_projection_flush_diagnostic(outcome: &ProjectionFlushOutcome) {
     let diagnostic = ProjectionFlushDiagnostic {
         flushed_at_ms: crate::services::clock::now_ms(),
@@ -1690,7 +1689,7 @@ fn record_projection_flush_diagnostic(outcome: &ProjectionFlushOutcome) {
     });
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn projection_flush_limit_reached(
     limits: &ProjectionFlushLimits,
     outcome: &ProjectionFlushOutcome,
@@ -1698,18 +1697,42 @@ fn projection_flush_limit_reached(
     stable_pages_start: u64,
 ) -> bool {
     outcome.entries_processed >= limits.max_rows
-        || canic_cdk::api::instruction_counter().saturating_sub(instruction_start)
+        || projection_instruction_counter().saturating_sub(instruction_start)
             >= limits.max_instructions
-        || canic_cdk::api::stable_size().saturating_sub(stable_pages_start)
+        || projection_stable_size().saturating_sub(stable_pages_start)
             >= limits.max_stable_pages_delta
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn projection_instruction_counter() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        canic_cdk::api::instruction_counter()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn projection_stable_size() -> u64 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        canic_cdk::api::stable_size()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        0
+    }
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn runtime_snapshot_by_kernel_id(kernel_id: &str) -> Option<SessionTurnRuntime> {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow().get(kernel_id).cloned())
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn complete_projection_dirty_entry(entry: &ProjectionDirtyEntry) {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| {
         let mut runtimes = runtimes.borrow_mut();
@@ -1732,7 +1755,7 @@ fn complete_projection_dirty_entry(entry: &ProjectionDirtyEntry) {
     });
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn refresh_projection_checkpoint(runtime: &mut SessionTurnRuntime) {
     let min_pending_generation = runtime
         .projection_dirty_queue
@@ -2234,7 +2257,7 @@ pub(crate) fn runtime_champion_spell_slugs_if_complete(
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_projection_dirty_entry(
     runtime: &SessionTurnRuntime,
     entry: &ProjectionDirtyEntry,
@@ -2265,7 +2288,7 @@ fn flush_projection_dirty_entry(
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_projection_tombstone(
     runtime: &SessionTurnRuntime,
     entry: &ProjectionDirtyEntry,
@@ -2297,7 +2320,7 @@ fn flush_projection_tombstone(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_session(runtime: &SessionTurnRuntime) -> Result<usize, ApiError> {
     let Some(session) = runtime.session.clone() else {
         return Ok(0);
@@ -2306,7 +2329,7 @@ fn flush_runtime_session(runtime: &SessionTurnRuntime) -> Result<usize, ApiError
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_participant(
     runtime: &SessionTurnRuntime,
     participant_id: &str,
@@ -2323,7 +2346,7 @@ fn flush_runtime_participant(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_champion(
     runtime: &SessionTurnRuntime,
     champion_id: &str,
@@ -2343,7 +2366,7 @@ fn flush_runtime_champion(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_champion_spell(
     runtime: &SessionTurnRuntime,
     spell_key: &str,
@@ -2387,7 +2410,7 @@ fn flush_runtime_champion_spell(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_world_object(
     runtime: &SessionTurnRuntime,
     object_id: &str,
@@ -2426,7 +2449,7 @@ fn flush_runtime_world_object(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_occupancy(
     runtime: &SessionTurnRuntime,
     occupancy_key: &str,
@@ -2481,7 +2504,7 @@ fn flush_runtime_occupancy(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn runtime_chunk_coord(runtime: &SessionTurnRuntime, value: u16) -> u16 {
     let chunk_size = runtime
         .session
@@ -2491,7 +2514,7 @@ fn runtime_chunk_coord(runtime: &SessionTurnRuntime, value: u16) -> u16 {
     value / chunk_size
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_movement_intent(
     runtime: &SessionTurnRuntime,
     intent_id: &str,
@@ -2542,7 +2565,7 @@ fn flush_runtime_movement_intent(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_command_receipt_by_key(
     runtime: &SessionTurnRuntime,
     command_id: &str,
@@ -2559,7 +2582,7 @@ fn flush_runtime_command_receipt_by_key(
     )?))
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_event_by_key(
     runtime: &SessionTurnRuntime,
     event_key: &str,
@@ -2574,7 +2597,7 @@ fn flush_runtime_event_by_key(
     Ok(usize::from(flush_runtime_event(runtime_event)?))
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_resource_delta_by_key(
     runtime: &SessionTurnRuntime,
     resource_key: &str,
@@ -2592,7 +2615,7 @@ fn flush_runtime_resource_delta_by_key(
     )?))
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn resource_delta_projection_key(delta: &ResourceTurnDelta) -> String {
     delta
         .ledger
@@ -2601,7 +2624,7 @@ fn resource_delta_projection_key(delta: &ResourceTurnDelta) -> String {
         .unwrap_or_else(|| delta.participant_id.clone())
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_quest(runtime: &SessionTurnRuntime, quest_id: &str) -> Result<usize, ApiError> {
     let Some(quest) = runtime
         .quest_snapshots
@@ -2636,7 +2659,7 @@ fn flush_runtime_quest(runtime: &SessionTurnRuntime, quest_id: &str) -> Result<u
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_scenario_rule(
     runtime: &SessionTurnRuntime,
     rule_id: &str,
@@ -2671,7 +2694,7 @@ fn flush_runtime_scenario_rule(
     Ok(1)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError> {
     let outcome = flush_runtime_projection_queue(ProjectionFlushLimits::unbounded())?;
     if outcome.truncated || outcome.queue_len_after != 0 {
@@ -2694,7 +2717,7 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
     Ok(outcome.rows_flushed)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_ready_participant(
     runtime: &SessionTurnRuntime,
     participant_id: &str,
@@ -2724,7 +2747,7 @@ fn flush_runtime_ready_participant(
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_command_receipt(
     runtime: &SessionTurnRuntime,
     receipt: &SessionTurnCommandReceipt,
@@ -2779,7 +2802,7 @@ fn flush_runtime_command_receipt(
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_resource_delta(
     runtime: &SessionTurnRuntime,
     resource_delta: &ResourceTurnDelta,
@@ -2808,7 +2831,7 @@ fn flush_runtime_resource_delta(
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<bool, ApiError> {
     let session_id = parse_ulid_id::<GameSession>(&runtime_event.event.session_id)?;
     if commands_events_effects::find_event_by_key(session_id, &runtime_event.event.event_key)?
@@ -2837,7 +2860,7 @@ fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<bool, ApiErro
     Ok(true)
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCommand>>, ApiError> {
     let Some(command_id_text) = command_id_text else {
         return Ok(None);
@@ -2852,7 +2875,7 @@ fn durable_command_id(command_id_text: Option<&str>) -> Result<Option<Id<GameCom
     }
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn parse_ulid_id<E>(value: &str) -> Result<Id<E>, ApiError>
 where
     E: EntityKey<Key = Ulid>,
@@ -2866,7 +2889,7 @@ where
     })
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn try_parse_ulid_id<E>(value: &str) -> Result<Id<E>, ()>
 where
     E: EntityKey<Key = Ulid>,
@@ -2890,7 +2913,7 @@ pub(crate) fn restore_from_upgrade(snapshot: SessionTurnRuntimeSnapshot) {
     });
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
     let bytes = encode_snapshot_for_upgrade(&snapshot_for_upgrade())?;
     if bytes.len() > MAX_SESSION_TURN_RUNTIME_SNAPSHOT_BYTES as usize {
@@ -2907,7 +2930,7 @@ pub(crate) fn persist_snapshot_for_upgrade() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
     let raw = SESSION_TURN_RUNTIME_SNAPSHOT_CELL.with(|cell| cell.borrow().get().clone());
     if raw.as_bytes().is_empty() {
@@ -2923,13 +2946,13 @@ pub(crate) fn restore_snapshot_after_upgrade() -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn encode_snapshot_for_upgrade(snapshot: &SessionTurnRuntimeSnapshot) -> Result<Vec<u8>, String> {
     candid::encode_one(snapshot)
         .map_err(|error| format!("encode session turn runtime snapshot failed: {error}"))
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn decode_snapshot_for_upgrade(bytes: &[u8]) -> Result<SessionTurnRuntimeSnapshot, String> {
     candid::decode_one(bytes)
         .map_err(|error| format!("decode session turn runtime snapshot failed: {error}"))
@@ -2938,7 +2961,7 @@ fn decode_snapshot_for_upgrade(bytes: &[u8]) -> Result<SessionTurnRuntimeSnapsho
 #[cfg(test)]
 pub(crate) fn clear_all_for_tests() {
     ACTIVE_SESSION_TURN_RUNTIMES.with(|runtimes| runtimes.borrow_mut().clear());
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     LAST_SESSION_PROJECTION_FLUSH.with(|last_flush| {
         *last_flush.borrow_mut() = None;
     });
@@ -3033,7 +3056,7 @@ mod tests {
         assert!(runtime.dirty.intents);
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     #[test]
     fn projection_dirty_queue_coalesces_entity_key_and_tracks_generation() {
         let mut runtime = runtime();
@@ -3073,7 +3096,7 @@ mod tests {
         assert!(dirty.last_dirty_at_ms >= dirty.first_dirty_at_ms);
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     #[test]
     fn completing_event_projection_entry_removes_queue_and_hides_runtime_event() {
         clear_all_for_tests();
@@ -3088,7 +3111,7 @@ mod tests {
         assert!(active_events_after("session:1", "public", 9).is_empty());
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     #[test]
     fn projection_checkpoint_advances_to_oldest_pending_generation() {
         clear_all_for_tests();
@@ -3122,7 +3145,7 @@ mod tests {
         assert_eq!(checkpoints[0].pending_entries, 0);
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     #[test]
     fn projection_diagnostics_report_queue_lag_and_checkpoint_state() {
         clear_all_for_tests();
@@ -3190,7 +3213,7 @@ mod tests {
         assert!(contains_runtime("session:1", 3));
     }
 
-    #[cfg(not(feature = "benchmark"))]
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
     #[test]
     fn upgrade_snapshot_encoding_preserves_dirty_queue_and_checkpoint() {
         clear_all_for_tests();
@@ -3225,6 +3248,231 @@ mod tests {
             decoded_runtime.projection_checkpoint.kernel_id,
             decoded_runtime.key()
         );
+    }
+
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    #[test]
+    fn projection_surface_flushes_rows_metrics_and_restores_dirty_upgrade_snapshot() {
+        clear_all_for_tests();
+        let unique = Ulid::generate().to_string();
+        let player = players::create_player_account(
+            icydb::types::Principal::from_slice(unique.as_bytes()),
+            Some(format!("proj-{}", &unique[..20])),
+            Some("Projection Surface".to_string()),
+        )
+        .expect("player row should seed projection test");
+        let ruleset = crate::repos::content::create_ruleset_definition(
+            format!("projection-rules-{unique}"),
+            1,
+            "Projection Rules".to_string(),
+            None,
+            Some("projection-hash".to_string()),
+        )
+        .expect("ruleset row should seed projection test");
+        let faction = crate::repos::content::create_faction_definition(
+            ruleset.id(),
+            format!("projection-faction-{unique}"),
+            "Projection Faction".to_string(),
+            "projection-trait".to_string(),
+        )
+        .expect("faction row should seed projection test");
+        let class = crate::repos::content::create_champion_class_definition(
+            ruleset.id(),
+            Some(faction.id()),
+            domm_game::ChampionClassContent {
+                id: "projection-class".to_string(),
+                ruleset_id: "projection-rules".to_string(),
+                faction_slug: None,
+                slug: format!("projection-class-{unique}"),
+                name: "Projection Class".to_string(),
+                description: None,
+                portrait_key: None,
+                base_movement: 24,
+                base_vision: 4,
+            },
+        )
+        .expect("champion class row should seed projection test");
+        let mut session = sessions::create_game_session(
+            ruleset.id(),
+            player.id(),
+            "Projection Session".to_string(),
+            7,
+            16,
+            16,
+            Timestamp::from_millis(200),
+        )
+        .expect("session row should seed projection test");
+        session.state = "active".to_string();
+        session.current_turn = 7;
+        let session =
+            sessions::update_session(session).expect("active session should update for test");
+        let participant = sessions::create_participant(
+            session.id(),
+            player.id(),
+            faction.id(),
+            0,
+            "red".to_string(),
+        )
+        .expect("participant row should seed projection test");
+        let champion = champions_artifacts::create_champion(
+            session.id(),
+            participant.id(),
+            class.id(),
+            "Projection Champion".to_string(),
+            "projection-class".to_string(),
+            "idle".to_string(),
+            1,
+            1,
+            0,
+            0,
+            1,
+            0,
+            1,
+            1,
+            1,
+            1,
+            0,
+            0,
+            1,
+            0,
+            Vec::new(),
+            24,
+            24,
+            7,
+            4,
+            0,
+        )
+        .expect("champion row should seed projection test");
+        let command_ulid = Ulid::generate();
+        let command_id = Id::<GameCommand>::from_key(command_ulid);
+        let session_id = session.id();
+        let participant_id = participant.id();
+        let champion_id = champion.id();
+        let session_id_text = session_id.to_string();
+        let participant_id_text = participant_id.to_string();
+        let champion_id_text = champion_id.to_string();
+        let command_id_text = command_id.to_string();
+        let event_key = format!("event:{command_id_text}:projection");
+        let mut runtime = SessionTurnRuntime::new(&session_id_text, 7, 100, 200, 100);
+
+        runtime.upsert_intent(RuntimeMovementIntent {
+            intent_id: Ulid::generate().to_string(),
+            command_id: command_id_text.clone(),
+            actor_participant_id: participant_id_text.clone(),
+            champion_id: champion_id_text.clone(),
+            path_json: "1,1;2,1".to_string(),
+            path_hash: "hash:projection".to_string(),
+            status: "pending".to_string(),
+            durable_intent: None,
+            champion: None,
+            participant: None,
+        });
+        runtime.insert_command_receipt(SessionTurnCommandReceipt {
+            command_id: command_id_text.clone(),
+            command_type: "submit_move_intent".to_string(),
+            actor_participant_id: participant_id_text.clone(),
+            client_nonce_text: "nonce:projection-surface".to_string(),
+            client_nonce: 42,
+            turn_number: 7,
+            payload_hash: "hash:projection-payload".to_string(),
+            payload_json: Some(r#"{"path":"1,1;2,1"}"#.to_string()),
+            response: CommandResponse {
+                command_id: command_id_text.clone(),
+                command_type: "submit_move_intent".to_string(),
+                actor_principal: candid::Principal::anonymous(),
+                actor_participant_id: Some(participant_id_text.clone()),
+                client_nonce: "nonce:projection-surface".to_string(),
+                payload_hash: "hash:projection-payload".to_string(),
+                status: domm_game::CommandStatus::Applied,
+                phase: domm_game::CommandPhase::Complete,
+                retryable: false,
+                effective_turn: 7,
+                durable_turn: 7,
+                events: Vec::new(),
+                changed_subjects: Vec::new(),
+                result: domm_game::CommandResult::None,
+                error: None,
+            },
+        });
+        runtime.push_event(SessionTurnEvent {
+            command_id: Some(command_id_text.clone()),
+            event: ApiEventView {
+                session_id: session_id_text.clone(),
+                event_seq: 1,
+                event_key: event_key.clone(),
+                audience_key: "public".to_string(),
+                turn_number: 7,
+                event_type: "movement_intent_submitted".to_string(),
+                subject_kind: Some("champion".to_string()),
+                subject_id_text: Some(champion_id_text.clone()),
+                payload: Some(r#"{"runtime":true}"#.to_string()),
+                redacted: false,
+            },
+            flushed: false,
+        });
+        insert_runtime(runtime);
+
+        assert!(
+            command_receipt_by_nonce(&session_id_text, &participant_id_text, 42).is_some(),
+            "runtime command-status surface should answer before projection flush"
+        );
+        assert_eq!(
+            active_events_after(&session_id_text, "public", 0).len(),
+            1,
+            "runtime event surface should answer before projection flush"
+        );
+        let dirty_before_flush = projection_diagnostic_snapshot();
+        assert_eq!(dirty_before_flush.total_dirty_queue_len, 3);
+        assert_eq!(dirty_before_flush.kernels[0].lag_generations, 3);
+
+        let outcome = flush_runtime_projection_queue(ProjectionFlushLimits::unbounded())
+            .expect("projection flush should succeed");
+
+        assert_eq!(outcome.queue_len_before, 3);
+        assert_eq!(outcome.queue_len_after, 0);
+        assert!(!outcome.truncated);
+        assert_eq!(outcome.rows_flushed, 3);
+        assert!(
+            movement::find_movement_intent(session_id, champion_id, 7)
+                .expect("movement intent lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            commands_events_effects::load_game_command(command_id)
+                .expect("command lookup should succeed")
+                .is_some()
+        );
+        assert!(
+            commands_events_effects::find_event_by_key(session_id, &event_key)
+                .expect("event lookup should succeed")
+                .is_some()
+        );
+        let clean_after_flush = projection_diagnostic_snapshot();
+        assert_eq!(clean_after_flush.total_dirty_queue_len, 0);
+        assert_eq!(clean_after_flush.kernels[0].lag_generations, 0);
+        assert_eq!(
+            clean_after_flush
+                .last_flush
+                .as_ref()
+                .expect("flush diagnostic should be recorded")
+                .rows_flushed,
+            3
+        );
+
+        with_runtime_mut(&session_id_text, 7, |runtime| {
+            runtime.mark_ready(participant_id_text.clone());
+        });
+        let dirty_before_upgrade = projection_diagnostic_snapshot();
+        assert_eq!(dirty_before_upgrade.total_dirty_queue_len, 1);
+        let snapshot = snapshot_for_upgrade();
+        clear_all_for_tests();
+        restore_from_upgrade(snapshot);
+
+        assert!(contains_runtime(&session_id_text, 7));
+        let restored = projection_diagnostic_snapshot();
+        assert_eq!(restored.total_dirty_queue_len, 1);
+        assert_eq!(restored.kernels[0].pending_entries, 1);
+        assert_eq!(restored.kernels[0].lag_generations, 1);
     }
 
     #[test]

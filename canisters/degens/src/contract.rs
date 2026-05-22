@@ -87,7 +87,7 @@ pub struct DiagnosticSystemJobPage {
     pub limit: u32,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct DiagnosticProjectionKernelView {
     pub kernel_id: String,
@@ -103,7 +103,7 @@ pub struct DiagnosticProjectionKernelView {
     pub pending_entries: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct DiagnosticProjectionFlushView {
     pub flushed_at_ms: u64,
@@ -116,7 +116,7 @@ pub struct DiagnosticProjectionFlushView {
     pub flush_instructions: u64,
 }
 
-#[cfg(not(feature = "benchmark"))]
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 #[derive(Clone, Debug, PartialEq, Eq, CandidType, Serialize, Deserialize)]
 pub struct DiagnosticProjectionSnapshot {
     pub kernels: Vec<DiagnosticProjectionKernelView>,

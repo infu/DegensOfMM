@@ -51,6 +51,14 @@ struct RuntimeBattleCommandContext {
     created_at_ms: u64,
 }
 
+struct CastAbilityCommandContext<'a> {
+    command_id: Id<GameCommand>,
+    command_id_text: &'a str,
+    client_nonce: String,
+    payload_hash: &'a str,
+    created_at_ms: u64,
+}
+
 #[cfg(not(feature = "benchmark"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct BattleKernelDriverOutcome {
@@ -1660,9 +1668,8 @@ pub(crate) fn submit_battle_action(
     } else {
         session_context::require_cached_active_session_caller(caller, &session_id)
     }?;
-    if input.action != "CastAbility"
-        && let Some(response) =
-            submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
+    if let Some(response) =
+        submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
     {
         session_context::remember_active_session_caller(caller, &context);
         return Ok(response);
@@ -1672,7 +1679,6 @@ pub(crate) fn submit_battle_action(
         battle_runtime::adopt_active_battle_from_rows(&context.session, battle.clone())?;
     }
     if battle.state == "active"
-        && input.action != "CastAbility"
         && let Some(response) =
             submit_runtime_battle_action(caller, &mut context, &input, &client_nonce, now_ms)?
     {
@@ -3928,9 +3934,7 @@ fn apply_player_action(
     command.phase = "applying".to_string();
     command = commands_events_effects::update_game_command(command)?;
 
-    if input.action != "CastAbility"
-        && let Some(runtime) = battle_runtime::with_runtime(&input.battle_id, Clone::clone)
-    {
+    if let Some(runtime) = battle_runtime::with_runtime(&input.battle_id, Clone::clone) {
         return apply_player_action_from_runtime(
             session,
             participant_id,
@@ -4047,6 +4051,18 @@ fn apply_player_action_from_runtime_parts(
         now_ms,
         CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS,
     )?;
+    if input.action == "CastAbility" {
+        return apply_cast_ability_command_from_runtime(
+            session,
+            participant_id,
+            command,
+            input,
+            response_participant_id,
+            events,
+            changed_subjects,
+            runtime,
+        );
+    }
     let battle_command = battle_rows::battle_action_command_from_parts(
         &command.command_id,
         command.client_nonce.to_string(),
@@ -4126,6 +4142,111 @@ fn apply_cast_ability_command(
     events: &mut Vec<domm_game::ApiEventView>,
     changed_subjects: &mut Vec<domm_game::ChangedSubject>,
 ) -> Result<BattleActionReceipt, ApiError> {
+    let command_id_text = command.id().to_string();
+    let cast_command = CastAbilityCommandContext {
+        command_id: command.id(),
+        command_id_text: &command_id_text,
+        client_nonce: command.client_nonce.to_string(),
+        payload_hash: &command.payload_hash,
+        created_at_ms: command.created_at.as_millis().try_into().unwrap_or(0),
+    };
+    let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
+    let (receipt, caster_champion_id) =
+        apply_cast_ability_to_state(session, participant_id, &cast_command, input, &mut state)?;
+    battle_rows::persist_battle_state(&state, command.id())?;
+    append_new_battle_events(
+        session,
+        command.id(),
+        &state,
+        Some(response_participant_id),
+        events,
+    )?;
+    append_cast_action_feed_events(
+        session,
+        command.id(),
+        &state,
+        input,
+        response_participant_id,
+        events,
+    )?;
+    mirror_battle_runtime_from_state(session, &state)?;
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &input.battle_id,
+        "update",
+    ));
+    changed_subjects.push(command_response::changed(
+        "champion",
+        &caster_champion_id,
+        "update",
+    ));
+    Ok(receipt)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_cast_ability_command_from_runtime(
+    session: &mut GameSession,
+    participant_id: &str,
+    command: &RuntimeBattleCommandContext,
+    input: &BattleActionInput,
+    response_participant_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+    changed_subjects: &mut Vec<domm_game::ChangedSubject>,
+    mut runtime: BattleRuntime,
+) -> Result<BattleActionReceipt, ApiError> {
+    let command_id = session_context::parse_id::<GameCommand>(&command.command_id, "command_id")?;
+    let cast_command = CastAbilityCommandContext {
+        command_id,
+        command_id_text: &command.command_id,
+        client_nonce: command.client_nonce.to_string(),
+        payload_hash: &command.payload_hash,
+        created_at_ms: command.created_at_ms,
+    };
+    let (receipt, caster_champion_id) = apply_cast_ability_to_state(
+        session,
+        participant_id,
+        &cast_command,
+        input,
+        &mut runtime.state,
+    )?;
+    append_new_runtime_battle_events(
+        session,
+        &command.command_id,
+        &mut runtime,
+        Some(response_participant_id),
+        events,
+    )?;
+    append_runtime_cast_action_feed_events(
+        session,
+        &command.command_id,
+        &mut runtime,
+        input,
+        response_participant_id,
+        events,
+    )?;
+    refresh_runtime_metadata_from_state(&mut runtime, session, &input.battle_id)?;
+    trim_runtime_transient_battle_history(&mut runtime);
+    battle_runtime::insert_runtime(runtime);
+    changed_subjects.push(command_response::changed(
+        "battle",
+        &input.battle_id,
+        "update",
+    ));
+    changed_subjects.push(command_response::changed(
+        "champion",
+        &caster_champion_id,
+        "update",
+    ));
+    Ok(receipt)
+}
+
+fn apply_cast_ability_to_state(
+    session: &mut GameSession,
+    participant_id: &str,
+    command: &CastAbilityCommandContext<'_>,
+    input: &BattleActionInput,
+    state: &mut domm_game::BattleState,
+) -> Result<(BattleActionReceipt, String), ApiError> {
     let ability_key = input.ability_key.as_deref().ok_or_else(|| {
         public_error(
             "battle_ability_required",
@@ -4147,17 +4268,21 @@ fn apply_cast_ability_command(
             false,
         )
     })?;
-    let mut state = battle_rows::load_battle_state(session, &input.battle_id)?;
-    state.commands.push(battle_rows::battle_action_command(
-        &command,
-        &input.battle_id,
-        Some(participant_id.to_string()),
-        input.battle_stack_id.clone(),
-        input.action.clone(),
-        input.target_stack_id.clone(),
-        input.destination,
-        false,
-    ));
+    state
+        .commands
+        .push(battle_rows::battle_action_command_from_parts(
+            command.command_id_text,
+            command.client_nonce.clone(),
+            command.payload_hash.to_string(),
+            command.created_at_ms,
+            &input.battle_id,
+            Some(participant_id.to_string()),
+            input.battle_stack_id.clone(),
+            input.action.clone(),
+            input.target_stack_id.clone(),
+            input.destination,
+            false,
+        ));
     let battle = state
         .battle(&input.battle_id)
         .map_err(map_battle_error)?
@@ -4201,8 +4326,10 @@ fn apply_cast_ability_command(
             false,
         ));
     }
-    if champion.last_command_id == Some(command.id().key()) {
-        return battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error);
+    if champion.last_command_id == Some(command.command_id.key()) {
+        let receipt =
+            battle_action_receipt(state, command.command_id_text).map_err(map_battle_error)?;
+        return Ok((receipt, caster_champion_id));
     }
     let available_mana = if champion.mana_turn == session.current_turn {
         champion.mana
@@ -4221,7 +4348,7 @@ fn apply_cast_ability_command(
         session.seed.to_string(),
         "battle_spell_damage",
         u32::from(battle.current_round),
-        &command.id().to_string(),
+        command.command_id_text,
         &input.battle_stack_id,
         target_stack_id,
         0,
@@ -4229,13 +4356,8 @@ fn apply_cast_ability_command(
     .roll_between_inclusive(12, 18)
     .map_err(|error| public_error("rng_error", error.to_string(), true))?;
     let damage = (roll.value + champion.wisdom.max(0) as u64).min(u64::from(u32::MAX)) as u32;
-    domm_game::apply_damage_to_stack(
-        &mut state,
-        target_stack_id,
-        damage,
-        &command.id().to_string(),
-    )
-    .map_err(map_battle_error)?;
+    domm_game::apply_damage_to_stack(state, target_stack_id, damage, command.command_id_text)
+        .map_err(map_battle_error)?;
     let status_key = format!(
         "hexed_until_round:{}",
         battle
@@ -4256,12 +4378,12 @@ fn apply_cast_ability_command(
             .map_err(map_battle_error)?;
         caster.cast_round = battle.current_round;
         caster.acted_round = battle.current_round;
-        caster.last_command_id = Some(command.id().to_string());
+        caster.last_command_id = Some(command.command_id_text.to_string());
     }
     domm_game::append_battle_event(
-        &mut state,
+        state,
         &input.battle_id,
-        &command.id().to_string(),
+        command.command_id_text,
         "battle_spell_cast",
         &input.battle_stack_id,
         &format!(
@@ -4274,13 +4396,12 @@ fn apply_cast_ability_command(
     );
     champion.mana_turn = session.current_turn;
     champion.mana = available_mana - spell.mana_cost;
-    champion.last_command_id = Some(command.id().key());
+    champion.last_command_id = Some(command.command_id.key());
     let champion = champions_artifacts::update_champion(champion)?;
     session_turn_runtime::mirror_champion_update(&champion);
-    battle_rows::persist_battle_state(&state, command.id())?;
     command_response::ensure_command_effect(
         session.id(),
-        command.id(),
+        command.command_id,
         format!("battle_spell:{spell_slug}:{}", input.battle_stack_id),
         "battle_spell_cast".to_string(),
         "battle_stack".to_string(),
@@ -4292,33 +4413,9 @@ fn apply_cast_ability_command(
             command_response::escape_json(&status_key)
         ),
     )?;
-    append_new_battle_events(
-        session,
-        command.id(),
-        &state,
-        Some(response_participant_id),
-        events,
-    )?;
-    append_cast_action_feed_events(
-        session,
-        command.id(),
-        &state,
-        input,
-        response_participant_id,
-        events,
-    )?;
-    mirror_battle_runtime_from_state(session, &state)?;
-    changed_subjects.push(command_response::changed(
-        "battle",
-        &input.battle_id,
-        "update",
-    ));
-    changed_subjects.push(command_response::changed(
-        "champion",
-        &caster_champion_id,
-        "update",
-    ));
-    battle_action_receipt(&state, &command.id().to_string()).map_err(map_battle_error)
+    let receipt =
+        battle_action_receipt(state, command.command_id_text).map_err(map_battle_error)?;
+    Ok((receipt, caster_champion_id))
 }
 
 fn caster_champion_for_battle(
@@ -5444,6 +5541,82 @@ fn append_cast_action_feed_events(
             command_response::escape_json(&input.battle_id)
         ),
     )?;
+    events.push(public_event);
+    Ok(())
+}
+
+fn append_runtime_cast_action_feed_events(
+    session: &mut GameSession,
+    command_id: &str,
+    runtime: &mut BattleRuntime,
+    input: &BattleActionInput,
+    response_participant_id: &str,
+    events: &mut Vec<domm_game::ApiEventView>,
+) -> Result<(), ApiError> {
+    let action_payload = format!(
+        r#"{{"action":"{}","stack_id":"{}","ability_key":{},"target_stack_id":{}}}"#,
+        command_response::escape_json(&input.action),
+        command_response::escape_json(&input.battle_stack_id),
+        input
+            .ability_key
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string()),
+        input
+            .target_stack_id
+            .as_deref()
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_string())
+    );
+    let detailed_payload = format!(
+        r#"{{"battle_id":"{}","subject_id_text":"{}","payload":{}}}"#,
+        command_response::escape_json(&input.battle_id),
+        command_response::escape_json(&input.battle_stack_id),
+        action_payload
+    );
+    for participant_id in runtime_involved_battle_participant_ids(runtime, &input.battle_id) {
+        let audience_key = format!("participant:{participant_id}");
+        let view = runtime_battle_event_view(
+            session,
+            format!(
+                "battle:{}:{}:action_applied:{}",
+                input.battle_id, command_id, audience_key
+            ),
+            audience_key,
+            "battle_action_applied".to_string(),
+            Some("battle".to_string()),
+            Some(input.battle_id.clone()),
+            detailed_payload.clone(),
+        )?;
+        runtime.push_event(BattleRuntimeEvent {
+            command_id: Some(command_id.to_string()),
+            event: view.clone(),
+            flushed: false,
+        });
+        if response_participant_id == participant_id {
+            events.push(view);
+        }
+    }
+    let public_event = runtime_battle_event_view(
+        session,
+        format!(
+            "battle:{}:{}:action_applied:public",
+            input.battle_id, command_id
+        ),
+        "public".to_string(),
+        "battle_action_applied".to_string(),
+        Some("battle".to_string()),
+        Some(input.battle_id.clone()),
+        format!(
+            r#"{{"battle_id":"{}","event_type":"battle_action_applied","redacted":true}}"#,
+            command_response::escape_json(&input.battle_id)
+        ),
+    )?;
+    runtime.push_event(BattleRuntimeEvent {
+        command_id: Some(command_id.to_string()),
+        event: public_event.clone(),
+        flushed: false,
+    });
     events.push(public_event);
     Ok(())
 }

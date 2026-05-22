@@ -8443,3 +8443,29 @@ Verification:
 Decision:
 
 - Keep this checkpoint. Active battle aftermath no longer depends on durable tactical survivor rows, leaving those rows as a row-backed/legacy fallback instead of an active runtime finalization prerequisite.
+
+## Runtime Battle CastAbility
+
+Time: `2026-05-22T00:20:28Z`.
+
+Cut:
+
+- Let active `CastAbility` submissions use the runtime battle command path.
+- Shared the spell application logic so active runtime casts mutate `BattleRuntime.state` for spell damage, target status keys, caster `cast_round`, and caster `acted_round`.
+- Added runtime spell/action feed events and runtime command receipts for active cast replay/status/feed behavior.
+- Kept champion mana, learned-spell validation, champion cache mirroring, and battle-spell `CommandEffect` writes durable because those are strategic boundaries.
+- Kept the row-backed cast fallback for legacy/adoption paths.
+
+Verification:
+
+- `cargo fmt`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister battle -- --nocapture`
+- `cargo test -p domm-game battle -- --nocapture`
+- `cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_canister_exposes_every_required_game_endpoint --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bffe14` / `12,582,420` bytes, `492` bytes under the IC limit.
+
+Decision:
+
+- Keep this checkpoint, but note the benchmark Wasm is very close to the IC code-section ceiling. The next cut should prefer taxonomy/docs or code-size-neutral changes unless it frees headroom first.

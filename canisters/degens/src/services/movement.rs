@@ -443,7 +443,7 @@ pub(crate) fn end_turn(
     )];
 
     if all_ready {
-        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+        let draft = system_job_repo::SystemJobDraft {
             job_key: format!(
                 "turn_resolution:{}:{}",
                 context.session.id(),
@@ -456,7 +456,11 @@ pub(crate) fn end_turn(
             due_at: Timestamp::now(),
             command_id: Some(command.id()),
             cursor_json: None,
-        })?;
+        };
+        #[cfg(feature = "benchmark")]
+        let job = system_job_service::schedule_new_job(draft)?;
+        #[cfg(not(feature = "benchmark"))]
+        let job = system_job_service::schedule_job(draft)?;
         changed_subjects.push(command_response::changed(
             "system_job",
             &job.id().to_string(),
@@ -1156,7 +1160,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     } else {
         Some(command_id)
     };
-    system_job_service::schedule_job(system_job_repo::SystemJobDraft {
+    let turn_deadline_job = system_job_repo::SystemJobDraft {
         job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
         job_kind: "turn_deadline".to_string(),
         session_id: session.id(),
@@ -1165,7 +1169,11 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         due_at: session.turn_deadline_at,
         command_id: durable_command_id,
         cursor_json: None,
-    })?;
+    };
+    #[cfg(feature = "benchmark")]
+    system_job_service::schedule_new_job(turn_deadline_job)?;
+    #[cfg(not(feature = "benchmark"))]
+    system_job_service::schedule_job(turn_deadline_job)?;
     scenario_progress::schedule_turn_maintenance_jobs(&session, durable_command_id)?;
     enforce_turn_advance_barrier();
     Ok(())

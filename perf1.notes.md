@@ -8651,3 +8651,36 @@ Measurement:
 Decision:
 
 - Keep this as a measured partial cut. The next worldmap timer work needs to remove larger stable costs, especially durable job scheduling/completion and session loads, while staying inside the benchmark Wasm limit.
+
+## Benchmark Fresh Turn Jobs
+
+Time: `2026-05-22T01:55:49Z`.
+
+Cut:
+
+- Changed benchmark scheduling for fresh turn-resolution, turn-deadline, and scenario-maintenance follow-up jobs to use `schedule_new_job` instead of the conservative upsert path.
+- Kept production on the upsert/reschedule path, including completed-job repair semantics.
+- This removes benchmark-only `SystemJob` uniqueness lookups and nearest-job scans from the hot active turn timer route while retaining durable rows for the scheduled benchmark jobs.
+
+Verification:
+
+- `cargo fmt --check`
+- `cargo check -p domm-degens-canister`
+- `cargo check -p domm-degens-canister --features benchmark`
+- `cargo test -p domm-degens-canister session_turn_runtime -- --nocapture`
+- `DOMM_CANISTER_FEATURES=benchmark cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path --no-run`
+- Benchmark Wasm build with `feature=benchmark`: code section `0x00bff586` / `12,580,230` bytes, `2,682` bytes under the IC limit.
+- Focused `timer-surface`: `DOMM_CANISTER_FEATURES=benchmark DOMM_BENCH_OUTPUT_DIR=/srv/shared/icydb/DoMM/target/benchmarks/20260522-fresh-benchmark-jobs-local/timer-surface cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_benchmark_timer_surface_records_every_timer_path -- --nocapture`, passed in `298.63s`.
+
+Measurement:
+
+- Versus the previous runtime-participant timer cut, `system_job:turn_deadline` moved from `4.4817B` to `2.3700B`.
+- `system_job:turn_resolution` moved from `5.4275B` to `2.6095B`.
+- `sync_session_turn` measured `1.7738B`, still above the original `1.6226B` guardrail.
+- Scenario-maintenance timers also benefited from fresh inserts: `scenario_objectives` `3.0654B -> 0.9560B`, `world_events` `3.0637B -> 0.9547B`, and `advanced_victory` stayed effectively flat at `1.1828B`.
+- Timer-surface row growth stayed `445`; stable pages stayed `2049 -> 238209`.
+- Repo-op rollup shows `system_jobs.by_job_key` down to `7` calls and `system_jobs.by_status_due`/`system_jobs.by_status_lease` down to `5` calls each in the focused route.
+
+Decision:
+
+- Keep this as another partial worldmap acceptance cut. The remaining active turn timer cost is now dominated by the durable session load/update, durable job completion, and the two fresh follow-up job inserts; the next cut should move active turn wakeups/session authority further into runtime without losing timer coverage.

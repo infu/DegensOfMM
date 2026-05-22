@@ -65,8 +65,30 @@ kernel barriers and projection queues. They should not become hidden live
 authority again just because a query or timer path still has a row-backed
 fallback.
 
+## Active Battle Projection And History
+
+These entities are projection/history-only while a `BattleRuntime` exists for an
+active battle. The runtime battle kernel owns tactical authority for stacks,
+obstacles, occupancy, readiness, command receipts, battle events, and active
+deadline/round wakeups. Durable rows remain useful for startup/adoption,
+explicit projection, history, diagnostics, upgrade compatibility, and row-backed
+fallback.
+
+| Entity or surface | Active-battle authority | Durable-row role |
+| --- | --- | --- |
+| `BattleStack` | `BattleRuntime` | Tactical stack projection for row-backed fallback, history/debug reads, and compatibility. Active damage, movement, status keys, acted/cast/defend/wait rounds, readiness, and occupancy-derived position belong to runtime. |
+| `BattleObstacle` | `BattleRuntime` | Tactical obstacle projection for row-backed fallback and diagnostics. Active obstacle state belongs to runtime battle state. |
+| `BattleOccupancy` | `BattleRuntime` | Tactical cell projection for row-backed fallback and diagnostics. Active occupancy belongs to runtime battle state/indexes. |
+| `BattleParticipantRoundReady` | `BattleRuntime` | Compatibility/history projection for row-backed fallback. Active readiness belongs to `BattleRuntime.ready_participants`. |
+| Battle command rows | `BattleRuntime` for active commands | Replay/status/history projection. Active `submit_battle_action`, `sync_battle`, and `end_battle_turn` should use runtime receipts where implemented. |
+| Battle event rows | `BattleRuntime` for active events | Feed/history projection. Active battle events should come from runtime buffers and archive/flush paths until projected. |
+| Battle-specific `SystemJob` rows | `BattleRuntime` timers/wakeups | Repair/diagnostic/fallback hints. Active battle timeout and round authority belongs to runtime deadline metadata and runtime wakeups. |
+| `Battle` shell | Mixed boundary | Keep as durable shell/outcome/history and startup/adoption anchor. Active tactical header fields mirror runtime while a battle is active; resolved/outcome fields remain durable history after projection/finalization. |
+
+Active battle projection rows must not be required for current-code upgrade
+restore or active aftermath. Legacy upgrades and row-backed fallback may still
+hydrate from rows until their compatibility windows close.
+
 ## Pending Taxonomy Slices
 
-- Active battle projection/history-only rows are still tracked in
-  `perf1.todo.md` Section 72D.
 - Index retirement sequencing is still tracked in `perf1.todo.md` Section 72D.

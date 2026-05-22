@@ -8507,3 +8507,22 @@ Verification:
 Decision:
 
 - Keep this as a doc-only checkpoint. The taxonomy prevents row-backed fallback paths from being treated as active authority while avoiding additional benchmark Wasm growth.
+
+## Active Battle Projection Taxonomy
+
+Time: `2026-05-22T00:25:12Z`.
+
+Cut:
+
+- Extended `perf1.table-taxonomy.md` with the active battle projection/history slice.
+- Marked `BattleStack`, `BattleObstacle`, `BattleOccupancy`, `BattleParticipantRoundReady`, battle command/event rows, and battle-specific `SystemJob` rows as projection/history-only while a `BattleRuntime` exists.
+- Recorded `BattleRuntime` as active authority for tactical stack state, obstacle state, occupancy, readiness, runtime command receipts, runtime events, deadlines, and round wakeups.
+- Kept `Battle` as a durable shell/outcome/history boundary and startup/adoption anchor, with active tactical header fields mirrored from runtime while active.
+
+Verification:
+
+- `git diff --check`
+
+Decision:
+
+- Keep this as a doc-only checkpoint. Current-code battle upgrade restore and active aftermath no longer require tactical projection rows, so the taxonomy now reflects the implementation boundary without spending benchmark Wasm headroom.

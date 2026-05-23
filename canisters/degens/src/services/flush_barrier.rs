@@ -32,8 +32,16 @@ pub(crate) fn flush_barrier(reason: &str) -> Result<usize, ApiError> {
     let mut flushed = 0_usize;
     flushed = flushed
         .saturating_add(super::account_lobby_session::flush_runtime_lobby_state_for_upgrade()?);
-    flushed = flushed
-        .saturating_add(super::session_turn_runtime::flush_runtime_projections_for_upgrade()?);
+    flushed = flushed.saturating_add(
+        crate::repos::commands_events_effects::flush_missing_runtime_game_commands_for_upgrade()?,
+    );
+    let runtime_projection_flush =
+        if reason == FLUSH_BARRIER_UPGRADE || reason == FLUSH_BARRIER_STRONG_READ {
+            super::session_turn_runtime::flush_runtime_projections_for_upgrade()?
+        } else {
+            super::session_turn_runtime::flush_runtime_projections_for_gameplay_barrier()?
+        };
+    flushed = flushed.saturating_add(runtime_projection_flush);
     flushed = flushed
         .saturating_add(super::economy_expansion::flush_runtime_dwelling_pools_for_upgrade()?);
     flushed = flushed.saturating_add(

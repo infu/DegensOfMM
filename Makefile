@@ -1,8 +1,10 @@
-CANDID_EXTRACTOR ?= $(HOME)/.cargo/bin/candid-extractor
-IC_WASM ?= ic-wasm
 TEST_JOBS ?= 8
 LONG_TEST_JOBS ?= 4
 GATE_M_TEST_JOBS ?= 1
+DFX ?= dfx
+DFX_LOCAL_START_LOG ?= /tmp/domm-dfx-start.log
+DFX_LOCAL_REPLICA_LOG ?= /tmp/domm-dfx.log
+DFX_LOCAL_CANISTER_CYCLES ?= 50000000000000
 
 .PHONY: bench build-wasm check-canister dfx-deploy-local dfx-stop-local regression smoke smoke-e2e test test-fast test-generated test-groups test-groups-list test-pocket test-pure test-schema
 
@@ -48,14 +50,12 @@ check-canister:
 	cargo check -p domm-degens-canister
 
 build-wasm:
-	CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --target wasm32-unknown-unknown --release -p domm-degens-canister
-	mkdir -p target/dfx/degens
-	$(CANDID_EXTRACTOR) target/wasm32-unknown-unknown/release/domm_degens_canister.wasm > target/dfx/degens/degens.did
-	$(IC_WASM) target/wasm32-unknown-unknown/release/domm_degens_canister.wasm -o target/dfx/degens/degens.wasm metadata candid:service -f target/dfx/degens/degens.did -v public
+	scripts/dfx-build-degens.sh
 
 dfx-deploy-local:
-	dfx start --background --clean
-	dfx deploy degens --network local
+	$(DFX) start --background --clean --log file --logfile $(DFX_LOCAL_REPLICA_LOG) > $(DFX_LOCAL_START_LOG) 2>&1
+	$(DFX) deploy degens --network local
+	$(DFX) canister deposit-cycles $(DFX_LOCAL_CANISTER_CYCLES) degens --network local
 
 dfx-stop-local:
-	dfx stop
+	$(DFX) stop

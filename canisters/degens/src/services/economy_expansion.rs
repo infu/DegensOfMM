@@ -858,12 +858,13 @@ fn apply_dwelling_recruit_command(
     pool.available = pool.available.saturating_sub(quantity);
     pool.last_command_id = Some(command.id().key());
     pool = persist_or_mirror_active_dwelling_pool(&context.session, pool)?;
-    recruit_to_champion(
+    recruit_to_champion_stack(
         &context.session,
         champion.id(),
         unit.id(),
         unit.max_hp,
         quantity,
+        None,
         command.id(),
     )?;
     let fresh_recruitment = if runtime_receipt {
@@ -1376,14 +1377,101 @@ fn dwelling_recruit_check(
     })
 }
 
-fn recruit_to_champion(
+pub(crate) fn resolve_champion_recruit_stack_slot(
+    champion_id: Id<Champion>,
+    unit_id: Id<UnitDefinition>,
+    quantity: u32,
+    requested_slot: Option<u8>,
+) -> Result<u8, ApiError> {
+    if let Some(slot) = requested_slot {
+        if slot >= domm_game::MAX_ARMY_SLOTS {
+            return Err(public_error(
+                "recruit_target_full",
+                "champion army is full",
+                false,
+            ));
+        }
+        validate_champion_recruit_slot(champion_id, unit_id, quantity, slot)?;
+        return Ok(slot);
+    }
+    for slot in 0..domm_game::MAX_ARMY_SLOTS {
+        match validate_champion_recruit_slot(champion_id, unit_id, quantity, slot) {
+            Ok(()) => return Ok(slot),
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    "unit_stack_incompatible" | "recruit_target_full"
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(public_error(
+        "recruit_target_full",
+        "champion army is full",
+        false,
+    ))
+}
+
+fn validate_champion_recruit_slot(
+    champion_id: Id<Champion>,
+    unit_id: Id<UnitDefinition>,
+    quantity: u32,
+    slot_index: u8,
+) -> Result<(), ApiError> {
+    let stack = match runtime_champion_army_stack(champion_id, slot_index) {
+        Some(stack) => Some(stack),
+        None => champions_artifacts::find_champion_army_stack(champion_id, slot_index)?,
+    };
+    let Some(stack) = stack else {
+        return Ok(());
+    };
+    if stack.unit_id != unit_id.key() {
+        return Err(public_error(
+            "unit_stack_incompatible",
+            "target champion army slot contains another unit",
+            false,
+        ));
+    }
+    if stack.quantity.saturating_add(quantity) > domm_game::ARMY_STACK_CAP {
+        return Err(public_error(
+            "recruit_target_full",
+            "champion army slot is full",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn recruit_to_champion_stack(
     session: &GameSession,
     champion_id: Id<Champion>,
     unit_id: Id<UnitDefinition>,
     front_hp: u16,
     quantity: u32,
+    requested_slot: Option<u8>,
     command_id: Id<GameCommand>,
-) -> Result<(), ApiError> {
+) -> Result<ChampionArmyStack, ApiError> {
+    if let Some(slot) = requested_slot {
+        if slot >= domm_game::MAX_ARMY_SLOTS {
+            return Err(public_error(
+                "recruit_target_full",
+                "champion army is full",
+                false,
+            ));
+        }
+        return recruit_to_champion_slot(
+            session,
+            champion_id,
+            unit_id,
+            front_hp,
+            quantity,
+            slot,
+            command_id,
+        );
+    }
     for slot in 0..domm_game::MAX_ARMY_SLOTS {
         let stack = match runtime_champion_army_stack(champion_id, slot) {
             Some(stack) => Some(stack),
@@ -1391,10 +1479,12 @@ fn recruit_to_champion(
         };
         if let Some(mut stack) = stack {
             if stack.unit_id == unit_id.key() {
+                if stack.quantity.saturating_add(quantity) > domm_game::ARMY_STACK_CAP {
+                    continue;
+                }
                 stack.quantity = stack.quantity.saturating_add(quantity);
                 stack.last_command_id = Some(command_id.key());
-                persist_or_mirror_active_champion_army_stack(session, stack)?;
-                return Ok(());
+                return persist_or_mirror_active_champion_army_stack(session, stack);
             }
             continue;
         }
@@ -1408,14 +1498,58 @@ fn recruit_to_champion(
             "active".to_string(),
         )?;
         stack.last_command_id = Some(command_id.key());
-        persist_or_mirror_active_champion_army_stack(session, stack)?;
-        return Ok(());
+        return persist_or_mirror_active_champion_army_stack(session, stack);
     }
     Err(public_error(
         "recruit_target_full",
         "champion army is full",
         false,
     ))
+}
+
+fn recruit_to_champion_slot(
+    session: &GameSession,
+    champion_id: Id<Champion>,
+    unit_id: Id<UnitDefinition>,
+    front_hp: u16,
+    quantity: u32,
+    slot_index: u8,
+    command_id: Id<GameCommand>,
+) -> Result<ChampionArmyStack, ApiError> {
+    let stack = match runtime_champion_army_stack(champion_id, slot_index) {
+        Some(stack) => Some(stack),
+        None => champions_artifacts::find_champion_army_stack(champion_id, slot_index)?,
+    };
+    if let Some(mut stack) = stack {
+        if stack.unit_id != unit_id.key() {
+            return Err(public_error(
+                "unit_stack_incompatible",
+                "target champion army slot contains another unit",
+                false,
+            ));
+        }
+        if stack.quantity.saturating_add(quantity) > domm_game::ARMY_STACK_CAP {
+            return Err(public_error(
+                "recruit_target_full",
+                "champion army slot is full",
+                false,
+            ));
+        }
+        stack.quantity = stack.quantity.saturating_add(quantity);
+        stack.last_command_id = Some(command_id.key());
+        return persist_or_mirror_active_champion_army_stack(session, stack);
+    }
+    let mut stack = champions_artifacts::create_champion_army_stack(
+        session.id(),
+        champion_id,
+        unit_id,
+        slot_index,
+        quantity,
+        front_hp,
+        "active".to_string(),
+    )?;
+    stack.last_command_id = Some(command_id.key());
+    persist_or_mirror_active_champion_army_stack(session, stack)
 }
 
 fn persist_or_mirror_active_champion_army_stack(

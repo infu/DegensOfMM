@@ -28,35 +28,16 @@ use super::{
     command_response::{self, GameCommandStart},
     render_projection, scenario_progress,
     session_context::{self, public_error},
-    session_turn_runtime, system_jobs as system_job_service, town_runtime, worldmap_kernel,
+    session_turn_runtime, town_runtime, worldmap_kernel,
 };
 
-const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = 1;
-const PARTIAL_TURN_RETRY_DELAY_MS: i64 = 60_000;
+const CANISTER_MOVEMENT_MICROSTEPS_PER_SYNC: u16 = u16::MAX;
 
 thread_local! {
     static FIRST_PLAYABLE_MAP_CACHE: RefCell<Option<domm_game::FirstPlayableMapState>> =
         const { RefCell::new(None) };
     static NEUTRAL_BATTLE_START_BY_ATTACKER: RefCell<BTreeMap<String, Battle>> =
         const { RefCell::new(BTreeMap::new()) };
-    #[cfg(feature = "benchmark")]
-    static DEFERRED_TURN_TIMER_COMPLETION: RefCell<bool> = const { RefCell::new(false) };
-}
-
-#[cfg(feature = "benchmark")]
-pub(crate) fn take_deferred_turn_timer_completion() -> bool {
-    DEFERRED_TURN_TIMER_COMPLETION.with_borrow_mut(|deferred| {
-        let was_deferred = *deferred;
-        *deferred = false;
-        was_deferred
-    })
-}
-
-#[cfg(feature = "benchmark")]
-fn defer_turn_timer_completion() {
-    DEFERRED_TURN_TIMER_COMPLETION.with_borrow_mut(|deferred| {
-        *deferred = true;
-    });
 }
 
 pub(crate) fn preview_move_path(
@@ -392,6 +373,19 @@ fn session_turn_participant(
     }
 }
 
+fn latest_participant_for_turn_update(
+    session: &GameSession,
+    participant: &GameParticipant,
+) -> Result<GameParticipant, ApiError> {
+    if let Some(runtime_participant) = session_turn_runtime::participant_snapshot(
+        &session.id().to_string(),
+        &participant.id().to_string(),
+    ) {
+        return Ok(runtime_participant);
+    }
+    Ok(sessions::load_participant(participant.id())?.unwrap_or_else(|| participant.clone()))
+}
+
 fn runtime_movement_failed_response(
     caller: CandidPrincipal,
     context: &session_context::SessionCallerContext,
@@ -454,37 +448,11 @@ pub(crate) fn end_turn(
     let ready_subject_id = ready_mark.subject_id;
     let readiness = ready_mark.readiness;
     let all_ready = readiness.all_ready;
-    let mut changed_subjects = vec![command_response::changed(
+    let changed_subjects = vec![command_response::changed(
         "participant_turn_ready",
         &ready_subject_id,
         "upsert",
     )];
-
-    if all_ready {
-        let draft = system_job_repo::SystemJobDraft {
-            job_key: format!(
-                "turn_resolution:{}:{}",
-                context.session.id(),
-                context.session.current_turn
-            ),
-            job_kind: "turn_resolution".to_string(),
-            session_id: context.session.id(),
-            battle_id: None,
-            turn_number: Some(context.session.current_turn),
-            due_at: Timestamp::now(),
-            command_id: Some(command.id()),
-            cursor_json: None,
-        };
-        #[cfg(feature = "benchmark")]
-        let job = system_job_service::schedule_new_job(draft)?;
-        #[cfg(not(feature = "benchmark"))]
-        let job = system_job_service::schedule_job(draft)?;
-        changed_subjects.push(command_response::changed(
-            "system_job",
-            &job.id().to_string(),
-            "upsert",
-        ));
-    }
 
     let session_id_text = context.session.id().to_string();
     let current_turn = context.session.current_turn;
@@ -521,7 +489,7 @@ pub(crate) fn end_turn(
         current_turn, ready_count, participant_count, all_ready
     );
     let command_id_text = command.id().to_string();
-    command_response::apply_runtime_command_with_result(
+    let response = command_response::apply_runtime_command_with_result(
         caller,
         &context,
         command,
@@ -537,7 +505,16 @@ pub(crate) fn end_turn(
             command_count: 1,
             event_count: 1,
         }),
-    )
+    )?;
+    if all_ready {
+        return sync_session_turn(
+            caller,
+            session_id_text,
+            u64::try_from(Timestamp::now().as_millis()).unwrap_or(0),
+            format!("{client_nonce}:turn-resolution"),
+        );
+    }
+    Ok(response)
 }
 
 pub(crate) fn sync_session_turn(
@@ -714,12 +691,6 @@ fn sync_session_turn_with_command(
     )?;
     if !movement_complete || should_yield_after_movement_events(&events) {
         let enforce_battle_handoff = contains_battle_handoff_event(&events);
-        #[cfg(feature = "benchmark")]
-        if !command.is_runtime() {
-            reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
-        }
-        #[cfg(not(feature = "benchmark"))]
-        reschedule_current_turn_jobs_for_manual_sync(&context.session)?;
         if !command.is_runtime() {
             worldmap_kernel::remove_active_turn_id(
                 &context.session.id().to_string(),
@@ -744,7 +715,8 @@ fn sync_session_turn_with_command(
     }
 
     let income_turn = context.session.current_turn;
-    let mut participant = context.participant.clone();
+    let mut participant =
+        latest_participant_for_turn_update(&context.session, &context.participant)?;
     let mut next_event_seq = context.session.next_event_seq;
     let income_events = materialize_income(
         &mut context.session,
@@ -779,6 +751,7 @@ fn sync_session_turn_with_command(
             previous_turn: income_turn,
         }
     } else {
+        enforce_durable_turn_hydration_barrier()?;
         worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows
     };
     worldmap_kernel::advance_turn(&mut context.session, command_id, income_turn, runtime_mode)?;
@@ -827,27 +800,14 @@ fn sync_session_turn_with_command(
     };
     events.push(event);
 
-    if !command.is_runtime() {
-        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: format!(
-                "turn_deadline:{}:{}",
-                context.session.id(),
-                context.session.current_turn
-            ),
-            job_kind: "turn_deadline".to_string(),
-            session_id: context.session.id(),
-            battle_id: None,
-            turn_number: Some(context.session.current_turn),
-            due_at: context.session.turn_deadline_at,
-            command_id: Some(command_id),
-            cursor_json: None,
-        })?;
+    let scenario_touched =
+        scenario_progress::run_turn_maintenance_inline(&context.session, Some(command_id))?;
+    if scenario_touched != 0 {
         changed_subjects.push(command_response::changed(
-            "system_job",
-            &job.id().to_string(),
-            "upsert",
+            "scenario",
+            &context.session.id().to_string(),
+            "sync",
         ));
-        scenario_progress::schedule_turn_maintenance_jobs(&context.session, Some(command_id))?;
     }
 
     let response = complete_sync_command_response(
@@ -1027,7 +987,7 @@ fn sync_turn_not_due_response(
 }
 
 fn should_yield_after_movement_events(events: &[domm_game::ApiEventView]) -> bool {
-    !events.is_empty()
+    contains_battle_handoff_event(events)
 }
 
 pub(crate) fn process_turn_resolution_job(job: SystemJob) -> Result<(), ApiError> {
@@ -1041,7 +1001,6 @@ pub(crate) fn process_turn_resolution_job(job: SystemJob) -> Result<(), ApiError
 
 fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let session_id = Id::<GameSession>::from_key(job.session_id);
-    #[cfg(feature = "benchmark")]
     let session_id_text = session_id.to_string();
     #[cfg(feature = "benchmark")]
     let runtime_rows = session_turn_runtime::latest_session_rows(&session_id_text);
@@ -1072,7 +1031,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         return Ok(());
     }
     if job.job_kind == "turn_deadline" && Timestamp::now() < session.turn_deadline_at {
-        system_job_repo::reschedule_system_job(job, session.turn_deadline_at, None)?;
+        system_job_repo::complete_system_job(job)?;
         return Ok(());
     }
     let command = if worldmap_kernel::contains_active_turn(&session) {
@@ -1110,7 +1069,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
             ));
             commands_events_effects::update_game_command(command)?;
         }
-        system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
+        system_job_repo::complete_system_job(job)?;
         if enforce_battle_handoff {
             enforce_battle_handoff_barrier();
         }
@@ -1133,13 +1092,28 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         .items
     };
     #[cfg(not(feature = "benchmark"))]
-    let participants = sessions::page_participants_by_session_status(
-        session.id(),
-        "active",
-        domm_game::MAX_LIST_LIMIT,
-        None,
-    )?
-    .items;
+    let participants = if command_is_runtime {
+        if let Some((_, participants)) = session_turn_runtime::latest_session_rows(&session_id_text)
+        {
+            participants
+        } else {
+            sessions::page_participants_by_session_status(
+                session.id(),
+                "active",
+                domm_game::MAX_LIST_LIMIT,
+                None,
+            )?
+            .items
+        }
+    } else {
+        sessions::page_participants_by_session_status(
+            session.id(),
+            "active",
+            domm_game::MAX_LIST_LIMIT,
+            None,
+        )?
+        .items
+    };
     for mut participant in participants {
         let income_events = materialize_income(
             &mut session,
@@ -1159,6 +1133,7 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
             previous_turn: income_turn,
         }
     } else {
+        enforce_durable_turn_hydration_barrier()?;
         worldmap_kernel::TurnAdvanceRuntimeMode::HydrateRows
     };
     worldmap_kernel::advance_turn(&mut session, command_id, income_turn, runtime_mode)?;
@@ -1191,36 +1166,13 @@ fn process_turn_resolution_job_inner(job: SystemJob) -> Result<(), ApiError> {
         commands_events_effects::update_game_command(command)?;
     }
 
-    #[cfg(feature = "benchmark")]
-    if !command_is_runtime {
-        system_job_repo::complete_system_job(job)?;
-    }
-    #[cfg(not(feature = "benchmark"))]
     system_job_repo::complete_system_job(job)?;
     let durable_command_id = if command_is_runtime {
         None
     } else {
         Some(command_id)
     };
-    let turn_deadline_job = system_job_repo::SystemJobDraft {
-        job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
-        job_kind: "turn_deadline".to_string(),
-        session_id: session.id(),
-        battle_id: None,
-        turn_number: Some(session.current_turn),
-        due_at: session.turn_deadline_at,
-        command_id: durable_command_id,
-        cursor_json: None,
-    };
-    #[cfg(feature = "benchmark")]
-    system_job_service::schedule_new_job(turn_deadline_job)?;
-    #[cfg(not(feature = "benchmark"))]
-    system_job_service::schedule_job(turn_deadline_job)?;
-    scenario_progress::schedule_turn_maintenance_jobs(&session, durable_command_id)?;
-    #[cfg(feature = "benchmark")]
-    if command_is_runtime {
-        defer_turn_timer_completion();
-    }
+    scenario_progress::run_turn_maintenance_inline(&session, durable_command_id)?;
     enforce_turn_advance_barrier();
     Ok(())
 }
@@ -1244,6 +1196,17 @@ fn contains_battle_handoff_event(events: &[domm_game::ApiEventView]) -> bool {
             "champion_encounter_pending" | "neutral_encounter_pending" | "town_encounter_pending"
         )
     })
+}
+
+#[cfg(not(feature = "benchmark"))]
+fn enforce_durable_turn_hydration_barrier() -> Result<(), ApiError> {
+    super::flush_barrier::flush_barrier(super::flush_barrier::FLUSH_BARRIER_STRONG_READ)?;
+    Ok(())
+}
+
+#[cfg(feature = "benchmark")]
+fn enforce_durable_turn_hydration_barrier() -> Result<(), ApiError> {
+    Ok(())
 }
 
 #[cfg(not(feature = "benchmark"))]
@@ -2181,13 +2144,6 @@ fn stop_candidate_fast(
     Ok(())
 }
 
-fn reschedule_current_turn_jobs_for_manual_sync(session: &GameSession) -> Result<(), ApiError> {
-    let due_at = manual_sync_retry_at();
-    update_current_turn_jobs(session.id(), session.current_turn, |job| {
-        system_job_service::reschedule_job(job, due_at, None).map(|_| ())
-    })
-}
-
 fn complete_current_turn_jobs(
     session_id: Id<GameSession>,
     turn_number: u32,
@@ -2519,6 +2475,14 @@ fn materialize_runtime_movement_intent(
     )?;
     let command_id =
         session_context::parse_id::<GameCommand>(&runtime_intent.command_id, "command_id")?;
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    session_turn_runtime::flush_command_receipt_for_runtime_command(
+        &session.id().to_string(),
+        session.current_turn,
+        &runtime_intent.command_id,
+    )?;
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    flush_runtime_movement_submit_event(session, champion_id, command_id)?;
     if let Some(mut existing) =
         movement::find_movement_intent(session.id(), champion_id, session.current_turn)?
     {
@@ -2542,6 +2506,56 @@ fn materialize_runtime_movement_intent(
         runtime_intent.path_hash.clone(),
     )
     .map_err(Into::into)
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn flush_runtime_movement_submit_event(
+    session: &GameSession,
+    champion_id: Id<Champion>,
+    command_id: Id<GameCommand>,
+) -> Result<(), ApiError> {
+    let event_key = format!("movement_intent:{}:{}", champion_id, session.current_turn);
+    if commands_events_effects::find_event_by_key(session.id(), &event_key)?.is_some() {
+        return Ok(());
+    }
+    let runtime_event = session_turn_runtime::with_runtime(
+        &session.id().to_string(),
+        session.current_turn,
+        |runtime| {
+            runtime
+                .active_events
+                .iter()
+                .find(|event| {
+                    event.event.event_key == event_key && event.event.audience_key == "public"
+                })
+                .map(|event| event.event.clone())
+        },
+    )
+    .flatten();
+    let Some(runtime_event) = runtime_event else {
+        return Ok(());
+    };
+    match commands_events_effects::create_game_event(
+        session.id(),
+        Some(command_id),
+        None,
+        runtime_event.turn_number,
+        runtime_event.event_seq,
+        runtime_event.event_key,
+        runtime_event.audience_key,
+        runtime_event.event_type,
+        runtime_event.subject_kind,
+        runtime_event.subject_id_text,
+        runtime_event.payload.unwrap_or_default(),
+    ) {
+        Ok(_) => {}
+        Err(error) => {
+            if commands_events_effects::find_event_by_key(session.id(), &event_key)?.is_none() {
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn pending_intent_from_runtime(
@@ -3239,7 +3253,11 @@ fn update_movement_champion(
         session_turn_runtime::mirror_champion_update(&champion);
         return Ok(champion);
     }
-    champions_artifacts::update_champion(champion).map_err(Into::into)
+    let champion = champions_artifacts::update_champion(champion)?;
+    if matches!(champion.status.as_str(), "active" | "in_battle") {
+        session_turn_runtime::mirror_champion_update(&champion);
+    }
+    Ok(champion)
 }
 
 fn update_movement_participant(
@@ -3250,7 +3268,9 @@ fn update_movement_participant(
         session_turn_runtime::mirror_participant_update(&participant);
         return Ok(participant);
     }
-    sessions::update_participant(participant).map_err(Into::into)
+    let participant = sessions::update_participant(participant)?;
+    session_turn_runtime::mirror_participant_update(&participant);
+    Ok(participant)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4438,6 +4458,7 @@ fn apply_world_object_at(
             session.current_turn,
         )?;
         map_visibility_occupancy::update_world_object(object.clone())?;
+        session_turn_runtime::mirror_world_object_update(&object);
     }
     let event = append_movement_public_event(
         session,
@@ -5270,22 +5291,6 @@ fn apply_u32_delta(value: u32, delta: i64) -> Result<u32, ApiError> {
     let value = apply_u64_delta(u64::from(value), delta)?;
     u32::try_from(value)
         .map_err(|_| public_error("resource_cap_exceeded", "resource cap exceeded", false))
-}
-
-fn partial_retry_at() -> Timestamp {
-    Timestamp::from_millis(
-        Timestamp::now()
-            .as_millis()
-            .saturating_add(PARTIAL_TURN_RETRY_DELAY_MS),
-    )
-}
-
-fn manual_sync_retry_at() -> Timestamp {
-    Timestamp::from_millis(
-        Timestamp::now()
-            .as_millis()
-            .saturating_add(PARTIAL_TURN_RETRY_DELAY_MS),
-    )
 }
 
 fn timestamp_to_u64(timestamp: Timestamp) -> u64 {

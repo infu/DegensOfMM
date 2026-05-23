@@ -1,5 +1,9 @@
 # Combined Benchmark Function Instruction Averages
 
+Historical benchmark snapshot: superseded by `perf1.measure.md` and
+`target/benchmarks/20260522-164948-5cfd001`. Keep this file as the
+20260521 all-timers aggregate, not as the current performance report.
+
 Source: all structured summaries from `target/benchmarks/20260521-160211-all-timers`.
 
 - Included benchmark summaries: `endpoint_surface`, `timer_surface`, `gate_j_strategic_loop`, `gate_k_battle_aftermath_victory_history`, `gate_l_first_playable`, `gate_m_web_client_probe`

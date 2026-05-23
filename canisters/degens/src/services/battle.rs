@@ -1,8 +1,4 @@
-#[cfg(feature = "benchmark")]
-use std::cell::RefCell;
 use std::collections::BTreeSet;
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-use std::time::Duration;
 
 use candid::Principal as CandidPrincipal;
 use domm_degens_schema::schema::{
@@ -30,38 +26,16 @@ use super::{
     },
     command_response::{self, GameCommandAction},
     session_context::{self, public_error},
-    session_turn_runtime, system_jobs as system_job_service,
+    session_turn_runtime,
 };
 
-const SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS: i64 = 1_000;
-const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = 1;
-const CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE: u32 = 1;
+const CANISTER_MAX_BATTLE_TIMEOUT_ACTIONS_PER_UPDATE: u32 = u32::MAX;
+const CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE: u32 = u32::MAX;
 const CANISTER_BATTLE_ACTION_SUBMIT_GRACE_MS: u64 = 15_000;
 const CANISTER_MAX_BATTLE_STACKS_PER_BATTLE: u32 =
     (domm_game::MAX_STACKS_PER_BATTLE_SIDE as u32) * 2;
 const CANISTER_RUNTIME_BATTLE_TRANSIENT_HISTORY_LIMIT: usize = 16;
 const AUTO_ENEMY_TARGET_ID: &str = "auto:enemy";
-
-#[cfg(feature = "benchmark")]
-thread_local! {
-    static DEFERRED_BATTLE_TIMER_COMPLETION: RefCell<bool> = const { RefCell::new(false) };
-}
-
-#[cfg(feature = "benchmark")]
-pub(crate) fn take_deferred_battle_timer_completion() -> bool {
-    DEFERRED_BATTLE_TIMER_COMPLETION.with_borrow_mut(|deferred| {
-        let was_deferred = *deferred;
-        *deferred = false;
-        was_deferred
-    })
-}
-
-#[cfg(feature = "benchmark")]
-fn defer_battle_timer_completion() {
-    DEFERRED_BATTLE_TIMER_COMPLETION.with_borrow_mut(|deferred| {
-        *deferred = true;
-    });
-}
 
 #[derive(Clone, Debug)]
 struct RuntimeBattleCommandContext {
@@ -183,7 +157,10 @@ impl<'a> BattleKernelDriver<'a> {
         })
     }
 
-    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+    #[cfg(any(
+        all(target_arch = "wasm32", not(feature = "benchmark")),
+        all(test, not(feature = "benchmark"))
+    ))]
     fn drive_runtime_timeout_timer(
         &mut self,
         battle_id: Id<Battle>,
@@ -212,7 +189,6 @@ impl<'a> BattleKernelDriver<'a> {
         }
         let deadline = Timestamp::from_millis(deadline_ms);
         if deadline > Timestamp::now() {
-            schedule_runtime_battle_timeout_wakeup(self.session.id(), battle_id, deadline)?;
             return Ok(true);
         }
         let Some(active_stack_id) = battle.active_stack_id else {
@@ -270,8 +246,7 @@ impl<'a> BattleKernelDriver<'a> {
             return Ok(true);
         }
         if deadline > Timestamp::now() {
-            system_job_repo::reschedule_system_job(job.clone(), deadline, None)?;
-            system_job_service::schedule_nearest_due_job()?;
+            system_job_repo::complete_system_job(job.clone())?;
             return Ok(true);
         }
         if let Some(active_stack_id) = battle.active_stack_id {
@@ -293,55 +268,6 @@ impl<'a> BattleKernelDriver<'a> {
         Ok(true)
     }
 
-    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-    fn drive_runtime_round_advance_timer(
-        &mut self,
-        battle_id: Id<Battle>,
-        round_number: u16,
-    ) -> Result<bool, ApiError> {
-        let battle_id_text = battle_id.to_string();
-        let Some(runtime) = battle_runtime::with_runtime(&battle_id_text, Clone::clone) else {
-            return Ok(false);
-        };
-        if runtime.session_id != self.session.id().to_string() {
-            return Ok(false);
-        }
-        let runtime_round_key = format!("battle_round_advance:{battle_id}:{round_number}");
-        let battle = runtime
-            .state
-            .battle(&battle_id_text)
-            .map_err(map_battle_error)?
-            .clone();
-        if battle.state != "active" || battle.current_round != round_number {
-            clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
-            return Ok(true);
-        }
-
-        let readiness = self.drive_readiness_and_schedule(battle_id, None, None, false, false)?;
-        if !readiness.all_ready {
-            clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
-            return Ok(true);
-        }
-
-        let now_ms = u64::try_from(Timestamp::now().as_millis()).unwrap_or(0);
-        let outcome = self.drive_round_auto_defends(
-            battle_id,
-            round_number,
-            now_ms,
-            CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE,
-        )?;
-        if outcome.incomplete {
-            schedule_runtime_battle_round_wakeup(self.session.id(), battle_id, round_number)?;
-            return Ok(true);
-        }
-
-        clear_runtime_battle_round_wakeup(&battle_id_text, &runtime_round_key);
-        if let Some(updated_battle) = runtime_battle_header(self.session.id(), battle_id)? {
-            schedule_runtime_battle_timeout_job(self.session.id(), battle_id, &updated_battle)?;
-        }
-        Ok(true)
-    }
-
     fn drive_readiness_and_schedule(
         &mut self,
         battle_id: Id<Battle>,
@@ -357,6 +283,17 @@ impl<'a> BattleKernelDriver<'a> {
             schedule_if_ready,
             schedule_timeout,
         )? {
+            if schedule_if_ready
+                && summary.all_ready
+                && let Some(battle) = runtime_battle_header(self.session.id(), battle_id)?
+            {
+                self.drive_round_auto_defends(
+                    battle_id,
+                    battle.current_round,
+                    u64::try_from(Timestamp::now().as_millis()).unwrap_or(0),
+                    CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE,
+                )?;
+            }
             self.changed_subjects
                 .extend(summary.changed_subjects.iter().cloned());
             return Ok(summary);
@@ -380,6 +317,14 @@ impl<'a> BattleKernelDriver<'a> {
         )?;
         if schedule_timeout && battle.state == "active" {
             schedule_battle_timeout_job(self.session.id(), &battle)?;
+        }
+        if schedule_if_ready && summary.all_ready {
+            self.drive_round_auto_defends(
+                battle_id,
+                battle.current_round,
+                u64::try_from(Timestamp::now().as_millis()).unwrap_or(0),
+                CANISTER_MAX_BATTLE_ROUND_AUTO_DEFENDS_PER_UPDATE,
+            )?;
         }
         self.changed_subjects
             .extend(summary.changed_subjects.iter().cloned());
@@ -501,24 +446,6 @@ fn response_active_stack_id(
         .map(|id| Id::<BattleStack>::from_key(id).to_string()))
 }
 
-fn schedule_runtime_battle_timeout_job(
-    session_id: Id<GameSession>,
-    battle_id: Id<Battle>,
-    battle: &domm_game::BattleRecord,
-) -> Result<(), ApiError> {
-    if battle.state != "active" {
-        return Ok(());
-    }
-    let Some(deadline_ms) = battle.action_deadline_at else {
-        return Ok(());
-    };
-    schedule_runtime_battle_timeout_wakeup(
-        session_id,
-        battle_id,
-        Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
-    )
-}
-
 pub(crate) fn schedule_battle_timeout_job(
     session_id: Id<GameSession>,
     battle: &Battle,
@@ -552,83 +479,16 @@ pub(crate) fn schedule_new_battle_timeout_job(
         );
     }
     #[cfg(not(feature = "benchmark"))]
-    schedule_runtime_battle_timeout_wakeup(session_id, battle.id(), deadline)
+    {
+        let _ = (session_id, deadline);
+        Ok(())
+    }
 }
 
-fn schedule_runtime_battle_timeout_wakeup(
-    session_id: Id<GameSession>,
-    battle_id: Id<Battle>,
-    deadline: Timestamp,
-) -> Result<(), ApiError> {
-    #[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-    schedule_runtime_battle_timeout_timer(session_id, battle_id, deadline);
-    #[cfg(any(not(target_arch = "wasm32"), feature = "benchmark"))]
-    let _ = (session_id, battle_id, deadline);
-    Ok(())
-}
-
-#[cfg(not(feature = "benchmark"))]
-fn schedule_runtime_battle_round_wakeup(
-    session_id: Id<GameSession>,
-    battle_id: Id<Battle>,
-    round_number: u16,
-) -> Result<(), ApiError> {
-    #[cfg(target_arch = "wasm32")]
-    schedule_runtime_battle_round_timer(session_id, battle_id, round_number);
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = (session_id, battle_id, round_number);
-    Ok(())
-}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-fn schedule_runtime_battle_timeout_timer(
-    session_id: Id<GameSession>,
-    battle_id: Id<Battle>,
-    deadline: Timestamp,
-) {
-    let session_id_text = session_id.to_string();
-    let battle_id_text = battle_id.to_string();
-    let deadline_ms = deadline.as_millis();
-    canic_cdk::timers::set_timer(runtime_timer_delay(deadline), async move {
-        if let Err(error) =
-            process_runtime_battle_timeout_timer(&session_id_text, &battle_id_text, deadline_ms)
-        {
-            canic_cdk::eprintln!("runtime battle timeout failed: {}", error.message);
-        }
-        if let Err(error) = system_job_service::schedule_nearest_due_job() {
-            canic_cdk::eprintln!("system job reschedule failed: {}", error.message);
-        }
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-fn schedule_runtime_battle_round_timer(
-    session_id: Id<GameSession>,
-    battle_id: Id<Battle>,
-    round_number: u16,
-) {
-    let session_id_text = session_id.to_string();
-    let battle_id_text = battle_id.to_string();
-    canic_cdk::timers::set_timer(Duration::from_millis(0), async move {
-        if let Err(error) =
-            process_runtime_battle_round_timer(&session_id_text, &battle_id_text, round_number)
-        {
-            canic_cdk::eprintln!("runtime battle round advance failed: {}", error.message);
-        }
-        if let Err(error) = system_job_service::schedule_nearest_due_job() {
-            canic_cdk::eprintln!("system job reschedule failed: {}", error.message);
-        }
-    });
-}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-fn runtime_timer_delay(due_at: Timestamp) -> Duration {
-    let now_ms = Timestamp::now().as_millis();
-    let delay_ms = due_at.as_millis().saturating_sub(now_ms).max(0);
-    Duration::from_millis(u64::try_from(delay_ms).unwrap_or(u64::MAX))
-}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
+#[cfg(any(
+    all(target_arch = "wasm32", not(feature = "benchmark")),
+    all(test, not(feature = "benchmark"))
+))]
 fn process_runtime_battle_timeout_timer(
     session_id_text: &str,
     battle_id_text: &str,
@@ -646,22 +506,13 @@ fn process_runtime_battle_timeout_timer(
     Ok(())
 }
 
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-fn process_runtime_battle_round_timer(
+#[cfg(all(test, not(feature = "benchmark")))]
+pub(crate) fn process_runtime_battle_timeout_timer_for_tests(
     session_id_text: &str,
     battle_id_text: &str,
-    round_number: u16,
+    deadline_ms: i64,
 ) -> Result<(), ApiError> {
-    let session_id = session_context::parse_id::<GameSession>(session_id_text, "session_id")?;
-    let battle_id = session_context::parse_id::<Battle>(battle_id_text, "battle_id")?;
-    let Some(mut session) = sessions::load_session(session_id)? else {
-        return Ok(());
-    };
-    let mut events = Vec::new();
-    let mut changed_subjects = Vec::new();
-    BattleKernelDriver::new(&mut session, None, &mut events, &mut changed_subjects)
-        .drive_runtime_round_advance_timer(battle_id, round_number)?;
-    Ok(())
+    process_runtime_battle_timeout_timer(session_id_text, battle_id_text, deadline_ms)
 }
 
 fn schedule_battle_timeout_job_at(
@@ -670,16 +521,7 @@ fn schedule_battle_timeout_job_at(
     created_turn: u32,
     deadline: Timestamp,
 ) -> Result<(), ApiError> {
-    system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-        job_key: format!("battle_timeout:{battle_id}:{}", deadline.as_millis()),
-        job_kind: "battle_timeout".to_string(),
-        session_id,
-        battle_id: Some(battle_id),
-        turn_number: Some(created_turn),
-        due_at: deadline,
-        command_id: None,
-        cursor_json: None,
-    })?;
+    let _ = (session_id, battle_id, created_turn, deadline);
     Ok(())
 }
 
@@ -1924,6 +1766,11 @@ fn submit_runtime_battle_action(
     if runtime.session_id != context.session.id().to_string() {
         return Ok(None);
     }
+    if let Some(response) =
+        existing_runtime_battle_action_response(caller, context, input, client_nonce)
+    {
+        return Ok(Some(response));
+    }
     if runtime_battle_timeout_due_without_submit_grace(&runtime, input, now_ms)? {
         return Ok(None);
     }
@@ -2025,6 +1872,47 @@ fn submit_runtime_battle_action(
         response.clone(),
     );
     Ok(Some(response))
+}
+
+fn existing_runtime_battle_action_response(
+    caller: CandidPrincipal,
+    context: &session_context::SessionCallerContext,
+    input: &BattleActionInput,
+    client_nonce_text: &str,
+) -> Option<CommandResponse> {
+    let payload_json = battle_action_payload_json(input);
+    let client_nonce = command_response::nonce_u64("submit_battle_action", client_nonce_text);
+    let payload_hash = command_response::payload_hash(
+        "submit_battle_action",
+        &context.participant.id().to_string(),
+        client_nonce_text,
+        &payload_json,
+    );
+    let canonical_session_id = context.session.id().to_string();
+    let actor_participant_id = context.participant.id().to_string();
+    battle_runtime::command_receipt_by_nonce(
+        &canonical_session_id,
+        &actor_participant_id,
+        client_nonce,
+    )
+    .map(|existing| {
+        if existing.payload_hash == payload_hash {
+            existing.response
+        } else {
+            runtime_battle_failed_response(
+                caller,
+                context,
+                Ulid::generate().to_string(),
+                client_nonce_text,
+                payload_hash,
+                public_error(
+                    "duplicate_nonce_payload_mismatch",
+                    format!("client nonce {client_nonce_text} was reused with a different payload"),
+                    false,
+                ),
+            )
+        }
+    })
 }
 
 fn begin_runtime_battle_command(
@@ -2479,7 +2367,7 @@ fn apply_resolved_battle_aftermath_with_runtime_projection(
         if runtime_battle.state != "resolved" {
             return Ok(());
         }
-        battle_rows::persist_battle_header_from_state(&runtime.state, command_id)?;
+        battle_rows::persist_battle_state(&runtime.state, command_id)?;
         runtime_survivor_stacks = Some(runtime.state.stacks.clone());
         battle_runtime::archive_runtime_events(&runtime);
         changed_subjects.push(command_response::changed(
@@ -3264,9 +3152,10 @@ pub(crate) fn process_battle_timeout_job(job: SystemJob) -> Result<(), ApiError>
 
 #[cfg(feature = "benchmark")]
 fn complete_benchmark_runtime_battle_timer_job(
+    job: &SystemJob,
     session_id: Id<GameSession>,
     battle_id: Id<Battle>,
-) -> bool {
+) -> Result<bool, ApiError> {
     let session_id_text = session_id.to_string();
     let battle_id_text = battle_id.to_string();
     let matched = battle_runtime::with_runtime(&battle_id_text, |runtime| {
@@ -3274,25 +3163,27 @@ fn complete_benchmark_runtime_battle_timer_job(
     })
     .unwrap_or(false);
     if matched {
-        defer_battle_timer_completion();
+        system_job_repo::complete_system_job(job.clone())?;
     }
-    matched
+    Ok(matched)
 }
 
 #[cfg(feature = "benchmark")]
 fn process_benchmark_runtime_battle_timeout_job(
+    job: &SystemJob,
     session_id: Id<GameSession>,
     battle_id: Id<Battle>,
-) -> bool {
-    complete_benchmark_runtime_battle_timer_job(session_id, battle_id)
+) -> Result<bool, ApiError> {
+    complete_benchmark_runtime_battle_timer_job(job, session_id, battle_id)
 }
 
 #[cfg(feature = "benchmark")]
 fn process_benchmark_runtime_battle_round_advance_job(
+    job: &SystemJob,
     session_id: Id<GameSession>,
     battle_id: Id<Battle>,
-) -> bool {
-    complete_benchmark_runtime_battle_timer_job(session_id, battle_id)
+) -> Result<bool, ApiError> {
+    complete_benchmark_runtime_battle_timer_job(job, session_id, battle_id)
 }
 
 fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
@@ -3307,7 +3198,7 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
     #[cfg(feature = "benchmark")]
-    if process_benchmark_runtime_battle_timeout_job(session_id, battle_id) {
+    if process_benchmark_runtime_battle_timeout_job(&job, session_id, battle_id)? {
         return Ok(());
     }
     let Some(mut session) = sessions::load_session(session_id)? else {
@@ -3368,7 +3259,7 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
         &mut changed_subjects,
     )?;
     if sync_incomplete {
-        system_job_repo::reschedule_system_job(job, partial_retry_at(), None)?;
+        system_job_repo::complete_system_job(job)?;
         return Ok(());
     }
 
@@ -3396,21 +3287,6 @@ fn process_battle_timeout_job_inner(job: SystemJob) -> Result<(), ApiError> {
     }
 
     system_job_repo::complete_system_job(job)?;
-    if let Some(updated_battle) = battles::load_battle(battle_id)?
-        && updated_battle.state == "active"
-        && let Some(deadline) = updated_battle.action_deadline_at
-    {
-        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: format!("battle_timeout:{battle_id}:{}", deadline.as_millis()),
-            job_kind: "battle_timeout".to_string(),
-            session_id,
-            battle_id: Some(battle_id),
-            turn_number: Some(session.current_turn),
-            due_at: deadline,
-            command_id: None,
-            cursor_json: None,
-        })?;
-    }
     Ok(())
 }
 
@@ -3446,8 +3322,7 @@ fn process_runtime_battle_timeout_job(
         return Ok(true);
     }
     if deadline > Timestamp::now() {
-        system_job_repo::reschedule_system_job(job.clone(), deadline, None)?;
-        system_job_service::schedule_nearest_due_job()?;
+        system_job_repo::complete_system_job(job.clone())?;
         return Ok(true);
     }
     if let Some(active_stack_id) = battle.active_stack_id {
@@ -3507,7 +3382,7 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     };
     let battle_id = Id::<Battle>::from_key(battle_id_key);
     #[cfg(feature = "benchmark")]
-    if process_benchmark_runtime_battle_round_advance_job(session_id, battle_id) {
+    if process_benchmark_runtime_battle_round_advance_job(&job, session_id, battle_id)? {
         return Ok(());
     }
     let Some(mut session) = sessions::load_session(session_id)? else {
@@ -3627,19 +3502,11 @@ fn process_battle_round_advance_job_inner(job: SystemJob) -> Result<(), ApiError
     };
 
     if round_incomplete {
-        system_job_repo::reschedule_system_job(job, Timestamp::now(), None)?;
-        system_job_service::schedule_nearest_due_job()?;
+        system_job_repo::complete_system_job(job)?;
         return Ok(());
     }
 
     system_job_repo::complete_system_job(job)?;
-    if let Some(updated_battle) = runtime_battle_header(session.id(), battle_id)? {
-        schedule_runtime_battle_timeout_job(session.id(), battle_id, &updated_battle)?;
-    } else if let Some(updated_battle) = battles::load_battle(battle_id)?
-        && updated_battle.state == "active"
-    {
-        schedule_battle_timeout_job(session.id(), &updated_battle)?;
-    }
     Ok(())
 }
 
@@ -3654,7 +3521,6 @@ struct BattleRoundReadinessSummary {
 struct RuntimeBattleRoundReadinessSummary {
     summary: BattleRoundReadinessSummary,
     round_job_key: Option<String>,
-    timeout_deadline: Option<u64>,
 }
 
 fn recompute_battle_round_readiness_and_schedule(
@@ -3708,24 +3574,11 @@ fn recompute_battle_round_readiness_and_schedule(
             .all(|participant_id| ready_participant_ids.contains(participant_id));
 
     if all_ready && schedule_if_ready {
-        let job = system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: format!(
-                "battle_round_advance:{}:{}",
-                battle.id(),
-                battle.current_round
-            ),
-            job_kind: "battle_round_advance".to_string(),
-            session_id,
-            battle_id: Some(battle.id()),
-            turn_number: None,
-            due_at: Timestamp::now(),
-            command_id,
-            cursor_json: None,
-        })?;
+        let _ = command_id;
         changed_subjects.push(command_response::changed(
-            "system_job",
-            &job.id().to_string(),
-            "upsert",
+            "battle_round_advance",
+            &format!("{}:{}", battle.id(), battle.current_round),
+            "inline",
         ));
     }
 
@@ -3742,7 +3595,7 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
     battle_id: Id<Battle>,
     command_id: Option<Id<GameCommand>>,
     schedule_if_ready: bool,
-    schedule_timeout: bool,
+    _schedule_timeout: bool,
 ) -> Result<Option<BattleRoundReadinessSummary>, ApiError> {
     let battle_id_text = battle_id.to_string();
     let Some(runtime_summary) = battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
@@ -3764,7 +3617,6 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
                     changed_subjects: Vec::new(),
                 },
                 round_job_key: None,
-                timeout_deadline: None,
             }));
         }
 
@@ -3829,18 +3681,13 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
             .count();
         let all_ready = !participant_ids.is_empty() && ready_count == participant_ids.len();
         let round_job_key = if all_ready && schedule_if_ready {
-            let key = format!(
+            Some(format!(
                 "battle_round_advance:{}:{}",
                 battle_id, battle.current_round
-            );
-            (runtime.deadline.round_job_key.as_deref() != Some(key.as_str())).then_some(key)
+            ))
         } else {
             None
         };
-        let timeout_deadline = (schedule_timeout && battle.state == "active")
-            .then_some(battle.action_deadline_at)
-            .flatten();
-
         Ok(Some(RuntimeBattleRoundReadinessSummary {
             summary: BattleRoundReadinessSummary {
                 ready_count,
@@ -3849,7 +3696,6 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
                 changed_subjects,
             },
             round_job_key,
-            timeout_deadline,
         }))
     }) else {
         return Ok(None);
@@ -3860,57 +3706,19 @@ fn recompute_runtime_battle_round_readiness_and_schedule(
     };
 
     if let Some(round_job_key) = runtime_summary.round_job_key.clone() {
-        #[cfg(not(feature = "benchmark"))]
-        {
-            let _ = command_id;
-            let round_number = battle_round_from_job_key(&round_job_key).unwrap_or(0);
-            battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
-                runtime.deadline.round_job_key = Some(round_job_key.clone());
-                runtime.mark_dirty();
-            });
-            schedule_runtime_battle_round_wakeup(session_id, battle_id, round_number)?;
-            runtime_summary
-                .summary
-                .changed_subjects
-                .push(command_response::changed(
-                    "battle_round_advance",
-                    &format!("runtime:{round_job_key}"),
-                    "wakeup",
-                ));
-        }
-        #[cfg(feature = "benchmark")]
-        {
-            let job = system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
-                job_key: round_job_key.clone(),
-                job_kind: "battle_round_advance".to_string(),
-                session_id,
-                battle_id: Some(battle_id),
-                turn_number: None,
-                due_at: Timestamp::now(),
-                command_id,
-                cursor_json: None,
-            })?;
-            battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
-                runtime.deadline.round_job_key = Some(round_job_key);
-                runtime.mark_dirty();
-            });
-            runtime_summary
-                .summary
-                .changed_subjects
-                .push(command_response::changed(
-                    "system_job",
-                    &job.id().to_string(),
-                    "upsert",
-                ));
-        }
-    }
-
-    if let Some(deadline_ms) = runtime_summary.timeout_deadline {
-        schedule_runtime_battle_timeout_wakeup(
-            session_id,
-            battle_id,
-            Timestamp::from_millis(i64::try_from(deadline_ms).unwrap_or(i64::MAX)),
-        )?;
+        let _ = command_id;
+        battle_runtime::with_runtime_mut(&battle_id_text, |runtime| {
+            runtime.deadline.round_job_key = None;
+            runtime.mark_dirty();
+        });
+        runtime_summary
+            .summary
+            .changed_subjects
+            .push(command_response::changed(
+                "battle_round_advance",
+                &format!("runtime:{round_job_key}"),
+                "inline",
+            ));
     }
 
     Ok(Some(runtime_summary.summary))
@@ -4102,16 +3910,6 @@ fn battle_round_processing(battle_id: Id<Battle>, round_number: u16) -> Result<b
                     || (job.status == system_job_repo::STATUS_SCHEDULED && job.due_at <= now))
         }),
     )
-}
-
-#[cfg(all(target_arch = "wasm32", not(feature = "benchmark")))]
-fn clear_runtime_battle_round_wakeup(battle_id: &str, round_job_key: &str) {
-    battle_runtime::with_runtime_mut(battle_id, |runtime| {
-        if runtime.deadline.round_job_key.as_deref() == Some(round_job_key) {
-            runtime.deadline.round_job_key = None;
-            runtime.mark_dirty();
-        }
-    });
 }
 
 fn battle_round_from_job_key(job_key: &str) -> Option<u16> {
@@ -4890,17 +4688,10 @@ fn apply_due_runtime_timeouts_for_sync(
             return Ok(Some((true, applied)));
         }
 
-        let timeout_command_id = command_id.to_string();
-        if runtime
-            .state
-            .events
-            .iter()
-            .any(|event| event.command_id == timeout_command_id)
-        {
-            break;
-        }
+        let timeout_command_id = Id::<GameCommand>::from_key(Ulid::generate());
+        let timeout_command_id_text = timeout_command_id.to_string();
         runtime.state.commands.push(domm_game::BattleCommandRecord {
-            command_id: timeout_command_id.clone(),
+            command_id: timeout_command_id_text.clone(),
             battle_id: battle_id_text.clone(),
             actor_participant_id: None,
             battle_stack_id: Some(active_stack_id),
@@ -4915,11 +4706,15 @@ fn apply_due_runtime_timeouts_for_sync(
             applied_at: None,
             retryable_error: None,
         });
-        domm_game::apply_battle_command_by_id(&mut runtime.state, &timeout_command_id, deadline)
-            .map_err(map_battle_error)?;
+        domm_game::apply_battle_command_by_id(
+            &mut runtime.state,
+            &timeout_command_id_text,
+            deadline,
+        )
+        .map_err(map_battle_error)?;
         append_runtime_timeout_public_event(
             session,
-            command_id,
+            timeout_command_id,
             &mut runtime,
             &battle_id_text,
             events,
@@ -6249,12 +6044,4 @@ fn map_battle_error(error: BattleError) -> ApiError {
         }
         _ => ApiError::new("battle_action_invalid", error.to_string(), false),
     }
-}
-
-fn partial_retry_at() -> Timestamp {
-    Timestamp::from_millis(
-        Timestamp::now()
-            .as_millis()
-            .saturating_add(SYSTEM_JOB_PARTIAL_RETRY_DELAY_MS),
-    )
 }

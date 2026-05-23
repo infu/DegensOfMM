@@ -2442,9 +2442,12 @@ fn pocket_ic_one_call_setup_progress_replay_and_upgrade_resume() {
         initial_progress.setup_command_status.as_deref(),
         Some("pending")
     );
-    assert_eq!(
-        initial_progress.setup_job_status.as_deref(),
-        Some("scheduled")
+    assert!(
+        matches!(
+            initial_progress.setup_job_status.as_deref(),
+            Some("scheduled" | "runtime_timer")
+        ),
+        "setup should be driven either by durable repair job or runtime timer: {initial_progress:?}"
     );
 
     let replayed = update_as::<LobbyCommandResponse>(
@@ -2467,13 +2470,13 @@ fn pocket_ic_one_call_setup_progress_replay_and_upgrade_resume() {
         initial_progress.setup_command_id
     );
     let replay_jobs = diagnostic_system_jobs(&fixture, Some(session_id.clone()), None);
-    assert_eq!(
+    assert!(
         replay_jobs
             .jobs
             .iter()
             .filter(|job| job.job_key == format!("setup_session:{session_id}"))
-            .count(),
-        1,
+            .count()
+            <= 1,
         "replaying the start nonce must not duplicate the setup job: {:?}",
         replay_jobs.jobs
     );
@@ -5128,6 +5131,14 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
     let champion_id = gate_owned_champion_id(&mut metrics, &fixture, player_one, &session_id);
     let town_id = "town:west".to_string();
     let dwelling_id = "dwelling:west-mudhook".to_string();
+    let neutral_battle_path = vec![
+        MoveCoord::new(9, 24),
+        MoveCoord::new(10, 24),
+        MoveCoord::new(11, 24),
+        MoveCoord::new(12, 24),
+        MoveCoord::new(12, 23),
+        MoveCoord::new(12, 22),
+    ];
 
     let _ = gate_query_as::<PlayerView>(&mut metrics, &fixture, player_one, "get_my_player", ());
     let _ = gate_query_as::<SetupProgressView>(
@@ -5465,16 +5476,6 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
         "get_town_view",
         (session_id.clone(), town_id.clone()),
     );
-    let _ = gate_query_as::<BattleView>(
-        &mut metrics,
-        &fixture,
-        player_one,
-        "get_battle_state",
-        (
-            session_id.clone(),
-            "battle:endpoint-surface:missing".to_string(),
-        ),
-    );
     let _ = gate_query_as::<ContentManifestResponse>(
         &mut metrics,
         &fixture,
@@ -5510,7 +5511,7 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
             "nonce:endpoint-surface:start".to_string(),
         ),
     );
-    let _ = gate_query_as::<MovementPreview>(
+    gate_query_as::<MovementPreview>(
         &mut metrics,
         &fixture,
         player_one,
@@ -5518,9 +5519,10 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
         (
             session_id.clone(),
             champion_id.clone(),
-            vec![MoveCoord::new(9, 23)],
+            neutral_battle_path.clone(),
         ),
-    );
+    )
+    .expect("preview_move_path should succeed for the neutral encounter route");
     let _ = gate_query_as::<BuildPreview>(
         &mut metrics,
         &fixture,
@@ -5545,20 +5547,6 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
             RecruitTarget::TownGarrison { slot_index: None },
         ),
     );
-    if let Ok(response) = gate_update_as::<CommandResponse>(
-        &mut metrics,
-        &fixture,
-        player_one,
-        "submit_move_intent",
-        (
-            session_id.clone(),
-            champion_id,
-            vec![MoveCoord::new(9, 23)],
-            "nonce:endpoint-surface:move".to_string(),
-        ),
-    ) {
-        metrics.observe_command_response(&response);
-    }
     if let Ok(response) = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
@@ -5589,60 +5577,68 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
     ) {
         metrics.observe_command_response(&response);
     }
-    if let Ok(response) = gate_update_as::<CommandResponse>(
-        &mut metrics,
-        &fixture,
-        player_one,
-        "sync_session_turn",
-        (
-            session_id.clone(),
-            "nonce:endpoint-surface:sync-turn".to_string(),
-        ),
-    ) {
-        metrics.observe_command_response(&response);
-    }
 
-    let missing_battle_id = "battle:endpoint-surface:missing".to_string();
-    let missing_battle_action = BattleActionInput {
-        battle_id: missing_battle_id.clone(),
-        battle_stack_id: "stack:endpoint-surface:missing".to_string(),
-        action: "Defend".to_string(),
-        ability_key: None,
-        target_stack_id: None,
-        destination: None,
-    };
-    let _ = gate_update_as::<CommandResponse>(
+    let (neutral_sync, _) = gate_submit_move_and_sync_until_event(
         &mut metrics,
         &fixture,
         player_one,
-        "sync_battle",
-        (
-            session_id.clone(),
-            missing_battle_id.clone(),
-            "nonce:endpoint-surface:sync-battle".to_string(),
-        ),
+        &session_id,
+        &champion_id,
+        neutral_battle_path.clone(),
+        "nonce:endpoint-surface:move",
+        "nonce:endpoint-surface:sync-turn:",
+        61_000,
+        "neutral_encounter_pending",
     );
-    let _ = gate_update_as::<CommandResponse>(
+    let battle_id = battle_id_from_events(&neutral_sync, "neutral_encounter_pending");
+    let battle_view = gate_query_as::<BattleView>(
         &mut metrics,
         &fixture,
         player_one,
-        "end_battle_turn",
-        (
-            session_id.clone(),
-            missing_battle_id,
-            "nonce:endpoint-surface:end-battle-turn".to_string(),
-        ),
+        "get_battle_state",
+        (session_id.clone(), battle_id.clone()),
+    )
+    .expect("endpoint-surface battle state should load");
+    assert_eq!(battle_view.state, "active");
+    assert!(
+        !battle_view.legal_actions_for_caller.is_empty(),
+        "endpoint-surface battle should expose a caller action"
     );
-    let _ = gate_update_as::<CommandResponse>(
+    let submitted_battle_action = gate_update_as::<CommandResponse>(
         &mut metrics,
         &fixture,
         player_one,
         "submit_battle_action",
         (
             session_id.clone(),
-            missing_battle_action,
+            choose_battle_action(&battle_view),
             "nonce:endpoint-surface:battle-action".to_string(),
         ),
+    )
+    .expect("endpoint-surface submit_battle_action should succeed");
+    metrics.observe_command_response(&submitted_battle_action);
+    assert_eq!(submitted_battle_action.status, CommandStatus::Applied);
+    let synced_battle = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        player_one,
+        "sync_battle",
+        (
+            session_id.clone(),
+            battle_id.clone(),
+            "nonce:endpoint-surface:sync-battle".to_string(),
+        ),
+    )
+    .expect("endpoint-surface sync_battle should succeed");
+    metrics.observe_command_response(&synced_battle);
+    assert_eq!(synced_battle.status, CommandStatus::Applied);
+    gate_resolve_battle_to_end(
+        &mut metrics,
+        &fixture,
+        player_one,
+        &session_id,
+        &battle_id,
+        "nonce:endpoint-surface:battle-resolve",
     );
     if let Ok(response) = gate_update_as::<CommandResponse>(
         &mut metrics,
@@ -5656,6 +5652,51 @@ fn pocket_ic_benchmark_endpoint_surface_records_every_required_endpoint() {
     ) {
         metrics.observe_command_response(&response);
     }
+
+    let end_round_player_one =
+        candid::Principal::self_authenticating(b"domm-endpoint-surface-end-round-one");
+    let end_round_player_two =
+        candid::Principal::self_authenticating(b"domm-endpoint-surface-end-round-two");
+    let end_round_session_id = gate_start_active_two_player_session(
+        &mut metrics,
+        &fixture,
+        end_round_player_one,
+        end_round_player_two,
+        "endpoint-surface-end-round",
+    );
+    let end_round_champion_id = gate_owned_champion_id(
+        &mut metrics,
+        &fixture,
+        end_round_player_one,
+        &end_round_session_id,
+    );
+    let (end_round_sync, _) = gate_submit_move_and_sync_until_event(
+        &mut metrics,
+        &fixture,
+        end_round_player_one,
+        &end_round_session_id,
+        &end_round_champion_id,
+        neutral_battle_path,
+        "nonce:endpoint-surface:end-round:move",
+        "nonce:endpoint-surface:end-round:sync-turn:",
+        61_000,
+        "neutral_encounter_pending",
+    );
+    let end_round_battle_id = battle_id_from_events(&end_round_sync, "neutral_encounter_pending");
+    let ended_battle_turn = gate_update_as::<CommandResponse>(
+        &mut metrics,
+        &fixture,
+        end_round_player_one,
+        "end_battle_turn",
+        (
+            end_round_session_id,
+            end_round_battle_id,
+            "nonce:endpoint-surface:end-battle-turn".to_string(),
+        ),
+    )
+    .expect("endpoint-surface end_battle_turn should succeed");
+    metrics.observe_command_response(&ended_battle_turn);
+    assert_eq!(ended_battle_turn.status, CommandStatus::Applied);
 
     metrics.set_benchmark_scenario("diagnostics");
     let final_storage = gate_diagnostic_snapshot(&mut metrics, &fixture, GATE_L_ENTITIES);
@@ -8421,6 +8462,7 @@ fn covered_required_endpoints(calls: &[BenchmarkCallRecord]) -> BTreeSet<&'stati
         .filter(|endpoint| {
             calls.iter().any(|call| {
                 call.method == endpoint.name
+                    && call.ok
                     && matches!(
                         (&call.kind[..], endpoint.kind),
                         ("query", EndpointKind::Query) | ("update", EndpointKind::Update)
@@ -8961,6 +9003,35 @@ fn benchmark_summary_excludes_internal_methods_and_tracks_coverage() {
 }
 
 #[test]
+fn benchmark_required_endpoint_coverage_requires_successful_calls() {
+    let calls = vec![
+        benchmark_test_error_call(
+            "endpoint_surface",
+            "get_battle_state",
+            "query",
+            "invalid_id",
+        ),
+        benchmark_test_error_call(
+            "endpoint_surface",
+            "submit_battle_action",
+            "update",
+            "invalid_id",
+        ),
+        benchmark_test_call("endpoint_surface", "register_player", "update"),
+        benchmark_test_call("endpoint_surface", "get_battle_state", "update"),
+    ];
+
+    let covered = covered_required_endpoints(&calls);
+
+    assert!(covered.contains("register_player"));
+    assert!(
+        !covered.contains("get_battle_state"),
+        "failed calls and wrong-kind calls must not cover required endpoints"
+    );
+    assert!(!covered.contains("submit_battle_action"));
+}
+
+#[test]
 fn benchmark_summary_renders_scenario_workload_context() {
     let calls = vec![
         benchmark_test_call("aftermath_victory", "submit_move_intent", "update"),
@@ -9131,6 +9202,19 @@ fn benchmark_test_call(scenario_id: &str, method: &str, kind: &str) -> Benchmark
         memory_size_after_bytes: 1_020,
         phases: Vec::new(),
         repo_ops: Vec::new(),
+    }
+}
+
+fn benchmark_test_error_call(
+    scenario_id: &str,
+    method: &str,
+    kind: &str,
+    error_code: &str,
+) -> BenchmarkCallRecord {
+    BenchmarkCallRecord {
+        ok: false,
+        error_code: Some(error_code.to_string()),
+        ..benchmark_test_call(scenario_id, method, kind)
     }
 }
 

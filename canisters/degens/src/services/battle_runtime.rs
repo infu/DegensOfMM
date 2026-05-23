@@ -21,7 +21,9 @@ use domm_degens_schema::schema::{
 };
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use domm_degens_schema::schema::{GameCommand, GameParticipant};
-use domm_game::{ApiError, ApiEventView, BattleState, CommandResponse, CommandStatusView};
+use domm_game::{
+    ApiError, ApiEventView, BattleState, CommandResponse, CommandResult, CommandStatusView,
+};
 use icydb::traits::EntityValue;
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 use icydb::types::Timestamp;
@@ -363,7 +365,12 @@ pub(crate) struct BattleRuntimeCommandReceipt {
 
 impl BattleRuntimeCommandReceipt {
     pub(crate) fn status_view(&self) -> CommandStatusView {
-        self.response.status_view()
+        let mut status = self.response.status_view();
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+        {
+            status.result_json = runtime_command_result_json(self);
+        }
+        status
     }
 }
 
@@ -791,6 +798,8 @@ pub(crate) fn flush_runtime_archives_for_barrier() -> Result<usize, ApiError> {
             }
         }
     });
+    ARCHIVED_SESSION_RUNTIME_EVENTS.with(|archived| archived.borrow_mut().clear());
+    ARCHIVED_SESSION_RUNTIME_COMMAND_RECEIPTS.with(|archived| archived.borrow_mut().clear());
     Ok(flushed)
 }
 
@@ -813,10 +822,12 @@ fn flush_runtime_command_receipt_for_session(
     let session_id = parse_ulid_id::<GameSession>(session_id_text)?;
     let command_id = parse_ulid_id::<GameCommand>(&receipt.command_id)?;
     let actor_participant_id = parse_ulid_id::<GameParticipant>(&receipt.actor_participant_id)?;
+    let actor_player_id = session_repo::load_participant(actor_participant_id)?
+        .map(|participant| participant.player_id);
     if commands_events_effects::load_game_command(command_id)?.is_some()
         || commands_events_effects::find_game_command_by_idempotency(
             session_id,
-            "participant",
+            "player",
             &receipt.actor_participant_id,
             receipt.client_nonce,
         )?
@@ -829,9 +840,9 @@ fn flush_runtime_command_receipt_for_session(
     let command = GameCommand {
         id: command_id.key(),
         session_id: session_id.key(),
-        actor_kind: "participant".to_string(),
+        actor_kind: "player".to_string(),
         actor_id_text: receipt.actor_participant_id.clone(),
-        actor_player_id: None,
+        actor_player_id,
         actor_participant_id: Some(actor_participant_id.key()),
         champion_id: None,
         turn_number: receipt.response.durable_turn,
@@ -841,10 +852,7 @@ fn flush_runtime_command_receipt_for_session(
         phase: receipt.response.phase.as_str().to_string(),
         payload_hash: receipt.payload_hash.clone(),
         payload_json,
-        result_json: Some(format!(
-            r#"{{"runtime_flushed":true,"command_id":"{}"}}"#,
-            receipt.command_id
-        )),
+        result_json: runtime_command_result_json(receipt),
         error_code: error.as_ref().map(|error| error.code.clone()),
         error_message: error.as_ref().map(|error| error.message.clone()),
         error_details_json: error.and_then(|error| error.details_json),
@@ -855,6 +863,68 @@ fn flush_runtime_command_receipt_for_session(
     };
     commands_events_effects::insert_game_command(command)?;
     Ok(true)
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn runtime_command_result_json(receipt: &BattleRuntimeCommandReceipt) -> Option<String> {
+    match &receipt.response.result {
+        CommandResult::BattleAction(action) => Some(format!(
+            r#"{{"command_kind":"submit_battle_action","current_round":{},"active_stack_id":{},"event_seq":{},"command_count":1,"event_count":{}}}"#,
+            action.current_round,
+            action
+                .active_stack_id
+                .as_deref()
+                .map(json_string)
+                .unwrap_or_else(|| "null".to_string()),
+            action
+                .event_seq
+                .map(|seq| seq.to_string())
+                .unwrap_or_else(|| "null".to_string()),
+            u32::from(action.event_seq.is_some())
+        )),
+        CommandResult::BattleSync(outcome) => Some(format!(
+            r#"{{"command_kind":"sync_battle","battle_id":"{}","timeout_actions_applied":{},"recovered_commands":{},"battle_sync_incomplete":{},"active_stack_id":{},"command_count":1,"event_count":{}}}"#,
+            escape_json(&outcome.battle_id),
+            outcome.timeout_actions_applied,
+            outcome.recovered_commands,
+            outcome.battle_sync_incomplete,
+            outcome
+                .active_stack_id
+                .as_deref()
+                .map(json_string)
+                .unwrap_or_else(|| "null".to_string()),
+            outcome.timeout_actions_applied
+        )),
+        CommandResult::StrategicReceipt(strategic) => Some(format!(
+            r#"{{"command_kind":"{}","current_turn":{},"command_count":{},"event_count":{}}}"#,
+            escape_json(&strategic.command_kind),
+            strategic.current_turn,
+            strategic.command_count,
+            strategic.event_count
+        )),
+        CommandResult::None => None,
+        _ => Some(format!(
+            r#"{{"command_kind":"{}","current_turn":{},"command_count":1,"event_count":{}}}"#,
+            escape_json(&receipt.command_type),
+            receipt.response.durable_turn,
+            receipt.response.events.len()
+        )),
+    }
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn json_string(value: &str) -> String {
+    format!(r#""{}""#, escape_json(value))
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn escape_json(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]

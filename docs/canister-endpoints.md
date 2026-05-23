@@ -1,12 +1,21 @@
 # Canister Endpoint Inventory
 
-Checkpoint 19A makes the canister API surface explicit before IcyDB repository
-work starts. The production backend is `canisters/degens`; `domm-game` remains
-the pure deterministic rules and DTO contract layer.
+This document tracks the current canister API surface for `canisters/degens`.
+`domm-game` remains the deterministic rules and DTO contract layer used by the
+canister services and tests.
+
+Current status as of 2026-05-22: the required gameplay inventory is `59`
+endpoints. The full benchmark suite at
+`target/benchmarks/20260522-164948-5cfd001` covered `59/59` required
+endpoints, Gate M's canister-backed web-client probe passed, and the
+hard-target audit reported zero violations.
 
 Gameplay endpoints must use typed Candid methods and typed IcyDB repository
 paths. Generic SQL is allowed only for controller-gated diagnostics or test
 fixture loading, not for normal gameplay.
+
+For the UI call order and gameplay loops built from these endpoints, see
+`docs/client-ui-integration.md`.
 
 ## Required Endpoints
 
@@ -19,11 +28,13 @@ fixture loading, not for normal gameplay.
 | `mark_ready` | update | `FixtureApiBackend::mark_ready` |
 | `start_session` | update | `FixtureApiBackend::start_session` |
 | `get_session` | query | `FixtureApiBackend::get_session` |
+| `get_setup_progress` | query | `FixtureApiBackend::get_setup_progress` |
 | `get_my_participant` | query | `FixtureApiBackend::get_my_participant` |
 | `get_match_history` | query | `FixtureApiBackend::get_match_history` |
 | `get_game_view` | query | `FixtureApiBackend::get_game_view` |
 | `get_visible_map_chunks` | query | `FixtureApiBackend::get_visible_map_chunks` |
 | `get_visible_objects` | query | `FixtureApiBackend::get_visible_objects` |
+| `get_object_view` | query | `FixtureApiBackend::get_object_view` |
 | `get_my_champions` | query | `FixtureApiBackend::get_my_champions` |
 | `get_champion_view` | query | `FixtureApiBackend::get_champion_view` |
 | `preview_champion_progression` | query | `FixtureApiBackend::preview_champion_progression` |
@@ -57,14 +68,17 @@ fixture loading, not for normal gameplay.
 | `get_content_manifest` | query | `FixtureApiBackend::get_content_manifest` |
 | `get_events_after` | query | `FixtureApiBackend::get_events_after` |
 | `get_command_status` | query | `FixtureApiBackend::get_command_status` |
+| `get_command_status_by_nonce` | query | `FixtureApiBackend::get_command_status_by_nonce` |
 | `preview_move_path` | query | `FixtureApiBackend::preview_move` |
 | `preview_build_town_structure` | query | `FixtureApiBackend::preview_build_town_structure` |
 | `preview_recruit_units` | query | `FixtureApiBackend::preview_recruit_units` |
 | `submit_move_intent` | update | `FixtureApiBackend::submit_move_intent` |
+| `end_turn` | update | `FixtureApiBackend::end_turn` |
 | `sync_session_turn` | update | `FixtureApiBackend::sync_session_turn` |
 | `submit_build_town_structure` | update | `FixtureApiBackend::submit_build_town_structure` |
 | `submit_recruit_units` | update | `FixtureApiBackend::submit_recruit_units` |
 | `sync_battle` | update | `FixtureApiBackend::sync_battle` |
+| `end_battle_turn` | update | `FixtureApiBackend::end_battle_turn` |
 | `submit_battle_action` | update | `FixtureApiBackend::submit_battle_action` |
 
 The canister also exposes `get_canister_endpoint_inventory` for contract tests
@@ -100,11 +114,19 @@ original command instead of failing due to a later clock value.
 Checkpoint 22 battle spellcasting uses `submit_battle_action` with
 `action = CastAbility` and `ability_key = spell:<slug>`, so it remains under the
 same canister-time and command-idempotency contract.
+Battle `action_deadline_at` is the timeout target. The current canister accepts
+a valid action from the active stack until `action_deadline_at + 15_000ms` if it
+wins the race against timeout processing.
 
 Checkpoint 23 expanded-economy updates use standard `GameCommand`
 idempotency. Exact retries for tavern hiring, market trading, and external
 dwelling recruitment replay the original `CommandResponse`; previews and pool
 reads are query-only projections.
+Marketplace trade rates are fixed in v1.1. Town/building income effects such
+as `town_income_gold_250` may exist in content metadata, but the current
+canister income path does not materialize them; active recurring income is
+captured mine income, with pickups/rewards/costs handled through the resource
+ledger.
 
 Checkpoint 24 scenario-progress updates use the same `GameCommand`
 idempotency. Quest accept/claim, objective sync, world-event sync, and
@@ -120,15 +142,23 @@ movement, siege actions, and larger-map gameplay remain disabled by persisted
 rows with explicit disabled reasons and `actionable = false` until a later
 bounded spec expands them.
 
-Checkpoint 26 keeps late `submit_move_intent` hard rejection out of the v1
-release contract. The canister route is sync-driven: render/query DTOs expose
-`sync_required`, clients call `sync_session_turn` to materialize expired turn
-state, and turn-final resolution remains authoritative. A stricter
-canister-side error for a new movement intent submitted after
-`turn_deadline_at` is tracked in `spec.v2.md` because it needs command replay,
-nonce mismatch, client recovery, and Pocket-IC race coverage before promotion.
+Checkpoint 26 implements accepted-closure rejection for late
+`submit_move_intent`: the route is still sync-driven, render/query DTOs expose
+`sync_required`, and clients call `sync_session_turn` to materialize expired
+turn state, but once a current-turn closure job is accepted, running, or due,
+new turn-sensitive commands fail before command creation with
+`backend_work_pending`/stale-expired semantics. Exact retries of already-created
+commands still replay. A stricter raw wall-clock error for a new movement intent
+submitted after `turn_deadline_at` but before closure acceptance remains optional
+V2 cleanup.
 
 ## Deferred Endpoint Decisions
+
+These names are intentionally absent from the v1 exported Candid service and
+from the required gameplay endpoint inventory. `retreat` and `surrender` are
+still exposed to clients as disabled battle affordances with typed disabled
+reasons; the remaining entries stay deferred until their command and replay
+contracts are promoted.
 
 | Endpoint | Decision |
 | --- | --- |

@@ -1,10 +1,13 @@
-use std::collections::BTreeMap;
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use domm_degens_schema::schema::{
     ArtifactDefinition, BuildingDefinition, Champion, ChampionClassDefinition, FactionDefinition,
     GameParticipant, GameSession, MapChunk, MapObjectDefinition, MapOccupancy, NeutralArmy,
-    ParticipantKnownObject, ResourceLedgerTurnSummary, RulesetDefinition, SpellDefinition,
-    TerrainDefinition, UnitDefinition, VisibilityChunk,
+    ParticipantKnownObject, ResourceLedgerTurnSummary, SpellDefinition, TerrainDefinition,
+    UnitDefinition, VisibilityChunk,
 };
 use domm_game::{
     FIRST_PLAYABLE_RULESET_SLUG, FIRST_PLAYABLE_RULESET_VERSION, FixtureIds, ResourceCost,
@@ -22,6 +25,13 @@ use crate::repos::{
 
 use super::{battle_start, render_projection, town_runtime};
 
+thread_local! {
+    static FIRST_PLAYABLE_CONTENT_ROWS_CACHE: RefCell<Option<FirstPlayableContentRows>> =
+        const { RefCell::new(None) };
+    static FIRST_PLAYABLE_MAP_STATE_CACHE: RefCell<Option<(String, domm_game::FirstPlayableMapState)>> =
+        const { RefCell::new(None) };
+}
+
 #[derive(Clone)]
 pub(crate) struct FirstPlayableContentRows {
     pub factions: BTreeMap<String, FactionDefinition>,
@@ -34,6 +44,10 @@ pub(crate) struct FirstPlayableContentRows {
 
 pub(crate) fn ensure_first_playable_content_rows()
 -> foundation::RepoResult<FirstPlayableContentRows> {
+    if let Some(rows) = cached_first_playable_content_rows() {
+        return Ok(rows);
+    }
+
     let manifest = first_playable_content_manifest();
     let ruleset = match content::find_ruleset_by_slug_version(
         FIRST_PLAYABLE_RULESET_SLUG,
@@ -86,14 +100,24 @@ pub(crate) fn ensure_first_playable_content_rows()
         .map(|row| (row.slug.clone(), row))
         .collect();
 
-    Ok(FirstPlayableContentRows {
+    let rows = FirstPlayableContentRows {
         factions,
         champion_classes,
         units,
         buildings,
         artifacts,
         map_objects,
-    })
+    };
+    remember_first_playable_content_rows(&rows);
+    Ok(rows)
+}
+
+fn cached_first_playable_content_rows() -> Option<FirstPlayableContentRows> {
+    FIRST_PLAYABLE_CONTENT_ROWS_CACHE.with_borrow(Clone::clone)
+}
+
+fn remember_first_playable_content_rows(rows: &FirstPlayableContentRows) {
+    FIRST_PLAYABLE_CONTENT_ROWS_CACHE.with_borrow_mut(|cache| *cache = Some(rows.clone()));
 }
 
 fn seed_content_definition_batches(
@@ -102,11 +126,14 @@ fn seed_content_definition_batches(
     factions: &BTreeMap<String, FactionDefinition>,
 ) -> foundation::RepoResult<()> {
     let now = Timestamp::now();
-    if content::find_champion_class_by_ruleset_slug(ruleset_id, "toll-broken-captain")?.is_none() {
-        let rows = manifest
-            .champion_classes
-            .iter()
-            .map(|class| ChampionClassDefinition {
+    let existing_champion_class_slugs = content::page_champion_classes_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.slug)
+        .collect::<BTreeSet<_>>();
+    let mut champion_class_rows = Vec::new();
+    for class in &manifest.champion_classes {
+        if !existing_champion_class_slugs.contains(&class.slug) {
+            champion_class_rows.push(ChampionClassDefinition {
                 id: Ulid::generate(),
                 ruleset_id: ruleset_id.key(),
                 faction_id: class
@@ -122,15 +149,21 @@ fn seed_content_definition_batches(
                 base_vision: class.base_vision,
                 created_at: now,
                 updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_champion_classes", rows)?;
+            });
+        }
+    }
+    if !champion_class_rows.is_empty() {
+        foundation::insert_many_atomic("content.seed_champion_classes", champion_class_rows)?;
     }
 
-    if content::find_terrain_by_ruleset_key(ruleset_id, "grass")?.is_none() {
-        let mut rows_by_key = BTreeMap::new();
-        for terrain in &manifest.terrain {
-            rows_by_key
+    let existing_terrain_keys = content::page_terrain_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.terrain_key)
+        .collect::<BTreeSet<_>>();
+    let mut terrain_rows_by_key = BTreeMap::new();
+    for terrain in &manifest.terrain {
+        if !existing_terrain_keys.contains(&terrain.terrain_key) {
+            terrain_rows_by_key
                 .entry(terrain.terrain_key.clone())
                 .or_insert_with(|| TerrainDefinition {
                     id: Ulid::generate(),
@@ -145,17 +178,22 @@ fn seed_content_definition_batches(
                     updated_at: now,
                 });
         }
+    }
+    if !terrain_rows_by_key.is_empty() {
         foundation::insert_many_atomic(
             "content.seed_terrain",
-            rows_by_key.into_values().collect::<Vec<_>>(),
+            terrain_rows_by_key.into_values().collect::<Vec<_>>(),
         )?;
     }
 
-    if content::find_unit_by_ruleset_slug(ruleset_id, "mudhook-levy")?.is_none() {
-        let rows = manifest
-            .units
-            .iter()
-            .map(|unit| UnitDefinition {
+    let existing_unit_slugs = content::page_units_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.slug)
+        .collect::<BTreeSet<_>>();
+    let mut unit_rows = Vec::new();
+    for unit in &manifest.units {
+        if !existing_unit_slugs.contains(&unit.slug) {
+            unit_rows.push(UnitDefinition {
                 id: Ulid::generate(),
                 ruleset_id: ruleset_id.key(),
                 faction_id: unit
@@ -191,17 +229,22 @@ fn seed_content_definition_batches(
                 ability_keys: unit.ability_keys.clone(),
                 created_at: now,
                 updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        let rows = foundation::insert_many_atomic("content.seed_units", rows)?;
+            });
+        }
+    }
+    if !unit_rows.is_empty() {
+        let rows = foundation::insert_many_atomic("content.seed_units", unit_rows)?;
         content::cache_units(&rows);
     }
 
-    if content::find_building_by_ruleset_slug(ruleset_id, "crumbling-hall")?.is_none() {
-        let rows = manifest
-            .buildings
-            .iter()
-            .map(|building| BuildingDefinition {
+    let existing_building_slugs = content::page_buildings_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.slug)
+        .collect::<BTreeSet<_>>();
+    let mut building_rows = Vec::new();
+    for building in &manifest.buildings {
+        if !existing_building_slugs.contains(&building.slug) {
+            building_rows.push(BuildingDefinition {
                 id: Ulid::generate(),
                 ruleset_id: ruleset_id.key(),
                 faction_id: building
@@ -226,20 +269,24 @@ fn seed_content_definition_batches(
                 effect_key: building.effect_key.clone(),
                 created_at: now,
                 updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        let rows = foundation::insert_many_atomic("content.seed_buildings", rows)?;
+            });
+        }
+    }
+    if !building_rows.is_empty() {
+        let rows = foundation::insert_many_atomic("content.seed_buildings", building_rows)?;
         content::cache_buildings(&rows);
     }
 
     if !manifest.spells.is_empty() {
         let preferred_cache_slug = manifest.spells.last().map(|spell| spell.slug.as_str());
-        let presence_slug = preferred_cache_slug.unwrap_or(&manifest.spells[0].slug);
-        if content::find_spell_by_ruleset_slug(ruleset_id, presence_slug)?.is_none() {
-            let rows = manifest
-                .spells
-                .iter()
-                .map(|spell| SpellDefinition {
+        let existing_spell_slugs = content::page_spells_by_ruleset(ruleset_id)?
+            .into_iter()
+            .map(|row| row.slug)
+            .collect::<BTreeSet<_>>();
+        let mut spell_rows = Vec::new();
+        for spell in &manifest.spells {
+            if !existing_spell_slugs.contains(&spell.slug) {
+                spell_rows.push(SpellDefinition {
                     id: Ulid::generate(),
                     ruleset_id: ruleset_id.key(),
                     slug: spell.slug.clone(),
@@ -254,18 +301,28 @@ fn seed_content_definition_batches(
                     duration_rounds: spell.duration_rounds,
                     created_at: now,
                     updated_at: now,
-                })
-                .collect::<Vec<_>>();
-            let rows = foundation::insert_many_atomic("content.seed_spells", rows)?;
-            content::cache_seeded_spells(&rows, preferred_cache_slug);
+                });
+            }
+        }
+        if !spell_rows.is_empty() {
+            foundation::insert_many_atomic("content.seed_spells", spell_rows)?;
+        }
+        if let Some(preferred_slug) = preferred_cache_slug
+            && let Some(preferred) =
+                content::find_spell_by_ruleset_slug(ruleset_id, preferred_slug)?
+        {
+            content::cache_seeded_spells(&[preferred], Some(preferred_slug));
         }
     }
 
-    if content::find_artifact_by_ruleset_slug(ruleset_id, "bent-banner")?.is_none() {
-        let rows = manifest
-            .artifacts
-            .iter()
-            .map(|artifact| ArtifactDefinition {
+    let existing_artifact_slugs = content::page_artifacts_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.slug)
+        .collect::<BTreeSet<_>>();
+    let mut artifact_rows = Vec::new();
+    for artifact in &manifest.artifacts {
+        if !existing_artifact_slugs.contains(&artifact.slug) {
+            artifact_rows.push(ArtifactDefinition {
                 id: Ulid::generate(),
                 ruleset_id: ruleset_id.key(),
                 slug: artifact.slug.clone(),
@@ -277,16 +334,21 @@ fn seed_content_definition_batches(
                 effect_key: artifact.effect_key.clone(),
                 created_at: now,
                 updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_artifacts", rows)?;
+            });
+        }
+    }
+    if !artifact_rows.is_empty() {
+        foundation::insert_many_atomic("content.seed_artifacts", artifact_rows)?;
     }
 
-    if content::find_map_object_by_ruleset_slug(ruleset_id, "gold-mine")?.is_none() {
-        let rows = manifest
-            .map_objects
-            .iter()
-            .map(|object| MapObjectDefinition {
+    let existing_map_object_slugs = content::page_map_objects_by_ruleset(ruleset_id)?
+        .into_iter()
+        .map(|row| row.slug)
+        .collect::<BTreeSet<_>>();
+    let mut map_object_rows = Vec::new();
+    for object in &manifest.map_objects {
+        if !existing_map_object_slugs.contains(&object.slug) {
+            map_object_rows.push(MapObjectDefinition {
                 id: Ulid::generate(),
                 ruleset_id: ruleset_id.key(),
                 slug: object.slug.clone(),
@@ -302,12 +364,23 @@ fn seed_content_definition_batches(
                 refresh_rule: object.refresh_rule.clone(),
                 created_at: now,
                 updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        foundation::insert_many_atomic("content.seed_map_objects", rows)?;
+            });
+        }
+    }
+    if !map_object_rows.is_empty() {
+        foundation::insert_many_atomic("content.seed_map_objects", map_object_rows)?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn seed_content_definition_batches_for_tests(
+    ruleset_id: Id<domm_degens_schema::schema::RulesetDefinition>,
+    manifest: &domm_game::ContentManifest,
+    factions: &BTreeMap<String, FactionDefinition>,
+) -> foundation::RepoResult<()> {
+    seed_content_definition_batches(ruleset_id, manifest, factions)
 }
 
 pub(crate) fn seed_first_playable_towns(
@@ -375,7 +448,8 @@ pub(crate) fn seed_first_playable_dwelling_pools(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    seed_dwelling_pools(session, &participants_by_slot(participants))
+    let content_rows = ensure_first_playable_content_rows()?;
+    seed_dwelling_pools(session, &participants_by_slot(participants), &content_rows)
 }
 
 pub(crate) fn seed_first_playable_map_chunks(
@@ -411,7 +485,8 @@ pub(crate) fn seed_first_playable_tavern_offers(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    seed_tavern_offers(session, participants)
+    let content_rows = ensure_first_playable_content_rows()?;
+    seed_tavern_offers(session, participants, &content_rows)
 }
 
 pub(crate) fn seed_first_playable_scenario_progress(
@@ -783,35 +858,77 @@ fn seed_external_dwelling_objects(
     Ok(())
 }
 
+fn with_first_playable_map_state<T>(
+    session: &GameSession,
+    participants: &[GameParticipant],
+    body: impl FnOnce(&domm_game::FirstPlayableMapState) -> foundation::RepoResult<T>,
+) -> foundation::RepoResult<T> {
+    let ids = fixture_ids_for_rows(session, participants);
+    let cache_key = first_playable_map_state_cache_key(&ids);
+    FIRST_PLAYABLE_MAP_STATE_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let should_refresh = cache
+            .as_ref()
+            .is_none_or(|(cached_key, _)| cached_key != &cache_key);
+        if should_refresh {
+            let map_state =
+                domm_game::build_first_playable_map_state_for_ids(&ids).map_err(map_seed_error)?;
+            *cache = Some((cache_key, map_state));
+        }
+        let Some((_, map_state)) = cache.as_ref() else {
+            return Err(map_seed_error(domm_game::MapError::OutOfBounds {
+                x: 0,
+                y: 0,
+            }));
+        };
+        body(map_state)
+    })
+}
+
+fn first_playable_map_state_cache_key(ids: &FixtureIds) -> String {
+    format!(
+        "{}:{}:{}:{}:{}:{}",
+        ids.session_id,
+        ids.player_one_id,
+        ids.player_two_id,
+        ids.participant_one_id,
+        ids.participant_two_id,
+        ids.map_id
+    )
+}
+
+fn map_seed_error(error: domm_game::MapError) -> domm_game::ApiError {
+    domm_game::ApiError::new("first_playable_map_seed_invalid", error.to_string(), false)
+}
+
 fn seed_map_chunks(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    let ids = fixture_ids_for_rows(session, participants);
-    let map_state = domm_game::build_first_playable_map_state_for_ids(&ids).map_err(|error| {
-        domm_game::ApiError::new("first_playable_map_seed_invalid", error.to_string(), false)
-    })?;
     if map_visibility_occupancy::find_map_chunk(session.id(), 0, 0)?.is_none() {
-        let now = Timestamp::now();
-        let rows = map_state
-            .chunks
-            .into_iter()
-            .map(|chunk| MapChunk {
-                id: Ulid::generate(),
-                session_id: session.id().key(),
-                chunk_x: chunk.chunk_x,
-                chunk_y: chunk.chunk_y,
-                width: u8::try_from(chunk.width).unwrap_or(u8::MAX),
-                height: u8::try_from(chunk.height).unwrap_or(u8::MAX),
-                terrain_blob: Blob::from(chunk.terrain_blob),
-                movement_blob: Blob::from(chunk.movement_blob),
-                flags_blob: Blob::from(chunk.flags_blob),
-                created_at: now,
-                updated_at: now,
-            })
-            .collect::<Vec<_>>();
-        let rows = foundation::insert_many_atomic("map.seed_map_chunks", rows)?;
-        render_projection::remember_map_chunks(&rows);
+        with_first_playable_map_state(session, participants, |map_state| {
+            let now = Timestamp::now();
+            let rows = map_state
+                .chunks
+                .iter()
+                .map(|chunk| MapChunk {
+                    id: Ulid::generate(),
+                    session_id: session.id().key(),
+                    chunk_x: chunk.chunk_x,
+                    chunk_y: chunk.chunk_y,
+                    width: u8::try_from(chunk.width).unwrap_or(u8::MAX),
+                    height: u8::try_from(chunk.height).unwrap_or(u8::MAX),
+                    terrain_blob: Blob::from(chunk.terrain_blob.clone()),
+                    movement_blob: Blob::from(chunk.movement_blob.clone()),
+                    flags_blob: Blob::from(chunk.flags_blob.clone()),
+                    created_at: now,
+                    updated_at: now,
+                })
+                .collect::<Vec<_>>();
+            let rows = foundation::insert_many_atomic("map.seed_map_chunks", rows)?;
+            render_projection::remember_map_chunks(&rows);
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -820,10 +937,6 @@ fn seed_visibility_chunks(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    let ids = fixture_ids_for_rows(session, participants);
-    let map_state = domm_game::build_first_playable_map_state_for_ids(&ids).map_err(|error| {
-        domm_game::ApiError::new("first_playable_map_seed_invalid", error.to_string(), false)
-    })?;
     let first_participant_id = participants.first().map(EntityValue::id);
     if first_participant_id
         .map(|id| map_visibility_occupancy::find_visibility_chunk(id, 0, 0))
@@ -831,27 +944,30 @@ fn seed_visibility_chunks(
         .flatten()
         .is_none()
     {
-        let now = Timestamp::now();
-        let rows = map_state
-            .visibility_chunks
-            .into_iter()
-            .map(|visibility| {
-                Ok(VisibilityChunk {
-                    id: Ulid::generate(),
-                    session_id: session.id().key(),
-                    participant_id: parse_participant_id(&visibility.participant_id)?.key(),
-                    chunk_x: visibility.chunk_x,
-                    chunk_y: visibility.chunk_y,
-                    discovered_blob: Blob::from(visibility.discovered_blob),
-                    visible_blob: Blob::from(visibility.visible_blob),
-                    visible_turn: visibility.visible_turn,
-                    created_at: now,
-                    updated_at: now,
+        with_first_playable_map_state(session, participants, |map_state| {
+            let now = Timestamp::now();
+            let rows = map_state
+                .visibility_chunks
+                .iter()
+                .map(|visibility| {
+                    Ok(VisibilityChunk {
+                        id: Ulid::generate(),
+                        session_id: session.id().key(),
+                        participant_id: parse_participant_id(&visibility.participant_id)?.key(),
+                        chunk_x: visibility.chunk_x,
+                        chunk_y: visibility.chunk_y,
+                        discovered_blob: Blob::from(visibility.discovered_blob.clone()),
+                        visible_blob: Blob::from(visibility.visible_blob.clone()),
+                        visible_turn: visibility.visible_turn,
+                        created_at: now,
+                        updated_at: now,
+                    })
                 })
-            })
-            .collect::<foundation::RepoResult<Vec<_>>>()?;
-        let rows = foundation::insert_many_atomic("map.seed_visibility_chunks", rows)?;
-        render_projection::remember_visibility_chunks(&rows);
+                .collect::<foundation::RepoResult<Vec<_>>>()?;
+            let rows = foundation::insert_many_atomic("map.seed_visibility_chunks", rows)?;
+            render_projection::remember_visibility_chunks(&rows);
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -860,10 +976,6 @@ fn seed_known_objects(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    let ids = fixture_ids_for_rows(session, participants);
-    let map_state = domm_game::build_first_playable_map_state_for_ids(&ids).map_err(|error| {
-        domm_game::ApiError::new("first_playable_map_seed_invalid", error.to_string(), false)
-    })?;
     let first_participant_id = participants.first().map(EntityValue::id);
     if first_participant_id
         .map(|id| map_visibility_occupancy::find_known_object(id, "town", "town:west"))
@@ -871,31 +983,34 @@ fn seed_known_objects(
         .flatten()
         .is_none()
     {
-        let now = Timestamp::now();
-        let rows = map_state
-            .known_objects
-            .into_iter()
-            .map(|known| {
-                Ok(ParticipantKnownObject {
-                    id: Ulid::generate(),
-                    session_id: session.id().key(),
-                    participant_id: parse_participant_id(&known.participant_id)?.key(),
-                    subject_kind: known.subject_kind,
-                    subject_id_text: known.subject_id_text,
-                    x: known.x,
-                    y: known.y,
-                    chunk_x: known.chunk_x,
-                    chunk_y: known.chunk_y,
-                    visibility: known.visibility,
-                    last_seen_turn: known.last_seen_turn,
-                    redacted_json: Some(known.redacted_json),
-                    created_at: now,
-                    updated_at: now,
+        with_first_playable_map_state(session, participants, |map_state| {
+            let now = Timestamp::now();
+            let rows = map_state
+                .known_objects
+                .iter()
+                .map(|known| {
+                    Ok(ParticipantKnownObject {
+                        id: Ulid::generate(),
+                        session_id: session.id().key(),
+                        participant_id: parse_participant_id(&known.participant_id)?.key(),
+                        subject_kind: known.subject_kind.clone(),
+                        subject_id_text: known.subject_id_text.clone(),
+                        x: known.x,
+                        y: known.y,
+                        chunk_x: known.chunk_x,
+                        chunk_y: known.chunk_y,
+                        visibility: known.visibility.clone(),
+                        last_seen_turn: known.last_seen_turn,
+                        redacted_json: Some(known.redacted_json.clone()),
+                        created_at: now,
+                        updated_at: now,
+                    })
                 })
-            })
-            .collect::<foundation::RepoResult<Vec<_>>>()?;
-        let rows = foundation::insert_many_atomic("map.seed_known_objects", rows)?;
-        render_projection::remember_known_objects(&rows);
+                .collect::<foundation::RepoResult<Vec<_>>>()?;
+            let rows = foundation::insert_many_atomic("map.seed_known_objects", rows)?;
+            render_projection::remember_known_objects(&rows);
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -904,49 +1019,49 @@ fn seed_occupancy(
     session: &GameSession,
     participants: &[GameParticipant],
 ) -> foundation::RepoResult<()> {
-    let ids = fixture_ids_for_rows(session, participants);
-    let map_state = domm_game::build_first_playable_map_state_for_ids(&ids).map_err(|error| {
-        domm_game::ApiError::new("first_playable_map_seed_invalid", error.to_string(), false)
-    })?;
     if map_visibility_occupancy::find_occupancy_cell(session.id(), 6, 24, "town")?.is_none() {
-        let now = Timestamp::now();
-        let rows = map_state
-            .occupancy_rows
-            .into_iter()
-            .filter(|row| matches!(row.occupant_kind.as_str(), "town" | "champion"))
-            .map(|row| {
-                let occupant_id_text = match row.occupant_kind.as_str() {
-                    "champion" => champions_artifacts::find_champion_by_session_xy(
-                        session.id(),
-                        row.x,
-                        row.y,
-                    )?
-                    .map(|champion| champion.id().to_string())
-                    .unwrap_or(row.occupant_id_text),
-                    "town" => towns::find_town_by_session_xy(session.id(), row.x, row.y)?
-                        .map(|town| town.id().to_string())
-                        .unwrap_or(row.occupant_id_text),
-                    _ => row.occupant_id_text,
-                };
-                Ok(MapOccupancy {
-                    id: Ulid::generate(),
-                    session_id: session.id().key(),
-                    x: row.x,
-                    y: row.y,
-                    chunk_x: row.chunk_x,
-                    chunk_y: row.chunk_y,
-                    layer: row.layer,
-                    occupant_kind: row.occupant_kind,
-                    occupant_id_text,
-                    occupant_cell_index: u8::try_from(row.occupant_cell_index).unwrap_or(u8::MAX),
-                    blocking: row.blocking,
-                    last_command_id: None,
-                    created_at: now,
-                    updated_at: now,
+        with_first_playable_map_state(session, participants, |map_state| {
+            let now = Timestamp::now();
+            let rows = map_state
+                .occupancy_rows
+                .iter()
+                .filter(|row| matches!(row.occupant_kind.as_str(), "town" | "champion"))
+                .map(|row| {
+                    let occupant_id_text = match row.occupant_kind.as_str() {
+                        "champion" => champions_artifacts::find_champion_by_session_xy(
+                            session.id(),
+                            row.x,
+                            row.y,
+                        )?
+                        .map(|champion| champion.id().to_string())
+                        .unwrap_or_else(|| row.occupant_id_text.clone()),
+                        "town" => towns::find_town_by_session_xy(session.id(), row.x, row.y)?
+                            .map(|town| town.id().to_string())
+                            .unwrap_or_else(|| row.occupant_id_text.clone()),
+                        _ => row.occupant_id_text.clone(),
+                    };
+                    Ok(MapOccupancy {
+                        id: Ulid::generate(),
+                        session_id: session.id().key(),
+                        x: row.x,
+                        y: row.y,
+                        chunk_x: row.chunk_x,
+                        chunk_y: row.chunk_y,
+                        layer: row.layer.clone(),
+                        occupant_kind: row.occupant_kind.clone(),
+                        occupant_id_text,
+                        occupant_cell_index: u8::try_from(row.occupant_cell_index)
+                            .unwrap_or(u8::MAX),
+                        blocking: row.blocking,
+                        last_command_id: None,
+                        created_at: now,
+                        updated_at: now,
+                    })
                 })
-            })
-            .collect::<foundation::RepoResult<Vec<_>>>()?;
-        foundation::insert_many_atomic("map.seed_occupancy", rows)?;
+                .collect::<foundation::RepoResult<Vec<_>>>()?;
+            foundation::insert_many_atomic("map.seed_occupancy", rows)?;
+            Ok(())
+        })?;
     }
     Ok(())
 }
@@ -989,10 +1104,9 @@ fn seed_economy_summaries(
 fn seed_dwelling_pools(
     session: &GameSession,
     participants_by_slot: &BTreeMap<u8, GameParticipant>,
+    content_rows: &FirstPlayableContentRows,
 ) -> foundation::RepoResult<()> {
-    let ruleset_id = first_playable_ruleset_id()?;
-    let unit = content::find_unit_by_ruleset_slug(ruleset_id, "mudhook-levy")?
-        .ok_or_else(|| missing_content("unit", "mudhook-levy"))?;
+    let unit = require_unit(content_rows, "mudhook-levy")?;
     for object in &first_playable_scenario().external_dwellings {
         let Some(world_object) = map_visibility_occupancy::find_world_object_by_session_xy(
             session.id(),
@@ -1031,26 +1145,31 @@ fn seed_dwelling_pools(
 fn seed_tavern_offers(
     session: &GameSession,
     participants: &[GameParticipant],
+    content_rows: &FirstPlayableContentRows,
 ) -> foundation::RepoResult<()> {
     let scenario = first_playable_scenario();
     let participants_by_slot = participants_by_slot(participants);
-    let class_rows = content::page_champion_classes_by_ruleset(first_playable_ruleset_id()?)?;
-    let class_slugs = class_rows
-        .iter()
-        .map(|class| class.slug.clone())
+    let class_slugs = content_rows
+        .champion_classes
+        .keys()
+        .cloned()
         .collect::<Vec<_>>();
-    let class_rows = class_rows
-        .into_iter()
-        .map(|class| (class.slug.clone(), class))
-        .collect::<BTreeMap<_, _>>();
     let week_number = 1;
     for start in &scenario.starts {
         let Some(participant) = participants_by_slot.get(&start.slot_index) else {
             continue;
         };
-        let Some(town) = towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
-        else {
-            continue;
+        let town = if let Some(town) =
+            town_runtime::cached_town_by_xy(session.id(), start.town_x, start.town_y)
+        {
+            town
+        } else {
+            let Some(town) =
+                towns::find_town_by_session_xy(session.id(), start.town_x, start.town_y)?
+            else {
+                continue;
+            };
+            town
         };
         for slot in 0..domm_game::TAVERN_OFFERS_PER_WEEK {
             let offer = domm_game::deterministic_tavern_offer(
@@ -1060,12 +1179,10 @@ fn seed_tavern_offers(
                 u8::try_from(slot).unwrap_or(u8::MAX),
                 &class_slugs,
             );
-            if economy_expansion::find_tavern_offer_by_key(&offer.offer_key)?.is_some() {
+            if town_runtime::cached_tavern_offer_by_key(&town, &offer.offer_key).is_some() {
                 continue;
             }
-            let class = class_rows
-                .get(&offer.champion_class_slug)
-                .ok_or_else(|| missing_content("champion_class", &offer.champion_class_slug))?;
+            let class = require_champion_class(content_rows, &offer.champion_class_slug)?;
             let offer = economy_expansion::create_tavern_offer(
                 session.id(),
                 town.id(),
@@ -1082,15 +1199,6 @@ fn seed_tavern_offers(
         }
     }
     Ok(())
-}
-
-fn first_playable_ruleset_id() -> foundation::RepoResult<Id<RulesetDefinition>> {
-    content::find_ruleset_by_slug_version(
-        FIRST_PLAYABLE_RULESET_SLUG,
-        FIRST_PLAYABLE_RULESET_VERSION,
-    )?
-    .map(|ruleset| ruleset.id())
-    .ok_or_else(|| missing_content("ruleset", FIRST_PLAYABLE_RULESET_SLUG))
 }
 
 fn fixture_ids_for_rows(session: &GameSession, participants: &[GameParticipant]) -> FixtureIds {

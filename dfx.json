@@ -3,9 +3,23 @@
   "canisters": {
     "degens": {
       "type": "custom",
-      "build": "export PATH=\"$HOME/.cargo/bin:$PATH\"; CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc cargo build --target wasm32-unknown-unknown --release -p domm-degens-canister && mkdir -p target/dfx/degens && candid-extractor target/wasm32-unknown-unknown/release/domm_degens_canister.wasm > target/dfx/degens/degens.did && ${IC_WASM:-ic-wasm} target/wasm32-unknown-unknown/release/domm_degens_canister.wasm -o target/dfx/degens/degens.wasm metadata candid:service -f target/dfx/degens/degens.did -v public",
-      "wasm": "target/dfx/degens/degens.wasm",
-      "candid": "target/dfx/degens/degens.did"
+      "build": "scripts/dfx-build-degens.sh",
+      "wasm": "target/wasm32-unknown-unknown/release/domm_degens_canister.wasm",
+      "candid": "target/dfx/degens/degens.did",
+      "optimize": "Oz",
+      "metadata": [
+        {
+          "name": "candid:service",
+          "path": "target/dfx/degens/degens.did",
+          "visibility": "public"
+        }
+      ]
+    }
+  },
+  "networks": {
+    "local": {
+      "bind": "0.0.0.0:4943",
+      "type": "ephemeral"
     }
   }
 }

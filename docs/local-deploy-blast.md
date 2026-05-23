@@ -5,9 +5,7 @@ Run these commands from `/srv/shared/icydb/DoMM`.
 ## Build And Install
 
 ```text
-make build-wasm
-dfx start --background --clean
-dfx deploy degens --network local
+make dfx-deploy-local
 dfx canister id degens --network local
 ```
 
@@ -20,13 +18,17 @@ DFX_IDENTITY=domm-local-smoke dfx deploy degens --network local
 ```
 
 The committed `dfx.json` builds `domm-degens-canister`, extracts the generated
-Candid to `target/dfx/degens/degens.did`, embeds it as public
-`candid:service` metadata in `target/dfx/degens/degens.wasm`, and installs that
-release wasm. The build expects `candid-extractor` on `$HOME/.cargo/bin` and
-`ic-wasm` on `PATH`; if `ic-wasm` is installed elsewhere, pass it explicitly:
+Candid to `target/dfx/degens/degens.did`, asks DFX to optimize the release wasm
+with `Oz`, and declares that DID as public `candid:service` metadata. The build
+expects `candid-extractor` on `$HOME/.cargo/bin` or `PATH`; no `IC_WASM` or
+`WASM_OPT` environment override is needed.
+
+The canister keeps runtime timers enabled. If local deploy crashes inside a
+patched PocketIC/DFX runner, use a clean runner with the Make variable instead
+of changing canister behavior:
 
 ```text
-IC_WASM=/path/to/ic-wasm dfx deploy degens --network local
+make DFX=/path/to/clean/dfx dfx-deploy-local
 ```
 
 ## Blast Checklist
@@ -57,9 +59,10 @@ blast call "$CANISTER_ID" mark_ready '["<session_id>", "nonce:blast:ready:2"]' -
 blast call "$CANISTER_ID" start_session '["<session_id>", "nonce:blast:start"]' --host "$HOST" --id 1
 ```
 
-Setup is a canister-owned job. After the single `start_session` call, poll
-`get_session` or `get_setup_progress` until the session reports
-`state == "active"`; do not advance setup with new `start_session` nonces.
+Setup advances in bounded slices. After the first `start_session` call, poll
+`get_session` or `get_setup_progress`; if the session still reports
+`state == "starting"`, call `start_session` again with a new nonce until it
+reports `state == "active"`.
 Active play should use `get_game_view`, `get_content_manifest`, visible
 map/object queries, champion/town/battle detail queries, and
 `get_command_status_by_nonce` for nonce polling.

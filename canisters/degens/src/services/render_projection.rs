@@ -1286,13 +1286,6 @@ fn live_world_objects_by_coord(
     session_id: Id<GameSession>,
 ) -> Result<BTreeMap<(u16, u16), WorldObject>, ApiError> {
     let session_id_text = session_id.to_string();
-    let runtime_objects = session_turn_runtime::world_object_snapshots(&session_id_text);
-    if !runtime_objects.is_empty() {
-        return Ok(runtime_objects
-            .into_iter()
-            .map(|object| ((object.x, object.y), object))
-            .collect());
-    }
     let mut objects = map_visibility_occupancy::page_world_objects_by_session(
         session_id,
         domm_game::MAX_LIST_LIMIT,

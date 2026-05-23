@@ -2007,6 +2007,13 @@ mod tests {
         FIRST_PLAYABLE_RULESET_SLUG, FIRST_PLAYABLE_RULESET_VERSION, FirstPlayableScenario,
         first_playable_content_manifest, first_playable_scenario, get_content_manifest,
     };
+    use crate::battle::build_first_playable_battle_state;
+    use crate::champion::build_first_playable_champion_state;
+    use crate::economy::{
+        TAVERN_OFFERS_PER_WEEK, build_first_playable_economy_state, deterministic_tavern_offer,
+    };
+    use crate::map::build_first_playable_map_state;
+    use crate::town::build_first_playable_town_state;
 
     #[test]
     fn content_manifest_loads_by_ruleset_and_has_stable_hash() {
@@ -2174,6 +2181,342 @@ mod tests {
     }
 
     #[test]
+    fn first_playable_runtime_content_references_resolve_once() {
+        let manifest = first_playable_content_manifest();
+        let scenario = first_playable_scenario();
+
+        assert_eq!(scenario.ruleset_slug, manifest.ruleset.slug);
+        assert_eq!(scenario.ruleset_version, manifest.ruleset.version);
+        assert_unique_manifest_slugs(
+            "faction",
+            manifest.factions.iter().map(|item| item.slug.as_str()),
+        );
+        assert_unique_manifest_slugs(
+            "champion_class",
+            manifest
+                .champion_classes
+                .iter()
+                .map(|item| item.slug.as_str()),
+        );
+        assert_unique_manifest_slugs(
+            "terrain",
+            manifest
+                .terrain
+                .iter()
+                .map(|item| item.terrain_key.as_str()),
+        );
+        assert_unique_manifest_slugs("unit", manifest.units.iter().map(|item| item.slug.as_str()));
+        assert_unique_manifest_slugs(
+            "building",
+            manifest.buildings.iter().map(|item| item.slug.as_str()),
+        );
+        assert_unique_manifest_slugs(
+            "spell",
+            manifest.spells.iter().map(|item| item.slug.as_str()),
+        );
+        assert_unique_manifest_slugs(
+            "artifact",
+            manifest.artifacts.iter().map(|item| item.slug.as_str()),
+        );
+        assert_unique_manifest_slugs(
+            "map_object",
+            manifest.map_objects.iter().map(|item| item.slug.as_str()),
+        );
+
+        for faction in &manifest.factions {
+            assert_eq!(faction.ruleset_id, manifest.ruleset.id);
+            if let Some(terrain_key) = &faction.native_terrain {
+                assert_exact_terrain(&manifest, &format!("faction {}", faction.slug), terrain_key);
+            }
+        }
+        for class in &manifest.champion_classes {
+            assert_eq!(class.ruleset_id, manifest.ruleset.id);
+            if let Some(faction_slug) = &class.faction_slug {
+                assert_exact_faction(&manifest, &format!("class {}", class.slug), faction_slug);
+            }
+        }
+        for unit in &manifest.units {
+            assert_eq!(unit.ruleset_id, manifest.ruleset.id);
+            if let Some(faction_slug) = &unit.faction_slug {
+                assert_exact_faction(&manifest, &format!("unit {}", unit.slug), faction_slug);
+            }
+        }
+        for building in &manifest.buildings {
+            assert_eq!(building.ruleset_id, manifest.ruleset.id);
+            if let Some(faction_slug) = &building.faction_slug {
+                assert_exact_faction(
+                    &manifest,
+                    &format!("building {}", building.slug),
+                    faction_slug,
+                );
+            }
+            for required in &building.requires_building_slugs {
+                assert_exact_building(
+                    &manifest,
+                    &format!("building {} prerequisite", building.slug),
+                    required,
+                );
+            }
+            if let Some(unit_slug) = &building.unlocks_unit_slug {
+                assert_exact_unit(
+                    &manifest,
+                    &format!("building {} unlock", building.slug),
+                    unit_slug,
+                );
+            }
+        }
+        for spell in &manifest.spells {
+            assert_eq!(spell.ruleset_id, manifest.ruleset.id);
+            assert_exact_spell(
+                &manifest,
+                &format!("spell definition {}", spell.slug),
+                &spell.slug,
+            );
+        }
+        for artifact in &manifest.artifacts {
+            assert_eq!(artifact.ruleset_id, manifest.ruleset.id);
+            assert_exact_artifact(
+                &manifest,
+                &format!("artifact definition {}", artifact.slug),
+                &artifact.slug,
+            );
+        }
+        for object in &manifest.map_objects {
+            assert_eq!(object.ruleset_id, manifest.ruleset.id);
+            assert_exact_map_object(
+                &manifest,
+                &format!("map object definition {}", object.slug),
+                &object.slug,
+            );
+        }
+
+        assert_exact_terrain(
+            &manifest,
+            "scenario default terrain",
+            &scenario.map.default_terrain_key,
+        );
+        for patch in &scenario.map.terrain_patches {
+            assert_exact_terrain(&manifest, "scenario terrain patch", &patch.terrain_key);
+            assert_in_bounds(patch.x, patch.y, &scenario);
+        }
+        for road in &scenario.map.road_paths {
+            assert!(!road.waypoints.is_empty(), "{} has no waypoints", road.key);
+            for coord in &road.waypoints {
+                assert_in_bounds(coord.x, coord.y, &scenario);
+            }
+        }
+
+        for start in &scenario.starts {
+            assert_exact_faction(
+                &manifest,
+                &format!("start {}", start.town_key),
+                &start.faction_slug,
+            );
+            assert_exact_champion_class(
+                &manifest,
+                &format!("start {}", start.champion_key),
+                &start.champion_class_slug,
+            );
+            for stack in &start.starting_army_stacks {
+                assert_exact_unit(
+                    &manifest,
+                    &format!("start stack {}", start.champion_key),
+                    &stack.unit_slug,
+                );
+            }
+        }
+        for object in scenario
+            .mines
+            .iter()
+            .chain(scenario.external_dwellings.iter())
+            .chain(scenario.central_objectives.iter())
+        {
+            assert_exact_map_object(
+                &manifest,
+                &format!("scenario object {}", object.key),
+                &object.object_slug,
+            );
+            assert_optional_start_slot(&scenario, object.owner_slot_index, &object.key);
+            assert_optional_neutral_key(
+                &scenario,
+                object.guard_neutral_army_key.as_deref(),
+                &object.key,
+            );
+        }
+        for pile in &scenario.resource_piles {
+            assert_exact_map_object(
+                &manifest,
+                &format!("resource reward {}", pile.key),
+                &pile.object_slug,
+            );
+        }
+        for neutral in &scenario.neutral_armies {
+            for stack in &neutral.stacks {
+                assert_exact_unit(
+                    &manifest,
+                    &format!("neutral stack {}", neutral.key),
+                    &stack.unit_slug,
+                );
+            }
+        }
+
+        let class_slugs = manifest
+            .champion_classes
+            .iter()
+            .map(|class| class.slug.clone())
+            .collect::<Vec<_>>();
+        assert!(!class_slugs.is_empty());
+        for start in &scenario.starts {
+            for slot in 0..TAVERN_OFFERS_PER_WEEK {
+                let offer = deterministic_tavern_offer(
+                    &scenario.scenario_seed,
+                    &start.town_key,
+                    1,
+                    u8::try_from(slot).unwrap_or(u8::MAX),
+                    &class_slugs,
+                );
+                assert_exact_champion_class(
+                    &manifest,
+                    &offer.offer_key,
+                    &offer.champion_class_slug,
+                );
+            }
+        }
+        for dwelling in &scenario.external_dwellings {
+            let object = manifest
+                .map_object(&dwelling.object_slug)
+                .expect("dwelling object definition exists");
+            assert_eq!(object.object_type, "external_dwelling");
+            assert_eq!(object.interaction_key, "external_dwelling_direct_recruit");
+        }
+        assert_exact_unit(
+            &manifest,
+            "first playable dwelling direct recruit",
+            "mudhook-levy",
+        );
+
+        let town_state = build_first_playable_town_state();
+        for town in &town_state.towns {
+            assert_exact_faction(
+                &manifest,
+                &format!("town row {}", town.town_id),
+                &town.faction_slug,
+            );
+        }
+        for building in &town_state.buildings {
+            assert_exact_building(
+                &manifest,
+                &format!("town building row {}", building.building_id),
+                &building.building_slug,
+            );
+        }
+        for pool in &town_state.recruit_pools {
+            assert_exact_unit(
+                &manifest,
+                &format!("town recruit pool {}", pool.pool_id),
+                &pool.unit_slug,
+            );
+        }
+        for stack in town_state
+            .champion_stacks
+            .iter()
+            .chain(town_state.garrison_stacks.iter())
+        {
+            assert_exact_unit(
+                &manifest,
+                &format!("town army stack {}", stack.stack_id),
+                &stack.unit_slug,
+            );
+        }
+
+        let map_state = build_first_playable_map_state();
+        for object in &map_state.world_objects {
+            assert_exact_map_object(
+                &manifest,
+                &format!("map object row {}", object.object_id),
+                &object.object_slug,
+            );
+            assert_optional_neutral_key(
+                &scenario,
+                object.guarded_neutral_army_id.as_deref(),
+                &object.object_id,
+            );
+        }
+        for subject in &map_state.subjects {
+            if let Some(object_slug) = &subject.object_slug {
+                assert_exact_map_object(
+                    &manifest,
+                    &format!("map subject {}", subject.subject_id_text),
+                    object_slug,
+                );
+            }
+            if subject.subject_kind == "neutral_army" {
+                assert_exact_neutral_key(
+                    &scenario,
+                    "map neutral subject",
+                    &subject.subject_id_text,
+                );
+            }
+        }
+
+        let champion_state = build_first_playable_champion_state();
+        for champion in &champion_state.champions {
+            assert_exact_champion_class(
+                &manifest,
+                &format!("champion row {}", champion.champion_id),
+                &champion.class_key,
+            );
+        }
+        for spell in &champion_state.champion_spells {
+            assert_exact_spell(
+                &manifest,
+                &format!("champion spell {}", spell.champion_spell_id),
+                &spell.spell_slug,
+            );
+        }
+        for stack in &champion_state.army_stacks {
+            assert_exact_unit(
+                &manifest,
+                &format!("champion stack {}", stack.stack_id),
+                &stack.unit_slug,
+            );
+        }
+        for artifact in &champion_state.artifact_instances {
+            assert_exact_artifact_id(
+                &manifest,
+                &format!("artifact instance {}", artifact.artifact_id),
+                &artifact.artifact_def_id,
+            );
+        }
+
+        let battle_state =
+            build_first_playable_battle_state().expect("battle fixture should build");
+        for stack in &battle_state.stacks {
+            assert_exact_unit_id(
+                &manifest,
+                &format!("battle stack {}", stack.battle_stack_id),
+                &stack.unit_id,
+            );
+        }
+
+        let economy_state = build_first_playable_economy_state();
+        for pile in &economy_state.resource_piles {
+            assert_exact_resource_pile_key(&scenario, "economy pile", &pile.pile_id);
+        }
+        for source in &economy_state.income_sources {
+            match source.source_kind.as_str() {
+                "town" => {
+                    assert_exact_town_key(&scenario, "economy town income", &source.source_id)
+                }
+                "mine" => {
+                    assert_exact_mine_key(&scenario, "economy mine income", &source.source_id)
+                }
+                other => panic!("unexpected first playable income source kind {other}"),
+            }
+        }
+    }
+
+    #[test]
     fn first_playable_walkthrough_targets_exist() {
         let manifest = first_playable_content_manifest();
         let scenario = first_playable_scenario();
@@ -2289,6 +2632,13 @@ mod tests {
         assert_eq!(values, sorted);
     }
 
+    fn assert_unique_manifest_slugs<'a>(label: &str, slugs: impl IntoIterator<Item = &'a str>) {
+        let mut seen = BTreeSet::new();
+        for slug in slugs {
+            assert!(seen.insert(slug), "duplicate {label} slug {slug}");
+        }
+    }
+
     fn assert_optional_asset(
         key: Option<&String>,
         asset_keys: &std::collections::BTreeSet<&String>,
@@ -2296,6 +2646,185 @@ mod tests {
         if let Some(key) = key {
             assert!(asset_keys.contains(key), "missing asset key {key}");
         }
+    }
+
+    fn assert_exactly_one<'a>(
+        label: &str,
+        source: &str,
+        value: &str,
+        candidates: impl IntoIterator<Item = &'a str>,
+    ) {
+        let count = candidates
+            .into_iter()
+            .filter(|candidate| *candidate == value)
+            .count();
+        assert_eq!(
+            count, 1,
+            "{source} references {label} {value}, found {count} matching definitions"
+        );
+    }
+
+    fn assert_exact_faction(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "faction slug",
+            source,
+            slug,
+            manifest.factions.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_champion_class(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "champion class slug",
+            source,
+            slug,
+            manifest
+                .champion_classes
+                .iter()
+                .map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_terrain(manifest: &ContentManifest, source: &str, terrain_key: &str) {
+        assert_exactly_one(
+            "terrain key",
+            source,
+            terrain_key,
+            manifest
+                .terrain
+                .iter()
+                .map(|item| item.terrain_key.as_str()),
+        );
+    }
+
+    fn assert_exact_unit(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "unit slug",
+            source,
+            slug,
+            manifest.units.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_unit_id(manifest: &ContentManifest, source: &str, id: &str) {
+        assert_exactly_one(
+            "unit id",
+            source,
+            id,
+            manifest.units.iter().map(|item| item.id.as_str()),
+        );
+    }
+
+    fn assert_exact_building(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "building slug",
+            source,
+            slug,
+            manifest.buildings.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_spell(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "spell slug",
+            source,
+            slug,
+            manifest.spells.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_artifact(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "artifact slug",
+            source,
+            slug,
+            manifest.artifacts.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_artifact_id(manifest: &ContentManifest, source: &str, id: &str) {
+        assert_exactly_one(
+            "artifact id",
+            source,
+            id,
+            manifest.artifacts.iter().map(|item| item.id.as_str()),
+        );
+    }
+
+    fn assert_exact_map_object(manifest: &ContentManifest, source: &str, slug: &str) {
+        assert_exactly_one(
+            "map object slug",
+            source,
+            slug,
+            manifest.map_objects.iter().map(|item| item.slug.as_str()),
+        );
+    }
+
+    fn assert_exact_neutral_key(scenario: &FirstPlayableScenario, source: &str, key: &str) {
+        assert_exactly_one(
+            "neutral army key",
+            source,
+            key,
+            scenario.neutral_armies.iter().map(|item| item.key.as_str()),
+        );
+    }
+
+    fn assert_optional_neutral_key(
+        scenario: &FirstPlayableScenario,
+        key: Option<&str>,
+        source: &str,
+    ) {
+        if let Some(key) = key {
+            assert_exact_neutral_key(scenario, source, key);
+        }
+    }
+
+    fn assert_optional_start_slot(
+        scenario: &FirstPlayableScenario,
+        slot: Option<u8>,
+        source: &str,
+    ) {
+        if let Some(slot) = slot {
+            let count = scenario
+                .starts
+                .iter()
+                .filter(|start| start.slot_index == slot)
+                .count();
+            assert_eq!(
+                count, 1,
+                "{source} references start slot {slot}, found {count} matching starts"
+            );
+        }
+    }
+
+    fn assert_exact_town_key(scenario: &FirstPlayableScenario, source: &str, key: &str) {
+        assert_exactly_one(
+            "town key",
+            source,
+            key,
+            scenario.starts.iter().map(|start| start.town_key.as_str()),
+        );
+    }
+
+    fn assert_exact_mine_key(scenario: &FirstPlayableScenario, source: &str, key: &str) {
+        assert_exactly_one(
+            "mine key",
+            source,
+            key,
+            scenario.mines.iter().map(|object| object.key.as_str()),
+        );
+    }
+
+    fn assert_exact_resource_pile_key(scenario: &FirstPlayableScenario, source: &str, key: &str) {
+        assert_exactly_one(
+            "resource pile key",
+            source,
+            key,
+            scenario
+                .resource_piles
+                .iter()
+                .map(|object| object.key.as_str()),
+        );
     }
 
     fn scenario_target_keys(

@@ -154,9 +154,11 @@ disabled by default in `icydb.toml` and are not used for normal gameplay paths.
 Diagnostics are separate and controller-gated.
 
 The public endpoint inventory is declared in `canisters/degens/src/contract.rs`.
-It currently covers account/lobby/session, render reads, movement, town,
-battle, content, events, history, champion magic, expanded economy, and scenario
-progress endpoints.
+It currently declares `59` required gameplay endpoints and covers
+account/lobby/session, render reads, movement, town, battle, content, events,
+history, champion magic, expanded economy, scenario progress, and worldgen
+boundary endpoints. `get_canister_endpoint_inventory` exposes that contract for
+tests and diagnostics.
 
 ## Command And Recovery Model
 
@@ -187,8 +189,9 @@ domain-specific markers such as `last_command_id`.
 DoMM uses simultaneous timed turns rather than sequential player turns.
 
 During a turn, players submit intents and commands. On a later update,
-`sync_session_turn` materializes due work: movement resolution, object
-interactions, income, battle handoffs, events, and turn advancement.
+`end_turn`, timer callbacks, zero-delay continuations, or public
+`sync_session_turn` recovery calls materialize due work: movement resolution,
+object interactions, income, battle handoffs, events, and turn advancement.
 
 Queries may report time metadata such as whether sync is required, but they do
 not persist turn advancement or speculative gameplay state. Update endpoints
@@ -201,10 +204,11 @@ boundary instead of accepting caller-controlled `now_ms`.
 
 Render-facing queries return DTOs from `domm-game`, not raw IcyDB rows.
 
-`get_game_view` is a bounded aggregate projection for session, participant, map
-chunks, visible objects, a small event projection, render-time metadata, and
-action affordances. Full event feeds and heavier or high-cost details are split
-into dedicated endpoints such as:
+`get_game_view` is intentionally a lightweight canister shell. It returns
+session, participant, render-time, content-hash, setup/backend-work metadata,
+and explicit omitted-field metadata. Map chunks, visible objects, champion
+roster/detail, town detail, battle detail, event feeds, and command status are
+split into dedicated endpoints such as:
 
 - `get_visible_map_chunks`
 - `get_visible_objects`
@@ -297,8 +301,7 @@ Canister update calls are processed one at a time, so Player 1 and Player 2 do
 not write in parallel. Each call sees the committed DB state from previous
 calls.
 
-The turn is time-based, but there is no background timer that wakes up and
-settles the turn automatically. The session stores:
+The turn is time-based. The session stores:
 
 ```text
 GameSession.current_turn
@@ -308,10 +311,9 @@ GameSession.turn_duration_ms
 ```
 
 When the deadline has passed, query endpoints can report that sync is required,
-but queries do not advance the game. The DB stays on the old turn until an
-update call settles it.
-
-Turn settlement happens when someone calls:
+but queries do not advance the game. Turn settlement can be driven by
+canister-owned timer jobs, zero-delay continuations, the final `end_turn`, or
+the public recovery call:
 
 ```text
 sync_session_turn(session_id, client_nonce)
@@ -347,7 +349,6 @@ In short:
 ```text
 players submit commands and intents during the turn window
 deadline passes
-nothing happens by itself
-the next sync/update call reads DB state, applies rules, writes results
+timer/continuation/end_turn/sync update reads state, applies rules, writes results
 the session advances when settlement is complete
 ```

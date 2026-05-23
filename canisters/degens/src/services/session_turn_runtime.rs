@@ -534,7 +534,7 @@ impl SessionTurnRuntime {
             ProjectionEntity::CommandReceipt,
             projection_key,
             ProjectionDirtyOp::Upsert,
-            PROJECTION_PRIORITY_NORMAL,
+            PROJECTION_PRIORITY_COMMAND_RECEIPT,
         );
     }
 
@@ -635,6 +635,8 @@ impl SessionTurnRuntime {
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+const PROJECTION_PRIORITY_COMMAND_RECEIPT: u8 = 40;
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 const PROJECTION_PRIORITY_NORMAL: u8 = 50;
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
@@ -729,6 +731,17 @@ impl ProjectionFlushLimits {
             max_rows: usize::MAX,
             max_instructions: u64::MAX,
             max_stable_pages_delta: u64::MAX,
+        }
+    }
+
+    pub(crate) fn gameplay_barrier() -> Self {
+        // Gameplay clicks must not pay the durable projection cost. Strong-read
+        // and upgrade barriers still drain the queue fully when durability is
+        // required.
+        Self {
+            max_rows: 0,
+            max_instructions: 0,
+            max_stable_pages_delta: 0,
         }
     }
 }
@@ -1787,6 +1800,16 @@ fn refresh_projection_checkpoint(runtime: &mut SessionTurnRuntime) {
     runtime.projection_checkpoint.pending_entries = runtime.projection_dirty_queue.len();
 }
 
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn mark_runtime_projection_clean(runtime: &mut SessionTurnRuntime) {
+    runtime.projection_dirty_queue.clear();
+    runtime.dirty = SessionTurnDirtySets::default();
+    runtime.projection_checkpoint.kernel_id = runtime.key();
+    runtime.projection_checkpoint.flushed_generation = runtime.generation;
+    runtime.projection_checkpoint.flushed_at_ms = crate::services::clock::now_ms();
+    runtime.projection_checkpoint.pending_entries = 0;
+}
+
 pub(crate) fn with_runtime<R>(
     session_id: &str,
     turn_number: u32,
@@ -1834,6 +1857,8 @@ pub(crate) fn prepare_active_turn_runtime(
     if let Some(previous) = latest_runtime_before(&session.id().to_string(), session.current_turn) {
         carry_forward_runtime_state(&mut runtime, previous);
     }
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    mark_runtime_projection_clean(&mut runtime);
     Ok(Some(runtime))
 }
 
@@ -1867,6 +1892,8 @@ pub(crate) fn prepare_active_turn_runtime_from_previous(
         runtime.session = Some(session.clone());
         runtime.event_seq_block = Some(event_seq_block);
         hydrate_active_turn_rows(session, &mut runtime)?;
+        #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+        mark_runtime_projection_clean(&mut runtime);
         return Ok(Some(runtime));
     };
 
@@ -1880,6 +1907,8 @@ pub(crate) fn prepare_active_turn_runtime_from_previous(
     runtime.session = Some(session.clone());
     runtime.event_seq_block = Some(event_seq_block);
     carry_forward_runtime_state(&mut runtime, previous);
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    mark_runtime_projection_clean(&mut runtime);
     Ok(Some(runtime))
 }
 
@@ -2182,6 +2211,18 @@ pub(crate) fn active_events_after(
             .cloned()
             .collect()
     })
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+pub(crate) fn flush_command_receipt_for_runtime_command(
+    session_id: &str,
+    turn_number: u32,
+    command_id: &str,
+) -> Result<bool, ApiError> {
+    let Some(runtime) = with_runtime(session_id, turn_number, Clone::clone) else {
+        return Ok(false);
+    };
+    Ok(flush_runtime_command_receipt_by_key(&runtime, command_id)? > 0)
 }
 
 pub(crate) fn command_receipt_by_id(
@@ -2730,6 +2771,12 @@ pub(crate) fn flush_runtime_projections_for_upgrade() -> Result<usize, ApiError>
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+pub(crate) fn flush_runtime_projections_for_gameplay_barrier() -> Result<usize, ApiError> {
+    let outcome = flush_runtime_projection_queue(ProjectionFlushLimits::gameplay_barrier())?;
+    Ok(outcome.rows_flushed)
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
 fn flush_runtime_ready_participant(
     runtime: &SessionTurnRuntime,
     participant_id: &str,
@@ -2773,7 +2820,7 @@ fn flush_runtime_command_receipt(
     if commands_events_effects::load_game_command(command_id)?.is_some()
         || commands_events_effects::find_game_command_by_idempotency(
             session_id,
-            "participant",
+            "player",
             &receipt.actor_participant_id,
             receipt.client_nonce,
         )?
@@ -2786,7 +2833,7 @@ fn flush_runtime_command_receipt(
     let command = GameCommand {
         id: command_id.key(),
         session_id: session_id.key(),
-        actor_kind: "participant".to_string(),
+        actor_kind: "player".to_string(),
         actor_id_text: receipt.actor_participant_id.clone(),
         actor_player_id: None,
         actor_participant_id: Some(actor_participant_id.key()),
@@ -2798,10 +2845,7 @@ fn flush_runtime_command_receipt(
         phase: receipt.response.phase.as_str().to_string(),
         payload_hash: receipt.payload_hash.clone(),
         payload_json,
-        result_json: Some(format!(
-            r#"{{"runtime_flushed":true,"command_id":"{}"}}"#,
-            receipt.command_id
-        )),
+        result_json: Some(runtime_receipt_result_json(receipt)),
         error_code: error.as_ref().map(|error| error.code.clone()),
         error_message: error.as_ref().map(|error| error.message.clone()),
         error_details_json: error.and_then(|error| error.details_json),
@@ -2812,6 +2856,17 @@ fn flush_runtime_command_receipt(
     };
     commands_events_effects::insert_game_command(command)?;
     Ok(true)
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn runtime_receipt_result_json(receipt: &SessionTurnCommandReceipt) -> String {
+    format!(
+        r#"{{"runtime_flushed":true,"command_kind":"{}","command_id":"{}","current_turn":{},"command_count":1,"event_count":{}}}"#,
+        super::command_response::escape_json(&receipt.command_type),
+        super::command_response::escape_json(&receipt.command_id),
+        receipt.turn_number,
+        receipt.response.events.len()
+    )
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
@@ -2852,12 +2907,32 @@ fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<bool, ApiErro
         return Ok(false);
     }
     let command_id = durable_command_id(runtime_event.command_id.as_deref())?;
+    let event_seq = reserve_durable_event_seq_for_runtime_flush(session_id)?;
+    if let Err(first_error) =
+        create_runtime_event_at_seq(runtime_event, session_id, command_id, event_seq)
+    {
+        let retry_event_seq = reserve_durable_event_seq_for_runtime_flush(session_id)?;
+        if retry_event_seq == event_seq {
+            return Err(first_error);
+        }
+        create_runtime_event_at_seq(runtime_event, session_id, command_id, retry_event_seq)?;
+    }
+    Ok(true)
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn create_runtime_event_at_seq(
+    runtime_event: &SessionTurnEvent,
+    session_id: Id<GameSession>,
+    command_id: Option<Id<GameCommand>>,
+    event_seq: u64,
+) -> Result<(), ApiError> {
     commands_events_effects::create_game_event(
         session_id,
         command_id,
         None,
         runtime_event.event.turn_number,
-        runtime_event.event.event_seq,
+        event_seq,
         runtime_event.event.event_key.clone(),
         runtime_event.event.audience_key.clone(),
         runtime_event.event.event_type.clone(),
@@ -2869,7 +2944,30 @@ fn flush_runtime_event(runtime_event: &SessionTurnEvent) -> Result<bool, ApiErro
             .clone()
             .unwrap_or_else(|| "{}".to_string()),
     )?;
-    Ok(true)
+    Ok(())
+}
+
+#[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+fn reserve_durable_event_seq_for_runtime_flush(
+    session_id: Id<GameSession>,
+) -> Result<u64, ApiError> {
+    let Some(mut session) = sessions::load_session(session_id)? else {
+        return Err(ApiError::new(
+            "session_not_found",
+            "session row was not found while flushing runtime event",
+            true,
+        ));
+    };
+    let event_seq = session.next_event_seq;
+    session.next_event_seq = session.next_event_seq.checked_add(1).ok_or_else(|| {
+        ApiError::new(
+            "event_sequence_exhausted",
+            "session event sequence cannot allocate a durable runtime event",
+            true,
+        )
+    })?;
+    sessions::update_session(session)?;
+    Ok(event_seq)
 }
 
 #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
@@ -3106,6 +3204,169 @@ mod tests {
         assert_eq!(dirty.key, "intent:1");
         assert_eq!(dirty.op, ProjectionDirtyOp::Upsert);
         assert!(dirty.last_dirty_at_ms >= dirty.first_dirty_at_ms);
+    }
+
+    #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]
+    #[test]
+    fn projection_flush_matrix_covers_every_entity_and_documents_noops() {
+        clear_all_for_tests();
+        let session_id = Id::<GameSession>::from_key(Ulid::generate()).to_string();
+        let runtime = SessionTurnRuntime::new(&session_id, 2, 100, 200, 100);
+        #[derive(Clone, Copy)]
+        enum MatrixExpectation {
+            Rows(usize),
+            Error(&'static str),
+        }
+        let matrix = [
+            (
+                ProjectionEntity::Session,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime session snapshot updates the durable GameSession row",
+            ),
+            (
+                ProjectionEntity::Participant,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime participant snapshot updates the durable GameParticipant row",
+            ),
+            (
+                ProjectionEntity::Ready,
+                "missing".to_string(),
+                MatrixExpectation::Error("invalid_runtime_snapshot_id"),
+                "runtime ready marker inserts or reuses the durable TurnReady row",
+            ),
+            (
+                ProjectionEntity::Champion,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime champion snapshot upserts the durable Champion row",
+            ),
+            (
+                ProjectionEntity::ChampionSpell,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime champion spell snapshot inserts missing durable ChampionSpell rows",
+            ),
+            (
+                ProjectionEntity::WorldObject,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime world-object snapshot upserts the durable WorldObject row",
+            ),
+            (
+                ProjectionEntity::Occupancy,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime occupancy cell upserts or tombstones durable map occupancy",
+            ),
+            (
+                ProjectionEntity::Contact,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "contact cells are runtime-only visibility indexes; flush is intentionally no-op",
+            ),
+            (
+                ProjectionEntity::MovementIntent,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime movement intent upserts the durable MovementIntent row",
+            ),
+            (
+                ProjectionEntity::CommandReceipt,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime command receipt inserts or reuses the durable command row",
+            ),
+            (
+                ProjectionEntity::Event,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime event inserts or reuses the durable event row",
+            ),
+            (
+                ProjectionEntity::ObjectDelta,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "object deltas are runtime-only change hints; flush is intentionally no-op",
+            ),
+            (
+                ProjectionEntity::ResourceDelta,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime resource delta inserts durable resource ledger rows",
+            ),
+            (
+                ProjectionEntity::Quest,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime quest snapshot upserts durable scenario quest state",
+            ),
+            (
+                ProjectionEntity::ScenarioRule,
+                "missing".to_string(),
+                MatrixExpectation::Rows(0),
+                "runtime scenario-rule snapshot upserts durable scenario rule state",
+            ),
+        ];
+        let entity_names = matrix
+            .iter()
+            .map(|(entity, _, _, _)| format!("{entity:?}"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            entity_names,
+            vec![
+                "Session",
+                "Participant",
+                "Ready",
+                "Champion",
+                "ChampionSpell",
+                "WorldObject",
+                "Occupancy",
+                "Contact",
+                "MovementIntent",
+                "CommandReceipt",
+                "Event",
+                "ObjectDelta",
+                "ResourceDelta",
+                "Quest",
+                "ScenarioRule",
+            ]
+        );
+        let intentional_noops = matrix
+            .iter()
+            .filter_map(|(entity, _, _, decision)| {
+                decision
+                    .contains("intentionally no-op")
+                    .then(|| format!("{entity:?}"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(intentional_noops, vec!["Contact", "ObjectDelta"]);
+
+        for (entity, key, expected_rows, decision) in matrix {
+            let entry = ProjectionDirtyEntry {
+                kernel_id: runtime.key(),
+                generation: 1,
+                entity,
+                key,
+                op: ProjectionDirtyOp::Upsert,
+                priority: PROJECTION_PRIORITY_NORMAL,
+                first_dirty_at_ms: 0,
+                last_dirty_at_ms: 0,
+            };
+            match expected_rows {
+                MatrixExpectation::Rows(expected_rows) => {
+                    let rows = flush_projection_dirty_entry(&runtime, &entry)
+                        .unwrap_or_else(|error| panic!("{entity:?} matrix row failed: {error:?}"));
+                    assert_eq!(rows, expected_rows, "{entity:?}: {decision}");
+                }
+                MatrixExpectation::Error(expected_code) => {
+                    let error = flush_projection_dirty_entry(&runtime, &entry)
+                        .expect_err("matrix row should return the expected typed error");
+                    assert_eq!(error.code, expected_code, "{entity:?}: {decision}");
+                }
+            }
+        }
     }
 
     #[cfg(any(not(feature = "benchmark"), feature = "projection-benchmark"))]

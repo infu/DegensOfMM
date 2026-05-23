@@ -6,10 +6,15 @@ under-proven for a truly playable v1 game. It does not list V2 backlog such as
 active siege, naval movement, large procedural maps, ranked, guilds, diplomacy,
 durable rematch, or full bot opponents.
 
-## Current Status - 2026-05-18
+## Current Status - 2026-05-22
 
-Status: no blocking v1.1 item remains open in this file. The older sections
-below are retained as audit history; their active outcomes are classified here.
+Status: no blocking v1.1 item remains open in this file. The first playable
+backend and canister-backed client contract are green for UI implementation:
+`DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh` passed in
+`target/benchmarks/20260522-164948-5cfd001`, required endpoint coverage is
+`59/59`, Gate M passed, and the hard-target audit reported zero violations.
+The older sections below are retained as audit history; their active outcomes
+are classified here.
 
 | Historical finding | Current classification |
 | --- | --- |
@@ -18,6 +23,7 @@ below are retained as audit history; their active outcomes are classified here.
 | Real 60-second local DFX turn waits and manual sync friction | Documented as a local-smoke constraint; PocketIC tests use time advancement for fast regression. A configurable short local turn duration remains V2/dev-tooling cleanup, not a v1.1 blocker. |
 | Public render/projection and battle read budget gaps | Fixed by dedicated bounded render endpoints, live-row render projection, battle start/read slicing, and Gate L/Gate M regression evidence. |
 | Guarded mine, battle aftermath, capture, income, victory, and history route | Fixed and covered by Gate L, Gate K, render-projection, battle-round, command-recovery, and local blast evidence. |
+| Champion-target town recruitment preview/submit mismatch and mutation risk | Fixed. Valid same-tile owned active champion targets are supported; invalid champion targets fail before resource spend, pool mutation, stack mutation, or pending-command leakage. |
 | Diagnostics drift and large local diagnostic snapshots | Fixed for v1.1 by controller-gated small-batch diagnostics and endpoint inventory coverage; large all-entity local diagnostic snapshots stay intentionally unsupported. |
 | Auth/redaction gaps | Fixed by visibility-redaction coverage plus the endpoint-auth matrix added on 2026-05-18. |
 | Expansion mechanics such as active siege/naval gameplay, richer economy variants, full bot AI, broader scenarios, and local/same-tile dwelling recruitment | Deferred to `spec.v2.md`. |
@@ -25,7 +31,12 @@ below are retained as audit history; their active outcomes are classified here.
 ## Historical Summary - 2026-05-16
 
 The following summary is preserved from the original audit and is superseded by
-the current status table above.
+the current status table above. Historical details below intentionally preserve
+now-obsolete observations, including endpoint count `54` and unsupported
+champion-target town recruitment; use the current status table above as the
+authoritative source for UI/client work.
+Later `Status`, `Needed`, and `Evidence` entries are historical unless a
+`Current outcome` paragraph explicitly updates them.
 
 The canister and pure test coverage are broad, and `make regression` passed at
 checkpoint 26. A local `blast` run also proved that two identities can register,
@@ -119,28 +130,12 @@ Concrete runtime state:
 
 ### Setup saga behavior
 
-Observed behavior:
+Historical only. The early local path required repeated `start_session` calls
+with fresh nonces to drive setup phases.
 
-- The first `start_session` call changed the session from `lobby` to
-  `starting`, not directly to `active`.
-- Setup completed only after 17 total `start_session` calls with fresh nonces.
-- Each setup call returned an applied lobby command and left the session in
-  `starting` until the final pass.
-- Source inspection explains this: canister setup has 16 setup effects and
-  applies one effect per `start_session` update before the final activation
-  pass.
-
-Missing work:
-
-- Document `start_session` as a setup saga that clients must poll/drive until
-  `get_session.state == "active"`, or provide a dedicated setup-progress
-  endpoint.
-- Return clearer setup progress in the public response, such as last completed
-  setup effect and remaining effect count.
-- Add local/manual play docs showing that repeated `start_session` calls are
-  expected.
-- Consider a single client helper that handles setup idempotently so UI/client
-  code does not duplicate this loop.
+Current UI contract: the host calls `start_session` once, then polls
+`get_setup_progress`, `get_session`, and/or events until `state == "active"`.
+Do not call `start_session` with fresh nonces to advance setup phases.
 
 ### Turn clock behavior under local DFX
 
@@ -253,16 +248,19 @@ Missing work:
 
 ### Runtime bugs and gaps found
 
-1. `preview_move_path` can exceed the local replica instruction limit.
+1. `preview_move_path` could exceed the local replica instruction limit.
 
-   Evidence:
+   Current outcome: fixed for the v1.1 first-playable route by bounded
+   render/projection work and query-budget coverage.
+
+   Historical evidence:
 
    - A two-step preview for player one from `(8,24)` toward the adjacent wood
      pile failed with `IC0522`, "Canister exceeded the limit of 5000000000
      instructions for single message execution".
    - The subsequent `submit_move_intent` update for the same path succeeded.
 
-   Needed:
+   Historical needed items:
 
    - Optimize `preview_move_path` or make it use the same bounded/indexed path
      as submit validation.
@@ -271,10 +269,14 @@ Missing work:
    - Add query metrics around preview to identify which repository/projection
      read is exploding.
 
-2. `get_visible_objects` renders stale semantic projection after movement and
+2. `get_visible_objects` rendered stale semantic projection after movement and
    pickup.
 
-   Evidence:
+   Current outcome: fixed for the v1.1 first-playable route by runtime/durable
+   render projection. Public object/champion views now agree after movement and
+   resource pickup in the covered routes.
+
+   Historical evidence:
 
    - After player one pickup, `get_my_champions` showed Mara at `(9,23)` and
      player one wood was `15`.
@@ -290,7 +292,7 @@ Missing work:
      `get_visible_objects` still reported `champion:east` at `(39,24)` and
      `pile:east-wood-1` as available.
 
-   Needed:
+   Historical needed items:
 
    - Rework render projection so visible champion and world-object rows are
      hydrated from persisted `Champion`, `MapOccupancy`, `WorldObject`, and
@@ -303,7 +305,7 @@ Missing work:
 
 3. Diagnostic and preview query costs are too close to IC limits.
 
-   Evidence:
+   Historical evidence:
 
    - `get_diagnostic_storage_snapshot` with 16 entity names exceeded the 5B
      instruction limit on the local replica.
@@ -319,7 +321,7 @@ Missing work:
 4. Local run ergonomics are not yet good enough for a public canister
    playability claim.
 
-   Evidence:
+   Historical evidence:
 
    - Manual local deployment required a temporary DFX project, Candid metadata
      patching, controller setup, repeated setup calls, and 60-second wall-clock
@@ -388,7 +390,7 @@ Additional runtime bugs and playability gaps:
 
 1. Battle is technically playable, but not manually comfortable.
 
-   Evidence:
+   Historical evidence:
 
    - Battle action deadlines are `30_000ms`
      (`crates/domm-game/src/battle/types.rs:12`), but local `blast` calls plus
@@ -437,7 +439,10 @@ Additional runtime bugs and playability gaps:
      `mine_captured` and a later `income_materialized` without requiring an
      artificial step away and back.
 
-3. The render projection remains stale after battle, capture, and income.
+3. The render projection remained stale after battle, capture, and income.
+
+   Current outcome: fixed for the v1.1 first-playable route by battle
+   aftermath projection, runtime-backed views, and Gate L/Gate M coverage.
 
    Evidence:
 
@@ -455,7 +460,7 @@ Additional runtime bugs and playability gaps:
      `canisters/degens/src/services/render_projection.rs:448`,
      `canisters/degens/src/services/render_projection.rs:607`.
 
-   Needed:
+   Historical needed items:
 
    - Treat stale projection as a P0 blocker for a visual client. A player cannot
      trust the map while it shows defeated neutrals, already-collected piles,
@@ -507,10 +512,10 @@ Additional runtime bugs and playability gaps:
    - Either support stable semantic ids for spawned scenario objects or avoid
      exposing semantic ids where later detail queries need durable row ids.
 
-6. Champion recruitment preview is inconsistent with submit and may be unsafe
-   under partial failure.
+6. Historical champion recruitment preview/submit inconsistency was fixed by
+   the current code.
 
-   Evidence:
+   Historical evidence, now obsolete as of 2026-05-22:
 
    - `preview_recruit_units` accepts both `TownGarrison` and `Champion` target
      variants and only uses the requested slot for preview:
@@ -518,17 +523,17 @@ Additional runtime bugs and playability gaps:
    - The submit path spends resources, updates the participant, decrements the
      recruit pool, and only then calls `recruit_to_garrison`:
      `canisters/degens/src/services/town.rs:420`.
-   - `recruit_to_garrison` rejects `RecruitTarget::Champion` with
-     `unsupported_recruit_target`:
+   - The old `recruit_to_garrison` path rejected `RecruitTarget::Champion`:
      `canisters/degens/src/services/town.rs:545`.
    - The live audit intentionally did not submit the champion-target town
      recruit because the ordering suggests a possible partial mutation before
      the unsupported-target error.
 
-   Needed:
+   Current outcome:
 
-   - Make preview and submit agree: reject champion targets before command
-     creation, spend, pool decrement, or stack mutation.
+   - Preview and submit agree for same-tile owned active champion targets.
+     Invalid champion targets fail before command creation, resource spend,
+     pool decrement, or stack mutation.
    - Add a recovery/idempotency test that failed recruitment cannot spend
      resources, decrement pools, or leave pending command state.
 
@@ -590,11 +595,12 @@ Current playable verdict from the live canister:
 - The backend can be driven through a meaningful v1 slice: lobby, setup,
   movement, pickup, build, recruit, dwelling reinforcement, battle,
   guarded-mine capture, and mine income all persisted in IcyDB.
-- It is not yet provably playable through public canister endpoints. The render projection lies about
-  important state, the aggregate game view is only a shell, battle requires a
-  tight polling/action loop, manual local turns require real 60-second waits,
-  preview movement traps on instruction limits, and some endpoint affordances
-  disagree with submit behavior.
+- Historical 2026-05-16 caveat: it was not yet provably playable through public
+  canister endpoints. Current outcome: the backend/client contract is green for
+  UI work through the 2026-05-22 benchmark suite, `59/59` endpoint coverage,
+  Gate M, render-projection coverage, and documented local canister/blast
+  paths. Manual local DFX still uses real-time deadlines, but that is a local
+  smoke constraint rather than a v1.1 blocker.
 
 ### Public API expansion audit
 
@@ -609,8 +615,10 @@ Additional client-facing endpoints that worked:
   `1e7fc4f2b594eb32a08a0059f84a9b07c1a5b89956aae1239182019addd5f0db`,
   `2` factions, `2` champion classes, `6` terrain types, `9` units,
   `8` buildings, `2` spells, `1` artifact, and `5` map object definitions.
-- `get_canister_endpoint_inventory` returned `54` public methods grouped by
-  domain. Endpoint kind is encoded as Candid enum objects such as
+- At the time of this historical audit, `get_canister_endpoint_inventory`
+  reported an inventory of `54` public methods grouped by domain. The current
+  required gameplay inventory is `59`, as recorded in the status table above.
+  Endpoint kind is encoded as Candid enum objects such as
   `{ "Update": null }` or `{ "Query": null }`, not a flat string.
 - `get_scenario_rules` returned active `central_objectives`, `conquest`,
   `max_turn`, and `quest_victory` rows, plus disabled advanced rows with
@@ -660,27 +668,25 @@ Additional IcyDB evidence after the client API pass:
 
 Client API gaps found:
 
-1. Learned spells are not exposed consistently.
+1. Learned spells are exposed on owned champion detail views.
 
-   Evidence:
+   Historical evidence from the original audit:
 
    - `preview_champion_progression` showed Mara had
      `learned_spell_slugs = ["spite-march"]`.
    - `get_champion_view` and `get_my_champions` still returned
      `spell_slugs = []` for the same champion after learning and casting the
      spell.
-   - Source confirms the canister render projection hard-codes
-     `spell_slugs: Vec::new()`:
-     `canisters/degens/src/services/render_projection.rs:257`.
+   - Source then confirmed the canister render projection hard-coded
+     `spell_slugs: Vec::new()`.
    - The progression service does have a working `ChampionSpell` lookup:
      `canisters/degens/src/services/champion_magic.rs:572`.
 
-   Needed:
+   Current outcome:
 
-   - Hydrate `ChampionView.spell_slugs` from `ChampionSpell` rows for owned
-     champion views and roster rows where the client is allowed to see them.
-   - Add a public canister test that learns a spell, calls
-     `get_champion_view`, and asserts the learned spell is visible.
+   - Fixed for owned champion detail views; `spell_slugs` are hydrated from
+     learned `ChampionSpell` rows where the caller may see them. Summary rows
+     may still omit detail and require `get_champion_view`.
 
 2. Command retry responses are correct but can be stale relative to current
    state.
@@ -816,6 +822,9 @@ New spec-contract gaps found:
 
 1. Tavern week-two offers are missing.
 
+   Current outcome: fixed for v1.1. Weekly tavern offer generation and recruit
+   growth are implemented and covered by current week-two/growth tests.
+
    Evidence:
 
    - The spec says taverns offer two seeded pseudo-random champions per week.
@@ -900,6 +909,12 @@ New spec-contract gaps found:
 
 5. Late movement submission differs from the client contract.
 
+   Current outcome: fixed at the accepted-closure boundary. New
+   turn-sensitive commands after the current-turn closure job is accepted,
+   running, or due fail before command creation with
+   `backend_work_pending`/stale-expired semantics; exact retries of
+   already-created commands still replay.
+
    Evidence:
 
    - `get_game_view` showed pending backend work before the late movement
@@ -918,6 +933,11 @@ New spec-contract gaps found:
 
 6. Object pagination uses offset-like cursors and paginates stale projection.
 
+   Current outcome: the cursor behavior is now documented as numeric offsets
+   over the current sorted projection, with live-state limitations. The stale
+   projection part was fixed by render-projection work; clients should still
+   tolerate row changes between pages.
+
    Evidence:
 
    - `get_visible_objects` with `cursor = 0`, `limit = 2` returned
@@ -930,8 +950,8 @@ New spec-contract gaps found:
 
    Needed:
 
-   - Replace offset-like cursors with stable cursor tokens or document the live
-     offset behavior and its limitations.
+   - Historical recommendation: replace offset-like cursors with stable cursor
+     tokens or document the live offset behavior and its limitations.
    - Do not build client map pagination on the stale known-object projection.
 
 7. Recruit growth does not materialize or project at the week boundary.
@@ -1133,7 +1153,12 @@ New spec-contract gaps found:
    - Keep these auth gates and add them to the PocketIC endpoint matrix for the
      scenario/worldgen domains.
 
-17. The render projection stayed stale after the new turn-10 movement.
+17. Historical turn-10 movement render-projection gap.
+
+   Current outcome: fixed for the covered v1.1 runtime/durable render
+   projection path; map object pages are no longer treated as static opening
+   snapshots for moved champions, consumed piles, defeated neutrals, or captured
+   mines.
 
    Evidence:
 
@@ -1145,7 +1170,7 @@ New spec-contract gaps found:
    - The same object DTOs had `details = null`, so the client does not get
      enough dynamic state to correct the stale projection.
 
-   Needed:
+   Historical needed items:
 
    - Treat this as the main map-render blocker: the authoritative champion and
      world-object rows are changing, but the map projection remains anchored to
@@ -1216,18 +1241,17 @@ Behavior that worked:
 - Joining the active/full match as the third identity failed with
   `session_not_joinable`.
 
-New gaps found:
+Historical gaps found:
 
-1. Champion-target recruitment can partially mutate state before returning an
-   unsupported-target error.
+1. Historical champion-target recruitment partial-mutation gap is fixed.
 
-   Evidence:
+   Historical evidence, now obsolete as of 2026-05-22:
 
    - `preview_recruit_units` allowed recruiting `1` `mudhook-levy` from West
      Woe into Mara even though Mara was at `(14,22)` and West Woe is at
      `(6,24)`.
-   - `submit_recruit_units` with the same `Champion` target returned a raw
-     `unsupported_recruit_target` API error:
+   - `submit_recruit_units` with the same `Champion` target returned a raw API
+     error:
      `canister recruit currently supports town garrison targets`.
    - Despite the error, West Woe's `mudhook-levy` pool dropped from `12` to
      `11`, player one gold dropped by `70`, and the pool's `last_command_id`
@@ -1239,17 +1263,11 @@ New gaps found:
    - A later `sync_session_turn` advanced the session to turn `11`, but the
      remote-recruit command remained `Pending` / `Created`.
 
-   Needed:
+   Current outcome:
 
-   - Reject unsupported recruit targets before command creation, resource spend,
-     or pool decrement.
-   - Make champion-target preview match update support. If champion targets are
-     not implemented on canister, preview must return
-     `unsupported_recruit_target` or a disabled reason.
-   - Implement recovery for partially created recruit commands or mark them
-     failed after rolling forward/repairing all deterministic effects.
-   - Add a regression test where an unsupported recruit target cannot spend
-     gold, decrement a pool, or leave a permanent pending command.
+   - Valid same-tile owned active champion targets are implemented.
+   - Invalid champion targets fail before command creation, resource spend,
+     pool decrement, stack mutation, or pending-command leakage.
 
 2. Turn sync advanced past a pending command that had already mutated state.
 
@@ -1270,9 +1288,14 @@ New gaps found:
    - If a command type is unrecoverable, return a typed repair-required error
      instead of advancing silently.
 
-3. Public events leak hidden opponent town actions.
+3. Public events leaked hidden opponent town actions.
 
-   Evidence:
+   Current outcome: fixed for v1.1. Event audiences are explicit
+   (`public` or `participant:{participant_id}`), callers may only request
+   authorized audiences, and hidden opponent town activity is not exposed as an
+   exact public payload.
+
+   Historical evidence:
 
    - Player two cannot read West Woe through `get_town_view`; the endpoint
      returns `not_visible`.
@@ -1284,17 +1307,22 @@ New gaps found:
    - Both events exposed the real West Woe town id and exact action payload with
      `redacted = false`.
 
-   Needed:
+   Historical needed items:
 
    - Apply event audience/redaction rules consistently with entity visibility.
    - Hidden opponent town build/recruit events are owner-private or redacted to
      a public coarse event that does not reveal exact town id, coordinates,
      unit/building choices, or quantities.
 
-4. Visible map chunk responses do not include `page_info` and return static
-   terrain data for undiscovered chunks.
+4. Visible map chunk responses lacked `page_info` and returned static terrain
+   data for undiscovered chunks.
 
-   Evidence:
+   Current outcome: documented for v1.1. Static terrain, movement, and flags may
+   be shipped for surveyed base-map chunks while dynamic objects, owners,
+   occupants, battle details, and events remain visibility-gated. Map chunk
+   pages expose page metadata.
+
+   Historical evidence:
 
    - `get_visible_map_chunks` for the west viewport returned `page_info = null`
      instead of the documented `next_cursor`, `has_more`, and `limit` metadata.
@@ -1304,7 +1332,7 @@ New gaps found:
    - Player one and player two both received the same static terrain/movement
      data for that undiscovered chunk.
 
-   Needed:
+   Historical needed items:
 
    - Document surveyed-base-map fog: static terrain/movement/flags may be
      shipped for undiscovered chunks and hidden by client fog overlays, but
@@ -1312,9 +1340,13 @@ New gaps found:
      visibility-gated.
    - Always return page metadata on map chunk pages.
 
-5. `get_visible_objects` has no page metadata and remains stale for both sides.
+5. `get_visible_objects` had no page metadata and remained stale for both sides.
 
-   Evidence:
+   Current outcome: fixed for v1.1. Object pages expose page metadata and use
+   the current sorted projection; clients must still treat object cursors as
+   live-state pagination rather than snapshot-isolated cursors.
+
+   Historical evidence:
 
    - Player one still sees `champion:west` at the opening coordinate `(8,24)`
      in the object projection, while `get_champion_view` shows Mara at
@@ -1327,8 +1359,8 @@ New gaps found:
    Needed:
 
    - Fix object projection for both factions, not only the west-side route.
-   - Populate `ObjectDetails` or document the detail endpoint to call by
-     subject kind.
+   - Historical recommendation: populate typed object details or document the
+     detail endpoint to call by subject kind.
    - Return page metadata consistently.
 
 6. Build/update ordering and preview/update parity still need cleanup.
@@ -1390,30 +1422,22 @@ Additional IcyDB evidence after this pass:
   `TownBuilding=4`, `TownGarrisonStack=1`, `TownRecruitPool=2`, and
   `WorldObject=19`.
 
-## P0 - Required Before Calling The Game Playable
+## Historical P0 Findings From 2026-05-16
 
 ### 0. Early end-turn map-turn readiness
 
-Status: missing.
+Historical status on 2026-05-16: missing. Current status: fixed for the
+backend contract by the public `end_turn` endpoint and covered timer/end-turn
+tests.
 
-Evidence:
+Current outcome:
 
-- The updated spec now requires active map turns to close when either the
-  60-second deadline expires or all active map participants have called
-  `end_turn` for the current turn.
-- The canister exposes lobby `mark_ready`, but no active-turn `end_turn`
-  endpoint exists in the public endpoint inventory.
-- `mark_ready` is lobby-only. On the active local match it returned
-  `session_not_joinable`.
-- `sync_session_turn` currently enforces the wall-clock deadline and returns
-  `turn_not_due` before `turn_deadline_at`; it does not check per-participant
-  active-turn readiness.
-
-Needed:
-
-- Add a `ParticipantTurnReady` IcyDB entity keyed by
-  `session_id + participant_id + turn_number`.
-- Add `end_turn(session_id, client_nonce) -> CommandResponse` to the canister.
+- Active map turns close when all active participants call `end_turn` or when
+  the deadline/sync job resolves.
+- The canister exposes `end_turn(session_id, client_nonce)` in the public
+  endpoint inventory.
+- `mark_ready` remains lobby-only. Active UI should not surface it during play;
+  if called after activation, the current canister returns `session_not_joinable`.
 - Treat `end_turn` as a readiness marker, not a player lock. A participant who
   ended may still submit movement/build/recruit/trade/spell commands while the
   same map turn remains open.
@@ -1487,10 +1511,9 @@ Backend scheduling design:
   turn by natural keying, schedule the next deadline job, and complete the
   system command. Store any cursor/progress needed in `SystemJob.cursor_json`
   or command phase fields before scheduling the next slice.
-- The existing `sync_session_turn` endpoint should become an admin/debug/manual
-  recovery driver or be renamed to a generic `drive_session` endpoint. It
-  should call the same internal job runner, not contain a separate turn
-  resolution path that clients must invoke.
+- Historical proposal, now superseded: `sync_session_turn` is a public
+  sync/recovery boundary that calls the same bounded turn runner used by timers
+  and continuations.
 - Battles need the same treatment. `submit_battle_action` already calls
   `apply_due_timeouts`, and `sync_battle` currently exists so clients can
   force auto-defend timeout progress. Instead, when a battle action deadline is
@@ -1498,11 +1521,9 @@ Backend scheduling design:
   bounded timeout auto-defends, schedule zero-delay continuation jobs if the
   timeout budget is exhausted, apply battle aftermath when the battle resolves,
   and schedule the next stack action deadline if the battle remains active.
-- `sync_battle` should also become manual recovery/debug or a thin wrapper
-  around the same system job runner. Normal clients should not need to call it
-  before submitting an action; at most `submit_battle_action` should trigger a
-  quick due-work pass and return a clear retryable `battle_processing` response
-  if an existing timeout job is currently locked.
+- Historical proposal, now superseded: `sync_battle` is a public battle
+  sync/recovery boundary over the same timeout/round/aftermath runner used by
+  timers and continuations.
 - Persist processing state, not Rust-local locks. A session or job should have
   a durable processing flag/lease such as `processing_kind`,
   `processing_turn`, `processing_command_id`, and `lease_expires_at`. Since IC
@@ -1557,7 +1578,8 @@ PocketIC coverage needed for the backend-scheduled path:
 
 ### 1. Human-playable client and local run path
 
-Status: missing.
+Status: still no full UI app in this repo. Current backend/client contract is
+green for starting UI work, and the local canister/blast path is documented.
 
 Evidence:
 
@@ -1583,7 +1605,10 @@ Needed:
 
 ### 2. Public render composition over canister views
 
-Status: under-implemented for real play.
+Historical status on 2026-05-16: under-implemented for real play. Current
+outcome: fixed for v1.1 by the documented endpoint composition contract in
+`docs/canister-endpoints.md`, dedicated bounded detail endpoints, Gate M, and
+the current `59/59` endpoint benchmark coverage.
 
 Evidence:
 
@@ -1606,7 +1631,9 @@ Needed:
 
 ### 3. Dynamic exploration, visibility, and object discovery
 
-Status: missing or inconsistent across pure rules and canister projection.
+Historical status on 2026-05-16: missing or inconsistent across pure rules and
+canister projection. Current status: fixed for v1.1 render projection and
+covered by the benchmark gates listed in the current status table above.
 
 Evidence:
 
@@ -1637,30 +1664,35 @@ Needed:
 
 ### 4. Movement validation parity at the canister boundary
 
-Status: incomplete.
+Historical status on 2026-05-16: incomplete. Current outcome: the public spec
+has been narrowed to match current canister behavior. Canister v1.1 validates
+length, bounds, adjacency, terrain cost, and supported blockers; it allows
+static undiscovered terrain and reports, but does not reject by, chunk count.
 
-Evidence:
+Historical evidence from the original audit:
 
 - Spec requires movement validation to include visibility/fog rules and v1 path
   caps: `spec.md:4328`, `spec.md:5321`.
-- Canister `submit_move_intent` validates path length, bounds, adjacency, and
+- Canister `submit_move_intent` validated path length, bounds, adjacency, and
   terrain cost, but not fog/discovery or the 8-chunk touched cap:
   `canisters/degens/src/services/movement.rs:54`,
   `canisters/degens/src/services/movement.rs:2146`.
-- `preview_move_path` always returns `stop: None`, even though execution can
-  stop on objects/blockers:
-  `canisters/degens/src/services/movement.rs:27`.
+- Preview stop reporting was incomplete in the original local pass.
 
-Needed:
+Current contract:
 
-- Make canister preview and submit use the same visibility, chunk-cap, and stop
-  validation rules as execution.
-- Add Pocket-IC tests for hidden tile rejection, too-many-chunks rejection, and
-  preview stop reporting for objects/neutrals/towns/enemy blockers.
+- Canister movement validates active ownership, bounds, adjacency, impassable
+  terrain, path cost, path length, and supported blockers.
+- It reports `chunks_touched` without rejecting chunk count and allows static
+  undiscovered terrain.
+- Preview reports supported object/neutral stops.
 
 ### 5. Remove synthetic battle/town-capture paths from playable proof
 
-Status: under-proven; pure/probe route still relies on fixture shortcuts.
+Historical status on 2026-05-16: under-proven; pure/probe route relied on
+fixture shortcuts. Current outcome: the canister-backed route is covered by
+Gate L/Gate K/Gate M plus battle-round/render-projection evidence; pure fixture
+shortcuts remain test helpers, not the public canister proof.
 
 Evidence:
 
@@ -1691,7 +1723,9 @@ Needed:
 
 ### 6. Recruitment into champion armies
 
-Status: exposed in DTO/spec, not implemented in canister submit path.
+Historical status on 2026-05-16: exposed in DTO/spec, not implemented in the
+canister submit path. Current status: fixed for same-tile owned active champion
+targets.
 
 Evidence:
 
@@ -1699,21 +1733,24 @@ Evidence:
   `crates/domm-game/src/town/types.rs:75`.
 - Spec says recruiting into a champion is allowed when the champion is at the
   owned town: `spec.md:4656`.
-- Canister submit rejects champion targets with `unsupported_recruit_target`;
-  only town garrison recruitment works:
+- The old canister submit path rejected champion targets, so only town garrison
+  recruitment worked:
   `canisters/degens/src/services/town.rs:160`,
   `canisters/degens/src/services/town.rs:535`.
 
-Needed:
+Current outcome:
 
-- Implement canister-backed recruitment into champion army stacks.
-- Make recruited stacks feed later tactical battle setup.
-- Add preview/submit/retry/Pocket-IC tests for champion recruitment, stack
-  merge, full target errors, and battle army visibility.
+- Same-tile canister-backed recruitment into owned active champion army stacks
+  is implemented.
+- Current tests cover valid champion recruitment plus invalid-target
+  no-mutation behavior.
+- Broader recruitment variants remain V2.
 
 ### 7. Core command recovery for build/recruit and ledger replay
 
-Status: risky for IC playability under traps/retries.
+Historical status on 2026-05-16: risky for IC playability under traps/retries.
+Current outcome: fixed for v1.1 command recovery coverage, including
+build/recruit/economy retry and ledger no-drift tests.
 
 Evidence:
 
@@ -1739,12 +1776,13 @@ Needed:
   double-spend or lost spend.
 - Add native and Pocket-IC retry/recovery tests for build and recruit.
 
-## P1 - Needed For A Robust First Playable
+## Historical P1 Findings From 2026-05-16
 
 ### 8. Guarded mine capture after guard defeat
 
-Status: resolved for the direct local canister route; automated PocketIC
-coverage is still needed.
+Historical status on 2026-05-16: resolved for the direct local canister route
+while automated PocketIC coverage was still needed. Current outcome: covered by
+Gate L/Gate K/render-projection/battle-round coverage and local blast evidence.
 
 Evidence:
 
@@ -1782,7 +1820,12 @@ Needed:
 
 ### 9. Max-turn stalemate finalization
 
-Status: incomplete for long-running matches.
+Historical status on 2026-05-16: incomplete for long-running matches. Current
+outcome: max-turn scenario rules can report `max_turn_reached`, but full
+stalemate finalization by mines, army power, and a distinct `max_turn_score`
+finish reason is not the public UI contract. Clients should treat
+`GameSession.state`, `winner_participant_id`, `finish_reason`, victory events,
+and match history as authoritative.
 
 Evidence:
 
@@ -1801,7 +1844,10 @@ Needed:
 
 ### 10. Battle spellcasting as a normal legal action
 
-Status: half surfaced.
+Historical status on 2026-05-16: half surfaced. Current outcome: fixed for the
+bounded v1.1 learned-spell slice. `CastAbility` is available through
+`submit_battle_action` when legal, with disabled reasons when unavailable;
+broader spell/status expansion remains V2.
 
 Evidence:
 
@@ -1822,11 +1868,14 @@ Needed:
 
 ### 11. Town economy after capture and unrest
 
-Status: partial.
+Historical status on 2026-05-16: partial. Current outcome: narrowed and
+documented. V1.1 active recurring income is captured mine income; town/building
+income effects such as `town_income_gold_250`, unrest penalties, pacification,
+recruit-pool halving, and desperation income remain V2/content-deferred.
 
 Evidence:
 
-- Spec references town hall income and capture/unrest behavior:
+- Historical spec text referenced town hall income and capture/unrest behavior:
   `spec.md:747`, `spec.md:5561`, `spec.md:5570`.
 - Canister income currently scans mines and grants flat gold:
   `canisters/degens/src/services/movement.rs:1907`.
@@ -1838,16 +1887,19 @@ Evidence:
 
 Needed:
 
-- Town hall income, unrest reduction, unrest penalties, pacification,
-  recruit-pool halving, and desperation income are v2. V1.1 active economy is
-  mine income, pickups/rewards, costs, tavern hiring, market trade, direct
-  dwelling recruitment, and weekly tavern/recruit growth.
+- Town/building income effects, unrest reduction, unrest penalties,
+  pacification, recruit-pool halving, and desperation income are v2. V1.1
+  active economy is captured mine income, pickups/rewards, costs, tavern
+  hiring, fixed-rate market trade, direct dwelling recruitment, and weekly
+  tavern/recruit growth.
 
-## P2 - Spec Drift To Resolve Before Final Audit Claims
+## Historical P2 Spec Drift From 2026-05-16
 
 ### 12. Retreat and surrender
 
-Status: spec says active; implementation/docs disable them.
+Historical status on 2026-05-16: spec said active while implementation/docs
+disabled them. Current outcome: v1.1 docs now keep retreat/surrender disabled
+or deferred; they may appear only as disabled action metadata.
 
 Evidence:
 
@@ -1868,7 +1920,9 @@ Needed:
 
 ### 13. README/TESTING docs are stale for Pocket-IC and canister play
 
-Status: stale.
+Historical status on 2026-05-16: stale. Current outcome: README/TESTING now
+document current canister and Pocket-IC status; remaining details live in the
+test/perf command docs.
 
 Evidence:
 
@@ -2032,7 +2086,7 @@ What now passes:
   `ParticipantKnownObject=13`, `Battle=1`, `BattleStack=3`,
   `BattleOccupancy=3`, and `BattleObstacle=2`.
 
-Remaining blocker:
+Historical remaining blocker:
 
 - `get_battle_state(session_id, battle_id)` still exceeds the local 5B
   instruction limit with IC0522 under DFX/PocketIC after the guarded-mine
@@ -2040,6 +2094,9 @@ Remaining blocker:
   in the query read model and after removing legal-action/spell enrichment from
   the query path. The deeper direct `blast` gate should stay open until this
   public battle read endpoint works on a fresh local canister.
+  Current outcome: fixed for the v1.1 public route by battle read slicing,
+  runtime-backed battle views, Gate K/Gate L/Gate M, and the 2026-05-22
+  benchmark suite.
 
 ### Follow-up all-ready and battle-read audit
 

@@ -1,4 +1,5 @@
 use super::{
+    MAX_GENERATED_CHUNKS_PER_UPDATE, MAX_GENERATED_MAP_HEIGHT, MAX_GENERATED_MAP_WIDTH,
     deterministic_procedural_map, first_playable_naval_route, first_playable_siege_rule,
     first_playable_skirmish_settings, validate_boat_movement, validate_generation_caps,
 };
@@ -14,6 +15,37 @@ fn procedural_map_preview_is_seed_stable_and_bounded() {
     assert_eq!(left.chunk_count, 9);
     assert!(left.water_tile_count > 0);
     assert_eq!(left.land_tile_count + left.water_tile_count, 48 * 48);
+}
+
+#[test]
+fn procedural_max_v1_map_is_seed_stable_and_bounded() {
+    let first = deterministic_procedural_map(
+        2_026,
+        MAX_GENERATED_MAP_WIDTH,
+        MAX_GENERATED_MAP_HEIGHT,
+        16,
+        9,
+    )
+    .expect("max v1 map should validate");
+    let replay = deterministic_procedural_map(
+        2_026,
+        MAX_GENERATED_MAP_WIDTH,
+        MAX_GENERATED_MAP_HEIGHT,
+        16,
+        9,
+    )
+    .expect("max v1 map replay should validate");
+
+    assert_eq!(first, replay);
+    assert_eq!(first.map_width, MAX_GENERATED_MAP_WIDTH);
+    assert_eq!(first.map_height, MAX_GENERATED_MAP_HEIGHT);
+    assert_eq!(first.chunk_count, MAX_GENERATED_CHUNKS_PER_UPDATE);
+    assert_eq!(
+        first.land_tile_count + first.water_tile_count,
+        u32::from(MAX_GENERATED_MAP_WIDTH) * u32::from(MAX_GENERATED_MAP_HEIGHT)
+    );
+    assert!(first.water_tile_count > 0);
+    assert!(first.road_tile_count > 0);
 }
 
 #[test]

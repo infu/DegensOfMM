@@ -1,6 +1,4 @@
 use std::cell::RefCell;
-#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
-use std::time::Duration;
 
 use candid::Principal as CandidPrincipal;
 #[cfg(any(not(feature = "benchmark"), not(target_arch = "wasm32")))]
@@ -29,9 +27,7 @@ use crate::repos::{
     system_jobs as system_job_repo,
 };
 
-use super::{
-    first_playable_setup, history, session_turn_runtime, system_jobs as system_job_service,
-};
+use super::{first_playable_setup, history, session_turn_runtime};
 
 const ACTIVE_SESSION_STATES: &[&str] = &["lobby", "starting", "active"];
 const SETUP_SYSTEM_ACTOR: &str = "setup";
@@ -311,6 +307,12 @@ fn cached_session_is_live(session_id: Id<GameSession>) -> bool {
         || cached_session_row(session_id)
             .as_ref()
             .is_some_and(|session| ACTIVE_SESSION_STATES.contains(&session.state.as_str()))
+}
+
+fn apply_cached_lobby_event_cursor(session: &mut GameSession) {
+    if let Some(cached) = cached_session_row(session.id()) {
+        session.next_event_seq = session.next_event_seq.max(cached.next_event_seq);
+    }
 }
 
 fn flush_session_participants_for_start(
@@ -751,6 +753,8 @@ const SETUP_EFFECTS: &[SetupEffectSpec] = &[
         target_kind: "procedural_map",
     },
 ];
+
+const SETUP_EFFECTS_PER_JOB: usize = usize::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SetupEffectSpec {
@@ -1325,53 +1329,20 @@ pub(crate) fn start_session(
             let started_now = session.state != "starting";
             if started_now {
                 session.state = "starting".to_string();
+                session = sessions::update_session(session)?;
                 remember_session_row(&session);
             }
-            let setup_command = if started_now {
-                ensure_runtime_setup_command(&session)
-            } else {
-                ensure_setup_command(&session)?
-            };
-            if started_now {
-                #[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
-                {
-                    let _ = &setup_command;
-                    schedule_runtime_setup_session_timer(session.id());
-                }
-                #[cfg(not(all(target_arch = "wasm32", feature = "benchmark")))]
-                {
-                    system_job_service::schedule_new_job(system_job_repo::SystemJobDraft {
-                        job_key: setup_session_job_key(session.id()),
-                        job_kind: "setup_session".to_string(),
-                        session_id: session.id(),
-                        battle_id: None,
-                        turn_number: Some(session.current_turn),
-                        due_at: Timestamp::now(),
-                        command_id: Some(setup_command.id()),
-                        cursor_json: setup_command.result_json.clone(),
-                    })?;
-                }
-            }
-
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                if let Some(job) =
-                    system_job_repo::find_system_job_by_key(&setup_session_job_key(session.id()))?
-                {
-                    process_setup_session_job(job)?;
-                } else {
-                    let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
-                    if setup_complete {
-                        session.state = "active".to_string();
-                        session = sessions::update_session(session)?;
-                        remember_session_row(&session);
-                    }
-                }
-                if let Some(updated) = sessions::load_session(session.id())? {
-                    if !(session.state == "starting" && updated.state == "lobby") {
-                        session = updated;
-                        remember_session_row(&session);
-                    }
+            let setup_command = ensure_durable_setup_command(&session)?;
+            let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
+            if setup_complete {
+                session.state = "active".to_string();
+                reset_active_turn_timer(&mut session);
+                let prepared_runtime =
+                    session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
+                session = sessions::update_session(session)?;
+                remember_session_row(&session);
+                if let Some(runtime) = prepared_runtime {
+                    session_turn_runtime::insert_runtime(runtime);
                 }
             }
             session_turn_runtime::ensure_active_turn_runtime(&mut session)?;
@@ -1453,6 +1424,17 @@ fn setup_progress_view(session: &GameSession) -> Result<SetupProgressView, ApiEr
         .get(completed_index)
         .map(|effect| effect.key.to_string());
 
+    let setup_job_status = setup_job
+        .as_ref()
+        .map(|job| job.status.clone())
+        .or_else(|| {
+            if session.state == "starting" && setup_command.is_some() {
+                Some("inline_setup".to_string())
+            } else {
+                None
+            }
+        });
+
     Ok(SetupProgressView {
         session_id: session.id().to_string(),
         session_state: session.state.clone(),
@@ -1465,7 +1447,7 @@ fn setup_progress_view(session: &GameSession) -> Result<SetupProgressView, ApiEr
             .as_ref()
             .map(|command| command.id().to_string()),
         setup_command_status: setup_command.as_ref().map(|command| command.status.clone()),
-        setup_job_status: setup_job.as_ref().map(|job| job.status.clone()),
+        setup_job_status,
         setup_job_attempt_count: setup_job.as_ref().map_or(0, |job| job.attempt_count),
     })
 }
@@ -1905,46 +1887,6 @@ fn ensure_first_playable_content()
     Ok(rows)
 }
 
-fn ensure_setup_command(session: &GameSession) -> Result<GameCommand, ApiError> {
-    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
-    if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
-        session.id(),
-        "system",
-        SETUP_SYSTEM_ACTOR,
-        client_nonce,
-    ) {
-        return Ok(command);
-    }
-    if let Some(command) = commands_events_effects::find_game_command_by_idempotency(
-        session.id(),
-        "system",
-        SETUP_SYSTEM_ACTOR,
-        client_nonce,
-    )? {
-        return Ok(command);
-    }
-
-    let command = new_setup_command(session);
-    commands_events_effects::cache_runtime_game_command(&command);
-    Ok(command)
-}
-
-fn ensure_runtime_setup_command(session: &GameSession) -> GameCommand {
-    let client_nonce = nonce_u64("setup_session", &session.id().to_string());
-    if let Some(command) = commands_events_effects::runtime_game_command_by_idempotency(
-        session.id(),
-        "system",
-        SETUP_SYSTEM_ACTOR,
-        client_nonce,
-    ) {
-        return command;
-    }
-
-    let command = new_setup_command(session);
-    commands_events_effects::cache_runtime_game_command(&command);
-    command
-}
-
 fn new_setup_command(session: &GameSession) -> GameCommand {
     let client_nonce = nonce_u64("setup_session", &session.id().to_string());
     let scenario = first_playable_scenario();
@@ -1969,16 +1911,6 @@ fn new_setup_command(session: &GameSession) -> GameCommand {
             scenario.scenario_hash, FIRST_PLAYABLE_RULESET_ID
         ),
     )
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
-fn schedule_runtime_setup_session_timer(session_id: Id<GameSession>) {
-    let session_id_text = session_id.to_string();
-    canic_cdk::timers::set_timer(Duration::from_millis(0), async move {
-        let _ = crate::metrics::benchmark_timer("runtime_timer:setup_session".to_string(), || {
-            process_runtime_setup_session_timer(&session_id_text)
-        });
-    });
 }
 
 fn setup_command_for_progress(session: &GameSession) -> Result<Option<GameCommand>, ApiError> {
@@ -2060,8 +1992,10 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
         system_job_repo::complete_system_job(job)?;
         return Ok(());
     }
+    apply_cached_lobby_event_cursor(&mut session);
     if session.state == "lobby" {
         session.state = "starting".to_string();
+        session = sessions::update_session(session)?;
         remember_session_row(&session);
     }
     if session.state != "starting" {
@@ -2074,77 +2008,16 @@ fn process_setup_session_job_inner(job: SystemJob) -> Result<(), ApiError> {
     let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
     if setup_complete {
         session.state = "active".to_string();
+        reset_active_turn_timer(&mut session);
         let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
         session = sessions::update_session(session)?;
+        remember_session_row(&session);
         if let Some(runtime) = prepared_runtime {
             session_turn_runtime::insert_runtime(runtime);
         }
         system_job_repo::complete_system_job(job)?;
-        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
-            job_kind: "turn_deadline".to_string(),
-            session_id: session.id(),
-            battle_id: None,
-            turn_number: Some(session.current_turn),
-            due_at: session.turn_deadline_at,
-            command_id: Some(setup_command.id()),
-            cursor_json: None,
-        })?;
     } else {
-        let cursor_json = commands_events_effects::load_game_command(setup_command.id())?
-            .and_then(|command| command.result_json)
-            .or_else(|| setup_command.result_json.clone());
-        system_job_repo::reschedule_system_job(job, Timestamp::now(), cursor_json)?;
-    }
-    Ok(())
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
-fn process_runtime_setup_session_timer(session_id: &str) -> Result<(), ApiError> {
-    let session_id = parse_id::<GameSession>(session_id, "session_id")?;
-    process_runtime_setup_session_step(session_id)
-}
-
-#[cfg(all(target_arch = "wasm32", feature = "benchmark"))]
-fn process_runtime_setup_session_step(session_id: Id<GameSession>) -> Result<(), ApiError> {
-    let Some(mut session) = sessions::load_session(session_id)? else {
-        return Ok(());
-    };
-
-    if session.state == "active" {
-        return Ok(());
-    }
-    if session.state == "lobby" {
-        session.state = "starting".to_string();
-        remember_session_row(&session);
-    }
-    if session.state != "starting" {
-        return Ok(());
-    }
-
-    let participants = participants_for_session(session.id())?;
-    let setup_command = ensure_durable_setup_command(&session)?;
-    let setup_complete = run_setup(&mut session, &setup_command, &participants)?;
-    if setup_complete {
-        session.state = "active".to_string();
-        let prepared_runtime = session_turn_runtime::prepare_active_turn_runtime(&mut session)?;
-        session = sessions::update_session(session)?;
-        remember_session_row(&session);
-        if let Some(runtime) = prepared_runtime {
-            session_turn_runtime::insert_runtime(runtime);
-        }
-        system_job_service::schedule_job(system_job_repo::SystemJobDraft {
-            job_key: format!("turn_deadline:{}:{}", session.id(), session.current_turn),
-            job_kind: "turn_deadline".to_string(),
-            session_id: session.id(),
-            battle_id: None,
-            turn_number: Some(session.current_turn),
-            due_at: session.turn_deadline_at,
-            command_id: Some(setup_command.id()),
-            cursor_json: None,
-        })?;
-    } else {
-        schedule_runtime_setup_session_timer(session.id());
+        system_job_repo::complete_system_job(job)?;
     }
     Ok(())
 }
@@ -2154,6 +2027,8 @@ fn run_setup(
     setup_command: &GameCommand,
     participants: &[GameParticipant],
 ) -> Result<bool, ApiError> {
+    let mut applied_this_job = 0_usize;
+    let mut command = setup_command.clone();
     for effect in SETUP_EFFECTS
         .iter()
         .skip(next_setup_effect_index(setup_command))
@@ -2161,7 +2036,6 @@ fn run_setup(
         if commands_events_effects::find_command_effect(setup_command.id(), effect.key)?.is_none() {
             apply_setup_effect(session, participants, effect)?;
             ensure_setup_effects(session.id(), setup_command.id(), effect)?;
-            let mut command = setup_command.clone();
             command.status = "applying".to_string();
             command.phase = "effects_applied".to_string();
             command.result_json = Some(format!(
@@ -2169,14 +2043,16 @@ fn run_setup(
                 effect.key
             ));
             command.retryable = true;
-            commands_events_effects::update_game_command(command)?;
-            return Ok(false);
+            command = commands_events_effects::update_game_command(command)?;
+            applied_this_job = applied_this_job.saturating_add(1);
+            if applied_this_job >= SETUP_EFFECTS_PER_JOB {
+                return Ok(false);
+            }
         }
     }
     ensure_setup_event(session, setup_command.id())?;
     ensure_match_summary_shells(session.id(), participants)?;
 
-    let mut command = setup_command.clone();
     command.status = "applied".to_string();
     command.phase = "complete".to_string();
     command.result_json = Some("{\"setup_complete\":true}".to_string());
@@ -2342,6 +2218,7 @@ fn append_session_event(
 ) -> Result<Option<ApiEventView>, ApiError> {
     let event_seq = session.next_event_seq;
     session.next_event_seq = event_seq.saturating_add(1);
+    *session = sessions::update_session(session.clone())?;
     remember_session_row(session);
     let event = ApiEventView {
         session_id: session.id().to_string(),
@@ -2676,6 +2553,15 @@ fn turn_deadline() -> Timestamp {
             .as_millis()
             .saturating_add(i64::try_from(TURN_DURATION_MS).unwrap_or(i64::MAX)),
     )
+}
+
+fn reset_active_turn_timer(session: &mut GameSession) {
+    let now = Timestamp::now();
+    session.turn_started_at = now;
+    session.turn_deadline_at = Timestamp::from_millis(
+        now.as_millis()
+            .saturating_add(i64::from(session.turn_duration_ms)),
+    );
 }
 
 fn status_from_str(value: &str) -> CommandStatus {

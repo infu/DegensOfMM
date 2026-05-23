@@ -1,5 +1,11 @@
 # perf1 Visual Architecture Brief
 
+Historical note: this visual brief preserves an early perf1 snapshot. For
+current measurement and status, use `perf1.measure.md`; for the completed
+checklist, use `perf1.todo.md`. Sections that say "current" below refer to the
+old 2026-05-19 visual snapshot, not the current 2026-05-22 runtime-kernel
+state.
+
 Goal: turn the perf1 work into an infographic that makes the architecture obvious at a glance: what was slow, what became fast, what still lives in IcyDB/stable structures, and what should move to heap runtime next.
 
 Numbers are from the recorded perf1 benchmark artifacts and `perf1.report.md`. They are instruction averages unless noted.
@@ -183,17 +189,19 @@ IcyDB is still the durable/projection/history layer. It did not become useless; 
 | Active battle header state | avoids projecting `Battle.current_round`, active stack, and deadline per action. |
 | Replay/status for active commands | runtime receipts serve command status before durable fallback. |
 
-## Current Remaining Slow Flow: Movement And Turn Sync
+## Historical Remaining Slow Flow: Movement And Turn Sync
 
 Headline metric after the movement cuts:
 
-| endpoint/scenario | before movement work | latest recorded | change |
+| endpoint/scenario | before movement work | 2026-05-19 recorded | change |
 | --- | ---: | ---: | ---: |
 | Gate J scenario instructions | 404.0368B | 357.9811B | -11.4% |
 | `submit_move_intent` avg | 15.3630B | 13.7537B | -10.5% |
 | `sync_session_turn` avg | 18.4665B | 14.7341B | -20.2% |
 
-Infographic caption: movement improved, but it is still mostly row-first. The remaining flow looks like old battle did before the runtime rewrite.
+Historical infographic caption: movement improved, but it was still mostly
+row-first at this point. Later perf1 work moved the route to the runtime-kernel
+model; see `perf1.measure.md`.
 
 ```mermaid
 flowchart LR

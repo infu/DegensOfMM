@@ -6,6 +6,8 @@ use domm_degens_schema::schema::{
     Champion, CommandEffect, GameCommand, GameEvent, GameParticipant, GameSession, LobbyCommand,
     PendingEffect, PlayerAccount,
 };
+#[cfg(not(feature = "benchmark"))]
+use icydb::traits::EntityValue;
 use icydb::{
     Create,
     db::query::FieldRef,
@@ -46,6 +48,20 @@ fn remember_runtime_game_command(command: &GameCommand) {
 
 pub(crate) fn cache_runtime_game_command(command: &GameCommand) {
     remember_runtime_game_command(command);
+}
+
+#[cfg(not(feature = "benchmark"))]
+pub(crate) fn flush_missing_runtime_game_commands_for_upgrade() -> RepoResult<usize> {
+    let commands = GAME_COMMAND_CACHE.with_borrow(Clone::clone);
+    let mut flushed = 0_usize;
+    for command in commands {
+        if load_game_command(command.id())?.is_some() {
+            continue;
+        }
+        insert_game_command(command)?;
+        flushed = flushed.saturating_add(1);
+    }
+    Ok(flushed)
 }
 
 pub(crate) const GAME_COMMAND_IDEMPOTENCY_LOOKUP: IndexedQueryPlan = IndexedQueryPlan {

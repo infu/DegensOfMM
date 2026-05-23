@@ -24,11 +24,24 @@ crates/domm-game/          pure deterministic rules, fixtures, DTOs, and headles
 schema/degens/             IcyDB canister/store schema root
 testing/generated-session/ generated-session regression test layer
 testing/macro-tests/       schema/macro regression test layer
-testing/pocket-ic/         Pocket-IC canister test layer scaffold
+testing/pocket-ic/         Pocket-IC canister tests and benchmark gates
 ```
 
 Public gameplay APIs must be typed query/update methods. Generic SQL and SQL DDL are
 disabled by default in `icydb.toml` and are reserved for controller/test-only surfaces.
+
+Latest recorded backend evidence: benchmark run
+`target/benchmarks/20260522-164948-5cfd001` at git `5cfd001` passed with
+`59/59` required gameplay endpoints. Treat this as recorded benchmark evidence,
+not a rerun of later uncommitted worktree changes. The canister-backed client
+probe covers the first-playable route through lobby, setup, map, movement,
+build, recruit, battle, result/history, and rematch affordance.
+
+For UI implementation, start with `docs/client-ui-integration.md`. It explains
+the current canister call order, render composition model, command retry/status
+rules, gameplay loops, battle flow, city/economy actions, and gameover/history
+screens. `docs/canister-endpoints.md` remains the endpoint inventory and
+deferred-endpoint policy.
 
 ## Smoke Commands
 
@@ -41,7 +54,6 @@ make check-canister
 Local canister deployment is committed through `dfx.json`:
 
 ```text
-make build-wasm
 make dfx-deploy-local
 ```
 

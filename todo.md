@@ -323,9 +323,9 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 ## 19A. Canister Endpoint Inventory And Contract Gate
 
 - [x] Create a canonical endpoint inventory for every public game method required by `spec.md`, `FixtureApiBackend`, and the web/client probe.
-- [x] Account/lobby/session endpoint inventory must include: `register_player`, `get_my_player`, `create_session`, `join_session`, `mark_ready`, `start_session`, `get_session`, `get_my_participant`, and `get_match_history`.
-- [x] Render/query endpoint inventory must include: `get_game_view`, `get_visible_map_chunks`, `get_visible_objects`, `get_my_champions`, `get_champion_view`, `get_town_view`, `get_battle_state`, `get_content_manifest`, `get_events_after`, and `get_command_status`.
-- [x] Preview/update endpoint inventory must include: `preview_move_path`, `preview_build_town_structure`, `preview_recruit_units`, `submit_move_intent`, `sync_session_turn`, `submit_build_town_structure`, `submit_recruit_units`, `sync_battle`, and `submit_battle_action`.
+- [x] Account/lobby/session endpoint inventory must include the live required public surface. The original 19A list has been superseded by the canonical `59` endpoint inventory in `canisters/degens/src/contract.rs` and `docs/canister-endpoints.md`.
+- [x] Render/query endpoint inventory must include setup, render, map/object/town/champion/battle detail, status, content, event, history, champion progression/magic, expanded economy, scenario progress, and world-generation boundary queries in the canonical `59` endpoint list.
+- [x] Preview/update endpoint inventory must include movement, turn sync, build/recruit, battle actions/sync/end-turn, champion magic, tavern/market/dwelling updates, quest/objective/world-event/scenario/victory sync, and world-generation sync endpoints in the canonical `59` endpoint list.
 - [x] Document whether out-of-route session actions are implemented now or explicitly deferred with typed disabled responses and matching client behavior.
 - [x] Define Candid input/output DTOs for every endpoint using the same semantics as `domm-game` public DTOs; no endpoint may expose raw IcyDB rows as the public UI contract.
 - [x] Add an endpoint contract test that fails if any required method is missing from the canister Candid export.
@@ -532,14 +532,15 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Treat static map terrain/movement/flags as public surveyed-base-map data
   while keeping dynamic objects, owners, occupants, battle details, and events
   visibility-gated.
-- [x] Reject `RecruitTarget::Champion` for town recruitment before command
-  creation, resource spending, pool decrement, or stack mutation; reserve it
-  for v2.
+- [x] Support same-tile owned active `RecruitTarget::Champion` town
+  recruitment, and reject invalid champion targets before command creation,
+  resource spending, pool decrement, or stack mutation.
 - [x] Document and test remote direct dwelling recruitment into owned active
   world-map champions; reject inactive, defeated, garrisoned, in-battle, or
   enemy champions before mutation.
 - [x] Implement week-two tavern offers and recruit growth
-  projection/materialization; keep town hall income, unrest/pacification,
+  projection/materialization; keep town/building income effects,
+  marketplace ownership rate improvements, unrest/pacification,
   recruit-pool halving, and desperation income deferred to v2.
 - [x] Make neutral battle tactical detail private to involved participants.
 - [x] Make hidden town build/recruit events audience-scoped or redacted.
@@ -567,7 +568,7 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
 - [x] Record the direct command lines, canister id, principals, endpoint scan
   result, session ids, and IcyDB diagnostic outputs in `spec.missing.md` during
   playability audits.
-- [ ] Only after the deploy and direct `blast scan` gates pass, run deeper
+- [x] Only after the deploy and direct `blast scan` gates pass, run deeper
   agent-driven gameplay checks for register/create/join/ready/start, active
   gameplay inspection, map movement, battles, economy, events, and
   `icydb_snapshot`/`icydb_metrics` corruption evidence.
@@ -619,8 +620,115 @@ Do not advance to a later checkpoint with known spec drift in the current checkp
     diagnostics. The passing command was
     `cargo test -p domm-pocket-ic-tests --test canister_endpoints
     pocket_ic_gate_l_first_playable_canister_e2e_uses_public_endpoints_and_icydb_state`.
-    Keep this broader local-DFX item open for the remaining full direct
-    collect/build/recruit walkthrough and diagnostics/metrics batches, not for
-    the automated Gate L guarded-route assertion blocker.
+    At that point this broader local-DFX item stayed open for the remaining
+    full direct collect/build/recruit walkthrough and diagnostics/metrics
+    batches, not for the automated Gate L guarded-route assertion blocker.
+  - Closed by the later 2026-05-18 fresh local DFX/blast smoke recorded in
+    `spec.1.1.md`: release deploy built in 2m13s, `blast scan` exposed 68
+    methods, setup reached `active`, direct movement/build/recruit/guarded
+    battle/capture/income calls succeeded, and IcyDB diagnostics reported zero
+    corruptions. PocketIC Gate L/Gate M and the 2026-05-22 benchmark suite now
+    carry the automated regression evidence.
 - [x] Do not add committed `blast` scripts or blast-based automated tests unless
   explicitly requested later; PocketIC remains the automated IC e2e test layer.
+
+## 29. Browser Client Local Replica Bring-Up
+
+Research snapshot from 2026-05-22:
+
+| Topic | Current finding | Implementation decision |
+| --- | --- | --- |
+| New ICP CLI | Official current docs install `@icp-sdk/icp-cli` and `@icp-sdk/ic-wasm`; the npm latest versions checked today are `@icp-sdk/icp-cli@0.2.7` and `@icp-sdk/ic-wasm@0.9.11`. The command is `icp`, with local flow `icp network start -d`, `icp deploy`, `icp canister call`, and `icp network stop`. | Add ICP CLI compatibility only after the browser client works against the existing local canister deploy. Do not replace the committed `dfx.json` path until `icp.yaml` can reproduce the custom Rust build, Candid extraction, metadata injection, and local canister id/env generation. |
+| Existing repo SDK path | This repo already has a working custom Rust canister deploy through `dfx.json`; local `dfx --version` is `0.32.0`. | First browser goal uses `dfx start --background --clean`, `dfx deploy degens --network local`, and Vite/Bun dev server against that local replica. |
+| AgentJS | Current npm latest for `@dfinity/agent`, `@dfinity/auth-client`, `@dfinity/candid`, `@dfinity/principal`, and `@dfinity/identity` is `3.4.3`. Official docs recommend generated actor calls over raw calls and require `fetchRootKey()` only for local development, never mainnet. | Build one typed `DommCanisterPort` over generated Candid declarations and `HttpAgent`. Keep generated actor imports out of React components, Pixi code, reducers, and feature panels. |
+| Frontend stack | Current checked npm latest: `react@19.2.6`, `react-dom@19.2.6`, `@reduxjs/toolkit@2.12.0`, `react-redux@9.3.0`, `vite@8.0.14`, `@vitejs/plugin-react@6.0.2`, `vitest@4.1.7`, `@playwright/test@1.60.0`, `pixi.js@8.18.1`, `typescript@6.0.3`, `jsdom@29.1.1`. Local Bun is `1.2.13`. | Use Bun for package management/scripts, Vite + React + TypeScript for app shell, Redux Toolkit + RTK Query for the client kernel, PixiJS for canvas, Vitest/Testing Library for unit/component tests, and Playwright for local-replica/browser/canvas checks. |
+
+- [ ] Create `apps/web` as a Bun-managed Vite React TypeScript app. Keep it in
+  the DoMM repo and avoid modifying the Rust workspace unless needed for
+  generated bindings.
+- [ ] Add package scripts that work from the repo root:
+  `bun --cwd apps/web install`, `bun --cwd apps/web run dev`,
+  `bun --cwd apps/web run test`, `bun --cwd apps/web run test:e2e`, and
+  `bun --cwd apps/web run typecheck`.
+- [ ] Add Makefile wrappers for the first local browser flow:
+  `make web-local-backend` builds/deploys `degens` with the existing DFX path,
+  `make web-local-env` writes the web app's local canister env, and
+  `make web-local` starts the Bun/Vite dev server after the backend is ready.
+- [ ] Generate or copy Candid TypeScript declarations from
+  `target/dfx/degens/degens.did` into a stable web-client import location.
+  Prefer generated declarations over handwritten actor shapes; if generation is
+  not available from the current DFX path, add a checked script that converts
+  the DID to TS and fails when the DID changes without regenerated bindings.
+- [ ] Add `apps/web/scripts/sync-local-canister-env.ts` that reads
+  `.dfx/local/canister_ids.json` plus `dfx info webserver-port`, then writes
+  `apps/web/.env.local` with `VITE_DEGENS_CANISTER_ID`,
+  `VITE_IC_HOST`, `VITE_DFX_NETWORK=local`, and the content/build revision used
+  by the UI.
+- [ ] Make the env sync script tolerate future ICP CLI mappings by checking
+  `.icp/cache/mappings/<environment>.ids.json` after the DFX path. Do not make
+  ICP CLI required until the compatibility task below passes.
+- [ ] Implement `apps/web/src/ports/canister/actor.ts` with `HttpAgent`,
+  generated `idlFactory`, generated actor creation, and local-only
+  `agent.fetchRootKey()`. Guard `fetchRootKey()` behind an explicit local
+  network check so production builds cannot call it.
+- [ ] Implement `apps/web/src/ports/canister/client.ts` as the typed
+  `DommCanisterPort` from `spec.client.md`, with one method per required
+  gameplay endpoint and no generic gameplay `submitCommand` escape hatch.
+- [ ] Add DTO adapters for the first shell route: `Principal` to text,
+  `bigint`/`Nat64` to safe strings or bounded numbers, Candid `opt` to
+  `T | null`, variants to discriminated unions, and copied arrays before data
+  reaches Redux reducers.
+- [ ] Add the Redux Toolkit store, RTK Query API slice, listener middleware,
+  domain slices, and fake canister test port before building real panels. The
+  first render path should load identity/session shell, content manifest,
+  `get_game_view`, visible map chunks, visible objects, my champions, and event
+  feeds through workflows, not component-level actor calls.
+- [ ] Add a dev identity strategy for local testing. Minimum: anonymous actor
+  can connect and call read-only endpoints. Better first-playable local route:
+  dev-only selectable identities backed by `@dfinity/identity` so Playwright can
+  create two browser players without Internet Identity. Keep `AuthClient` as
+  the production-ready auth seam but do not block local replica work on a local
+  Internet Identity canister.
+- [ ] Build the first usable local screen around the real canister: connection
+  status, caller principal, endpoint inventory/content manifest status, lobby
+  create/join/ready/start controls, setup progress, and a nonblank Pixi map
+  canvas once the session is active.
+- [ ] Ensure update-call UX follows the AgentJS latency reality: show local
+  pending/applying status immediately, keep canvas pan/selection responsive,
+  poll command status only when needed, and refresh affected views from
+  `changed_subjects`/events.
+- [ ] Add Vitest coverage for env parsing, actor host selection,
+  local-only `fetchRootKey` guarding, DTO adapters, RTK Query endpoint wrappers,
+  command workflow state transitions, stale response drops, and fake-canister
+  startup/session render composition.
+- [ ] Add React Testing Library coverage for lobby/setup controls, disabled
+  states, command lifecycle labels, and panel rendering from selector view
+  models. Keep tests pointed at the fake port unless explicitly testing the
+  real local replica.
+- [ ] Add Playwright local smoke that can start from a fresh local replica or
+  verify a running one, open the Bun/Vite URL, connect to the real `degens`
+  canister, load the manifest/session shell, and assert the Pixi canvas is
+  nonblank with no overlapping critical controls.
+- [ ] Add a two-player Playwright route using dev identities: register two
+  players, create/join/ready/start once, poll setup to active, load the opening
+  viewport, select a champion, preview a path, submit movement, end/sync turn,
+  and verify the map refreshes from real canister views.
+- [ ] Add `docs/client-ui-local.md` with exact commands for:
+  installing Bun dependencies, installing/updating `@icp-sdk/icp-cli` and
+  `@icp-sdk/ic-wasm`, DFX local deploy, Bun/Vite local client launch, stopping
+  the replica, and running unit/component/Playwright tests.
+- [ ] Add optional ICP CLI compatibility after DFX browser bring-up passes:
+  create `icp.yaml`/canister config or document why `icp-cli@0.2.7` cannot yet
+  reproduce this repo's custom Rust canister build. Passing parity means
+  `icp network start -d`, deploy/install of the `degens` wasm with public
+  Candid metadata, generated local canister id/env output, and the same
+  Playwright local smoke against the `icp`-started network.
+- [ ] Audit the first browser implementation against `spec.client.md`,
+  `docs/client-ui-integration.md`, and `docs/canister-endpoints.md`. Fix any
+  component-level actor calls, raw DTO leakage into reducers, missing required
+  endpoint wrapper, unsafe local/mainnet agent behavior, or stale hidden data
+  before considering the local UI bring-up complete.
+- [ ] Gate P: from a clean checkout, one documented command sequence can start
+  a fresh local replica, deploy the real `degens` canister, launch the Bun React
+  client locally, connect through AgentJS, render the active opening map, and
+  pass unit/component plus Playwright local smoke tests.

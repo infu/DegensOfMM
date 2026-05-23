@@ -1,5 +1,10 @@
 # perf1 Implementation Plan: Whole-Game Runtime Aggregates
 
+Historical note: this was the implementation plan at the start of the
+whole-game runtime rewrite. The plan has largely been executed; use
+`perf1.measure.md` for current measurements and `perf1.todo.md` for completed
+checkpoint evidence.
+
 Source: subagent research on movement/session-turn flow, query merge requirements, testing strategy, and future aggregate boundaries. No tests were run to create this plan.
 
 ## Goal
@@ -431,7 +436,7 @@ cargo test -p domm-pocket-ic-tests --test canister_endpoints \
 Full benchmark suite:
 
 ```bash
-DOMM_BENCH_JOBS=4 scripts/run-benchmarks.sh
+DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh
 ```
 
 Do not run full suite for every micro-step. Use it when runtime authority, durable boundary behavior, or public API behavior has a meaningful checkpoint.

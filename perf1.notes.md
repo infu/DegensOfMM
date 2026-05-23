@@ -2,6 +2,12 @@
 
 This is the running notes and decision log for `perf1.todo.md`.
 
+Current status note: perf1 has moved past the early battle-only and
+movement-hot-path entries below. Use `perf1.measure.md` for the current
+2026-05-22 benchmark status and `perf1.todo.md` for completed checkpoints. Old
+sections intentionally preserve historical commands, run IDs, and intermediate
+claims.
+
 Keep this file current while working:
 
 - Record what changed and why.
@@ -963,6 +969,9 @@ Full benchmark suite after this checkpoint:
 run id: 20260519-063353-02c93e3
 artifact: target/benchmarks/20260519-063353-02c93e3/suite-summary.md
 command: DOMM_BENCH_JOBS=4 scripts/run-benchmarks.sh
+historical note: current full-suite runs use `DOMM_BENCH_JOBS=5
+scripts/run-benchmarks.sh`; this entry preserves the original 2026-05-19
+command.
 ```
 
 Suite result:

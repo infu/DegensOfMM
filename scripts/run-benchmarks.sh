@@ -402,6 +402,9 @@ hard_target_boundary_reason() {
         endpoint-surface:submit_dwelling_recruit)
             printf "dwelling recruit still crosses durable recruit-pool/garrison boundary"
             ;;
+        endpoint-surface:sync_battle)
+            printf "endpoint-surface sync_battle samples battle timeout/recovery/aftermath durable handoff boundary"
+            ;;
         timer-surface:end_turn)
             printf "timer-surface end_turn samples the durable turn-close boundary"
             ;;

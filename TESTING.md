@@ -21,9 +21,9 @@ make test-generated  # generated-session harness surface
 make test-fast       # prebuild selected stable groups and run them in parallel
 make test-groups-list
 make test-groups GROUPS="gate-k week-two" TEST_JOBS=4
-make test-pocket     # safe parallel Pocket-IC phase, then serial long routes
-make smoke-e2e       # checkpoint 19 first-playable e2e fixture with metrics
-make build-wasm      # release wasm plus extracted Candid for local dfx
+make test-pocket     # parallel, long, and isolated Gate M Pocket-IC phases
+make smoke-e2e       # first-playable canister/client e2e fixture with metrics
+make build-wasm      # release wasm plus extracted Candid for dfx
 make regression      # all workspace tests
 make check-canister  # canister crate build check
 ```
@@ -31,16 +31,20 @@ make check-canister  # canister crate build check
 `scripts/run-test-groups.sh` is the timing harness for spec 1.1 test work. It
 prebuilds the selected test binaries once, runs named groups with bounded
 parallelism, writes logs under `target/test-groups/`, and prints a Markdown
-timing table. `make test-pocket` runs `pocket-parallel` with `TEST_JOBS`, then
-runs the long full-route `pocket-serial` groups with one worker. `make
-regression` runs non-PocketIC workspace tests before invoking the same phased
-PocketIC target. `DOMM_TEST_JOBS` defaults to `min(nproc, 8)`; raise it only
-for groups that are isolated and stable under concurrent Pocket-IC instances.
+timing table. `make test-pocket` runs `pocket-parallel` with `TEST_JOBS`,
+`pocket-long` with `LONG_TEST_JOBS` (default `4`), and the isolated
+`pocket-gate-m` phase with `GATE_M_TEST_JOBS`. `make regression` runs
+non-PocketIC workspace tests before invoking the same phased PocketIC target.
+For direct `scripts/run-test-groups.sh` runs, `DOMM_TEST_JOBS` defaults to
+`min(nproc, 8)`. Make targets pass `TEST_JOBS` (default `8`),
+`LONG_TEST_JOBS` (default `4`), or `GATE_M_TEST_JOBS` (default `1`)
+explicitly. Raise worker counts only for groups that are isolated and stable
+under concurrent Pocket-IC instances.
 
 Pocket-IC tests now exercise meaningful canister routes. New v1.1 suites should stay split
-by failure mode (`timer_jobs`, `end_turn`, `battle_round_readiness`,
-`render_projection`, `query_budgets`, `command_recovery`, and
-`visibility_redaction`), with endpoint auth matrices in the `endpoint-auth` group,
+by failure mode using the runnable groups `timer-jobs`, `end-turn`,
+`battle-round`, `render-projection`, `query-budget`, `command-recovery`, and
+`visibility-redaction`, with endpoint auth matrices in the `endpoint-auth` group,
 rather than growing one monolithic endpoint test.
 
 ## Fixtures
@@ -62,7 +66,7 @@ cargo test -p domm-game gate_d_backend_fixture_reaches_victory_from_public_calls
 make regression
 ```
 
-Expected result: the checkpoint 19 fixture reaches victory, the Gate E client walkthrough
+Expected result: the first-playable fixture reaches victory, the Gate E client walkthrough
 completes, the Gate M canister-backed client route reports Pocket-IC/IcyDB response and row
 metrics, Gate L still completes the public canister first-playable route, the Gate D backend
 route still reports stable command/event/query/storage counts, and the full workspace
@@ -73,11 +77,19 @@ regression suite passes.
 The reproducible local deploy path is:
 
 ```text
-make build-wasm
-dfx start --background --clean
-dfx deploy degens --network local
+make dfx-deploy-local
 blast scan "$(dfx canister id degens --network local)" --host "http://127.0.0.1:$(dfx info webserver-port)"
 ```
 
+`make dfx-deploy-local` starts the local replica from `dfx.json` and writes DFX
+startup output to `/tmp/domm-dfx-start.log` plus replica output to
+`/tmp/domm-dfx.log`. If the local PocketIC/DFX cache has been patched, replace
+or override the runner rather than changing gameplay timers; for example:
+`make DFX=/path/to/clean/dfx dfx-deploy-local`.
+
 Use `docs/local-deploy-blast.md` for the full multi-identity command checklist and
 diagnostic snapshot evidence.
+
+For UI-facing behavior, pair the smoke commands above with
+`docs/client-ui-integration.md`; it describes the endpoint composition and
+gameplay loops that Gate M exercises against the real canister.

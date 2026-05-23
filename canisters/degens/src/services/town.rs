@@ -1,5 +1,7 @@
 use candid::Principal as CandidPrincipal;
-use domm_degens_schema::schema::{GameCommand, GameParticipant, GameSession, Town};
+use domm_degens_schema::schema::{
+    Champion, GameCommand, GameParticipant, GameSession, Town, UnitDefinition,
+};
 use domm_game::{
     ApiError, ApiTownView, BuildPreview, CommandPhase, CommandResponse, CommandResult,
     CommandStatus, RecruitPreview, RecruitTarget, StrategicCommandReceipt,
@@ -9,10 +11,11 @@ use icydb::{
     types::{Id, Ulid},
 };
 
-use crate::repos::content;
+use crate::repos::{champions_artifacts, content};
 
 use super::{
-    command_response, render_projection, session_context, session_turn_runtime, town_runtime,
+    command_response, economy_expansion, render_projection, session_context, session_turn_runtime,
+    town_runtime,
 };
 
 struct RuntimeTownCommand {
@@ -178,22 +181,33 @@ pub(crate) fn preview_recruit_units(
         unit.aether_cost.saturating_mul(quantity),
     );
     let available = town_runtime::recruit_pool(&town, unit.id())?.map_or(0, |pool| pool.available);
-    let target_slot_index = match target {
-        RecruitTarget::TownGarrison { slot_index } => slot_index,
-        RecruitTarget::Champion { slot_index, .. } => slot_index,
+    let mut target_slot_index = match &target {
+        RecruitTarget::TownGarrison { slot_index } => *slot_index,
+        RecruitTarget::Champion { slot_index, .. } => *slot_index,
     };
-    let disabled_reason = if town.owner_participant_id != Some(context.participant.id().key()) {
+    let mut disabled_reason = if town.owner_participant_id != Some(context.participant.id().key()) {
         Some("not_owner".to_string())
-    } else if matches!(target, RecruitTarget::Champion { .. }) {
-        Some("unsupported_recruit_target".to_string())
     } else if quantity == 0 {
         Some("invalid_quantity".to_string())
     } else if available < quantity {
         Some("recruit_pool_empty".to_string())
+    } else if !can_afford(&context.participant, &total_cost) {
+        Some("insufficient_resources".to_string())
     } else {
-        (!can_afford(&context.participant, &total_cost))
-            .then(|| "insufficient_resources".to_string())
+        None
     };
+    if disabled_reason.is_none() {
+        let target_check = recruit_target_check(
+            &context.session,
+            &context.participant,
+            &town,
+            unit.id(),
+            quantity,
+            &target,
+        )?;
+        target_slot_index = target_check.target_slot_index;
+        disabled_reason = target_check.disabled_reason;
+    }
 
     Ok(RecruitPreview {
         allowed: disabled_reason.is_none(),
@@ -214,7 +228,8 @@ pub(crate) fn submit_build_town_structure(
     building_def_id: String,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_cached_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let building_slug = slug_from_public_id(&building_def_id, "building:");
     let payload_json = format!(
@@ -365,16 +380,10 @@ pub(crate) fn submit_recruit_units(
     target: RecruitTarget,
     client_nonce: String,
 ) -> Result<CommandResponse, ApiError> {
-    let mut context = session_context::require_cached_active_session_caller(caller, &session_id)?;
+    let mut context =
+        session_context::require_active_session_caller_runtime_first(caller, &session_id)?;
     let town = resolve_town(&context.session, &town_id)?;
     let unit_slug = slug_from_public_id(&unit_id, "unit:");
-    if matches!(target, RecruitTarget::Champion { .. }) {
-        return Err(ApiError::new(
-            "unsupported_recruit_target",
-            "town recruitment to champions is reserved for v2",
-            false,
-        ));
-    }
     let payload_json = format!(
         r#"{{"town_id":"{}","unit_slug":"{}","quantity":{},"target":{}}}"#,
         command_response::escape_json(&town_id),
@@ -428,6 +437,38 @@ pub(crate) fn submit_recruit_units(
             ),
         ));
     }
+    let target_check = match recruit_target_check(
+        &context.session,
+        &context.participant,
+        &town,
+        unit.id(),
+        quantity,
+        &target,
+    ) {
+        Ok(check) => check,
+        Err(error) => {
+            return Ok(fail_runtime_town_command(
+                caller,
+                &context,
+                command,
+                &client_nonce,
+                error,
+            ));
+        }
+    };
+    if let Some(reason) = target_check.disabled_reason.clone() {
+        return Ok(fail_runtime_town_command(
+            caller,
+            &context,
+            command,
+            &client_nonce,
+            ApiError::new(
+                reason.clone(),
+                format!("town recruit target disabled: {reason}"),
+                false,
+            ),
+        ));
+    }
     let total_cost = resource_balances(
         unit.gold_cost.saturating_mul(quantity),
         unit.wood_cost.saturating_mul(quantity),
@@ -453,15 +494,45 @@ pub(crate) fn submit_recruit_units(
     pool.last_command_id = Some(command.command_id.key());
     town_runtime::mirror_recruit_pool(&pool);
 
-    let garrison = recruit_to_garrison_runtime(
-        &town,
-        unit.id(),
-        unit_slug.clone(),
-        unit.max_hp,
-        quantity,
-        target,
-        command.command_id,
-    )?;
+    let stack_subject = match (&target, target_check.champion_id) {
+        (RecruitTarget::TownGarrison { .. }, _) => {
+            let garrison = recruit_to_garrison_runtime(
+                &town,
+                unit.id(),
+                unit_slug.clone(),
+                unit.max_hp,
+                quantity,
+                target.clone(),
+                command.command_id,
+            )?;
+            command_response::changed("town_garrison_stack", &garrison.id().to_string(), "upsert")
+        }
+        (RecruitTarget::Champion { .. }, Some(champion_id)) => {
+            let stack = economy_expansion::recruit_to_champion_stack(
+                &context.session,
+                champion_id,
+                unit.id(),
+                unit.max_hp,
+                quantity,
+                target_check.target_slot_index,
+                command.command_id,
+            )?;
+            command_response::changed("champion_army_stack", &stack.id().to_string(), "upsert")
+        }
+        (RecruitTarget::Champion { .. }, None) => {
+            return Ok(fail_runtime_town_command(
+                caller,
+                &context,
+                command,
+                &client_nonce,
+                ApiError::new(
+                    "champion_not_found",
+                    "champion recruit target was not resolved",
+                    false,
+                ),
+            ));
+        }
+    };
     let mut session = context.session.clone();
     let events = append_runtime_town_command_events(
         &context,
@@ -488,7 +559,7 @@ pub(crate) fn submit_recruit_units(
         vec![
             command_response::changed("town", &town.id().to_string(), "update"),
             command_response::changed("town_recruit_pool", &pool.id().to_string(), "update"),
-            command_response::changed("town_garrison_stack", &garrison.id().to_string(), "upsert"),
+            stack_subject,
             command_response::changed(
                 "participant",
                 &context.participant.id().to_string(),
@@ -508,6 +579,114 @@ fn resolve_town_by_session_id(
 ) -> Result<Town, ApiError> {
     town_runtime::load_town_by_public_id(session_id, town_id)?
         .ok_or_else(|| session_context::public_error("not_found", "town not found", false))
+}
+
+struct RecruitTargetCheck {
+    disabled_reason: Option<String>,
+    target_slot_index: Option<u8>,
+    champion_id: Option<Id<Champion>>,
+}
+
+fn recruit_target_check(
+    session: &GameSession,
+    participant: &GameParticipant,
+    town: &Town,
+    unit_id: Id<UnitDefinition>,
+    quantity: u32,
+    target: &RecruitTarget,
+) -> Result<RecruitTargetCheck, ApiError> {
+    match target {
+        RecruitTarget::TownGarrison { slot_index } => Ok(RecruitTargetCheck {
+            disabled_reason: None,
+            target_slot_index: *slot_index,
+            champion_id: None,
+        }),
+        RecruitTarget::Champion {
+            champion_id,
+            slot_index,
+        } => {
+            let champion = resolve_recruit_champion(session, champion_id)?;
+            let champion_id = champion.id();
+            let disabled_reason = if champion.participant_id != participant.id().key()
+                || champion.status != "active"
+                || champion.in_battle_id.is_some()
+            {
+                Some("not_active_stack".to_string())
+            } else if champion.x != town.x || champion.y != town.y {
+                Some("champion_not_at_town".to_string())
+            } else {
+                None
+            };
+            if disabled_reason.is_some() {
+                return Ok(RecruitTargetCheck {
+                    disabled_reason,
+                    target_slot_index: *slot_index,
+                    champion_id: Some(champion_id),
+                });
+            }
+            let resolved_slot_index = economy_expansion::resolve_champion_recruit_stack_slot(
+                champion_id,
+                unit_id,
+                quantity,
+                *slot_index,
+            )?;
+            Ok(RecruitTargetCheck {
+                disabled_reason: None,
+                target_slot_index: Some(resolved_slot_index),
+                champion_id: Some(champion_id),
+            })
+        }
+    }
+}
+
+fn resolve_recruit_champion(
+    session: &GameSession,
+    champion_id: &str,
+) -> Result<Champion, ApiError> {
+    let session_id_text = session.id().to_string();
+    if let Ok(id) = session_context::parse_id::<Champion>(champion_id, "champion_id") {
+        if let Some(champion) =
+            session_turn_runtime::champion_snapshot(&session_id_text, &id.to_string())
+        {
+            if champion.session_id != session.id().key() {
+                return Err(ApiError::new(
+                    "champion_wrong_session",
+                    "champion does not belong to this session",
+                    false,
+                ));
+            }
+            return Ok(champion);
+        }
+        let champion = champions_artifacts::load_champion(id)?
+            .ok_or_else(|| ApiError::new("champion_not_found", "champion was not found", false))?;
+        if champion.session_id != session.id().key() {
+            return Err(ApiError::new(
+                "champion_wrong_session",
+                "champion does not belong to this session",
+                false,
+            ));
+        }
+        return Ok(champion);
+    }
+
+    let start = domm_game::first_playable_scenario()
+        .starts
+        .into_iter()
+        .find(|start| start.champion_key == champion_id)
+        .ok_or_else(|| ApiError::new("champion_not_found", "champion was not found", false))?;
+    if let Some(champion) = session_turn_runtime::champion_snapshot_by_start(
+        &session_id_text,
+        start.champion_x,
+        start.champion_y,
+    ) {
+        return Ok(champion);
+    }
+    champions_artifacts::find_champion_by_session_xy(
+        session.id(),
+        start.champion_x,
+        start.champion_y,
+    )?
+    .ok_or_else(|| ApiError::new("champion_not_found", "champion was not found", false))
 }
 
 fn missing_required_building_slug(

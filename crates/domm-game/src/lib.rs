@@ -30,6 +30,9 @@ pub mod town;
 pub mod world_object;
 pub mod worldgen;
 
+#[cfg(test)]
+mod property_tests;
+
 pub use aftermath::{
     AftermathError, AftermathEventRecord, AftermathSmokeView, AftermathState,
     BattleAftermathReport, MatchSessionRecord, PlayerMatchSummaryRecord, RetreatSurrenderPolicy,
@@ -208,8 +211,8 @@ pub use strategic::{
     StrategicStepView, run_first_playable_strategic_gate,
 };
 pub use town::{
-    ArmyStackRecord, BuildPreview, ChampionTownRecord, MAX_ARMY_SLOTS, RECRUIT_POOL_CAP,
-    RecruitPreview, RecruitTarget, TownBuildingRecord, TownError, TownRecord,
+    ARMY_STACK_CAP, ArmyStackRecord, BuildPreview, ChampionTownRecord, MAX_ARMY_SLOTS,
+    RECRUIT_POOL_CAP, RecruitPreview, RecruitTarget, TownBuildingRecord, TownError, TownRecord,
     TownRecruitPoolRecord, TownSmokeView, TownState, build_first_playable_town_state,
     run_first_playable_town_smoke,
 };

@@ -18,16 +18,17 @@ endpoints, deterministic command/recovery flows, and Pocket-IC coverage.
 | Classification | Systems |
 | --- | --- |
 | implement-now | None. The first playable is complete at Gate N, and adding Part 1 behavior without new Part 2 gates would invalidate the canister/IcyDB contract. |
-| promote-to-Part-2-first | Champion skills, level-up choices, spell learning, spellcasting, mana, advanced statuses, taverns, marketplaces, external dwellings, advanced economy, quests, scenario objectives, world events, advanced victories, siege, naval movement, seeded procedural maps, skirmish settings, diplomacy, rematch, ranked, guilds, campaign persistence, and broader history/social systems. Checkpoints 22-24 have implemented the first bounded progression/magic, expanded-economy, and scenario-progress slices; remaining variants still need their own bounded specs. |
+| promote-to-Part-2-first | Champion skills, level-up choices, spell learning, spellcasting, mana, advanced statuses, taverns, marketplaces, external dwellings, advanced economy, quests, scenario objectives, world events, advanced victories, siege, naval movement, seeded procedural maps, skirmish settings, diplomacy, rematch, ranked, guilds, campaign persistence, and broader history/social systems. Checkpoints 22-25 have implemented the first bounded progression/magic, expanded-economy, scenario-progress, and world-generation-boundary slices; remaining variants still need their own bounded specs. |
 | still-deferred or removed | Sequential player turns, hotseat-only backend flow, monolithic `GameState` persistence, unrestricted generic SQL gameplay paths, unbounded full bot opponents, unbounded content packs, and any system without numeric caps and indexed lookup paths. |
 
 ## Triage Table
 
 | Part 1 system | Classification | Destination |
 | --- | --- | --- |
-| Champion skill trees, level-up choices, skill ranks, spell learning, battle spellcasting, adventure spellcasting, mana reset rules, advanced statuses, dispel/stacking, artifact-set-style effect expansion | promote-to-Part-2-first | Checkpoint 22 |
+| Bounded champion progression/magic slice: level cap, spell learning, adventure casting, learned battle `CastAbility`, mana/status persistence, and unsupported-effect responses | promoted and implemented | Checkpoint 22 |
+| Broader champion skill trees, skill ranks, advanced status/dispel/stacking rules, and artifact-set-style effect expansion | promote-to-Part-2-first | Future champion expansion |
 | Tavern hiring, marketplace trading, external dwellings, and direct map recruitment | promoted and implemented | Checkpoint 23 |
-| Defeated champion reappearance, advanced economy buildings, and broader resource-source variety | promote-to-Part-2-first | Future economy expansion |
+| Defeated champion reappearance, town/building income effects, marketplace ownership rate improvements, advanced economy buildings, and broader resource-source variety | promote-to-Part-2-first | Future economy expansion |
 | Central objective tracking, one opening quest, weekly world events, quest reward claim, and typed scenario rules | promoted and implemented | Checkpoint 24 |
 | Quest huts, quest chains, monthly world events, artifact victory, king-of-the-hill, survival, scenario-specific defeat, and richer scenario rules beyond the disabled row contract | promote-to-Part-2-first | Future scenario expansion |
 | Skirmish settings, deterministic first-playable procedural preview metadata, and disabled naval/siege/larger-map boundary rows | promoted and implemented | Checkpoint 25 |
@@ -62,7 +63,7 @@ must include all of the following:
 
 | Checkpoint | Required Part 2 additions before code |
 | --- | --- |
-| 22 | Define skill/spell/status entities or prove existing `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, artifact rows, and effect keys are sufficient. Add indexes by session, champion, participant, battle, skill key, spell key, and status key. Add commands such as level-up choice, spell learning, battle cast, adventure cast, and previews. Cap skill options, spellbook size, casts per turn/round, status instances, and effect targets. |
+| 22 | Implemented the bounded progression/magic slice using existing `ChampionSpell`, `SpellDefinition`, `BattleStack.status_keys`, artifact rows, and effect keys where sufficient. Future champion expansion still needs a fresh bounded spec for full skill trees, skill ranks, advanced statuses, dispel/stacking, and artifact-set-style effects. |
 | 23 | Implemented tavern offers, hire records, market/trade rows, dwelling pools, indexes by session/week/participant/town/object/offer/command, hire/trade/dwelling preview and update endpoints, and caps for offers, trade amounts, pool growth, and visible candidates. |
 | 24 | Implemented objective progress, quest state, world event state, scenario rule state, indexed lookup paths by session/participant/key/window/victory state, quest accept/claim, objective sync, world-event sync, advanced-victory sync, and caps for active quests, objective rows, event rows, rule rows, and victory checks. |
 | 25 | Implemented skirmish settings, deterministic first-playable procedural preview metadata, and explicit disabled naval/siege boundary rows. Added indexes by session, generation key, status, route key, and rule key; added skirmish/procedural/naval/siege query endpoints plus `sync_world_generation`; capped generated dimensions, generated chunks per update, water crossings, route/rule rows, and siege battle obstacles. Active boat movement, siege actions, and larger map materialization remain future world-generation expansion work. |

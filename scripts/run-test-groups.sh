@@ -25,6 +25,10 @@ add_group "pure" \
     "deterministic domm-game rules and fixture tests" \
     "cargo test -p domm-game --no-run" \
     "cargo test -p domm-game"
+add_group "pure-property" \
+    "perf1 pure domm-game property-style core rule matrix" \
+    "cargo test -p domm-game --no-run" \
+    "cargo test -p domm-game property_ -- --nocapture"
 add_group "schema" \
     "schema macro compilation tests" \
     "cargo test -p domm-schema-macro-tests --no-run" \
@@ -37,6 +41,14 @@ add_group "canister-check" \
     "canister crate typecheck" \
     "" \
     "cargo check -p domm-degens-canister"
+add_group "service-regression" \
+    "perf1 fast canister service regression filter" \
+    "cargo test -p domm-degens-canister --no-run" \
+    "cargo test -p domm-degens-canister service_ -- --nocapture"
+add_group "projection-recovery" \
+    "perf1 projection flush and recovery service filters" \
+    "cargo test -p domm-degens-canister --no-run" \
+    "cargo test -p domm-degens-canister projection -- --nocapture && cargo test -p domm-degens-canister flush -- --nocapture"
 add_group "pocket-lock" \
     "PocketIC lock sharding probe" \
     "cargo test -p domm-pocket-ic-tests --test pic_lock --no-run" \
@@ -114,7 +126,15 @@ add_group "visibility-redaction" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints --no-run" \
     "cargo test -p domm-pocket-ic-tests --test canister_endpoints pocket_ic_visibility_redaction_keeps_private_payloads_private -- --nocapture"
 
+if [[ "${DOMM_ENABLE_FAILURE_ARTIFACT_SELF_TEST:-0}" == "1" ]]; then
+    add_group "failure-artifact-self-test" \
+        "hidden failing group used to verify failure artifact capture" \
+        "" \
+        "printf 'seed=artifact-self-test\nstep=before-failure\nlast successful view snapshot: none\ncommand_id=command:self-test event_id=event:self-test\nactive runtime diagnostic: synthetic\nprojection snapshot: synthetic\ntimer job snapshot: synthetic\n' && exit 7"
+fi
+
 FAST_GROUPS=("pure" "schema" "generated" "canister-check" "pocket-lock")
+PERF1_FAST_GROUPS=("pure-property" "service-regression" "projection-recovery" "canister-check")
 POCKET_PARALLEL_GROUPS=(
     "pocket-lock"
     "pocket-smoke"
@@ -148,19 +168,39 @@ POCKET_GROUPS=(
     "${POCKET_PARALLEL_GROUPS[@]}"
     "${POCKET_SERIAL_GROUPS[@]}"
 )
+PERF1_FOCUSED_GROUPS=(
+    "endpoint-auth"
+    "gate-l"
+    "render-projection"
+    "battle-round"
+    "command-recovery"
+    "visibility-redaction"
+)
+PERF1_LONG_FORM_GROUPS=(
+    "gate-j"
+    "gate-k"
+    "gate-l"
+    "movement"
+    "stationary"
+    "week-two"
+    "gate-m"
+)
 
 usage() {
     cat <<'USAGE'
 Usage:
   scripts/run-test-groups.sh list
-  scripts/run-test-groups.sh [fast|pocket|pocket-parallel|pocket-long|pocket-gate-m|pocket-serial|all-existing|GROUP...]
+  scripts/run-test-groups.sh [fast|perf1-fast|perf1-focused|perf1-long-form|pocket|pocket-parallel|pocket-long|pocket-gate-m|pocket-serial|all-existing|GROUP...]
 
 Environment:
   DOMM_TEST_JOBS      Parallel group limit. Defaults to min(nproc, 8).
   DOMM_TEST_LOG_DIR   Directory for per-group logs. Defaults under target/test-groups/.
+  DOMM_TEST_ARTIFACT_DIR
+                      Directory for failure bundles. Defaults to target/test-artifacts/.
 
 Examples:
   DOMM_TEST_JOBS=8 scripts/run-test-groups.sh fast
+  DOMM_TEST_JOBS=4 scripts/run-test-groups.sh perf1-focused
   DOMM_TEST_JOBS=4 scripts/run-test-groups.sh gate-k week-two gate-m
 USAGE
 }
@@ -181,6 +221,18 @@ selected_groups() {
     case "$1" in
         fast)
             printf "%s\n" "${FAST_GROUPS[@]}"
+            return
+            ;;
+        perf1-fast)
+            printf "%s\n" "${PERF1_FAST_GROUPS[@]}"
+            return
+            ;;
+        perf1-focused)
+            printf "%s\n" "${PERF1_FOCUSED_GROUPS[@]}"
+            return
+            ;;
+        perf1-long-form)
+            printf "%s\n" "${PERF1_LONG_FORM_GROUPS[@]}"
             return
             ;;
         pocket)
@@ -238,6 +290,10 @@ format_ms() {
     printf "%d.%03ds" "$((millis / 1000))" "$((millis % 1000))"
 }
 
+artifact_root() {
+    printf "%s\n" "${DOMM_TEST_ARTIFACT_DIR:-target/test-artifacts}"
+}
+
 run_prebuilds() {
     local -a prebuilds=()
     local -A seen=()
@@ -287,6 +343,162 @@ run_group() {
     printf "%s\t%s\t%s\t%s\n" \
         "$group" "$status" "$(format_ms "$elapsed")" "$command" >"$result_file"
     return "$status"
+}
+
+collect_log_matches() {
+    local output_file="$1"
+    local pattern="$2"
+    local description="$3"
+    local group log_file
+
+    {
+        printf "# %s\n\n" "$description"
+        printf "Run ID: %s\n\n" "$RUN_ID"
+    } >"$output_file"
+
+    for group in "${selected[@]}"; do
+        log_file="$LOG_DIR/$group.log"
+        {
+            printf "## %s\n\n" "$group"
+            if [[ -f "$log_file" ]]; then
+                grep -Ein "$pattern" "$log_file" | tail -200 || printf "No matching lines.\n"
+            else
+                printf "No log file was written for this group.\n"
+            fi
+            printf "\n"
+        } >>"$output_file"
+    done
+}
+
+write_failure_artifacts() {
+    local artifact_dir selected_text group result_file status elapsed command log_file
+    local -a failed_groups
+    artifact_dir="$(artifact_root)/$RUN_ID"
+    mkdir -p "$artifact_dir/logs"
+
+    failed_groups=()
+    for group in "${selected[@]}"; do
+        result_file="$LOG_DIR/$group.result"
+        if [[ -f "$result_file" ]]; then
+            IFS=$'\t' read -r _ status elapsed command <"$result_file"
+            cp "$result_file" "$artifact_dir/logs/$group.result"
+            if [[ "$status" != "0" ]]; then
+                failed_groups+=("$group")
+            fi
+        else
+            status="missing"
+            elapsed="unknown"
+            command="${GROUP_COMMANDS[$group]}"
+            failed_groups+=("$group")
+        fi
+        log_file="$LOG_DIR/$group.log"
+        if [[ -f "$log_file" ]]; then
+            cp "$log_file" "$artifact_dir/logs/$group.log"
+        fi
+    done
+
+    selected_text="${selected[*]}"
+    {
+        printf '# DOMM Test Failure Artifact\n\n'
+        printf -- '- Run ID: `%s`\n' "$RUN_ID"
+        printf -- '- Source log dir: `%s`\n' "$LOG_DIR"
+        printf -- '- Selected groups: `%s`\n' "$selected_text"
+        printf -- '- Failed groups: `%s`\n' "${failed_groups[*]:-none}"
+        printf -- '- Artifact dir: `%s`\n\n' "$artifact_dir"
+        printf '## Minimal Replay\n\n'
+        for group in "${failed_groups[@]}"; do
+            printf '```bash\n'
+            printf 'DOMM_TEST_JOBS=1 scripts/run-test-groups.sh %s\n' "$group"
+            printf '```\n\n'
+        done
+        printf '## Files\n\n'
+        printf -- '- `seed.txt`: seed and environment context\n'
+        printf -- '- `step-log.txt`: grouped command/status table and failed log tails\n'
+        printf -- '- `last-successful-view-snapshots.txt`: extracted view/snapshot lines\n'
+        printf -- '- `command-event-ids.txt`: extracted command/event/nonce lines\n'
+        printf -- '- `active-runtime-diagnostics.txt`: extracted runtime/diagnostic lines\n'
+        printf -- '- `projection-snapshot.txt`: extracted projection/flush/dirty lines\n'
+        printf -- '- `timer-job-snapshot.txt`: extracted timer/job/deadline lines\n'
+        printf -- '- `logs/`: full per-group logs and result rows\n'
+    } >"$artifact_dir/failure-summary.md"
+
+    {
+        printf "RUN_ID=%s\n" "$RUN_ID"
+        printf "SELECTED_GROUPS=%s\n" "$selected_text"
+        printf "FAILED_GROUPS=%s\n" "${failed_groups[*]:-none}"
+        printf "DOMM_TEST_SEED=%s\n" "${DOMM_TEST_SEED:-unset}"
+        printf "DOMM_SCENARIO_SEED=%s\n" "${DOMM_SCENARIO_SEED:-unset}"
+        printf "DOMM_BENCH_SEED=%s\n" "${DOMM_BENCH_SEED:-unset}"
+        printf "CANIC_POCKET_IC_LOCK_NAMESPACE_PREFIX=domm-%s-<group>\n" "$RUN_ID"
+        env | LC_ALL=C sort | grep -E '^(DOMM|CANIC|CARGO|RUST|CI|GITHUB)_' || true
+        printf "\n# Extracted Seed Lines\n\n"
+        for group in "${selected[@]}"; do
+            log_file="$LOG_DIR/$group.log"
+            printf "## %s\n\n" "$group"
+            if [[ -f "$log_file" ]]; then
+                grep -Ein 'seed|rng|random|scenario' "$log_file" | tail -200 || printf "No matching lines.\n"
+            else
+                printf "No log file was written for this group.\n"
+            fi
+            printf "\n"
+        done
+    } >"$artifact_dir/seed.txt"
+
+    {
+        printf "# Step Log\n\n"
+        printf "| Test group | Status | Time | Command |\n"
+        printf "| --- | --- | ---: | --- |\n"
+        for group in "${selected[@]}"; do
+            result_file="$LOG_DIR/$group.result"
+            if [[ -f "$result_file" ]]; then
+                IFS=$'\t' read -r _ status elapsed command <"$result_file"
+            else
+                status="missing"
+                elapsed="unknown"
+                command="${GROUP_COMMANDS[$group]}"
+            fi
+            printf '| %s | %s | %s | `%s` |\n' "$group" "$status" "$elapsed" "$command"
+        done
+        printf "\n# Failed Log Tails\n\n"
+        for group in "${failed_groups[@]}"; do
+            log_file="$LOG_DIR/$group.log"
+            printf "## %s\n\n" "$group"
+            if [[ -f "$log_file" ]]; then
+                tail -120 "$log_file"
+            else
+                printf "No log file was written for this group.\n"
+            fi
+            printf "\n"
+        done
+    } >"$artifact_dir/step-log.txt"
+
+    collect_log_matches "$artifact_dir/last-successful-view-snapshots.txt" \
+        'last successful|view snapshot|game_view|visible_objects|visible_map|champion_view|town_view|battle_state' \
+        "Last Successful View Snapshot Lines"
+    collect_log_matches "$artifact_dir/command-event-ids.txt" \
+        'command[_ -]?id|event[_ -]?(id|key|seq)|client_nonce|nonce|receipt|status' \
+        "Command, Event, Nonce, Receipt Lines"
+    collect_log_matches "$artifact_dir/active-runtime-diagnostics.txt" \
+        'active runtime|runtime diagnostic|runtime|diagnostic|dirty queue|queue_len|lag' \
+        "Active Runtime Diagnostic Lines"
+    collect_log_matches "$artifact_dir/projection-snapshot.txt" \
+        'projection|dirty|flush|lag|checkpoint|queue_len' \
+        "Projection Snapshot Lines"
+    collect_log_matches "$artifact_dir/timer-job-snapshot.txt" \
+        'timer|system_job|job|deadline|wakeup|repair|lease' \
+        "Timer and Job Snapshot Lines"
+
+    {
+        printf "#!/usr/bin/env bash\n"
+        printf "set -euo pipefail\n"
+        printf "cd %q\n" "$workspace_root"
+        for group in "${failed_groups[@]}"; do
+            printf "DOMM_TEST_JOBS=1 scripts/run-test-groups.sh %q\n" "$group"
+        done
+    } >"$artifact_dir/replay.sh"
+    chmod +x "$artifact_dir/replay.sh"
+
+    printf "\nFailure artifacts: %s\n" "$artifact_dir" >&2
 }
 
 case "${1:-}" in
@@ -356,7 +568,14 @@ done
 printf "\n| Test group | Status | Time | Command |\n"
 printf "| --- | --- | ---: | --- |\n"
 for group in "${selected[@]}"; do
-    IFS=$'\t' read -r result_group status elapsed command <"$LOG_DIR/$group.result"
+    if [[ -f "$LOG_DIR/$group.result" ]]; then
+        IFS=$'\t' read -r result_group status elapsed command <"$LOG_DIR/$group.result"
+    else
+        result_group="$group"
+        status="missing"
+        elapsed="unknown"
+        command="${GROUP_COMMANDS[$group]}"
+    fi
     if [[ "$status" == "0" ]]; then
         label="pass"
     else
@@ -367,12 +586,21 @@ for group in "${selected[@]}"; do
 done
 
 if ((overall != 0)); then
+    write_failure_artifacts
     printf "\nFailed group log tails:\n" >&2
     for group in "${selected[@]}"; do
-        IFS=$'\t' read -r _ status _ _ <"$LOG_DIR/$group.result"
+        if [[ -f "$LOG_DIR/$group.result" ]]; then
+            IFS=$'\t' read -r _ status _ _ <"$LOG_DIR/$group.result"
+        else
+            status="missing"
+        fi
         if [[ "$status" != "0" ]]; then
             printf "\n==> %s (%s)\n" "$group" "$LOG_DIR/$group.log" >&2
-            tail -80 "$LOG_DIR/$group.log" >&2
+            if [[ -f "$LOG_DIR/$group.log" ]]; then
+                tail -80 "$LOG_DIR/$group.log" >&2
+            else
+                printf "No log file was written for this group.\n" >&2
+            fi
         fi
     done
     exit "$overall"

@@ -13,6 +13,29 @@ movement, large procedural maps, diplomacy, guilds, ranked play, durable
 rematch, broad neutral AI, large spell trees, full bot opponents, and other
 items already parked in `spec.v2.md`.
 
+## Current Status - 2026-05-22
+
+This file is historical implementation planning, but the current code state is
+green for the first playable backend and canister-backed client contract.
+
+- `DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh` passed in
+  `target/benchmarks/20260522-164948-5cfd001`.
+- Required endpoint coverage is `59/59` across the benchmark gates.
+- Gate M's canister-backed web-client probe passes through lobby, map,
+  movement, build, recruit, battle, result, rematch affordance, and history.
+- The hard-target audit reports `0` violations.
+- `get_game_view` is a lightweight session shell; UI clients compose the real
+  view through dedicated map/object/champion/town/battle/event/history
+  endpoints.
+- `sync_session_turn` is part of the public UI recovery/progression contract
+  when render/query metadata reports `sync_required`; `sync_battle` is the
+  corresponding public battle timeout/recovery/aftermath sync boundary.
+- Town recruitment supports garrison targets and same-tile owned active
+  champion targets. Invalid champion targets return stable failed command
+  responses before spend/pool/stack mutation.
+- Durable rematch creation is still V2. The v1 client may expose only a
+  rematch affordance after result/history.
+
 ## 0. Testing Speed, Parallelism, And Checkpoint Discipline
 
 Priority: P0.
@@ -28,8 +51,9 @@ Checkpoint rules:
   isolated temp/target directories where useful, and parallel workers over
   one large serial run.
 - Do not assume PocketIC tests are parallel just because multiple cargo
-  processes were launched. Current runs wait on `/tmp/canic-pocket-ic.lock`, so
-  the first optimization checkpoint is removing or isolating that global lock.
+  processes were launched. Historical pre-2026-05-17 runs waited on
+  `/tmp/canic-pocket-ic.lock`; current scripts use per-run/per-group
+  `CANIC_POCKET_IC_LOCK_NAMESPACE` isolation.
 - Ramp PocketIC concurrency deliberately after the lock fix. Start with 4-8
   independent PocketIC instances, verify port/temp/state isolation, then
   increase worker count only when memory and process overhead are stable.
@@ -42,7 +66,7 @@ Checkpoint rules:
   explains what was accomplished. Each checkpoint commit should include the
   relevant `spec.1.1.md` checkbox/evidence update.
 
-Current timing notes from 2026-05-18 full regression:
+Historical timing notes from the 2026-05-18 full regression:
 
 | Test group | Last observed result/time | Parallel status / next action |
 | --- | --- | --- |
@@ -284,11 +308,13 @@ Testing-first todo:
   workspace tests and the optimized PocketIC recipe. Final PocketIC phase
   timings from `target/test-groups/20260518-051001`,
   `target/test-groups/20260518-051458`, and `target/test-groups/20260518-052022`:
-  `pocket-parallel` at 8 workers passed all 10 groups with max group time
+  `pocket-parallel` at 8 workers passed the then-current 10 groups with max group time
   274.274s, `pocket-long` at 4 workers passed all 6 long endpoint groups with
   max group time 322.933s, and isolated `pocket-gate-m` passed in 460.601s.
   After the run, one leftover PocketIC server from Gate M was terminated and the
   process check was clean.
+  Current `scripts/run-test-groups.sh` has 12 `pocket-parallel` groups; treat
+  this paragraph as historical timing evidence, not the live group inventory.
 
 ## Five-Agent Investigation Synthesis
 
@@ -364,9 +390,10 @@ Core implementation files called out by the investigation:
   captures the mine, receives income, and verifies IcyDB row health.
 - Public render endpoints never show stale champion coordinates, consumed piles
   as available, defeated neutrals as active, or captured mines as uncaptured.
-- Normal clients do not need to call `sync_session_turn`, `sync_battle`,
-  `sync_objectives`, `sync_world_events`, `sync_advanced_victory`, or any
-  future `process_next_turn` endpoint to keep backend state moving.
+- Normal clients may call `sync_session_turn` when render/query metadata
+  reports `sync_required`, and may call `sync_battle` for battle
+  timeout/recovery/aftermath catch-up. Scenario/world-generation sync
+  endpoints are status/recovery boundaries, not primary gameplay actions.
 
 ## Decision Lock-In
 
@@ -383,28 +410,31 @@ file and `spec.md`:
 - `get_session` is a lobby/setup shell. Active gameplay metadata comes from
   `get_game_view` render metadata, `get_content_manifest`, and dedicated
   bounded render endpoints.
-- All `sync_*` endpoints are internal maintenance concepts, not normal client
-  actions. If the public methods remain temporarily exposed, they are
-  admin/debug/manual recovery wrappers over the same durable `SystemJob`
-  runners used by timers, zero-delay continuations, awaited self-call
-  continuations, and ordinary gameplay commands. They must not be required in
-  client flow or shown as gameplay action affordances.
+- `sync_session_turn` and `sync_battle` are public sync/recovery endpoints, not
+  flavor actions. The client uses `sync_session_turn` when render/query
+  metadata reports `sync_required`, and may use `sync_battle` to make battle
+  deadlines, timeout recovery, or aftermath handoff visible promptly. They call
+  the same bounded progression paths used by timers, zero-delay continuations,
+  awaited self-call continuations, and ordinary gameplay commands.
 - Canister `get_game_view` remains a metadata shell, not a large aggregate. It
   must return `omitted_fields` when heavy collections are omitted, and omitted
   collections must report `has_more = false` and `next_cursor = None`.
 - V1.1 uses surveyed-base-map fog. Static map chunk terrain, movement, and
   flags may be returned for undiscovered chunks, but dynamic objects, owners,
   occupants, battle details, and events remain visibility-gated.
-- Town recruitment supports `RecruitTarget::TownGarrison` only. The
-  `RecruitTarget::Champion` DTO variant is reserved for v2 and must reject
-  before command creation, resource spending, or pool mutation.
+- Town recruitment supports `RecruitTarget::TownGarrison` and same-tile
+  `RecruitTarget::Champion` targets. Champion targets must be owned, active,
+  on the world map, not in battle, and on the same tile as the owned town.
+  Invalid champion targets return stable failed command responses before
+  resource spending, pool mutation, or stack mutation.
 - External dwellings with `direct_recruit = true` are remote rally points. They
   may recruit to any owned active world-map champion in the same session; no
   same-tile or distance check is required in v1.1.
-- V1.1 active economy is mine income, resource pickups/rewards, costs, tavern
-  hiring, marketplace trade, direct dwelling recruitment, and weekly
-  tavern/recruit growth. Town hall income, captured-town unrest mechanics,
-  pacification, recruit-pool halving, and desperation income are v2.
+- V1.1 active economy is captured mine income, resource pickups/rewards, costs,
+  tavern hiring, fixed-rate marketplace trade, direct dwelling recruitment, and
+  weekly tavern/recruit growth. Town/building income effects, marketplace
+  ownership rate improvements, captured-town unrest mechanics, pacification,
+  recruit-pool halving, and desperation income are v2.
 - Tactical neutral battle detail is private to involved participants. Hidden
   opponent town build/recruit events and hidden neutral battle outcomes are
   private or redacted according to visibility; no exact public hidden payloads.
@@ -431,22 +461,19 @@ Use these test classes consistently across every topic below:
   identities and records endpoint/IcyDB evidence. Do not add committed `blast`
   scripts unless explicitly requested.
 
-New PocketIC suites should be split by failure mode instead of added to the
-already-large endpoint tests:
-
-- `testing/pocket-ic/tests/timer_jobs.rs`
-- `testing/pocket-ic/tests/end_turn.rs`
-- `testing/pocket-ic/tests/battle_round_readiness.rs`
-- `testing/pocket-ic/tests/render_projection.rs`
-- `testing/pocket-ic/tests/query_budgets.rs`
-- `testing/pocket-ic/tests/command_recovery.rs`
-- `testing/pocket-ic/tests/visibility_redaction.rs`
+Current PocketIC grouping is owned by `scripts/run-test-groups.sh` aliases such
+as `timer-jobs`, `end-turn`, `battle-round`, `render-projection`,
+`query-budget`, `command-recovery`, and `visibility-redaction`. Many current
+cases still live in `testing/pocket-ic/tests/canister_endpoints.rs` and
+`testing/pocket-ic/tests/client_probe_canister.rs`; splitting them into
+one-file-per-failure-mode suites is optional future cleanup, not current file
+layout.
 
 ## 1. Local Canister Deployment And Blast Smoke
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
 - There is no committed root `dfx.json` or checked-in local deployment flow for
   DoMM.
@@ -485,12 +512,14 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
-- `sync_session_turn` is a client-visible update call and currently enforces
-  the 60-second turn deadline.
-- `sync_battle` is also client-visible and is needed when battle timeout work is
-  incomplete.
+- Historically, `sync_session_turn` was the only client-visible update call
+  enforcing the 60-second turn deadline. Current v1.1 also uses `end_turn`,
+  timer callbacks, and zero-delay continuations; public `sync_session_turn`
+  remains a recovery/progression endpoint.
+- `sync_battle` is also client-visible and can drive battle timeout/recovery
+  work when needed.
 - `sync_objectives`, `sync_world_events`, and `sync_advanced_victory` are
   client-visible materialization hooks. They currently make objective progress,
   world-event rows, and advanced victory checks look like gameplay calls even
@@ -563,10 +592,10 @@ Priority: P0.
   watchdogs or diagnostics, and keep them idempotent.
 - On `init` and `post_upgrade`, scan active sessions and battles in bounded
   slices, repair missing `SystemJob` rows, and reschedule the nearest due job.
-- Convert `sync_session_turn`, `sync_battle`, `sync_objectives`,
-  `sync_world_events`, and `sync_advanced_victory` into admin/debug/manual
-  recovery drivers or thin wrappers around the same internal job runners.
-  Normal clients should not need them.
+- Route `sync_session_turn`, `sync_battle`, `sync_objectives`,
+  `sync_world_events`, and `sync_advanced_victory` through the same internal
+  job runners used by timers and continuations. The client-facing sync methods
+  are public recovery/progression boundaries, not flavor actions.
 - Use a canister-side instruction soft limit with `instruction_counter()`.
   Before a slice approaches the limit, persist cursor state, set the job back
   to `scheduled` with `due_at = now`, and schedule a zero-delay timer.
@@ -601,14 +630,15 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
-- The spec requires turns to close early when all active map participants have
-  ended, but the canister has no active-turn `end_turn` endpoint.
-- Existing `mark_ready` is lobby-only and returns `session_not_joinable` during
-  active play.
-- There is no `ParticipantTurnReady` persistence.
-- The current turn only closes through deadline-driven `sync_session_turn`.
+- Historical gap: the spec required turns to close early when all active map
+  participants ended, but the canister originally had no active-turn
+  `end_turn` endpoint or `ParticipantTurnReady` persistence.
+- Current v1.1 closes map turns through `end_turn`, canister-owned timers,
+  zero-delay continuations, and public sync/recovery updates.
+- `mark_ready` is lobby-only and returns `session_not_joinable` during active
+  play; UI should surface `end_turn` instead.
 - `GameParticipant.ready_turn` exists, but it belongs to lobby/session setup
   semantics. Do not repurpose it for active map-turn readiness.
 
@@ -623,17 +653,17 @@ Priority: P0.
 - PocketIC: a participant with a champion in an active battle can still end the
   world-map turn while battle actions continue separately.
 
-### Proposed Solution
+### Current Implementation
 
-- Add `ParticipantTurnReady` keyed by
+- `ParticipantTurnReady` is keyed by
   `session_id + participant_id + turn_number`.
-- Add `ParticipantTurnReady` fields:
+- `ParticipantTurnReady` fields:
   `session_id`, `participant_id`, `turn_number`, `command_id`, and `ended_at`.
-- Add `ParticipantTurnReady` indexes:
+- `ParticipantTurnReady` indexes:
   unique `session_id + participant_id + turn_number`,
   nonunique `session_id + turn_number`,
   and optional `command_id`.
-- Add public update endpoint:
+- Public update endpoint:
   `end_turn(session_id, client_nonce) -> CommandResponse`.
 - Treat `end_turn` as a readiness marker, not a player lock. Ended players may
   keep acting while the same map turn remains open.
@@ -648,7 +678,7 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
 - Current turn sync resolves pending movement, materializes income, increments
   `current_turn`, and emits events in one client-triggered path.
@@ -696,7 +726,7 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
 - Existing client-probe routes are scripted and hard-code movement, build,
   recruit, and battle choices.
@@ -736,18 +766,27 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
-- `get_visible_objects` renders stale static known-object projection after
+- Historically, `get_visible_objects` rendered stale static known-object projection after
   movement, pickup, battle, capture, and income.
 - Champions appear at opening coordinates even after movement.
 - Consumed resource piles still render as available.
 - Defeated neutrals and captured mines can still render as active/available.
 - Newly visible objects are not reliably materialized into known-object rows.
 - Object and map chunk pages often return `page_info = null`.
-- Object pagination uses offset-like cursors rather than stable cursor tokens.
+- Object pagination uses numeric offset cursors over the current sorted
+  projection; clients must treat pages as live-state pagination, not a
+  snapshot.
 - Map chunks return public static terrain/movement/flags even for undiscovered
   chunks; dynamic state must remain redacted by visibility.
+
+Current outcome: the v1.1 public render contract is composed from
+runtime/durable projection endpoints that keep champion coordinates, consumed
+resource piles, defeated neutrals, captured mines, town ownership, and event
+visibility in sync for the first-playable route. Numeric object cursors remain
+live-state cursors rather than snapshot-isolated tokens, and clients must
+tolerate page changes between requests.
 
 ### Reproducible Tests
 
@@ -773,13 +812,14 @@ Priority: P0.
   live semantic state.
 - On movement and battle aftermath, update visible/discovered tiles and
   materialize newly discovered objects.
-- Return typed `ObjectDetails` as the primary v1.1 contract; keep JSON detail
-  payloads compatibility-only where they already exist.
+- Return redacted `details_json` in `ObjectView` as the current v1.1 contract
+  and use dedicated detail endpoints for typed town, champion, object, and
+  authorized battle detail.
 - Add `get_object_view(session_id, subject_kind, subject_id_text)` for selected
   map-object details. Full detail endpoints remain
   `get_town_view`, `get_champion_view`, and authorized `get_battle_state`.
-- Use stable cursor tokens for object pagination. Offset pagination is not a
-  v1.1 public contract.
+- Document the current numeric offset cursor behavior for object pagination and
+  its live-state limitations.
 - Always return page metadata for paged endpoints.
 - Document surveyed-base-map fog: map chunk `terrain_blob`, `movement_blob`,
   and `flags_blob` are public static map data and may be returned for
@@ -791,7 +831,7 @@ Priority: P0.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
 - `preview_move_path` can exceed the 5B local replica instruction limit for
   short or normal multi-step paths after real play history accumulates.
@@ -803,8 +843,11 @@ Priority: P0.
   blockers, towns, enemies, or neutrals.
 - Movement into an occupied champion tile can be accepted as an intent and then
   silently fail to move during sync.
-- Late movement while backend work is pending can be accepted today, which
-  differs from the v1.1 contract once a turn-resolution job has been accepted.
+- Late movement acceptance was a historical gap. Current v1.1 rejects new
+  turn-sensitive commands after the current-turn closure job is accepted,
+  running, or due, returning `backend_work_pending`/stale-expired semantics
+  before command creation. Exact retries of already-created commands still
+  replay.
 
 ### Reproducible Tests
 
@@ -813,7 +856,8 @@ Priority: P0.
 - PocketIC: movement into undiscovered static terrain is allowed within normal
   movement/path caps, but preview does not reveal hidden dynamic blockers,
   objects, owners, occupants, or events.
-- PocketIC: too-many-chunks movement is rejected.
+- PocketIC/pure: too-many-chunks movement is rejected in pure rules. Current
+  canister movement reports `chunks_touched` but does not reject by chunk count.
 - PocketIC: preview reports stops for pickups, guards, towns, enemy blockers,
   and occupied destination tiles.
 - PocketIC: moving into a currently occupied friendly champion tile is rejected
@@ -843,7 +887,7 @@ Priority: P0.
 Priority: P0 for timeout automation and guarded-mine route. P1 for battle
 spellcasting polish.
 
-### Current Problems
+### Historical Problem Statement
 
 - Battle can be driven through canister endpoints, but manual play is awkward
   because 30-second action deadlines trigger timeout flows quickly.
@@ -875,9 +919,10 @@ spellcasting polish.
   without waiting for active-stack deadlines.
 - PocketIC: a participant whose living stacks have all acted, are disabled, or
   have no enabled meaningful action is marked battle-round ready automatically.
-- PocketIC: when a participant ends the battle round, any still-unacted stacks
-  they own are deterministically marked skipped/defended for that round and
-  cannot later submit old-round battle actions.
+- PocketIC: when a participant ends the battle round, readiness is committed
+  immediately and old-round actions are blocked; remaining stacks are
+  auto-defended by the round-advance job, possibly over zero-delay
+  continuations.
 - PocketIC: timeout work that exceeds per-update budget schedules and completes
   a zero-delay continuation.
 - PocketIC: repeated `sync_battle` or timer wakeups on a resolved battle return
@@ -897,9 +942,10 @@ spellcasting polish.
   `end_battle_turn(session_id, battle_id, client_nonce) -> CommandResponse`.
   This is separate from map `end_turn`.
 - Battle `end_battle_turn` is a commitment for that battle round, unlike map
-  `end_turn`. The participant's remaining eligible stacks for that battle round
-  are resolved through deterministic system skip/defend commands, and later
-  old-round battle actions from that participant fail stale.
+  `end_turn`. It immediately records participant readiness and blocks later
+  old-round battle actions from that participant. The participant's remaining
+  eligible stacks are auto-defended by the round-advance job, possibly over
+  zero-delay continuations.
 - On every battle action, timeout job, battle view refresh driver, and
   `end_battle_turn`, recompute auto-readiness. A participant is auto-ready when
   no living stack they own can perform an enabled meaningful action this round.
@@ -929,14 +975,16 @@ spellcasting polish.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problems Fixed By Current Code
 
 - Build, recruit, tavern hire, and some economy commands can partially mutate
   state before failing.
 - `submit_build_town_structure` and `submit_recruit_units` are not included in
   the core recoverable command list.
-- Champion-target recruit can spend gold and decrement a pool before returning
-  `unsupported_recruit_target`, leaving a pending command and lost resources.
+- Earlier champion-target recruit paths could spend gold and decrement a pool
+  before returning an unsupported-target error. Current code supports valid
+  same-tile champion targets and returns stable failed command responses before
+  mutation for invalid targets.
 - Tavern hire can create champion/offer/resource mutations before an occupancy
   error and then fail differently on retry.
 - Turn sync can advance past a pending command that already mutated state.
@@ -950,9 +998,8 @@ Priority: P0.
   balance update. Retry must complete without double-spend or lost spend.
 - Trap/retry test: recruit decrements a pool then traps. Retry must complete or
   roll forward consistently.
-- Regression: unsupported champion-target recruit cannot create a command,
-  spend gold, decrement a pool, or leave a pending command unless the target is
-  fully implemented.
+- Regression: invalid champion-target recruit cannot spend gold, decrement a
+  pool, mutate stacks, or leave a pending command.
 - Regression: tavern hire into an occupied spawn tile cannot partially mutate
   state; exact nonce retry returns a recovered applied result or a stable failed
   command with no leaked effects.
@@ -987,11 +1034,11 @@ Priority: P0.
 Priority: P0 for no-loss mutations and client parity. P1 for weekly growth and
 town economy rules.
 
-### Current Problems
+### Historical Problems Fixed By Current Code
 
-- Town-to-champion recruitment is present in DTO/spec previews but unsupported
-  by canister submit.
-- Preview and submit disagree for some recruit targets.
+- Town-to-champion recruitment used to be present in DTO/spec previews but
+  unsupported by canister submit. Current code supports same-tile owned active
+  champion targets and shares validation between preview and submit.
 - External dwelling recruitment succeeded remotely; v1.1 now documents that as
   intentional, but active/not-in-battle target validation still needs hardening.
 - Tavern week-two offers are missing after the week boundary.
@@ -1001,15 +1048,17 @@ town economy rules.
 - Build preview can exceed query budget for ordinary next buildings.
 - Build validation order can return resource errors before
   `already_built_this_turn`, which may confuse the client.
-- Town hall income, capture unrest, unrest reduction, and desperation income
-  are deferred to v2; active v1.1 docs and endpoints must stop presenting them
-  as mechanical systems.
+- Town/building income effects, capture unrest, unrest reduction, marketplace
+  ownership rate improvements, and desperation income are deferred to v2;
+  active v1.1 docs and endpoints must stop presenting them as mechanical
+  systems.
 
 ### Reproducible Tests
 
 - PocketIC: preview and submit for every recruit target variant agree.
-- PocketIC: champion-target town recruitment returns `unsupported_recruit_target`
-  before command creation, resource spend, pool decrement, or stack mutation.
+- PocketIC: valid same-tile champion-target town recruitment applies and
+  creates/merges a champion army stack; invalid champion targets fail before
+  resource spend, pool decrement, or stack mutation.
 - PocketIC: direct dwelling recruitment succeeds remotely into an owned active
   world-map champion and rejects non-owned, inactive, defeated, garrisoned, or
   in-battle targets before mutation.
@@ -1024,10 +1073,15 @@ town economy rules.
 
 ### Proposed Solution
 
-- Make preview and submit share target validation and resource validation.
-- For champion-target town recruitment, reject `RecruitTarget::Champion` before
-  command creation, resource spend, pool decrement, or stack mutation.
-  `RecruitTarget::Champion` remains a reserved v2 DTO variant.
+- Make preview and submit share target validation and resource validation where
+  the canister contract has promoted that rule. Current canister movement
+  validation enforces length, bounds, adjacency, terrain cost, and submit-time
+  friendly blockers; static undiscovered terrain is allowed and chunk-count
+  rejection remains pure/future unless promoted.
+- For champion-target town recruitment, use the same target validation in
+  preview and submit. Valid same-tile owned active champion targets create or
+  merge champion army stacks; invalid targets return failed command responses
+  before resource spend, pool decrement, or stack mutation.
 - Direct external dwelling recruitment is remote in v1.1. If the dwelling pool
   is owned, `direct_recruit = true`, and the target champion is owned, active,
   on the world map, and not in battle, no same-tile or distance check is
@@ -1037,23 +1091,27 @@ town economy rules.
   tile, or pre-submit `town_occupied` error.
 - Materialize or project weekly recruit growth consistently.
 - Move expensive build preview reads onto indexed bounded paths.
-- Keep v1.1 active economy to mine income, pickups/rewards, costs, tavern
-  hiring, market trade, direct dwelling recruitment, and weekly tavern/recruit
-  growth. Town hall income, captured-town unrest mechanics, pacification,
-  recruit-pool halving, and desperation income are deferred to v2; any
-  `unrest_until_turn` value is non-mechanical capture metadata in v1.1.
+- Keep v1.1 active economy to captured mine income, pickups/rewards, costs,
+  tavern hiring, fixed-rate market trade, direct dwelling recruitment, and
+  weekly tavern/recruit growth. Town/building income effects such as
+  `town_income_gold_250`, marketplace ownership rate improvements,
+  captured-town unrest mechanics, pacification, recruit-pool halving, and
+  desperation income are deferred to v2; any `unrest_until_turn` value is
+  non-mechanical capture metadata in v1.1.
 
 ## 11. Champion Progression, Spells, And Events
 
 Priority: P1, except event idempotency is P0 where it affects client history.
 
-### Current Problems
+### Historical Problem Statement
 
 - Learned adventure spells are visible in progression preview but not in
   `get_champion_view` or roster rows.
 - Recasting the same adventure spell can reuse an old event key, so later casts
   do not appear as new public events.
-- Battle spellcasting is not consistently exposed as a legal battle action.
+- Battle spellcasting exposure was historical drift; current v1.1 keeps learned
+  battle spells in scope through `CastAbility`, with disabled reasons when a
+  cast is unavailable.
 - Event and command payloads are JSON strings inside structured Candid, which
   requires client-specific parsing.
 
@@ -1082,7 +1140,7 @@ Priority: P1, except event idempotency is P0 where it affects client history.
 
 Priority: P0.
 
-### Current Problems
+### Historical Problem Statement
 
 - Hidden opponent town build/recruit actions are redacted in public events and
   available in full only through participant-private event audiences.
@@ -1123,7 +1181,7 @@ Priority: P0.
 
 Priority: P0 for one-call setup. P1 for metadata polish.
 
-### Current Problems
+### Historical Problem Statement
 
 - The repeated-call `start_session` model was not acceptable for a playable
   client. The v1.1 contract is now one host update call; the canister drives
@@ -1157,7 +1215,10 @@ Priority: P0 for one-call setup. P1 for metadata polish.
 - Contract test: `get_game_view`, `get_content_manifest`, setup progress, and
   dedicated endpoints expose current turn, max turns, turn timing, content hash,
   map size, chunk size, and setup state needed by callers.
-- Error test: `mark_ready` in active state returns a readiness-specific error.
+- Error test: `mark_ready` is lobby-only. Active sessions must use `end_turn`;
+  if a client calls `mark_ready` after activation, the current canister returns
+  `session_not_joinable`, and UI should not surface `mark_ready` during active
+  play.
 
 ### Proposed Solution
 
@@ -1192,26 +1253,34 @@ Priority: P0 for one-call setup. P1 for metadata polish.
   participants. Gameplay metadata comes from `get_game_view` render metadata,
   `get_content_manifest`, and dedicated map, object, champion, town, battle,
   event, and command-status endpoints.
-- Replace ambiguous readiness errors with `session_not_in_lobby`,
-  `participant_not_found`, or a similarly specific code.
+- Keep `mark_ready` out of active-play UI. The current canister reports
+  `session_not_joinable` outside the lobby; a clearer readiness-specific code
+  remains optional cleanup, not the current client contract.
 
 ## 14. Scenario Progress, Victory, And Match History
 
 Priority: P1.
 
-### Current Problems
+### Historical Problem Statement
 
-- Max-turn stalemate scoring is specified but not finalized from turn sync.
-- Scenario progress can mark `max_turn_reached` without finalizing the match.
-- Match history cannot be verified until victory/finalization paths work.
+- Historically, max-turn stalemate scoring was specified but not finalized from
+  turn sync. Current canister scenario rules can report `max_turn_reached`, but
+  full stalemate finalization by mines, army power, and a distinct
+  `max_turn_score` finish reason is not the public UI contract.
+- The UI should treat `GameSession.state`, `winner_participant_id`,
+  `finish_reason`, victory events, and match history as authoritative.
+- Match history verification was historically blocked on victory/finalization;
+  current endpoint/benchmark coverage includes match-history reads after
+  finalization paths.
 - Some scenario/world-generation sync endpoints behave like status
   synchronizers and may append events even when the system is disabled or
   future-scoped.
 
 ### Reproducible Tests
 
-- PocketIC: advance to max turn and assert winner scoring by towns, mines, army
-  power, and seeded tie-break.
+- PocketIC: advance to max turn and assert scenario progress reports
+  `max_turn_reached`; separately assert any promoted full stalemate scoring if
+  the canister later implements that public finish path.
 - PocketIC: finalization creates match history visible to the right players.
 - PocketIC: objective and world-event sync/status endpoints are idempotent and
   do not expose future disabled systems as active gameplay or append public
@@ -1219,9 +1288,11 @@ Priority: P1.
 
 ### Proposed Solution
 
-- Finalize max-turn victory from the backend turn-resolution job or a clearly
-  documented scenario job.
-- Add deterministic scoring helpers and tests in pure rules and canister tests.
+- Treat full max-turn score finalization as optional cleanup until it is exposed
+  through `GameSession.state`, `winner_participant_id`, `finish_reason`, victory
+  events, and match history.
+- If promoted, add deterministic scoring helpers and tests in pure rules and
+  canister tests.
 - Ensure match history is created by every victory/finalization path.
 - Disabled/future systems are not player-action endpoints in v1.1. Public
   status queries may return disabled rows only with `status = "disabled"`,
@@ -1234,7 +1305,7 @@ Priority: P1.
 Priority: P1, with query-budget blockers promoted to P0 where they affect
 normal client play.
 
-### Current Problems
+### Historical Problem Statement
 
 - `get_diagnostic_storage_snapshot` can exceed the local 5B instruction limit
   when called with many entity names.
@@ -1268,7 +1339,7 @@ normal client play.
 
 Priority: P1.
 
-### Current Problems
+### Historical Problem Statement
 
 - README and TESTING still describe PocketIC as a scaffold even though canister
   tests are now meaningful.
@@ -1534,8 +1605,8 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
     canister_endpoints pocket_ic_end_turn_closes_turn_and_blocks_stale_actions
     -- --nocapture` passed in 61.90s.
 - [x] Audit `spec.md`: `ParticipantTurnReady`, public API shape,
-  `CommandResult::EndTurn`, turn advancement rule, and map/battle separation
-  agree with code.
+  `end_turn` returning `CommandResult::StrategicReceipt`, turn advancement
+  rule, and map/battle separation agree with code.
 - [x] Audit `spec.1.1.md`: Topic 3 and first-gate criteria are complete.
 - [x] Gate tests: end-turn PocketIC route and `make check-canister`.
   Completed 2026-05-18 with `make check-canister` and the focused
@@ -1543,11 +1614,10 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 
 ### Gate 5. Timer-Driven Turn Resolution
 
-- [x] Split `sync_session_turn` into a manual recovery wrapper over an internal
+- [x] Route public `sync_session_turn` through the internal
   `process_turn_resolution_slice`.
-- [x] Split `sync_objectives`, `sync_world_events`, and
-  `sync_advanced_victory` into manual recovery wrappers over internal scenario
-  maintenance job runners.
+- [x] Route `sync_objectives`, `sync_world_events`, and
+  `sync_advanced_victory` through internal scenario maintenance job runners.
 - [x] Schedule `turn_deadline:{session_id}:{turn_number}` on activation and on
   every new turn.
 - [x] Add scenario job keys and runners:
@@ -1622,8 +1692,8 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 
 ### Gate 6. Timer-Driven Battle Timeout And Battle Round Readiness
 
-- [x] Split `sync_battle` into a manual recovery wrapper over internal battle
-  timeout/round jobs.
+- [x] Route public `sync_battle` through the internal battle timeout/round
+  jobs.
 - [x] Schedule `battle_timeout:{battle_id}:{deadline_ms}` whenever an action
   deadline is created or advanced.
 - [x] Add `end_battle_turn(session_id, battle_id, client_nonce)`.
@@ -1645,7 +1715,8 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
     bounded battle-round auto-defend work per timer message and made due-now
     system jobs replace stale later wakeups.
 - [x] Audit `spec.md`: `BattleParticipantRoundReady`, `end_battle_turn`,
-  `EndBattleTurn`, battle DTO readiness fields, and battle timeout rules match.
+  `EndBattleTurn`, battle readiness semantics without public readiness arrays,
+  and battle timeout rules match.
 - [x] Audit `spec.1.1.md`: Topic 8 and first-gate criteria match code.
 - [x] Gate tests: `timer_jobs`, `battle_round_readiness`, battle service tests,
   `make check-canister`.
@@ -1661,8 +1732,9 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 - [x] Add build, recruit, tavern hire, dwelling recruit, and any missing economy
   commands to recoverable saga handling or reject unsupported paths before
   command creation.
-- [x] Reject champion-target town recruitment before command creation so
-  unsupported targets cannot spend, decrement pools, or leave pending commands.
+- [x] Support valid same-tile champion-target town recruitment and ensure
+  invalid champion targets fail before spend, pool mutation, stack mutation, or
+  pending-command leakage.
 - [x] Fix tavern hire placement/recovery so occupancy failure cannot leak
   champion, offer, or resource mutations.
 - [x] Make battle aftermath and guarded-object capture idempotent per
@@ -1760,7 +1832,7 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 - [x] Materialize newly discovered objects when movement/visibility changes.
 - [x] Add `GameView.omitted_fields`; omitted collections must report
   `has_more = false` and `next_cursor = None`.
-- [x] Return typed `ObjectDetails` as the primary object-detail contract and
+- [x] Keep redacted `details_json` as the object-list details contract and
   add/document `get_object_view` for selected map object details.
 - [x] Document surveyed-base-map fog: static terrain/movement/flags may be
   returned for undiscovered chunks, but dynamic state stays visibility-gated.
@@ -1885,8 +1957,8 @@ battle resolution, guarded-mine capture, later mine income, and diagnostics.
 
 ### Gate 13. Economy, Tavern, Recruitment, Spells, And Victory Polish
 
-- [x] Reject champion-target town recruitment in preview and submit before
-  command creation; keep `RecruitTarget::Champion` reserved for v2.
+- [x] Support valid same-tile champion-target town recruitment in preview and
+  submit; invalid targets fail before spend/pool/stack mutation.
 - [x] Document and test remote direct dwelling recruitment into owned active
   world-map champions; reject invalid targets before spend/pool mutation.
 - [x] Implement week-two tavern offers and recruit growth projection/materialization.

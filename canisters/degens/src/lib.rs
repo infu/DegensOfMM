@@ -39,21 +39,8 @@ icydb::start!();
 
 #[canic_cdk::init]
 fn init() {
-    if let Err(error) = services::account_lobby_session::repair_first_playable_content_cache() {
-        canic_cdk::eprintln!(
-            "first playable content cache init repair failed: {}",
-            error.message
-        );
-    }
-    if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
-        canic_cdk::eprintln!(
-            "active session admission cache init repair failed: {}",
-            error.message
-        );
-    }
-    if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
-        canic_cdk::eprintln!("system job init repair failed: {}", error.message);
-    }
+    if let Err(_error) = services::account_lobby_session::repair_first_playable_content_cache() {}
+    if let Err(_error) = services::account_lobby_session::repair_active_session_admission_cache() {}
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
@@ -95,27 +82,8 @@ fn post_upgrade() {
     if let Err(error) = services::session_turn_runtime::restore_snapshot_after_upgrade() {
         panic!("session turn runtime post-upgrade restore failed: {error}");
     }
-    if let Err(error) = services::account_lobby_session::repair_active_session_admission_cache() {
-        canic_cdk::eprintln!(
-            "active session admission cache post-upgrade repair failed: {}",
-            error.message
-        );
-    }
-    if let Err(error) = services::account_lobby_session::repair_first_playable_content_cache() {
-        canic_cdk::eprintln!(
-            "first playable content cache post-upgrade repair failed: {}",
-            error.message
-        );
-    }
-    if let Err(error) = services::system_jobs::repair_and_schedule_after_install_or_upgrade() {
-        canic_cdk::eprintln!("system job post-upgrade repair failed: {}", error.message);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-#[unsafe(export_name = "canister_heartbeat")]
-extern "C" fn canister_heartbeat() {
-    services::system_jobs::heartbeat_tick();
+    if let Err(_error) = services::account_lobby_session::repair_active_session_admission_cache() {}
+    if let Err(_error) = services::account_lobby_session::repair_first_playable_content_cache() {}
 }
 
 #[allow(dead_code)]

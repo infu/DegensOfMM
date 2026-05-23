@@ -207,6 +207,18 @@ pub(crate) fn cache_seeded_spells(rows: &[SpellDefinition], preferred_slug: Opti
     }
 }
 
+#[cfg(test)]
+pub(crate) fn clear_cached_spell_for_tests() {
+    SPELL_SLUG_CACHE.with(|cache| {
+        *cache.borrow_mut() = None;
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn cached_spell_slug_for_tests() -> Option<String> {
+    SPELL_SLUG_CACHE.with(|cache| cache.borrow().as_ref().map(|row| row.slug.clone()))
+}
+
 fn cached_spell_by_slug(ruleset_id: Id<RulesetDefinition>, slug: &str) -> Option<SpellDefinition> {
     let ruleset_key = ruleset_id.key();
     SPELL_SLUG_CACHE.with(|cache| {

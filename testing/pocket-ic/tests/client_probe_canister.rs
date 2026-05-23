@@ -2389,6 +2389,7 @@ fn covered_required_endpoints(calls: &[BenchmarkCallRecord]) -> BTreeSet<&'stati
         .filter(|endpoint| {
             calls.iter().any(|call| {
                 call.method == endpoint.name
+                    && call.ok
                     && matches!(
                         (&call.kind[..], endpoint.kind),
                         ("query", EndpointKind::Query) | ("update", EndpointKind::Update)
@@ -2740,6 +2741,8 @@ fn assert_canister_client_state(state: &WebClientState) {
     assert!(state.retry_replays >= 3);
     assert!(state.match_result.is_some());
     assert!(state.match_history.entries_returned >= 1);
+    assert_unique_event_sequences(state);
+    assert_stable_command_receipts_per_nonce(state);
     let command_errors = state
         .command_log
         .iter()
@@ -2761,6 +2764,33 @@ fn assert_canister_client_state(state: &WebClientState) {
             .iter()
             .any(|event| event.event_type == "session_started")
     );
+}
+
+fn assert_unique_event_sequences(state: &WebClientState) {
+    let mut seen = BTreeSet::new();
+    for event in &state.event_feed {
+        assert!(
+            seen.insert(event.event_seq),
+            "duplicate event sequence in web-client event feed: {}",
+            event.event_seq
+        );
+    }
+}
+
+fn assert_stable_command_receipts_per_nonce(state: &WebClientState) {
+    let mut by_nonce = BTreeMap::new();
+    for entry in &state.command_log {
+        if let Some(existing_command_id) = by_nonce.insert(
+            (entry.command_type.as_str(), entry.client_nonce.as_str()),
+            entry.command_id.as_str(),
+        ) {
+            assert_eq!(
+                existing_command_id,
+                entry.command_id.as_str(),
+                "same command type/nonce must replay the original command id"
+            );
+        }
+    }
 }
 
 fn assert_representative_dtos_match(fixture: &GameView, canister: &GameView) {

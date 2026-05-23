@@ -6,7 +6,11 @@ first-playable audit; Gate O is the final docs/spec/regression agreement pass.
 
 ## Gate 14 Closure
 
-Status: pass as of 2026-05-18.
+Status: pass as of 2026-05-22.
+
+Current benchmark evidence: `DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh`
+passed in `target/benchmarks/20260522-164948-5cfd001` with `59/59` required
+endpoints covered, Gate M passing, and zero hard-target audit violations.
 
 The active `spec.md` v1.1 contract has implementation and test evidence:
 
@@ -15,7 +19,7 @@ The active `spec.md` v1.1 contract has implementation and test evidence:
 | `spec.md` Part 1 | Design background only under the redaction note. Anything without the bounded Part 2 model, endpoint, recovery path, deterministic key, caps, and tests remains deferred. |
 | `spec.md` Part 2 database, architecture, turn, command, API, lazy, budget, evolution, and first-playable sections | Covered by typed IcyDB repositories, public Candid endpoints, setup/turn/battle system jobs, command/effect/event recovery, bounded render endpoints, diagnostics, and the first-playable route tests. |
 | `spec.1.1.md` Topics 0-16 | Closed through the Gate 1-14 checklist; remaining expansion mechanics are in `spec.v2.md`. |
-| Historical `spec.missing.md` findings | Classified as fixed, deferred, or historical evidence in the 2026-05-18 status note at the top of that file. No blocking v1.1 item remains open there. |
+| Historical `spec.missing.md` findings | Classified as fixed, deferred, or historical evidence in the 2026-05-22 status note at the top of that file. No blocking v1.1 item remains open there. |
 | Public read endpoints versus IcyDB diagnostics | Gate L reads public state through `get_session`, `get_visible_objects`, `get_champion_view`, `get_town_view`, `get_events_after`, and `get_match_history`, then verifies the expected typed IcyDB diagnostic row counts for the same route. Local blast evidence also records `icydb_snapshot` with zero corrupted entries/keys and small-batch diagnostic row counts. |
 | Local new-developer route | `dfx.json`, `make build-wasm`, `make dfx-deploy-local`, and `docs/local-deploy-blast.md` provide the committed local deploy path. The local checklist uses one `start_session` call, polls setup state, plays through public endpoints, and verifies IcyDB diagnostics in batches. |
 
@@ -43,7 +47,7 @@ canister e2e, Gate M canister-backed client probe, and doc tests.
 | Content and first playable map | Implemented for the hand-authored compact 1v1 map, content manifest, factions, units, buildings, objects, terrain, towns, champions, neutrals, and walkthrough targets. |
 | Map, visibility, and rendering | Implemented through map chunks, terrain/movement/flag blobs, visibility chunks, known objects, occupancy, redaction, and bounded viewport/list queries. |
 | Movement and turn sync | Implemented with replaceable movement intents, persisted turn-sync slices, movement snapshots, object stops, conflict/blocker handling, visibility refreshes, and IcyDB command/effect/event rows. |
-| Late movement-intent hard rejection | Intentionally deferred from v1. V1 keeps sync-driven turn closure through `sync_required` metadata and `sync_session_turn`; hard canister-side rejection of late new `submit_move_intent` calls is documented in `spec.v2.md` as non-blocking contract cleanup. |
+| Late movement-intent hard rejection | Implemented at the accepted-closure boundary. V1.1 rejects new turn-sensitive commands after the current-turn closure job is accepted, running, or due, returning `backend_work_pending`/stale-expired semantics before command creation; exact retries of already-created commands still replay. |
 | Resources and economy | Implemented for pickups, ledger-backed spends/rewards, income materialization, mine ownership cutover, marketplace trading, tavern hiring, and one external dwelling slice. Broader economy variety is V2. |
 | Towns and recruitment | Implemented for town ownership, buildings, build previews/commands, recruit pools, garrison/champion targets, direct recruitment, and recovery-safe resource spends. |
 | Champions, armies, artifacts, magic | Implemented for v1 champion state, army stacks, status, XP/level caps, bounded level-up/spell learning/adventure spell/battle spell slice, artifact ownership/equipment/capture, and explicit unsupported-effect responses. Larger spell/skill/artifact-set expansion is V2. |
@@ -58,7 +62,10 @@ canister e2e, Gate M canister-backed client probe, and doc tests.
 
 ## Gate N History
 
-Status: pass. `make regression` completed successfully for checkpoint 20.
+Historical full-regression status: pass. `make regression` completed
+successfully for checkpoint 20. Current benchmark evidence is the 2026-05-22
+`DOMM_BENCH_JOBS=5 scripts/run-benchmarks.sh` run recorded at the top of this
+file.
 
 The first playable production backend is `canisters/degens`. Public gameplay
 uses typed Candid endpoints backed by IcyDB rows in `schema/degens`; the pure
@@ -70,7 +77,7 @@ layer.
 | Area | Audit result |
 | --- | --- |
 | IcyDB schema and repositories | Implemented with typed domain repositories, indexed hot-path plan tests, relation/deletion tests, and generic SQL scans limited to diagnostics. |
-| Public canister endpoints | 28 required 19A endpoints were exported in Candid, inventoried, and called by Pocket-IC tests at Gate N. Checkpoints 22-25 expand the live inventory to 54 with champion progression, magic, tavern, market, external dwelling, objective, quest, world-event, scenario-rule, skirmish, procedural-map, naval-route, and siege-rule endpoints. |
+| Public canister endpoints | The current required gameplay inventory is `59` endpoints, all exported in Candid, inventoried, and covered across the benchmark gates. The historical Gate N inventory started with 28 required 19A endpoints; checkpoints 22-25 and later perf/client work expanded the live surface with champion progression, magic, tavern, market, external dwelling, objective, quest, world-event, scenario-rule, skirmish, procedural-map, naval-route, siege-rule, timer/probe, and dedicated render/detail endpoints. |
 | Lobby/session/setup | IcyDB-backed registration, create/join/ready/start, setup phases, setup recovery, participant rows, and match-history shells are implemented. |
 | Content/opening views | First-playable content, map, visibility, objects, champions, towns, neutrals, economy, and opening viewport projections are persisted and queryable. |
 | Strategic gameplay | Movement intents, sync slicing, resource pickup, mine capture/income, building, recruitment, object visits, visibility, and battle handoff persist IcyDB rows. |
@@ -99,7 +106,7 @@ naval/siege/larger-map gameplay.
 
 ## Known Follow-Up
 
-Hard rejection of late new `submit_move_intent` calls is explicitly deferred to
-`spec.v2.md` as non-blocking contract cleanup. The public API no longer trusts
-caller time, and the current playable route uses the existing sync-driven turn
-submission behavior with `sync_required` plus `sync_session_turn`.
+The public API no longer trusts caller time. New turn-sensitive commands after
+the accepted turn-closure boundary fail before command creation; the remaining
+optional V2 cleanup is stricter raw wall-clock rejection before a closure job has
+been accepted.

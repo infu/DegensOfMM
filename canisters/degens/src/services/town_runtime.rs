@@ -145,7 +145,11 @@ fn cached_town_by_alias(session_id: Id<GameSession>, alias: &str) -> Option<Town
     })
 }
 
-fn cached_town_by_xy(session_id: Id<GameSession>, town_x: u16, town_y: u16) -> Option<Town> {
+pub(crate) fn cached_town_by_xy(
+    session_id: Id<GameSession>,
+    town_x: u16,
+    town_y: u16,
+) -> Option<Town> {
     TOWN_PROJECTIONS.with(|projections| {
         projections
             .borrow()
@@ -156,6 +160,21 @@ fn cached_town_by_xy(session_id: Id<GameSession>, town_x: u16, town_y: u16) -> O
                     && projection.town.y == town_y
             })
             .map(|projection| projection.town.clone())
+    })
+}
+
+pub(crate) fn cached_tavern_offer_by_key(town: &Town, offer_key: &str) -> Option<TavernOffer> {
+    TOWN_PROJECTIONS.with(|projections| {
+        projections
+            .borrow()
+            .get(&town_key(town))
+            .and_then(|projection| {
+                projection
+                    .tavern_offers
+                    .iter()
+                    .find(|offer| offer.offer_key == offer_key)
+                    .cloned()
+            })
     })
 }
 

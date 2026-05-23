@@ -20,7 +20,6 @@ use crate::repos::{
     map_visibility_occupancy, scenario_progress, sessions, system_jobs as system_job_repo,
 };
 
-use super::system_jobs as system_job_service;
 #[cfg(not(feature = "benchmark"))]
 use super::worldmap_kernel;
 use super::{
@@ -395,60 +394,24 @@ pub(crate) fn schedule_turn_maintenance_jobs(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<(), ApiError> {
-    schedule_turn_maintenance_jobs_durable(session, command_id)
+    run_turn_maintenance_inline(session, command_id).map(|_| ())
 }
 
-fn schedule_turn_maintenance_jobs_durable(
+pub(crate) fn run_turn_maintenance_inline(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
-) -> Result<(), ApiError> {
+) -> Result<u32, ApiError> {
     if session.state != "active" {
-        return Ok(());
+        return Ok(0);
     }
-
-    schedule_scenario_job(session, command_id, "scenario_objectives")?;
-    Ok(())
-}
-
-fn schedule_scenario_job(
-    session: &GameSession,
-    command_id: Option<Id<GameCommand>>,
-    job_kind: &str,
-) -> Result<(), ApiError> {
-    let due_at = Timestamp::now();
-    let job_key = format!("{job_kind}:{}:{}", session.id(), session.current_turn);
-    let draft = system_job_repo::SystemJobDraft {
-        job_key,
-        job_kind: job_kind.to_string(),
-        session_id: session.id(),
-        battle_id: None,
-        turn_number: Some(session.current_turn),
-        due_at,
+    let objectives = sync_objective_rows_for_session(session.id(), command_id)?;
+    ensure_current_world_event(session, command_id)?;
+    let victory = sync_scenario_rule_rows_for_session_with_completed_objectives(
+        session,
         command_id,
-        cursor_json: None,
-    };
-    #[cfg(feature = "benchmark")]
-    {
-        let job = system_job_service::schedule_job(draft)?;
-        if job.status == system_job_repo::STATUS_COMPLETED {
-            let mut job = job;
-            job.command_id = command_id.map(|id| id.key());
-            system_job_repo::reschedule_system_job(job, due_at, None)?;
-        }
-        return Ok(());
-    }
-    #[cfg(not(feature = "benchmark"))]
-    {
-        let job = system_job_repo::upsert_system_job(draft)?;
-
-        if job.status == system_job_repo::STATUS_COMPLETED {
-            let mut job = job;
-            job.command_id = command_id.map(|id| id.key());
-            system_job_repo::reschedule_system_job(job, due_at, None)?;
-        }
-
-        system_job_service::schedule_nearest_due_job()
-    }
+        Some(objectives.completed),
+    )?;
+    Ok(objectives.touched.saturating_add(1).saturating_add(victory))
 }
 
 pub(crate) fn process_scenario_maintenance_job(job: SystemJob) -> Result<(), ApiError> {
@@ -508,13 +471,7 @@ fn process_scenario_maintenance_job_inner(job: SystemJob) -> Result<(), ApiError
         }
     }
 
-    let completed_job_kind = job.job_kind.clone();
     system_job_repo::complete_system_job(job)?;
-    if completed_job_kind == "scenario_objectives" {
-        schedule_scenario_job(&session, None, "world_events")?;
-    } else if completed_job_kind == "world_events" {
-        schedule_scenario_job(&session, None, "advanced_victory")?;
-    }
     Ok(())
 }
 
@@ -616,15 +573,9 @@ fn apply_scenario_maintenance_job(
 #[cfg(not(feature = "benchmark"))]
 fn complete_scenario_maintenance_job(
     job: SystemJob,
-    session: &GameSession,
+    _session: &GameSession,
 ) -> Result<(), ApiError> {
-    let completed_job_kind = job.job_kind.clone();
     system_job_repo::complete_system_job(job)?;
-    match completed_job_kind.as_str() {
-        "scenario_objectives" => schedule_scenario_job(session, None, "world_events")?,
-        "world_events" => schedule_scenario_job(session, None, "advanced_victory")?,
-        _ => {}
-    }
     Ok(())
 }
 
@@ -1077,6 +1028,7 @@ fn ensure_current_world_event(
     session: &GameSession,
     command_id: Option<Id<GameCommand>>,
 ) -> Result<WorldEventState, ApiError> {
+    expire_old_world_events(session, command_id)?;
     let event = domm_game::deterministic_world_event(session.seed, session.current_turn);
     if let Some(row) = cached_world_event_by_key(session.id(), &event.event_key) {
         return Ok(row);
@@ -1105,6 +1057,24 @@ fn ensure_current_world_event(
             Ok(row)
         }
     }
+}
+
+fn expire_old_world_events(
+    session: &GameSession,
+    command_id: Option<Id<GameCommand>>,
+) -> Result<(), ApiError> {
+    for mut row in world_event_rows_by_status(session.id(), "active")? {
+        if row.ends_turn >= session.current_turn {
+            continue;
+        }
+        row.status = "expired".to_string();
+        if let Some(command_id) = command_id {
+            row.last_command_id = Some(command_id.key());
+        }
+        let row = scenario_progress::update_world_event_state(row)?;
+        remember_world_event_row(session.id(), row);
+    }
+    Ok(())
 }
 
 fn sync_quest_victory_rule_after_claim(

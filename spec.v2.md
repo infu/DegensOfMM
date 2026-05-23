@@ -39,10 +39,14 @@ similar Part 1 design note exists.
 
 ## Canister Contract Cleanup
 
-V1 keeps the playable sync-driven turn contract: clients use render-time
+V1.1 keeps the playable sync-driven turn contract: clients use render-time
 `sync_required` metadata and call `sync_session_turn` before trusting
-turn-sensitive state. A stricter hard rejection for `submit_move_intent` calls
-that arrive after `turn_deadline_at` is V2 contract cleanup because it needs a
+turn-sensitive state. Accepted-closure rejection is implemented: once a
+current-turn closure job is accepted, running, or due, new turn-sensitive
+commands fail before command creation, while exact retries of already-created
+commands still replay. The remaining optional V2 cleanup is stricter raw
+wall-clock rejection for `submit_move_intent` calls that arrive after
+`turn_deadline_at` but before closure acceptance; that rule still needs a
 bounded compatibility pass for command replay, payload mismatch behavior,
 pre-submit sync affordances, client recovery copy, and Pocket-IC coverage.
 
@@ -148,14 +152,14 @@ Pocket-IC e2e coverage for every public endpoint
 V2 candidates:
 
 ```text
-quest huts
+additional quest huts beyond the v1 opening quest
 quest chains
-monthly world events
+monthly world events beyond the v1 deterministic weekly event slice
 artifact victory
 king-of-the-hill
 survival
 scenario-specific defeat
-richer scenario rules beyond the disabled row contract
+richer scenario rules and victory variants beyond the disabled row contract
 ```
 
 Before implementation, define scenario-specific row ownership, visibility and
@@ -194,9 +198,10 @@ defeated champion reappearance
 advanced economy buildings
 broader resource-source variety
 additional tavern/market/dwelling variants
-champion-target town recruitment
+additional champion-target recruitment variants beyond same-tile owned town recruitment
 local/same-tile external dwelling recruitment variants
-town hall income
+town/building income effects such as `town_income_gold_250`
+marketplace ownership rate improvements
 captured-town unrest penalties and pacification
 desperation income
 ```
